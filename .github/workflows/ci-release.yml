@@ -48,6 +48,13 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
+      # Секреты в дереве — тот же gitleaks и тот же .gitleaks.toml, что на
+      # pre-commit; образ закреплён по версии.
+      - name: Gitleaks
+        run: >-
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.30.1
+          dir /repo --config /repo/.gitleaks.toml --redact --no-banner -v
+
       # PyYAML на образе раннера присутствует, но это деталь образа, а не
       # контракт: ставим явно, чтобы обновление образа не выключило половину
       # проверки молча (validate-extensions.py на отсутствие yaml отвечает
