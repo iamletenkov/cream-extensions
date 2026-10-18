@@ -65,6 +65,11 @@ jobs:
       - name: Run repository checks
         run: tools/check.sh
 
+      # shellcheck (на образе раннера есть) — та же цель, что в make ci
+      # и на pre-push: планка -S error, см. tools/lint.sh.
+      - name: Shellcheck
+        run: make lint
+
   release-please:
     name: Release Please
     needs: check
