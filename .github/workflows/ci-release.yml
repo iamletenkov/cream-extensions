@@ -97,7 +97,7 @@ jobs:
   #
   # Только push в main: на pull_request секретов нет, а pull_request_target
   # здесь не нужен и опасен. Без секрета (форк, чужой клон) шаг пропускается
-  # с предупреждением; в iamletenkov/bisquite-extensions это отказ.
+  # с предупреждением; в iamletenkov/cream-extensions это отказ.
   dispatch-bisquite:
     name: Bump extensions in bisquite
     needs: release-please
@@ -112,7 +112,7 @@ jobs:
           GH_TOKEN: ${{ secrets.BISQUITE_DISPATCH_TOKEN }}
           TAG: ${{ needs.release-please.outputs.tag_name }}
           TARGET_REPO: iamletenkov/bisquite
-          HOME_REPO: iamletenkov/bisquite-extensions
+          HOME_REPO: iamletenkov/cream-extensions
         run: |
           set -euo pipefail
           if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
