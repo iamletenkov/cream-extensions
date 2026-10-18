@@ -48,6 +48,13 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
+      # Секреты в дереве — тот же gitleaks и тот же .gitleaks.toml, что на
+      # pre-commit; образ закреплён по версии.
+      - name: Gitleaks
+        run: >-
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.30.1
+          dir /repo --config /repo/.gitleaks.toml --redact --no-banner -v
+
       # PyYAML на образе раннера присутствует, но это деталь образа, а не
       # контракт: ставим явно, чтобы обновление образа не выключило половину
       # проверки молча (validate-extensions.py на отсутствие yaml отвечает
@@ -64,6 +71,11 @@ jobs:
       # если первая упала, — в логе видны все ошибки, а не первая.
       - name: Run repository checks
         run: tools/check.sh
+
+      # shellcheck (на образе раннера есть) — та же цель, что в make ci
+      # и на pre-push: планка -S error, см. tools/lint.sh.
+      - name: Shellcheck
+        run: make lint
 
   release-please:
     name: Release Please
@@ -97,7 +109,7 @@ jobs:
   #
   # Только push в main: на pull_request секретов нет, а pull_request_target
   # здесь не нужен и опасен. Без секрета (форк, чужой клон) шаг пропускается
-  # с предупреждением; в iamletenkov/bisquite-extensions это отказ.
+  # с предупреждением; в iamletenkov/cream-extensions это отказ.
   dispatch-bisquite:
     name: Bump extensions in bisquite
     needs: release-please
@@ -112,7 +124,7 @@ jobs:
           GH_TOKEN: ${{ secrets.BISQUITE_DISPATCH_TOKEN }}
           TAG: ${{ needs.release-please.outputs.tag_name }}
           TARGET_REPO: iamletenkov/bisquite
-          HOME_REPO: iamletenkov/bisquite-extensions
+          HOME_REPO: iamletenkov/cream-extensions
         run: |
           set -euo pipefail
           if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then

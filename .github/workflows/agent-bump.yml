@@ -48,7 +48,7 @@ jobs:
     name: Bump teleport-agent pin
     runs-on: ubuntu-latest
     env:
-      AGENT_REPO: iamletenkov/bisquite-teleport-agent
+      AGENT_REPO: iamletenkov/stvor-agent
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
