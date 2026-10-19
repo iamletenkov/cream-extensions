@@ -9,5 +9,5 @@
 | [extensions.md](extensions.md) | конвенция расширений: манифест, фазы, способности, раскладка в госте, проверки |
 | [adr/README.md](adr/README.md) | индекс архитектурных решений; шаблон — [adr/0000-template.md](adr/0000-template.md) |
 | [specs/](specs/) | спеки (что и почему строим) — пока пусто |
-| [plans/](plans/) | планы реализации с Progress Tracker — пока пусто |
+| [plans/2026-10-19-cream-v1-migration.md](plans/2026-10-19-cream-v1-migration.md) | план перевода всего каталога на cream/v1: 29 задач в 10 волнах, выпуск 5.0.0 |
 | [research/](research/) | исследования и сравнения — пока пусто |
