@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- kiosk (cream): system default of the Xfce4 panel — no panels under the
+     kiosk browser. A user's own ~/.config/xfce4/xfconf channel overrides it. -->
+<channel name="xfce4-panel" version="1.0">
+  <property name="panels" type="empty">
+  </property>
+</channel>

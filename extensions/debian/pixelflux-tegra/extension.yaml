@@ -1,27 +1,51 @@
+# pixelflux-tegra — hardware H.264/H.265 in Selkies on NVIDIA Jetson.
+#
+# Selkies 2.0.0 carries pixelflux with the Tegra backend; what the base image
+# does not solve is the system libxcb under the session (selkies#396: the
+# AppImage's own libxcb next to the L4T X/EGL drops the capture), plus a gbm
+# shim on focal, plus a check on live hardware.
+#
+# install   — no /etc/nv_tegra_release or not arm64 → 20 (plan ruling R11);
+#             selkies must be installed (/opt/selkies/current). Builds the gbm
+#             shim when the system libgbm lacks gbm_bo_create_with_modifiers2
+#             (gcc in /var/lib/cream/ext/pixelflux-tegra, temporary file and
+#             rename), writes the drop-in selkies@.service.d/10-pixelflux-tegra.conf
+#             with LD_PRELOAD, checks that the module imports with it and
+#             carries the Tegra backend; a stamp of the AppImage prefix in the
+#             state directory.
+# configure — every boot, stage graphical (was verify-pixelflux-tegra.service):
+#             the encoder node, the access of the session user (group video on
+#             JetPack 4), pixelflux answers "tegra" for H.264. No node, another
+#             backend, a stale stamp — a warning and exit 0 (R11). After
+#             install/upgrade a running selkies@ is restarted (no-block) to get
+#             the preload.
+# remove    — the drop-in, the shim, the stamp.
+#
+# 3.0.0: cream/v1 (plan 2026-10-19, Task 27); rename table — README.md.
+schema: cream/v1
 name: pixelflux-tegra
-version: 2.0.0
-layout: 2
-family: deb
-# Только arm64: бэкенд кодирует через вендорскую libnvv4l2.so, которая есть
-# только в L4T. install.sh вдобавок отказывает на образе без
-# /etc/nv_tegra_release.
-arch: [arm64]
-# build     — install.sh подкладывает системную libxcb (и шим gbm на focal)
-#             в юнит selkies@ drop-in'ом: сессия запускается мимо AppRun, где
-#             апстрим починил это сам (selkies#396). Колесо больше не подменяет:
-#             Selkies 2.0.0rc1 несёт pixelflux 2.1.0rc1 с бэкендом Tegra.
-# firstboot — configure.sh проверяет на живом железе, что бэкенд виден
-#             (в appliance сборки устройств кодера нет).
-phase: [build, firstboot]
-# Возможности не объявляет: рабочий стол даёт selkies, а это его ускоритель.
-# hw-video-codec тоже не наше — им владеет l4t-gstreamer, и два владельца
-# одной возможности сделали бы её бессмысленной.
+version: 3.0.0
+summary: Аппаратное кодирование Selkies на Jetson — подкладка libxcb, шим gbm, проверка бэкенда Tegra
+cream: ">=1.1.0"
+platform:
+  family: deb
+  # The encoder sits behind the vendor libnvv4l2.so, present only in L4T.
+  arch: [arm64]
+targets:
+  build: exec
+  live: "yes"
+# No capability of its own: the desktop is selkies', this is its accelerator;
+# hw-video-codec belongs to l4t-gstreamer.
 provides: []
-# Ставится ПОСЛЕ selkies: подменяет модуль внутри поставленного им AppImage.
-# Порядок строк в VMFILE bisquite не сортирует, поэтому реальная преграда —
-# проверка /opt/selkies/current в начале install.sh.
 requires: [web-remote-desktop]
-# Оба подменяют pixelflux внутри одного AppImage: поставленный вторым
-# затирает первый, и какой бэкенд окажется в сессии, зависело бы от порядка
-# строк в VMFILE. Объявление симметрично тому, что стоит в pixelflux-v4l2m2m.
-conflicts: [pixelflux-v4l2m2m]
+depends:
+  - {name: cloud-user, version: ">=1.0.0 <2"}
+# Both tune pixelflux inside the one AppImage of selkies.
+conflicts:
+  extensions: [pixelflux-v4l2m2m]
+hooks:
+  install: {timeout: 15m}
+  configure:
+    stage: graphical
+    timeout: 2m
+  remove: {timeout: 1m}

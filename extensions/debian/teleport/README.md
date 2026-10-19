@@ -212,13 +212,21 @@ merged-usr не годится, нужен `/usr/bin/…`); команда по�
 юниты, которые перезапускаются, пока блокировку держит другой процесс
 (`set-managed` держит её, перезапуская `teleport.service`; спека cream §7.3).
 
+Перезагрузка `teleport.service` (`ExecReload`) — render и HUP главному процессу через
+`systemctl kill --kill-who=main --signal=HUP` (с 4.0.1): `/bin/kill` (procps) в
+минимальных образах нет, `systemctl` есть везде, где есть systemd; `--kill-who`, а не
+`--kill-whom` — на Ubuntu 22.04 systemd 249.
+
 `cream validate` предупреждает (`validate.unit_lock`) о `teleport-join.service`
 (`join-retry`) и `teleport-token.service` (`scrub-token`): их `ExecStart` зовёт
 действие с `lock: exclusive`. Это допустимо: правило ловит юнит, который
 перезапускает держатель блокировки и сам ждёт её, — а эти два никто под
 блокировкой не стартует и не ждёт (`join` включает таймер `--no-block`, а
 `teleport-token.path` срабатывает сам). Им блокировка нужна: тик и стирание
-секрета не должны пересечься с идущим `join`. Пока его держит `join` (до 5 мин),
+секрета не должны пересечься с идущим `join`, а `lock: none` запрещает им писать
+(тик пишет ожидание и регистрацию, стирание — удаляет секрет, который `join --force`
+мог только что записать заново). Что ни один держатель блокировки не ждёт job этих
+юнитов, держит тест (`tests/test-join.sh`, «юниты»). Пока блокировку держит `join` (до 5 мин),
 они ждут: `--lock-timeout 6m`, `TimeoutStartSec` юнита — с запасом на ожидание
 и само действие. `teleport.service`: `TimeoutStopSec=30s` — restart внутри
 `set-managed` укладывается в 90 с адаптера stvor-agent.

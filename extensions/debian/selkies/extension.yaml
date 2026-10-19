@@ -1,24 +1,144 @@
+# selkies — the X session on the monitor, in a browser, over one WebSocket port.
+#
+# install   — the AppImage of Selkies by the pinned version and sha256 per
+#             architecture, extracted to /opt/selkies/<version> (no FUSE);
+#             x11-utils and xauth for the wrapper. Starts nothing.
+# configure — every boot, stage graphical (after the display manager): the
+#             Teleport declaration /etc/cream/teleport/apps.d/selkies.conf and
+#             `systemctl start --no-block selkies@<cloud-init user>`. Fail-closed:
+#             without SELKIES_BASIC_AUTH_PASSWORD and without an explicit
+#             SELKIES_ALLOW_NO_AUTH=1 the service is not started (a warning, exit 0);
+#             no display manager, no user — a warning and exit 0 (plan ruling R11).
+# apply     — after `cream set selkies …`: the same check, the declaration and
+#             a non-blocking restart (or stop) of the instance.
+# remove    — stops the instances, takes away the declaration and the AppImage.
+# files     — selkies@.service: EnvironmentFile config and secrets, User=%i, the
+#             wrapper files/run-selkies.sh (refuses to start without
+#             authentication, exit 78 — not restarted).
+#
+# 6.0.0: cream/v1 (plan 2026-10-19, Task 17): settings in /etc/cream/selkies/config,
+#        passwords and the token in /etc/cream/selkies/secrets (secret: file);
+#        the allow-no-auth knob is SELKIES_ALLOW_NO_AUTH=1 (ruling R8);
+#        SELKIES_ENABLE_BASIC_AUTH is set by the wrapper from the password; no
+#        authentication on the loopback is no longer the default either.
+#        Rename table — README.md.
+schema: cream/v1
 name: selkies
-version: 5.0.0
-layout: 2
-# 5.0.0: объявление для Teleport — в /etc/cream/teleport/apps.d/ (расширение
-#        teleport формата cream); прежний teleport-agent его не видит.
-# 4.0.3: объявление для Teleport несёт ICON=desktop (нужен teleport-agent 2.2.0+;
-#        более старый агент объявление с третьим ключом пропустит целиком).
-# 4.0.0: настройки — домен selkies библиотеки bisquite-conf (схема knobs,
-#        SELKIES_* — шаблоном): установка не переписывает файл; BISQUITE_SELKIES_*
-#        вне схемы больше не принимаются.
-family: deb
-# AppImage публикуется для x86_64 и aarch64; install.sh выбирает по dpkg-архитектуре.
-arch: [amd64, arm64]
-# build     — install.sh скачивает AppImage (закреплённая версия, sha256),
-#             распаковывает, кладёт юниты и /etc/bisquite/selkies/config;
-# firstboot — configure.sh включает selkies@<пользователь cloud-init>.
-#             Сети первая загрузка не требует.
-phase: [build, firstboot]
+version: 6.0.0
+summary: Selkies — рабочий стол X-сессии в браузере; без пароля не стартует, наружу — через Teleport
+cream: ">=1.1.0"
+platform:
+  family: deb
+  # The AppImage is published for x86_64 and aarch64.
+  arch: [amd64, arm64]
+  os: [{id: debian}, {id: ubuntu}]
+targets:
+  build: exec
+  live: "yes"
 provides: [web-remote-desktop]
-# x11-server      — Selkies снимает экран существующего X-дисплея (XShm);
-# display-manager — сессию пользователя открывает менеджер входа, и без
-#                   DESKTOP_AUTOLOGIN=1 до входа человека показывать нечего.
+# x11-server      — Selkies captures an existing X display (XShm);
+# display-manager — the session of the user is opened by the display manager.
 requires: [x11-server, display-manager]
-conflicts: []
+depends:
+  - {name: cloud-user, version: ">=1.0.0 <2"}
+hooks:
+  # The AppImage is ~535 MB over the network, extracted to 1.7 GB.
+  install: {timeout: 60m}
+  # At boot up to 60 s of waiting for the cloud-init user, then files and
+  # non-blocking systemctl.
+  configure:
+    stage: graphical
+    timeout: 3m
+  apply: {timeout: 1m}
+  remove: {timeout: 5m}
+files:
+  - {src: files/selkies@.service, dst: /etc/systemd/system/selkies@.service, mode: "0644"}
+# Names are the native variables of Selkies (`selkies --help`, "Env:"): the unit
+# reads the files as EnvironmentFile and Selkies takes them itself. Every type
+# admits no newline, quote, $, backquote, backslash or space (tests/test-selkies.sh).
+config:
+  keys:
+    SELKIES_ADDR:
+      type: 're:^[A-Za-z0-9.:-]{1,253}$'
+      default: "127.0.0.1"
+      description: "адрес прослушивания; снаружи — через Teleport или ssh-туннель"
+    SELKIES_PORT: {type: port, default: "8080", description: "порт"}
+    SELKIES_MODE:
+      type: "enum:websockets,webrtc"
+      default: websockets
+      description: "WebRTC через веб-приложение Teleport не проходит"
+    SELKIES_ENABLE_DUAL_MODE: {type: "enum:true,false", default: "false", description: "оба режима сразу"}
+    SELKIES_ENABLE_HTTPS:
+      type: "enum:true,false"
+      default: "false"
+      description: "TLS; на петле TLS завершает прокси, наружу с паролем — нужен"
+    SELKIES_BASIC_AUTH_PASSWORD:
+      type: 're:^[A-Za-z0-9!#%&()*+,./:;<=>?@^_{|}~\[\]-]{8,128}$'
+      default: ""
+      empty: true
+      secret: file
+      description: "пароль basic auth: 8–128 знаков без пробелов, кавычек, $ и обратной косой; без него служба не стартует"
+    SELKIES_BASIC_AUTH_VIEWONLY_PASSWORD:
+      type: 're:^[A-Za-z0-9!#%&()*+,./:;<=>?@^_{|}~\[\]-]{8,128}$'
+      default: ""
+      empty: true
+      secret: file
+      description: "пароль только для просмотра; без основного пароля аутентификацией не считается"
+    SELKIES_MASTER_TOKEN:
+      type: 're:^[A-Za-z0-9._~+/=-]{16,256}$'
+      default: ""
+      empty: true
+      secret: file
+      description: "токен совместной работы"
+    SELKIES_ALLOW_NO_AUTH:
+      type: bool
+      default: "0"
+      description: "ручка расширения, не Selkies: 1 — запускать без пароля (предупреждение при каждом старте)"
+    SELKIES_ENABLE_RESIZE:
+      type: "enum:true,false"
+      default: "false"
+      description: "true — Selkies меняет разрешение МОНИТОРА под окно браузера"
+    SELKIES_ENCODER: {type: 're:^[a-z0-9-]{1,32}$', default: "h264enc", description: "кодер: h264enc, h264enc-striped, jpeg"}
+    SELKIES_FRAMERATE:
+      type: 're:^[0-9]{1,3}(,[0-9]{1,3}-[0-9]{1,3})?$'
+      default: "30,8-60"
+      description: "частота кадров: старт,мин-макс"
+    SELKIES_AUDIO_ENABLED: {type: "enum:true,false", default: "true", description: "звук сессии"}
+    SELKIES_MICROPHONE_ENABLED: {type: "enum:true,false", default: "false", description: "микрофон браузера на машину"}
+    SELKIES_GAMEPAD_ENABLED: {type: "enum:true,false", default: "false", description: "геймпады (заводят сокеты в /tmp)"}
+    SELKIES_WEBCAM_ENABLED: {type: "enum:true,false", default: "false", description: "веб-камера браузера на машину"}
+    SELKIES_ENABLE_CLIPBOARD:
+      type: "enum:true,false,in,out"
+      default: "true"
+      description: "буфер обмена: обе стороны или по направлениям"
+    SELKIES_FILE_TRANSFERS:
+      type: 're:^(none|upload|download|upload,download|download,upload)$'
+      default: "upload,download"
+      description: "передача файлов в ~/Downloads пользователя; none — выключить"
+    SELKIES_COMMAND_ENABLED: {type: "enum:true,false", default: "false", description: "API выполнения команд"}
+    SELKIES_ENABLE_SHARING: {type: "enum:true,false", default: "false", description: "ссылки для просмотра другими"}
+    SELKIES_SECOND_SCREEN: {type: "enum:true,false", default: "false", description: "второй монитор"}
+    SELKIES_UI_SIDEBAR_SHOW_GAMEPADS: {type: "enum:true,false", default: "false", description: "панель: геймпады"}
+    SELKIES_UI_SIDEBAR_SHOW_WEBCAM: {type: "enum:true,false", default: "false", description: "панель: веб-камера"}
+    SELKIES_UI_SIDEBAR_SHOW_SHARING: {type: "enum:true,false", default: "false", description: "панель: совместный доступ"}
+    SELKIES_UI_SIDEBAR_SHOW_APPS: {type: "enum:true,false", default: "false", description: "панель: приложения"}
+    SELKIES_DISPLAY:
+      type: 're:^:[0-9]+(\.[0-9]+)?$'
+      default: ""
+      empty: true
+      description: "X-дисплей; пусто — :0 (ключ обёртки)"
+    SELKIES_HTTPS_CERT:
+      type: 're:^/[A-Za-z0-9._/-]{1,1000}$'
+      default: ""
+      empty: true
+      description: "сертификат; пусто — пара, выпущенная на машине в состоянии пользователя"
+    SELKIES_HTTPS_KEY:
+      type: 're:^/[A-Za-z0-9._/-]{1,1000}$'
+      default: ""
+      empty: true
+      description: "ключ сертификата"
+    SELKIES_*:
+      type: 're:^[A-Za-z0-9_.,:/@%+=-]{1,512}$'
+      empty: true
+      pattern: true
+      description: "любая переменная Selkies (selkies --help), не секрет: секреты — только три ключа выше"

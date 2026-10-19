@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# cream hook `remove` of chromium-kiosk: the packages recorded by install
+# removed (apt keeps the package's conffiles, /etc/chromium-kiosk/config.yml
+# among them). cream takes away the repository file and the key (`files`).
+# A repeat finds nothing and exits 0.
+#
+# On a running system the package's config watcher is stopped before apt and
+# its state reset after: a watcher in its restart loop (no display yet) would
+# otherwise try to restart a unit apt has just taken away and stay `failed`.
+set -euo pipefail
+log_info(){ >&2 echo "[INFO] chromium-kiosk: $*"; }
+log_error(){ >&2 echo "[ERROR] chromium-kiosk: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}/packages"
+WATCHER=chromium-kiosk_configwatcher.service
+running=""
+[[ "${CREAM_PHASE:-}" == live && -d "$R/run/systemd/system" ]] && running=1
+ours=()
+if [[ -f "$STATE" ]]; then
+    mapfile -t ours < <(sed '/^$/d' "$STATE")
+fi
+if (( ${#ours[@]} )); then
+    export DEBIAN_FRONTEND=noninteractive
+    if [[ -n "$running" ]]; then
+        systemctl stop "$WATCHER" 2>/dev/null || true
+    fi
+    apt-get -q -y remove "${ours[@]}" || { log_error "apt-get remove ${ours[*]} не прошёл"; exit 1; }
+    if [[ -n "$running" ]]; then
+        systemctl reset-failed "$WATCHER" 2>/dev/null || true
+    fi
+    log_info "удалены: ${ours[*]}"
+else
+    log_info "своих пакетов нет — apt не трогаю"
+fi
+rm -f -- "$STATE"

@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# cream hook `install` of selkies: the AppImage by the pinned version and sha256,
+# extracted to /opt/selkies/<version>, the link /opt/selkies/current, and
+# x11-utils/xauth for the wrapper. Starts nothing and writes no settings: the
+# domain is cream's (/etc/cream/selkies/{config,secrets}), the unit is laid out
+# by cream (files), the start and the Teleport declaration are configure's.
+#
+# WHY AppImage. The Selkies 2.0 packages are built for Ubuntu 26.04 and Debian
+# trixie; the AppImage carries its own environment (conda, pixelflux, pcmflux)
+# and ran on Ubuntu 22.04 unchanged (AGX Orin, 2026-09-14). Version and sha256
+# are pinned per architecture: "latest" would change under our feet.
+#
+# WHY EXTRACTED. A mounted AppImage needs FUSE in the guest and unpacks the
+# squashfs on every start; the extracted tree (6 s at build, 1.7 GB) depends on
+# nothing. The binary is started bypassing `AppRun` — why, in the header of
+# files/run-selkies.sh.
+#
+# Idempotent: an extracted tree of the pinned version is kept, the link is
+# rewritten only when it points elsewhere.
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] selkies: $*"; }
+log_warn(){ >&2 echo "[WARN] selkies: $*"; }
+log_error(){ >&2 echo "[ERROR] selkies: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+SELKIES_VERSION="2.0.0"
+declare -A APPIMAGE_SHA256=(
+    [x86_64]="8dcdbe239dc8930545819aae510c45283cf25922250b6b7348ff2fd790c41ed8"
+    [aarch64]="01ef981ff31279807705107dbe23a35e20ec68b246376c1efc5cce0ddc7a23d8"
+)
+OPT="$R/opt/selkies"
+PREFIX="$OPT/${SELKIES_VERSION}"
+
+arch="$(dpkg --print-architecture)"
+case "$arch" in
+    amd64) APPARCH=x86_64 ;;
+    arm64) APPARCH=aarch64 ;;
+    *) log_error "архитектура $arch — AppImage Selkies только для amd64 и arm64"; exit 1 ;;
+esac
+
+apt_retry(){
+    local i
+    for i in 1 2 3; do
+        "$@" && return 0
+        log_warn "попытка $i: $* — не удалась, повтор через 10 с"
+        sleep 10
+    done
+    return 1
+}
+
+[[ ! -L "$OPT" ]] || { log_error "/opt/selkies — символическая ссылка, не пишу через неё"; exit 1; }
+
+# --- AppImage -----------------------------------------------------------------
+# The release tag lost its `v` prefix upstream (v2.0.0rc0 -> 2.0.0rc0, seen
+# 2026-09-15: the old URL answers 404, the asset is byte-identical). Both
+# spellings are tried; the pinned sha256 is what guards the content.
+if [[ -x "$PREFIX/usr/conda/bin/selkies" ]]; then
+    log_info "Selkies $SELKIES_VERSION уже распакован в /opt/selkies/$SELKIES_VERSION"
+else
+    export DEBIAN_FRONTEND=noninteractive
+    command -v curl >/dev/null 2>&1 \
+        || { apt_retry apt-get update -q && apt_retry apt-get install -y -q curl ca-certificates; } \
+        || { log_error "curl не установился"; exit 1; }
+    ASSET="selkies-${SELKIES_VERSION}-${APPARCH}.AppImage"
+    RELEASES="https://github.com/selkies-project/selkies/releases/download"
+    URLS=("$RELEASES/${SELKIES_VERSION}/$ASSET" "$RELEASES/v${SELKIES_VERSION}/$ASSET")
+    install -d -m 0755 "$OPT"
+    # The work directory next to the target: the same file system for mv, and
+    # no 1.7 GB in a tmpfs.
+    WORK="$(mktemp -d "$OPT/.install.XXXXXX")"
+    trap 'rm -r -f -- "$WORK"' EXIT
+    fetched=0
+    for URL in "${URLS[@]}"; do
+        log_info "скачиваю $URL"
+        # --speed-limit/--speed-time turn a stalled transfer into a retry: over
+        # the board's Wi-Fi the download froze at 76 of 535 MB and curl waited
+        # an hour with no timeout (AGX Orin, 2026-09-15).
+        if curl -fsSL --retry 5 --retry-delay 5 \
+                --connect-timeout 30 --speed-limit 10240 --speed-time 60 \
+                -o "$WORK/selkies.AppImage" "$URL"; then
+            fetched=1; break
+        fi
+    done
+    (( fetched )) || { log_error "AppImage не скачался ни по одной ссылке: ${URLS[*]}"; exit 1; }
+    if ! echo "${APPIMAGE_SHA256[$APPARCH]}  $WORK/selkies.AppImage" | sha256sum -c --quiet - >/dev/null 2>&1; then
+        log_error "sha256 AppImage не совпал с закреплённым для $APPARCH"
+        exit 1
+    fi
+    chmod 0755 "$WORK/selkies.AppImage"
+    # --appimage-extract works without FUSE: the runtime is static and unpacks
+    # the squashfs itself, into the current directory.
+    ( cd "$WORK" && ./selkies.AppImage --appimage-extract >/dev/null ) || { log_error "AppImage не распаковался"; exit 1; }
+    [[ -x "$WORK/squashfs-root/usr/conda/bin/selkies" ]] \
+        || { log_error "в AppImage нет usr/conda/bin/selkies — раскладка сменилась"; exit 1; }
+    chmod -R a+rX,go-w "$WORK/squashfs-root"
+    chown -R -h 0:0 "$WORK/squashfs-root" 2>/dev/null || true
+    rm -r -f -- "$PREFIX"
+    mv -T -- "$WORK/squashfs-root" "$PREFIX"
+    log_info "распакован в /opt/selkies/$SELKIES_VERSION ($(du -sh "$PREFIX" | cut -f1))"
+fi
+if [[ "$(readlink "$OPT/current" 2>/dev/null || true)" != "$PREFIX" ]]; then
+    ln -sfn -- "$PREFIX" "$OPT/current"
+fi
+"$PREFIX/usr/conda/bin/selkies" --help >/dev/null 2>&1 || { log_error "selkies --help не запускается"; exit 1; }
+
+# xdpyinfo checks the X authority candidate (as x11vnc does).
+export DEBIAN_FRONTEND=noninteractive
+apt_retry apt-get install -y -q --no-install-recommends x11-utils xauth >/dev/null \
+    || { log_error "x11-utils и xauth не установились"; exit 1; }
+
+log_info "Selkies $SELKIES_VERSION установлен ($APPARCH); пароль — echo <пароль> | sudo cream set selkies SELKIES_BASIC_AUTH_PASSWORD=-"

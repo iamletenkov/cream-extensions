@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# cream action `camera-profile` of sensing-gmsl2-camera: the camera profile on
+# one video node — what the vendor's quick_bring_up.sh asks for interactively,
+# without questions and on every appearance of the node.
+#
+#   cream run sensing-gmsl2-camera camera-profile videoN
+#   /opt/cream/ext/sensing-gmsl2-camera/actions/camera-profile videoN
+#
+# The second form is how sensing-gmsl2-camera@videoN.service calls it (the udev
+# rule wants the unit when the node appears), with the keys from
+# EnvironmentFile=/etc/cream/sensing-gmsl2-camera/config. The node name and the
+# controls are checked here, whoever wrote them, before they reach v4l2-ctl.
+#
+# Exit: 0 — profile set, or not a Sensing node (skipped); 1 — bad controls or
+# v4l2-ctl refused; 2 — usage.
+set -euo pipefail
+
+node="${1:-}"
+if [[ ! "$node" =~ ^video[0-9]{1,4}$ ]]; then
+    echo "использование: camera-profile videoN" >&2
+    exit 2
+fi
+controls="${SENSING_CAMERA_CONTROLS:-}"
+if [[ ! "$controls" =~ ^[a-z_]+=[0-9a-fx]+(,[a-z_]+=[0-9a-fx]+)*$ ]]; then
+    echo "SENSING_CAMERA_CONTROLS не задан или не вида имя=число,…: профиль не ставлю" >&2
+    exit 1
+fi
+dev="/dev/$node"
+
+# Not a Sensing node (USB camera, codec, loopback) — not ours, silently past.
+# Told apart by the sub-device name: "vi-output, sgx-yuv-gmsl2 <bus>-<addr>".
+info="$(v4l2-ctl -d "$dev" --info 2>/dev/null || true)"
+if ! grep -q "sgx-yuv-gmsl2" <<<"$info"; then
+    exit 0
+fi
+# On a port without a camera the command passes too (measured 2026-09-14,
+# video0 with detect error: rc=0), so the profile goes to EVERY node of the
+# driver instead of guessing where the camera is.
+if v4l2-ctl -d "$dev" -c "$controls"; then
+    echo "$node: $controls"
+else
+    echo "$node: v4l2-ctl не принял профиль" >&2
+    exit 1
+fi

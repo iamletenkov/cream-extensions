@@ -1,8 +1,8 @@
 # shellcheck shell=bash
-# libnvisppg.so from NVIDIA's camera overlay. Sourced by install.sh, never
-# executed:
+# libnvisppg.so from NVIDIA's camera overlay. Sourced by hooks/install and
+# hooks/remove, never executed:
 #
-#   source "$SCRIPT_DIR/nvisppg.sh"
+#   source "$CREAM_EXT_DIR/nvisppg.sh"
 #
 # WHY THE EXTENSION DOES IT. Until 2026-09-19 the flash station swapped the
 # library while preparing the BSP tree (step 03 of nvidia-jetpack, after
@@ -22,8 +22,8 @@
 # diversion must name the path dpkg knows. The link is checked, not assumed.
 #
 # The functions take the pinned values as arguments so that the tests can
-# feed a fixture; the pins live in install.sh. NVISPPG_ROOT is a test root,
-# empty in the guest. The caller's log_info/log_error are used when defined.
+# feed a fixture; the pins live in hooks/install. NVISPPG_ROOT is the root the
+# hook works on (CREAM_ROOT; empty on the machine). The caller's log_info/log_error are used when defined.
 
 NVISPPG_ROOT="${NVISPPG_ROOT:-}"
 NVISPPG_LIB=/usr/lib/aarch64-linux-gnu/nvidia/libnvisppg.so
@@ -128,4 +128,51 @@ nvisppg_install(){
         return 1
     fi
     _nv_info "libnvisppg.so из оверлея NVIDIA; штатная — $NVISPPG_LIB.distrib"
+}
+
+# dpkg-divert of the root this file works on.
+_nv_divert(){
+    local cmd=(dpkg-divert)
+    [[ -n "$NVISPPG_ROOT" ]] && cmd+=(--root "$NVISPPG_ROOT")
+    "${cmd[@]}" "$@"
+}
+
+# rc=0 when dpkg has a diversion of the library.
+nvisppg_diverted(){
+    local true_name
+    true_name="$(_nv_divert --truename "$NVISPPG_LIB" 2>/dev/null)" || return 1
+    [[ "$true_name" != "$NVISPPG_LIB" ]]
+}
+
+# Undo nvisppg_install: take the diversion off and put the stock library back
+# from .distrib (checked against STOCK_SHA), by a rename over the overlay one.
+# Refuses, changing nothing, when the library in place is not the overlay
+# (OVERLAY_SHA) — someone replaced it since. No diversion — nothing to undo.
+# When the base was already swapped before (no .distrib), only the diversion
+# goes and the overlay library stays.
+nvisppg_remove(){
+    local stock_sha="$1" overlay_sha="$2"
+    local lib="$NVISPPG_ROOT$NVISPPG_LIB" distrib="$NVISPPG_ROOT$NVISPPG_LIB.distrib" cur
+    if ! nvisppg_diverted; then
+        _nv_info "отведения libnvisppg.so нет — снимать нечего"
+        return 0
+    fi
+    cur="$(sha256sum "$lib" 2>/dev/null | cut -d' ' -f1)"
+    if [[ "$cur" != "$overlay_sha" ]]; then
+        _nv_error "libnvisppg.so на месте не из оверлея (${cur:-нет файла}) — её меняли после установки, не трогаю"
+        return 1
+    fi
+    if [[ -f "$distrib" && ! -L "$distrib" ]]; then
+        cur="$(sha256sum "$distrib" | cut -d' ' -f1)"
+        if [[ "$cur" != "$stock_sha" ]]; then
+            _nv_error "$NVISPPG_LIB.distrib не штатная ($cur) — не возвращаю"
+            return 1
+        fi
+        _nv_divert --remove "$NVISPPG_LIB" >/dev/null || return 1
+        mv -f -T -- "$distrib" "$lib" || return 1
+        _nv_info "libnvisppg.so — снова штатная, отведение dpkg снято"
+    else
+        _nv_divert --remove "$NVISPPG_LIB" >/dev/null || return 1
+        _nv_info "отведение dpkg снято; libnvisppg.so из оверлея остаётся (база была подменена до cream)"
+    fi
 }

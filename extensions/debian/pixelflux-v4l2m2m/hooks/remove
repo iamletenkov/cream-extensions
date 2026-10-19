@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# cream hook `remove` of pixelflux-v4l2m2m: the stamp (the only file it writes).
+set -euo pipefail
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:-$R/var/lib/cream/ext/pixelflux-v4l2m2m}"
+[[ -L "$STATE" ]] || rm -f -- "$STATE/stamp"
+>&2 echo "[INFO] pixelflux-v4l2m2m: снято"

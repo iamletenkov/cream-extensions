@@ -1,17 +1,36 @@
+# can-usb — USB/serial CAN adapter modules (gs_usb, peak_usb, slcan) built for
+# the Sensing kernel of Jetson AGX Orin on L4T 36.4.3 from NVIDIA's kernel
+# sources of the same release, against the kernel-headers tree of the machine.
+#
+# install — not a Jetson (no /etc/nv_tegra_release) — code 20; another board,
+#           release, the stock kernel or unknown headers — 1, all before the
+#           network; the modules land in /lib/modules/<kernel>/updates/can-usb
+#           (code 10 when they changed, 0 on a repeat); headers and build tools
+#           it installs and the hold it adds are recorded for `remove`.
+# remove  — the modules and depmod; its own apt packages (refuses when apt would
+#           take anything else) and its hold of the headers (never one held
+#           before cream or recorded by sensing-gmsl2-camera).
+# Tree: canusb.sh (functions), Kbuild.
+schema: cream/v1
 name: can-usb
-version: 1.0.0
-layout: 2
-family: deb
-# Только Jetson AGX Orin на L4T 36.4.3 с ядром Sensing: модули собираются под
-# одну сборку ядра; install.sh отказывает на другой плате, релизе или ядре.
-arch: [arm64]
-# Только build: модули собираются и кладутся в образ, весь флот получает один
-# бинарь; на устройстве им нужен только udev (загрузка по modalias адаптера).
-phase: build
-# can-usb-adapters — gs_usb, peak_usb, slcan в /lib/modules/<ядро>/updates/can-usb
-# с depmod для ядра образа.
+version: 2.0.0
+summary: Модули адаптеров CAN gs_usb, peak_usb, slcan под ядро Sensing (Jetson AGX Orin, L4T 36.4.3)
+cream: ">=1.0.0"
+platform:
+  family: deb
+  arch: [arm64]
+targets:
+  build: exec
+  live: confirm
+  live_note: >-
+    скачивает исходники ядра Jetson Linux 36.4.3 (около 220 МБ, потоком), ставит заголовки
+    ядра (nvidia-l4t-kernel-headers, закрепляет apt-mark hold) и компилятор и собирает три
+    модуля под ядро Sensing в /lib/modules/5.15.148-tegra/updates/can-usb; модули грузит
+    udev при подключении адаптера, после перезагрузки
 provides: [can-usb-adapters]
-# install.sh отказывает без ядра Sensing на /boot/Image, а его кладёт
-# sensing-gmsl2-camera (способность gmsl2-camera): в VMFILE — раньше can-usb.
+# The Sensing kernel on /boot/Image is put there by sensing-gmsl2-camera.
 requires: [gmsl2-camera]
-conflicts: []
+hooks:
+  # 220 MB of sources streamed, then a small build.
+  install: {timeout: 90m}
+  remove: {timeout: 10m}

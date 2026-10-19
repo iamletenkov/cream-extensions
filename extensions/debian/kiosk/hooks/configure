@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# cream hook `configure` of kiosk: stage graphical (after the display manager)
+# — every boot, after install on a working machine and after `cream set kiosk …`
+# (no own apply: cream restarts cream-configure@kiosk).
+#
+#   1. No display manager — a warning and 0 (ruling R11): a browser without an
+#      X server would only loop in Restart=always.
+#   2. The user: KIOSK_USER, else the cloud-init user (library cloud-user),
+#      waited for up to 60 s at boot. None, unknown or root — a warning and 0:
+#      the browser of a kiosk never runs as root.
+#   3. The GNOME on-screen keyboard: a system dconf keyfile (the same profile
+#      rule as the extensions desktop and locale), only under GNOME.
+#   4. kiosk-chromium@<user> enabled by a link in graphical.target.wants, the
+#      instances of other users disabled; on a running system restarted and
+#      stopped with --no-block (the hook may run inside a boot job).
+# Nothing is written into the user's home: the Xfce4 panel and desktop are
+# system defaults (`files`), the settings reach the browser through the unit's
+# EnvironmentFile.
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] kiosk: $*"; }
+log_warn(){ >&2 echo "[WARN] kiosk: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+SD="$R/etc/systemd/system"
+WANTS="$SD/graphical.target.wants"
+TEMPLATE=/etc/systemd/system/kiosk-chromium@.service
+CLOUD_USER_LIB="$R/opt/cream/ext/cloud-user/get_cloud_user.sh"
+DCONF_PROFILE="$R/etc/dconf/profile/user"
+KBD="$R/etc/dconf/db/local.d/50-kiosk-keyboard"
+KBD_TEXT=$'# kiosk (cream): the GNOME on-screen keyboard on, a system default.\n[org/gnome/desktop/a11y/applications]\nscreen-keyboard-enabled=true'
+USER_RE='^[a-z_][a-z0-9_-]{0,31}$'
+
+running=""
+[[ "${CREAM_PHASE:-}" == live && -d "$R/run/systemd/system" ]] && running=1
+
+# disable_others [KEEP]: every enabled instance except KEEP off.
+disable_others(){
+    local keep="${1:-}" link name
+    shopt -s nullglob
+    for link in "$WANTS"/kiosk-chromium@*.service; do
+        name="${link##*/}"
+        [[ -n "$keep" && "$name" == "kiosk-chromium@${keep}.service" ]] && continue
+        rm -f -- "$link"
+        [[ -n "$running" ]] && systemctl --no-block stop "$name" || true
+        log_info "прежний экземпляр $name выключен"
+    done
+    shopt -u nullglob
+}
+
+# write_file PATH TEXT: through a temporary file and rename, only on a change;
+# 0 — written.
+write_file(){
+    local path="$1" text="$2" tmp
+    if [[ -f "$path" && ! -L "$path" ]] && [[ "$(cat -- "$path")" == "$text" ]]; then
+        return 1
+    fi
+    install -d -m 0755 "$(dirname "$path")"
+    tmp="$(mktemp "$(dirname "$path")/.${path##*/}.XXXXXX")"
+    printf '%s\n' "$text" > "$tmp"
+    chmod 0644 "$tmp"
+    mv -f -T -- "$tmp" "$path"
+}
+
+apply_keyboard(){
+    local changed=""
+    if [[ "${KIOSK_KEYBOARD_ENABLED:-true}" == true && -x "$R/usr/bin/gnome-shell" ]]; then
+        install -d -m 0755 "$(dirname "$DCONF_PROFILE")"
+        if [[ -L "$DCONF_PROFILE" ]]; then
+            log_warn "/etc/dconf/profile/user — ссылка; профиль не трогаю, клавиатура может не включиться"
+        elif [[ ! -f "$DCONF_PROFILE" ]]; then
+            write_file "$DCONF_PROFILE" $'user-db:user\nsystem-db:local' || true
+        elif ! grep -qx 'system-db:local' "$DCONF_PROFILE"; then
+            write_file "$DCONF_PROFILE" "$(cat -- "$DCONF_PROFILE")"$'\nsystem-db:local' || true
+        fi
+        write_file "$KBD" "$KBD_TEXT" && changed=1
+    else
+        if [[ "${KIOSK_KEYBOARD_ENABLED:-true}" == true ]]; then
+            log_info "экранная клавиатура — только под GNOME (gnome-shell не найден), пропускаю"
+        fi
+        if [[ -f "$KBD" && ! -L "$KBD" ]] && [[ "$(cat -- "$KBD")" == "$KBD_TEXT" ]]; then
+            rm -f -- "$KBD"; changed=1
+        fi
+    fi
+    if [[ -n "$changed" ]]; then
+        if command -v dconf >/dev/null 2>&1; then
+            dconf update || log_warn "dconf update не прошёл — клавиатура применится после него"
+        else
+            log_warn "dconf не найден — системная база не пересобрана"
+        fi
+    fi
+}
+
+# resolve_user <wait seconds>: KIOSK_USER or the cloud-init user; empty — none.
+resolve_user(){
+    local wait_s="$1" user="" i
+    for (( i = 0; ; i += 3 )); do
+        if [[ -n "${KIOSK_USER:-}" ]]; then
+            user="$KIOSK_USER"
+        elif [[ -x "$CLOUD_USER_LIB" ]]; then
+            user="$("$CLOUD_USER_LIB" 2>/dev/null || true)"
+        fi
+        if [[ -n "$user" ]] && getent passwd "$user" >/dev/null 2>&1; then
+            printf '%s\n' "$user"; return 0
+        fi
+        (( i < wait_s )) || break
+        sleep 3
+    done
+    [[ -n "$user" ]] && printf '%s\n' "$user"
+    return 1
+}
+
+if [[ ! -e "$SD/display-manager.service" && ! -L "$SD/display-manager.service" ]]; then
+    log_warn "менеджер входа не включён (нет display-manager.service) — браузер киоска не включаю"
+    log_warn "X-сервер и автологин дают gnome, xfce4 или lxde и desktop"
+    disable_others
+    exit 0
+fi
+
+wait_s=0
+[[ "${CREAM_REASON:-boot}" == boot ]] && wait_s=60
+if [[ -n "${KIOSK_USER:-}" && ! "$KIOSK_USER" =~ $USER_RE ]]; then
+    log_warn "KIOSK_USER не по форме: $(printf '%q' "$KIOSK_USER") — браузер киоска не включаю"
+    exit 0
+fi
+if ! user="$(resolve_user "$wait_s")"; then
+    log_warn "пользователь киоска ${user:+'$user' }не найден (KIOSK_USER или cloud-init) — браузер не включаю"
+    exit 0
+fi
+if [[ ! "$user" =~ $USER_RE ]]; then
+    log_warn "имя пользователя не по форме: $(printf '%q' "$user") — браузер не включаю"
+    exit 0
+fi
+if [[ "$(id -u "$user" 2>/dev/null || true)" == 0 ]]; then
+    log_warn "пользователь киоска — root: браузер от root не запускается; задайте KIOSK_USER"
+    exit 0
+fi
+
+apply_keyboard
+
+disable_others "$user"
+install -d -m 0755 "$WANTS"
+link="$WANTS/kiosk-chromium@${user}.service"
+if [[ "$(readlink -- "$link" 2>/dev/null || true)" != "$TEMPLATE" ]]; then
+    rm -f -- "$link"
+    ln -s -- "$TEMPLATE" "$link"
+fi
+if [[ -n "$running" ]]; then
+    systemctl --no-block restart "kiosk-chromium@${user}.service"
+    log_info "kiosk-chromium@$user перезапускается"
+else
+    log_info "kiosk-chromium@$user включён — запустится с графической целью"
+fi

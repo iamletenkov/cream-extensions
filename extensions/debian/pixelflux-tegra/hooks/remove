@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# cream hook `remove` of pixelflux-tegra: the drop-in of selkies@, the gbm shim
+# and the stamp. A running session keeps its preload until its next start.
+# A repeat finds nothing and exits 0.
+set -euo pipefail
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:-$R/var/lib/cream/ext/pixelflux-tegra}"
+DROPIN_DIR="$R/etc/systemd/system/selkies@.service.d"
+
+# rm -f removes a symlink itself, never its target.
+if [[ ! -L "$DROPIN_DIR" ]]; then
+    rm -f -- "$DROPIN_DIR/10-pixelflux-tegra.conf"
+    rmdir -- "$DROPIN_DIR" 2>/dev/null || true
+fi
+if [[ ! -L "$STATE" ]]; then
+    rm -f -- "$STATE/gbm_shim.so" "$STATE/stamp"
+fi
+if [[ -d "$R/run/systemd/system" ]]; then
+    systemctl daemon-reload || >&2 echo "[WARN] pixelflux-tegra: daemon-reload не прошёл"
+fi
+>&2 echo "[INFO] pixelflux-tegra: подкладка снята; selkies@ без неё — после перезапуска сессии"
