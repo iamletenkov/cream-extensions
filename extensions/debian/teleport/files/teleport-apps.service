@@ -1,0 +1,9 @@
+[Unit]
+Description=Republish Teleport apps after a change in apps.d or command-labels.d
+# Nothing to republish until the agent is configured; `join` renders on its own.
+ConditionPathExists=/etc/teleport.yaml
+
+[Service]
+Type=oneshot
+# Active agent — reload (render + HUP); otherwise only render.
+ExecStart=/usr/bin/cream run teleport reload-apps
