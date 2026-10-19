@@ -5,7 +5,7 @@
 #               needs (numpy and scipy of l4t-pytorch) stays (pip-owned.py);
 #   packages    apt packages it put on; cuDNN and python3-pip stay while
 #               torch is installed in /usr/local.
-# apt is asked first in simulation: when it would take away anything besides
+# apt is asked first in simulation (library apt-guard): when it would take away anything besides
 # our packages the hook refuses before changing anything. Things there before
 # cream stay. A repeat finds nothing and exits 0.
 set -euo pipefail
@@ -42,19 +42,11 @@ for p in "${recorded[@]}"; do
     fi
 done
 if (( ${#ours[@]} )); then
-    sim="$(apt-get -s remove "${ours[@]}")" || { log_error "apt-get -s remove ${ours[*]} не прошёл"; exit 1; }
-    extra=()
-    while read -r verb pkg _; do
-        [[ "$verb" == Remv ]] || continue
-        mine=""
-        for p in "${ours[@]}"; do [[ "$p" == "$pkg" ]] && mine=1; done
-        [[ -n "$mine" ]] || extra+=("$pkg")
-    done <<< "$sim"
-    if (( ${#extra[@]} )); then
-        log_error "вместе с ${ours[*]} apt снял бы и чужие пакеты: ${extra[*]}"
-        log_error "сними руками или забудь запись: cream remove --forget l4t-tensorflow"
-        exit 1
-    fi
+    APT_GUARD="$R/opt/cream/ext/apt-guard/apt-guard.sh"
+    [[ -f "$APT_GUARD" ]] || { log_error "нет библиотеки apt-guard ($APT_GUARD) — cream ставит её по depends"; exit 1; }
+    # shellcheck source=../../apt-guard/apt-guard.sh
+    source "$APT_GUARD"
+    apt_guard_check remove "${ours[@]}" || exit 1
 fi
 
 # --- pip ------------------------------------------------------------------------
