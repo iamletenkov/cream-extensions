@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# cream hook `remove` of rustdesk: our options out of every RustDesk2.toml
+# (hooks/configure --clear, as the users), the package removed if we put it
+# on, the unit we laid out removed. The device identity (RustDesk.toml) and
+# options RustDesk wrote itself stay: they are the machine's and the users'.
+# A repeat finds nothing and exits 0.
+set -euo pipefail
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+EXT_DIR="${CREAM_EXT_DIR:?run by cream}"
+STATE_DIR="${CREAM_STATE_DIR:?run by cream}"
+# shellcheck source=../files/common.sh
+. "$EXT_DIR/files/common.sh"
+
+"$EXT_DIR/hooks/configure" --clear || log "свои опции RustDesk2.toml сняты не у всех (см. выше)"
+
+if [[ -f "$STATE_DIR/packages" ]] && grep -qx rustdesk "$STATE_DIR/packages"; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get -q -y remove rustdesk || { log "apt-get remove rustdesk не прошёл"; exit 1; }
+    log "пакет rustdesk удалён"
+fi
+if [[ -e "$STATE_DIR/unit-ours" ]]; then
+    rm -f -- "$R/usr/lib/systemd/system/rustdesk.service"
+fi
+rm -f -- "$STATE_DIR/packages" "$STATE_DIR/unit-ours"
+log "готово"

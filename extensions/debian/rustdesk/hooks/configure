@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# cream hook `configure` of rustdesk: stage system, before rustdesk.service —
+# every boot, after install on a working machine and after
+# `cream set rustdesk …` (no own apply: cream restarts configure).
+#
+# Renders the server keys into [options] of RustDesk2.toml of root (the
+# service) and of every user with UID 1000..65533:
+#
+#   RUSTDESK_ID_SERVER      custom-rendezvous-server
+#   RUSTDESK_RELAY_SERVER   relay-server
+#   RUSTDESK_API_SERVER     api-server
+#   RUSTDESK_KEY            key  (the server's PUBLIC key, id_ed25519.pub)
+#
+# Every value is checked by its form here (the domain file can be edited by
+# hand): out of form — refusal, nothing written. A user's file is rendered by
+# files/render-toml.sh running AS THAT USER (files/common.sh, as_user), never by
+# root. An empty key is removed only if we wrote it (state: managed). Nothing
+# here sets a password, a verification method or an approve mode: access stays
+# as RustDesk ships it — a one-time password shown on the screen of the machine.
+#
+#   hooks/configure --clear   (from remove) takes our options away, nothing else.
+#
+# The first start of RustDesk may write RustDesk2.toml back from its own state
+# AFTER this render (seen on the first boot of a fresh image). While an account
+# has not run RustDesk yet, or this run had to change something, a transient
+# timer restarts cream-configure@rustdesk a minute later — at most 10 times per
+# boot (the counter lives in /run/rustdesk, which a reboot empties; not in the
+# state — the state must not change on a repeated install).
+set -euo pipefail
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+EXT_DIR="${CREAM_EXT_DIR:?run by cream}"
+STATE_DIR="${CREAM_STATE_DIR:?run by cream}"
+# shellcheck source=../files/common.sh
+. "$EXT_DIR/files/common.sh"
+RENDER="$EXT_DIR/files/render-toml.sh"
+STATE="$STATE_DIR/managed"
+FOLLOWUP="$R/run/rustdesk/followup"
+CLOUD_USER_LIB="$R/opt/cream/ext/cloud-user/get_cloud_user.sh"
+
+clear=""
+[[ "${1:-}" == --clear ]] && clear=1
+
+HOST_RE='^[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?$'
+URL_RE='^https?://[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$'
+KEY_RE='^[A-Za-z0-9+/]{1,512}={0,2}$'
+names=(custom-rendezvous-server relay-server api-server key)
+declare -A want=() re=(
+    [custom-rendezvous-server]="$HOST_RE" [relay-server]="$HOST_RE"
+    [api-server]="$URL_RE" [key]="$KEY_RE")
+if [[ -z "$clear" ]]; then
+    want=([custom-rendezvous-server]="${RUSTDESK_ID_SERVER:-}" [relay-server]="${RUSTDESK_RELAY_SERVER:-}"
+          [api-server]="${RUSTDESK_API_SERVER:-}" [key]="${RUSTDESK_KEY:-}")
+fi
+bad=0
+for n in "${names[@]}"; do
+    v="${want[$n]:-}"
+    if [[ -n "$v" && ! "$v" =~ ${re[$n]} ]]; then
+        log "$n: значение не по форме: $(printf '%q' "$v") — RustDesk2.toml не пишу"
+        bad=1
+    fi
+done
+(( bad == 0 )) || exit 1
+
+declare -A managed=()
+if [[ -f "$STATE" && ! -L "$STATE" ]]; then
+    while IFS= read -r n; do
+        case "$n" in custom-rendezvous-server|relay-server|api-server|key) managed[$n]=1 ;; esac
+    done < "$STATE"
+fi
+args=()
+for n in "${names[@]}"; do
+    if [[ -n "${want[$n]:-}" ]]; then
+        args+=("$n=${want[$n]}")
+    elif [[ -n "${managed[$n]:-}" ]]; then
+        args+=("-$n")
+    fi
+done
+if (( ${#args[@]} == 0 )); then
+    log "ключи сервера пусты — RustDesk2.toml не трогаю (публичные серверы RustDesk)"
+    exit 0
+fi
+
+# At boot the cloud-init user may still be on its way: wait up to 30 s, so the
+# first boot renders that user's file too.
+if [[ "${CREAM_REASON:-boot}" == boot && -z "$clear" && -x "$CLOUD_USER_LIB" ]]; then
+    for (( i = 0; i < 30; i += 3 )); do
+        u="$("$CLOUD_USER_LIB" 2>/dev/null || true)"
+        [[ -n "$u" ]] && getent passwd "$u" >/dev/null 2>&1 && break
+        sleep 3
+    done
+fi
+
+changed=0 rc=0 first_run=0
+out="$(mktemp)"
+trap 'rm -f -- "$out"' EXIT
+if r="$(bash "$RENDER" "$R/root/.config/rustdesk/RustDesk2.toml" "${args[@]}")"; then
+    [[ "$r" == changed ]] && { log "/root/.config/rustdesk/RustDesk2.toml обновлён"; changed=1; }
+else
+    log "/root/.config/rustdesk/RustDesk2.toml не записан"; rc=1
+fi
+[[ -e "$R/root/.config/rustdesk/RustDesk.toml" ]] || first_run=1
+while read -r name home; do
+    if as_user "$name" "$out" "$RENDER" "$R$home/.config/rustdesk/RustDesk2.toml" "${args[@]}"; then
+        [[ "$(head -c 16 "$out")" == changed* ]] && { log "$home/.config/rustdesk/RustDesk2.toml ($name) обновлён"; changed=1; }
+    else
+        log "$home/.config/rustdesk/RustDesk2.toml ($name) не записан"; rc=1
+    fi
+    [[ -e "$R$home/.config/rustdesk/RustDesk.toml" ]] || first_run=1
+done < <(users)
+
+install -d -m 0755 "$STATE_DIR"
+if [[ -n "$clear" ]]; then
+    rm -f -- "$STATE" "$FOLLOWUP"
+    exit "$rc"
+fi
+tmp="$(mktemp "$STATE_DIR/.managed.XXXXXX")"
+for n in "${names[@]}"; do [[ -n "${want[$n]}" ]] && echo "$n"; done > "$tmp" || true
+mv -f -T -- "$tmp" "$STATE"
+
+running=""
+[[ "${CREAM_PHASE:-}" == live && -d "$R/run/systemd/system" ]] && running=1
+if (( changed )) && [[ -n "$running" ]]; then
+    if systemctl is-active --quiet rustdesk.service 2>/dev/null; then
+        systemctl --no-block restart rustdesk.service && log "rustdesk.service перезапускается с новыми настройками"
+    fi
+fi
+
+if [[ -n "$running" ]] && (( first_run || changed )) && command -v systemd-run >/dev/null 2>&1; then
+    step=0
+    if [[ -f "$FOLLOWUP" && ! -L "$FOLLOWUP" ]]; then
+        read -r fs < "$FOLLOWUP" || true
+        [[ "${fs:-}" =~ ^[0-9]{1,2}$ ]] && step="$fs"
+    fi
+    if (( step < 10 )); then
+        step=$(( step + 1 ))
+        install -d -m 0755 "${FOLLOWUP%/*}"
+        [[ -L "$FOLLOWUP" ]] && rm -f -- "$FOLLOWUP"
+        printf '%s\n' "$step" > "$FOLLOWUP"
+        systemd-run --quiet --no-block --on-active=60 --unit="rustdesk-followup-$step" \
+            systemctl --no-block restart cream-configure@rustdesk.service >/dev/null 2>&1 \
+            && log "повторная сверка через минуту ($step/10)"
+    fi
+fi
+exit "$rc"

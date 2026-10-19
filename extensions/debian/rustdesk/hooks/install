@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# cream hook `install` of rustdesk: the .deb from the GitHub release by version
+# and sha256 (checked BEFORE apt sees the file), rustdesk.service in place and
+# enabled. Paths of the machine go under $CREAM_ROOT (hooktest).
+#
+# The image carries NO server addresses and NO device identity: addresses are
+# the domain keys, rendered by configure on the device; RustDesk.toml (ID, key
+# pair, salt, password) is removed in the BUILD only, so that each device makes
+# its own on the first start. A live install never wipes an existing ID. In a
+# user's home the files are removed by a process running as that user, never
+# by root.
+#
+# Install parameters (scope: install): RUSTDESK_VERSION (1.5.0, pinned sums for
+# amd64 and arm64), RUSTDESK_SHA256_AMD64 / RUSTDESK_SHA256_ARM64 (per
+# architecture, win), RUSTDESK_SHA256 (any architecture) — one of them is
+# required for any other version; RUSTDESK_URL — a mirror of the .deb.
+set -euo pipefail
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+EXT_DIR="${CREAM_EXT_DIR:?run by cream}"
+STATE_DIR="${CREAM_STATE_DIR:?run by cream}"
+# shellcheck source=../files/common.sh
+. "$EXT_DIR/files/common.sh"
+
+# Pins: version + dpkg architecture -> sha256 of the release asset (GitHub
+# release asset digest, checked against the downloaded file: x86_64
+# 2026-10-14, aarch64 2026-10-15).
+DEFAULT_VERSION=1.5.0
+pinned_sha256(){
+    case "$1/$2" in
+        1.5.0/amd64) echo 4e2b9701d25a7ef373f3d09bda584a37d6902f97a6ab15f2e86d4a5783e2a0ec ;;
+        1.5.0/arm64) echo 1f2fc9be8321c10347aa33cb13198c6a956aec272c5e58ac81f4c0ef04037df3 ;;
+    esac
+}
+asset_arch(){
+    case "$1" in
+        amd64) echo x86_64 ;;
+        arm64) echo aarch64 ;;
+        *) return 1 ;;
+    esac
+}
+
+arch="$(dpkg --print-architecture)"
+rarch="$(asset_arch "$arch")" || { log "архитектура $arch: пакеты есть только для amd64 (x86_64) и arm64 (aarch64)"; exit 1; }
+version="${RUSTDESK_VERSION:-$DEFAULT_VERSION}"
+[[ "$version" =~ ^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}$ ]] || { log "RUSTDESK_VERSION=$(printf '%q' "$version"): ожидали X.Y.Z"; exit 1; }
+file="rustdesk-$version-$rarch.deb"
+case "$arch" in
+    amd64) arch_sha="${RUSTDESK_SHA256_AMD64:-}" ;;
+    arm64) arch_sha="${RUSTDESK_SHA256_ARM64:-}" ;;
+esac
+sha256="${arch_sha:-${RUSTDESK_SHA256:-$(pinned_sha256 "$version" "$arch")}}"
+[[ "$sha256" =~ ^[0-9a-f]{64}$ ]] || {
+    log "для RustDesk $version ($arch) нет sha256 — задайте RUSTDESK_SHA256_${arch^^} (digest файла $file на странице релиза)"
+    exit 1; }
+url="${RUSTDESK_URL:-https://github.com/rustdesk/rustdesk/releases/download/$version/$file}"
+[[ "$url" =~ ^https?://[A-Za-z0-9.:/_~%+-]+$ ]] || { log "RUSTDESK_URL=$(printf '%q' "$url"): ожидали URL"; exit 1; }
+
+apt_retry(){
+    local i
+    for i in 1 2 3; do
+        "$@" && return 0
+        log "попытка $i: $* — не удалась, повтор через 10 с"
+        sleep 10
+    done
+    return 1
+}
+
+export DEBIAN_FRONTEND=noninteractive
+installed="$(dpkg-query -W -f='${Status} ${Version}\n' rustdesk 2>/dev/null || true)"
+if [[ "$installed" == "install ok installed $version" ]]; then
+    log "RustDesk $version уже установлен"
+else
+    WORK="$(mktemp -d "${TMPDIR:-/var/tmp}/rustdesk.XXXXXX")"
+    trap 'rm -r -f -- "$WORK"' EXIT
+    log "скачиваю $url"
+    curl -fL --proto '=https,http' --retry 5 --retry-delay 5 --connect-timeout 30 \
+        --speed-limit 10240 --speed-time 60 -o "$WORK/$file" "$url" || { log "$file не скачался"; exit 1; }
+    if ! echo "$sha256  $WORK/$file" | sha256sum -c --quiet - >/dev/null 2>&1; then
+        log "sha256 $file не совпал с $sha256 — пакет не ставлю"
+        exit 1
+    fi
+    apt_retry apt-get update -q || { log "apt-get update не прошёл"; exit 1; }
+    # apt resolves the package's dependencies; the file is readable by _apt
+    # (mktemp -d is 0700).
+    chmod 0755 "$WORK"; chmod 0644 "$WORK/$file"
+    apt_retry apt-get install -y -q "$WORK/$file" || { log "пакет $file не установился"; exit 1; }
+    if [[ ! -s "$STATE_DIR/packages" && -z "$installed" ]]; then
+        install -d -m 0755 "$STATE_DIR"
+        echo rustdesk > "$STATE_DIR/packages"
+    fi
+    log "установлен rustdesk $version"
+fi
+
+# The unit: the package's postinst copies it only when PID 1 is systemd —
+# inside the build appliance it is not, so the unit would be missing. Written
+# through a temporary file and rename; recorded so remove takes it away.
+UNIT="$R/usr/lib/systemd/system/rustdesk.service"
+if [[ ! -f "$UNIT" && ! -f "$R/etc/systemd/system/rustdesk.service" ]]; then
+    install -d -m 0755 "$(dirname "$UNIT")"
+    tmp="$(mktemp "$(dirname "$UNIT")/.rustdesk.service.XXXXXX")"
+    # The same fix as postinst: ExecStop needs an absolute path.
+    sed 's|^ExecStop=pkill|ExecStop=/usr/bin/pkill|' "$R/usr/share/rustdesk/files/systemd/rustdesk.service" > "$tmp"
+    chmod 0644 "$tmp"
+    mv -f -T -- "$tmp" "$UNIT"
+    install -d -m 0755 "$STATE_DIR"
+    : > "$STATE_DIR/unit-ours"
+    log "юнит /usr/lib/systemd/system/rustdesk.service положен (postinst делает это только под systemd)"
+fi
+[[ -e "$R/usr/bin/rustdesk" || -L "$R/usr/bin/rustdesk" ]] || ln -s /usr/share/rustdesk/rustdesk "$R/usr/bin/rustdesk"
+
+# --- no identity in the image (build only) ----------------------------------
+if [[ "${CREAM_PHASE:-}" == build ]]; then
+    names=(RustDesk.toml RustDesk2.toml RustDesk_local.toml)
+    for h in /root /etc/skel; do
+        for f in "${names[@]}"; do
+            if [[ -e "$R$h/.config/rustdesk/$f" || -L "$R$h/.config/rustdesk/$f" ]]; then
+                rm -f -- "$R$h/.config/rustdesk/$f"
+                log "удалён $h/.config/rustdesk/$f — у каждого устройства свой ID"
+            fi
+        done
+    done
+    while read -r name home; do
+        files=()
+        for f in "${names[@]}"; do files+=("$R$home/.config/rustdesk/$f"); done
+        as_user "$name" /dev/null rm -f -- "${files[@]}" || log "$home: файлы RustDesk не удалены от имени $name"
+    done < <(users)
+    rm -f -- "$STATE_DIR/managed"
+    leftover="$(find "$R/root" "$R/etc/skel" "$R/home" -path '*/.config/rustdesk/RustDesk*.toml' 2>/dev/null || true)"
+    [[ -z "$leftover" ]] || { log "в образе остались файлы RustDesk: $leftover"; exit 1; }
+fi
+
+systemctl enable rustdesk.service
+log "rustdesk.service включён; сервер задаётся ключами: cream set rustdesk RUSTDESK_ID_SERVER=… RUSTDESK_KEY=…"

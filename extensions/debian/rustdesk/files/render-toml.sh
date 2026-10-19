@@ -8,9 +8,10 @@
 # TOML literal strings ('...'), as RustDesk itself writes them; the schema of
 # the `rustdesk` domain admits no quote in a value.
 #
-# configure.sh runs this as the OWNER of the file (runuser), never as root
-# in a user's home: a symlink planted there must not make root read or write
-# a file the user may not touch.
+# hooks/configure runs this as the OWNER of the file (runuser, empty
+# environment), never as root in a user's home: a symlink planted there must
+# not make root read or write a file the user may not touch. A symlink in
+# place of the file itself is refused; the file is replaced by rename.
 #
 # Prints "changed" when the file was written.
 set -euo pipefail
@@ -27,6 +28,11 @@ done
 for a in "${sets[@]}"; do
     [[ "${a#*=}" != *"'"* && "${a#*=}" != *$'\n'* ]] || { >&2 echo "render-toml: кавычка в значении ${a%%=*}"; exit 2; }
 done
+
+if [[ -L "$file" ]]; then
+    >&2 echo "render-toml: $file — символическая ссылка; не правлю"
+    exit 1
+fi
 
 # Nothing to set and no file: leave the user's home alone.
 if (( ${#sets[@]} == 0 )) && [[ ! -e "$file" ]]; then
