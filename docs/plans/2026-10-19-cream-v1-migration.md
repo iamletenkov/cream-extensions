@@ -20,7 +20,7 @@
 - [x] Task 10: `firewall` (стадия `early`, `inet cream`, `CREAM-INPUT`, CLI → действия)
 - [x] Task 11: `network-manager` + `cloud-growroot` + `nocloud-cidata`
 - [x] Task 12: новое расширение `desktop` (из `lib/bisquite-desktop` и `lib/knobs/desktop`)
-- [ ] Task 13: `gnome` + `xfce4` + `lxde`
+- [x] Task 13: `gnome` + `xfce4` + `lxde`
 - [ ] Task 14: `cloud-user-desktop` + `wallpaper`
 - [ ] Task 15: `code-server`
 - [ ] Task 16: `kiosk` + `chromium-kiosk`
