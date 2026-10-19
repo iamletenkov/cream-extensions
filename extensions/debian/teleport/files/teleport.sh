@@ -77,6 +77,10 @@ EXT_DIR="${CREAM_EXT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 APPS_DIR="$ETC/apps.d"
 CMD_LABELS_DIR="$ETC/command-labels.d"
 YAML="$ROOT/etc/teleport.yaml"
+# --pid-file of teleport.service; written by every Teleport process after a
+# successful start (a HUP forks a child that writes its own).
+PID_FILE="$ROOT/run/teleport.pid"
+PROC="$ROOT/proc"
 DATA="$ROOT/var/lib/teleport"
 ROLLBACK="$STATE/rollback"
 # The path the agent reads (teleport.yaml), and the same file under the root.
@@ -138,6 +142,8 @@ MANAGED_MAX=16
 MANAGED_PENDING="$STATE/managed-pending"
 # The wait for a new run of teleport.service after the restart, s.
 RESTART_TIMEOUT=30
+# reload-apps: seconds for the child forked on HUP to write its pid file.
+RELOAD_TIMEOUT=60
 # Command labels: at most 8 files, 8 arguments each; no shell is involved.
 CMD_LABELS_MAX=8
 CMD_ARGS_MAX=8
@@ -487,10 +493,26 @@ read_cmd_label(){
         /home/*|/tmp/*|/var/tmp/*|/run/user/*)
             warn "пропускаю $f: $path — под /home, /tmp, /var/tmp или /run/user"; return 1 ;;
     esac
-    if [[ ! -f "$ROOT$path" || ! -x "$ROOT$path" ]]; then
-        warn "пропускаю $f: $path — не исполняемый файл"; return 1
+    # The command may not exist yet: cream lays a drop-in from `files` before
+    # the install hook of its extension unpacks the binary (cream spec §6.5),
+    # and a render then must not drop the label for good. Teleport runs the
+    # command itself every period. What matters now is who could put a file
+    # there: an existing command — a regular executable with a trusted chain;
+    # a missing one — the nearest existing directory with a trusted chain (no
+    # symlink, root's, no write for group or others), so only root creates it.
+    if [[ -e "$ROOT$path" || -L "$ROOT$path" ]]; then
+        if [[ -L "$ROOT$path" || ! -f "$ROOT$path" || ! -x "$ROOT$path" ]]; then
+            warn "пропускаю $f: $path — не исполняемый файл"; return 1
+        fi
+        why="$(trusted_path "$ROOT$path" "$path")" || { warn "пропускаю $f: $why"; return 1; }
+    else
+        local near="${path%/*}"
+        while [[ -n "$near" && ! -e "$ROOT$near" && ! -L "$ROOT$near" ]]; do near="${near%/*}"; done
+        if [[ -n "$near" ]]; then
+            [[ -d "$ROOT$near" && ! -L "$ROOT$near" ]] || { warn "пропускаю $f: $near — не каталог"; return 1; }
+            why="$(trusted_path "$ROOT$near" "$near")" || { warn "пропускаю $f: $why"; return 1; }
+        fi
     fi
-    why="$(trusted_path "$ROOT$path" "$path")" || { warn "пропускаю $f: $why"; return 1; }
     if (( ${#words[@]} - 1 > CMD_ARGS_MAX )); then
         warn "пропускаю $f: больше $CMD_ARGS_MAX аргументов"; return 1
     fi
@@ -1547,17 +1569,86 @@ cmd_status(){
     fi
 }
 
-# reload-apps (teleport-apps.service): a running agent reloads (render + HUP,
-# sessions survive); a stopped one only gets the file for its next start.
+# reload-apps (teleport-apps.service, `cream run` from the stvor-agent wrapper):
+# the one point where a change of apps.d or command-labels.d reaches the agent.
+# lock: exclusive — serialized with join, set-managed, apply and itself; nobody
+# holding the lock waits for teleport-apps.service, so §7.3 does not bite.
+#   1. wait while teleport.service is activating, reloading or deactivating —
+#      a HUP then is lost (a restart in progress already read an older file);
+#   2. render; a stopped agent only gets the file for its next start;
+#   3. HUP (sessions survive) only to a ready agent — its pid file names a live
+#      process that is the MainPID (Teleport writes it after a successful
+#      start); confirmed by a new pid file: the forked child read the new
+#      config and started;
+#   4. not ready, HUP refused or not confirmed in RELOAD_TIMEOUT — restart
+#      with confirmation of a new active run (restart_agent).
+unit_state(){ systemctl show -p ActiveState --value teleport.service 2>/dev/null || true; }
+settle_agent(){
+    local waited=0
+    while :; do
+        case "$(unit_state)" in
+            activating|reloading|deactivating) ;;
+            *) return 0 ;;
+        esac
+        (( waited < RESTART_TIMEOUT )) || return 1
+        sleep 1; waited=$((waited + 1))
+    done
+}
+# agent_pid: the pid of the pid file when it names a live process.
+agent_pid(){
+    local pid=""
+    [[ -f "$PID_FILE" && ! -L "$PID_FILE" ]] && pid="$(head -c 32 -- "$PID_FILE" 2>/dev/null | tr -d '[:space:]')"
+    [[ "$pid" =~ ^[1-9][0-9]{0,9}$ && -d "$PROC/$pid" ]] || return 1
+    printf '%s\n' "$pid"
+}
+# agent_ready: the pid file names a live process and it is the MainPID of the
+# unit — ExecReload signals the main process. After a HUP the old process
+# drains and stays the MainPID while the child already wrote the pid file; a
+# HUP then hits the old one and is lost (seen live, debian-12, 2026-10-19).
+agent_ready(){
+    local pid main
+    pid="$(agent_pid)" || return 1
+    main="$(unit_prop MainPID)"
+    [[ "$main" == "$pid" ]] || return 1
+    printf '%s\n' "$pid"
+}
+reload_agent(){
+    local before now waited=0
+    until before="$(agent_ready)"; do
+        if (( waited >= RESTART_TIMEOUT )); then
+            log "агент не готов к HUP за ${RESTART_TIMEOUT} с (pid-файл не называет главный процесс) — перезапуск"
+            restart_agent; return
+        fi
+        sleep 1; waited=$((waited + 1))
+    done
+    waited=0
+    if ! systemctl reload teleport.service >/dev/null 2>&1; then
+        log "teleport.service не принял reload — перезапуск"
+        restart_agent; return
+    fi
+    while :; do
+        if now="$(agent_pid)" && [[ "$now" != "$before" ]] && agent_active; then
+            log "агент перечитал конфиг (новый процесс $now)"
+            return 0
+        fi
+        (( waited < RELOAD_TIMEOUT )) || break
+        sleep 1; waited=$((waited + 1))
+    done
+    log "после HUP нового процесса за ${RELOAD_TIMEOUT} с нет — перезапуск"
+    restart_agent
+}
 cmd_reload_apps(){
     need_root
-    if agent_active; then
-        systemctl reload teleport.service || die "teleport.service не принял reload"
-    else
-        load_conf
-        [[ -n "${C[TELEPORT_PROXY]}" ]] && cmd_render
+    load_conf
+    [[ -n "${C[TELEPORT_PROXY]}" ]] || return 0
+    if ! has_systemd; then cmd_render; return 0; fi
+    settle_agent || log "teleport.service не вышел из перехода за ${RESTART_TIMEOUT} с"
+    cmd_render
+    if ! agent_active; then
+        log "агент не запущен — конфиг применится при старте"
+        return 0
     fi
-    return 0
+    reload_agent || die "teleport.service не перечитал конфиг: ни HUP, ни перезапуск не подтвердились"
 }
 
 # ---------------------------------------------------------------------------

@@ -14,12 +14,12 @@ stvor-agent §11.
 
 | Хук | Что |
 |---|---|
-| `install` | выбирает версию и сумму (явные ключи или пин), берёт `.deb` из источника, сверяет sha256, `dpkg -i`, затем `systemctl --no-block start teleport-apps.service` (метка `stvor_agent`, ниже). Та же версия уже стоит — пропуск |
+| `install` | выбирает версию и сумму (явные ключи или пин), берёт `.deb` из источника, сверяет sha256, `dpkg -i`. Та же версия уже стоит — пропуск |
 | `upgrade` | то же; `postinst` пакета перезапускает службу, если агент включён |
 | `remove` | `stvor-agent disable` (служба, токен и `state.json`), затем `dpkg -r stvor-agent` |
 | `apply` | `systemctl --no-block try-restart stvor-agent.service` — служба перечитывает `/etc/cream/stvor-agent/config` |
 
-Зависит от `teleport >=4.0.0 <5`: мажор `teleport` — версия интерфейса
+Зависит от `teleport >=4.0.2 <5`: мажор `teleport` — версия интерфейса
 управляемых меток и контракта `command-labels.d`. Пока стоит обёртка,
 `cream remove teleport` отказывает (67).
 
@@ -29,11 +29,13 @@ stvor-agent §11.
 Внутри одна строка `command=/usr/bin/stvor-agent version --label`. Teleport
 раз в 5 минут исполняет команду и публикует вывод — версию агента, если он
 включён, иначе пустую строку. cream кладёт файл до хука `install` (спека cream
-§6.5): `teleport-apps.path` видит его сразу, но render пропускает команду —
-бинаря ещё нет. Поэтому хуки `install` и `upgrade` после успешного `dpkg -i`
-(фаза live, systemd запущен) зовут `systemctl --no-block start
-teleport-apps.service`: render и reload (HUP), без restart и без разрыва
-сессий. До `join` юнит ничего не делает (`ConditionPathExists=/etc/teleport.yaml`).
+§6.5), то есть раньше бинаря. С `teleport` 4.0.2 это не важно: render оставляет в
+конфиге команду, которой ещё нет (её проверяет сам Teleport при запуске), а
+`teleport-apps.path` → `reload-apps` — одна сериализованная точка применения
+(HUP с подтверждением или restart). Хуки обёртки `teleport-apps.service` больше не
+запускают: второй запуск попадал на ещё дренирующийся после первого HUP процесс и
+стоил лишнего restart. До `join` юнит ничего не делает
+(`ConditionPathExists=/etc/teleport.yaml`).
 
 **Токен меток — не ручка cream.** Хуки токен не принимают и службу не
 включают; включение — `stvor-agent enable` с токеном на stdin. Дочерние

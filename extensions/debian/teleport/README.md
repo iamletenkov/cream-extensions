@@ -188,11 +188,24 @@ render добавляет `ssh_service.commands`: `{name: <ключ>, command: [
 (не root, запись группе или всем, символическая ссылка — значит, `/bin/…` на
 merged-usr не годится, нужен `/usr/bin/…`); команда под `/home`, `/tmp`,
 `/var/tmp`, `/run/user` (там пишет пользователь, а у `stvor-agent.service`
-`ProtectHome`/`PrivateTmp`) или путь с `//`; команда — не исполняемый файл;
+`ProtectHome`/`PrivateTmp`) или путь с `//`; команда есть, но не исполняемый файл;
 больше 8 аргументов или аргумент не из `[A-Za-z0-9._=-]`; больше 8 файлов.
 Каталог — 0755 root, и вся цепочка над ним до `/` — тоже (иначе пропускается
 каталог целиком). Shell не участвует.
-Изменение каталога видит `teleport-apps.path` — reload (HUP, плавный).
+
+**Команды может ещё не быть** (с 4.0.2): cream раскладывает `files` расширения
+до его хука `install` (спека cream §6.5), и drop-in `stvor_agent` появляется раньше
+`/usr/bin/stvor-agent`. Метка всё равно попадает в конфиг — команду при запуске
+проверяет сам Teleport (раз в 5 мин). Проверяется тогда ближайший существующий
+каталог пути и цепочка над ним: только root может положить туда файл.
+
+Изменение каталога видит `teleport-apps.path` → `teleport-apps.service` →
+`reload-apps` — **одна сериализованная точка** (`lock: exclusive`, с 4.0.2): ждёт,
+пока `teleport.service` выйдет из перехода (HUP во время перезапуска теряется),
+собирает конфиг и шлёт HUP только готовому агенту (pid-файл называет живой
+процесс). Успех — новый pid-файл: дочерний процесс Teleport прочитал новый конфиг
+и стартовал. Не готов, reload отклонён или нового процесса за 60 с нет — restart
+с подтверждением нового запуска. Остановленный агент получает только файл.
 
 ## Действия и файлы
 
@@ -205,10 +218,10 @@ merged-usr не годится, нужен `/usr/bin/…`); команда по�
 | `managed-status` | none | управляемые метки, маркер, регистрация, агент; JSON схемы 1 |
 | `status` | none | регистрация, служба, ручки, приложения, управляемые и командные метки — текстом |
 | `render` | none | `/etc/teleport.yaml` (0600); `ExecStartPre`/`ExecReload` `teleport.service` |
-| `reload-apps` | none | `ExecStart` `teleport-apps.service` |
+| `reload-apps` | exclusive | `teleport-apps.service`: render, HUP с подтверждением новым процессом или restart |
 | `scrub-token` | exclusive | `teleport-token.service`: стирает секрет первого входа |
 
-`render`, `reload-apps`, `status`, `managed-status` — `lock: none`: их зовут
+`render`, `status`, `managed-status` — `lock: none`: их зовут
 юниты, которые перезапускаются, пока блокировку держит другой процесс
 (`set-managed` держит её, перезапуская `teleport.service`; спека cream §7.3).
 
@@ -218,7 +231,8 @@ merged-usr не годится, нужен `/usr/bin/…`); команда по�
 `--kill-whom` — на Ubuntu 22.04 systemd 249.
 
 `cream validate` предупреждает (`validate.unit_lock`) о `teleport-join.service`
-(`join-retry`) и `teleport-token.service` (`scrub-token`): их `ExecStart` зовёт
+(`join-retry`), `teleport-token.service` (`scrub-token`) и `teleport-apps.service`
+(`reload-apps`, с 4.0.2): их `ExecStart` зовёт
 действие с `lock: exclusive`. Это допустимо: правило ловит юнит, который
 перезапускает держатель блокировки и сам ждёт её, — а эти два никто под
 блокировкой не стартует и не ждёт (`join` включает таймер `--no-block`, а

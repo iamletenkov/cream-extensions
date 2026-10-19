@@ -5,7 +5,9 @@
 # file goes away on `cream remove stvor-agent`).
 schema: cream/v1
 name: stvor-agent
-version: 4.0.1
+version: 4.0.2
+# 4.0.2: метку stvor_agent применяет teleport 4.0.2 (reload-apps), хуки больше не
+#        запускают teleport-apps.service; depends teleport >=4.0.2.
 # 4.0.1: пин пакета stvor-agent 4.0.0.
 summary: Агент портала Stvor — метки env и space узла Teleport с портала
 cream: ">=1.0.0"
@@ -18,7 +20,7 @@ targets: {build: exec, live: "yes"}
 provides: [stvor-agent]
 # Major of `teleport` is the version of the managed labels interface and of
 # the command-labels.d contract (spec stvor-agent §10.2).
-depends: [{name: teleport, version: ">=4.0.0 <5"}]
+depends: [{name: teleport, version: ">=4.0.2 <5"}]
 hooks:
   install: {timeout: 10m}
   upgrade: {timeout: 10m}

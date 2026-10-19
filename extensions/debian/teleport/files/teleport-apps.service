@@ -5,5 +5,8 @@ ConditionPathExists=/etc/teleport.yaml
 
 [Service]
 Type=oneshot
-# Active agent — reload (render + HUP); otherwise only render.
-ExecStart=/usr/bin/cream run teleport reload-apps
+# The one serialized point (lock/teleport): render, then a confirmed HUP or a
+# restart of an active agent; a stopped one only gets the file. Waits for the
+# lock a join may hold (up to 5 min), then the action itself (timeout 5m).
+TimeoutStartSec=12min
+ExecStart=/usr/bin/cream run --lock-timeout 6m teleport reload-apps

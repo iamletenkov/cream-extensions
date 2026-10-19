@@ -1,8 +1,11 @@
 schema: cream/v1
 name: teleport
-version: 4.0.1
+version: 4.0.2
 summary: Узел Teleport — бинарь, регистрация (join), рендер teleport.yaml, приложения apps.d
 cream: ">=1.0.0"
+# 4.0.2: командная метка попадает в конфиг и до появления команды (drop-in
+#        кладётся раньше бинаря); reload-apps — lock: exclusive, ждёт выхода агента
+#        из перехода, HUP с подтверждением новым pid-файлом, иначе restart.
 # 4.0.1: HUP агенту — `systemctl kill --kill-who=main`, а не /bin/kill (procps нет
 #        в минимальных образах; найдено гейтом Stvor на docker debian-12).
 # 4.0.0: перенос bisquite-teleport-agent 3.x под cream (спека stvor-agent §10):
@@ -127,8 +130,10 @@ actions:
     lock: none
     phases: [build, live]
   reload-apps:
-    summary: "переопубликовать приложения после изменения apps.d (teleport-apps.service)"
-    lock: none
+    summary: "применить apps.d и command-labels.d: render, HUP с подтверждением или restart (teleport-apps.service)"
+    lock: exclusive
+    # settle 30 s + HUP 60 s + restart 30 s
+    timeout: 5m
     phases: [live]
   scrub-token:
     summary: "стереть секрет первого входа после регистрации (teleport-token.service)"
