@@ -2,20 +2,33 @@
 
 TensorFlow 2.16.1 с CUDA для Jetson (JetPack 6, L4T 36.4): колесо NVIDIA.
 
-> **С 1.1.0 — раскладка 2.** Манифест объявляет `layout: 2`: каталог расширения
-> в госте — `/opt/bisquite/l4t-tensorflow/` (был `/opt/vmsetup/l4t-tensorflow/`). Путей гостя
-> расширение не прибивает, поэтому версия минорная; нужен bisquite
-> с поддержкой `layout: 2`.
+```
+EXTENSION l4t-tensorflow          # образ bisquite, после cuda-toolkit
+sudo cream install l4t-tensorflow # живая плата Jetson; cuda — поставщик requires
+sudo cream remove l4t-tensorflow
+```
+
+> **2.0.0 — cream/v1.** `install.sh` стал хуком `hooks/install`, появился хук `remove`;
+> `live: yes`. Каталог в госте — `/opt/cream/ext/l4t-tensorflow/` (`constraints.txt`,
+> `check-system-python.py`, `pip-owned.py` — в дереве). Нет `/etc/nv_tegra_release`
+> (не Jetson) — код **20** до apt (рулинг Р11), а не отказ 1. Временный каталог —
+> `/var/tmp`. Настроек нет. `pip` — только с `constraints.txt` из дерева расширения, под root в `/usr/local`,
+> с `HOME` во временном каталоге и без конфигурации pip (`PIP_CONFIG_FILE=/dev/null`):
+> в домашний каталог root ничего не пишется. Загрузки NVIDIA сверяются по sha256.
 
 ## Манифест
 
 | Поле | Значение |
 |---|---|
-| `phase` | `build` |
-| `arch` | `arm64` |
+| `targets` | `build: exec`, `live: yes` |
+| `platform.arch` | `arm64` |
 | `provides` | `tensorflow` |
 | `requires` | `cuda` — TF грузит библиотеки тулкита |
-| `conflicts` | пусто — с `l4t-pytorch` делит numpy 1.26.4 и scipy 1.13.1 |
+| `conflicts` | нет — с `l4t-pytorch` делит numpy 1.26.4 и scipy 1.13.1 |
+| `hooks` | `install` (90 мин), `remove` |
+
+Ветки R32 нет: колеса под Python 3.8 и CUDA 10.2 не существует, на Nano `install`
+откажет проверкой Python (или CUDA).
 
 ## Прежде чем ставить: это последняя версия
 
@@ -51,3 +64,35 @@ jetson-ai-lab под именем `tensorflow` отдаёт обычные ко�
 `jinja2` у cloud-init; с 3.0.3 cloud-init шаблоны рендерит (проверено).
 `requests`, `urllib3`, `idna`, `certifi` в `constraints.txt` не закреплены
 намеренно: apt-овые версии TF устраивают, и перекрывать их незачем.
+
+## Что снимает `remove`
+
+`install` записывает в `/var/lib/cream/ext/l4t-tensorflow/` только своё:
+`packages` — apt-пакеты, которых не было; `pip` — дистрибутивы, появившиеся в
+`/usr/local` за установку (и при отказе на полпути). `remove` сначала спрашивает apt
+в режиме симуляции (чужие зависимые — отказ до изменений, `cream remove --forget
+l4t-tensorflow`), затем `pip uninstall` своих, кроме нужных другим (`numpy`,
+`scipy` при `l4t-pytorch`, `pip-owned.py` — тот же файл, что у `l4t-pytorch`), и
+`apt-get remove` своих; `libcudnn9-cuda-12` и `python3-pip` остаются, пока в
+`/usr/local` стоит `torch`.
+
+## Коды выхода `install`
+
+| Код | Когда |
+|---|---|
+| 0 | поставлено |
+| 1 | нет `/usr/local/cuda/lib64`, Python не 3.10, apt или pip не прошли, sha256 не совпал, проверка импорта или системного Python не прошла |
+| 20 | нет `/etc/nv_tegra_release` — не Jetson, ставить неоткуда (до apt) |
+
+## Проверки
+
+- **V** — `make cream-validate`, `tools/check-names.sh`.
+- **H** — `tests/test-l4t-tensorflow.sh`: код 20, отказы до apt (CUDA, Python),
+  установка (каждый `pip install` с `constraints.txt`, `HOME` не root, записи),
+  отказы (sha256, импорт, системный Python; запись pip и при отказе), `remove`
+  (своё, чужое, при `l4t-pytorch`, отказ при чужих зависимых).
+- **P — ожидает.** Платы Jetson в CI нет: установка на живой плате (AGX Orin, R36) через
+  `cream install` или сборка образа через bisquite проверяются вручную после плана
+  bisquite (Task 23 плана 2026-10-19 cream-v1-migration).
+- **L** — не нужен: в контейнере нет `/etc/nv_tegra_release`, ответ — код 20, его
+  проверяет H.

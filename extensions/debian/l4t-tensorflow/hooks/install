@@ -1,19 +1,29 @@
 #!/usr/bin/env bash
-# TensorFlow с CUDA для Jetson (JetPack 6, L4T 36.4): колесо NVIDIA.
+# cream hook `install` of l4t-tensorflow: TensorFlow with CUDA for Jetson
+# (JetPack 6, L4T 36.4), the NVIDIA wheel.
 #
-#   tensorflow 2.16.1 nv24.08   CDN NVIDIA, сборка под JetPack 6.1 (CUDA 12.6),
-#                               работает и на 6.2 — проверено обучением на GPU
+#   tensorflow 2.16.1 nv24.08   NVIDIA CDN, built for JetPack 6.1 (CUDA 12.6),
+#                               works on 6.2 — checked by training on a GPU
 #   cuDNN 9.3                   apt, jetson/common
-#   keras 3.3.3                 PyPI, та, с которой вышел TF 2.16
-#   numpy 1.26.4, scipy 1.13.1  PyPI, те же, что у l4t-pytorch
+#   keras 3.3.3                 PyPI, the one TF 2.16 shipped with
+#   numpy 1.26.4, scipy 1.13.1  PyPI, the same as l4t-pytorch
 #
-# ЭТО ПОСЛЕДНЯЯ ВЕРСИЯ, И НОВОЙ НЕ БУДЕТ. NVIDIA публикует TF для Jetson
-# на developer.download.nvidia.com/compute/redist/jp/, и последний каталог
-# с TF — v61 (август 2024); каталога v62 нет. Индекс jetson-ai-lab отдаёт
-# под именем tensorflow обычные колёса PyPI (cp313, без CUDA для Jetson).
-# То есть расширение закрывает старые модели и код на TF/Keras, а не
-# открывает дорогу вперёд — это надо знать, прежде чем тащить 1.9 ГБ
-# в образ.
+# THIS IS THE LAST VERSION, THERE WILL BE NO NEWER ONE. NVIDIA publishes TF for
+# Jetson under developer.download.nvidia.com/compute/redist/jp/, the last
+# directory with TF is v61 (August 2024); there is no v62. The jetson-ai-lab
+# index serves plain PyPI wheels under the name tensorflow (cp313, no Jetson
+# CUDA). The extension keeps old models and TF/Keras code running; it is not a
+# way forward — worth knowing before pulling 1.9 GB into an image.
+#
+# pip (ruling of the plan for Task 23): always with constraints.txt of the
+# extension tree; the NVIDIA wheel is checked by sha256. pip runs as root and
+# installs into /usr/local, with HOME in the temporary directory and no pip
+# configuration: nothing lands in the home directory of root. What pip put on
+# is recorded for `remove` (pip-owned.py). check-system-python.py guards the
+# system Python at the end.
+#
+# Exit codes (spec §6.2, ruling R11): 20 — not a Jetson (no
+# /etc/nv_tegra_release), before apt touches anything; 1 — failure; 0 — done.
 set -euo pipefail
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
@@ -21,7 +31,9 @@ log_info(){ >&2 echo -e "${GREEN}[INFO]${NC} l4t-tensorflow: $*"; }
 log_warn(){ >&2 echo -e "${YELLOW}[WARN]${NC} l4t-tensorflow: $*"; }
 log_error(){ >&2 echo -e "${RED}[ERROR]${NC} l4t-tensorflow: $*"; }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}"
+EXT_DIR="${CREAM_EXT_DIR:?run by cream}"
 
 TF_WHEEL="tensorflow-2.16.1+nv24.08-cp310-cp310-linux_aarch64.whl"
 TF_URL="https://developer.download.nvidia.com/compute/redist/jp/v61/tensorflow/${TF_WHEEL}"
@@ -37,35 +49,88 @@ apt_retry(){
     done
 }
 
+# put_file MODE DEST: stdin into DEST through a temporary file in the same
+# directory and a rename — a symlink at DEST is replaced, never followed.
+put_file(){
+    local mode="$1" dest="$2" tmp
+    tmp="$(mktemp "$(dirname "$dest")/.l4t-tensorflow.XXXXXX")"
+    cat > "$tmp"
+    chmod "$mode" "$tmp"
+    mv -f -T -- "$tmp" "$dest"
+}
+
+# record FILE NAME…: add names to a record of $STATE, keeping the old ones.
+record(){
+    local file="$STATE/$1"; shift
+    (( $# )) || return 0
+    install -d -m 0755 "$STATE"
+    { if [[ -f "$file" && ! -L "$file" ]]; then cat "$file"; fi
+      printf '%s\n' "$@"; } | sed '/^$/d' | sort -u | put_file 0644 "$file"
+}
+
+is_installed(){
+    [[ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null || true)" == installed ]]
+}
+
+first_line(){ head -n 1 | tr -cd '[:print:]' | tr -d '\\'; }
+
 export DEBIAN_FRONTEND=noninteractive
 APT_OPTS=(-q -y -o Dpkg::Options::=--force-confnew)
 
-if [[ ! -f /etc/nv_tegra_release ]]; then
-    log_error "в образе нет /etc/nv_tegra_release — это не образ NVIDIA Jetson (L4T)"
+TEGRA_RELEASE="$R/etc/nv_tegra_release"
+if [[ ! -f "$TEGRA_RELEASE" ]]; then
+    log_warn "нет /etc/nv_tegra_release — это не NVIDIA Jetson (L4T): колесо TF NVIDIA не встанет"
+    exit 20
+fi
+log_info "L4T: $(first_line < "$TEGRA_RELEASE")"
+
+if [[ ! -d "$R/usr/local/cuda/lib64" ]]; then
+    log_error "нет /usr/local/cuda/lib64 — поставь cuda-toolkit раньше этого (requires: cuda)"
     exit 1
 fi
-if [[ ! -d /usr/local/cuda/lib64 ]]; then
-    log_error "нет /usr/local/cuda/lib64 — поставь EXTENSION cuda-toolkit раньше этого"
-    exit 1
-fi
-PYVER="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+PYVER="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' | first_line)"
 if [[ "$PYVER" != "3.10" ]]; then
     log_error "Python $PYVER, а колесо TF собрано под 3.10 (cp310)"
     exit 1
 fi
 
-WORK="$(mktemp -d /var/tmp/l4t-tensorflow.XXXXXX)"
-trap 'rm -rf "$WORK"' EXIT
+install -d -m 0755 "$R/var/tmp"
+WORK="$(mktemp -d "$R/var/tmp/l4t-tensorflow.XXXXXX")"
+install -d -m 0700 "$WORK/home"
+PIP=(env HOME="$WORK/home" PIP_CONFIG_FILE=/dev/null PIP_NO_CACHE_DIR=1 PIP_USER=0
+    PIP_DISABLE_PIP_VERSION_CHECK=1 PYTHONNOUSERSITE=1
+    python3 -m pip install --no-cache-dir --constraint "$EXT_DIR/constraints.txt")
 
-# Системные библиотеки: по ldd всех .so в колесе на плате не хватало
-# только cuDNN — остальное TF носит с собой или берёт из тулкита.
-# h5py с PyPI — колесо manylinux со своим libhdf5, apt-овый не нужен.
+# On any exit: record what pip put into /usr/local (also after a failure
+# half-way — remove must find it), then drop the temporary directory.
+finish(){
+    local rc=$?
+    if [[ -f "$WORK/pip-before" ]] && python3 "$EXT_DIR/pip-owned.py" list > "$WORK/pip-after"; then
+        mapfile -t added < <(comm -13 <(sort "$WORK/pip-before") <(sort "$WORK/pip-after"))
+        record pip "${added[@]}" || rc=1
+    fi
+    rm -r -f -- "$WORK"
+    exit "$rc"
+}
+trap finish EXIT
+
+# System libraries: by ldd of every .so in the wheel on a board only cuDNN was
+# missing — TF carries the rest or takes it from the toolkit. h5py from PyPI is
+# a manylinux wheel with its own libhdf5.
+PKGS=(libcudnn9-cuda-12 python3-pip)
+new=()
+for p in "${PKGS[@]}"; do
+    is_installed "$p" || new+=("$p")
+done
 log_info "apt: cuDNN 9"
 apt_retry apt-get update -q || exit 1
-apt_retry apt-get install "${APT_OPTS[@]}" libcudnn9-cuda-12 python3-pip || {
+apt_retry apt-get install "${APT_OPTS[@]}" "${PKGS[@]}" || {
     log_error "apt не поставил зависимости"
     exit 1
 }
+record packages "${new[@]}"
+
+python3 "$EXT_DIR/pip-owned.py" list > "$WORK/pip-before"
 
 log_info "колесо TensorFlow (NVIDIA, 553 МБ)"
 apt_retry curl -fsSL --max-time 1800 -o "$WORK/$TF_WHEEL" "$TF_URL" || exit 1
@@ -74,22 +139,21 @@ echo "$TF_SHA256  $WORK/$TF_WHEEL" | sha256sum -c --quiet - || {
     exit 1
 }
 
-# numpy/scipy — первыми и явно: без явного указания pip оставил бы
-# apt-овый numpy 1.21.5, если бы тот удовлетворил требованию, а TF
-# требует >=1.23.5 — ставить всё равно, так пусть это будет видно здесь.
+# numpy/scipy first and explicitly: otherwise pip would keep apt's numpy 1.21.5
+# if it satisfied the requirement, but TF needs >=1.23.5 — it is installed
+# anyway, so let it be visible here.
 log_info "pip: numpy, scipy, keras, tensorflow"
-apt_retry python3 -m pip install --no-cache-dir --constraint "$SCRIPT_DIR/constraints.txt" \
-    numpy scipy keras "$WORK/$TF_WHEEL" || {
+apt_retry "${PIP[@]}" numpy scipy keras "$WORK/$TF_WHEEL" || {
     log_error "pip не поставил TensorFlow"
     exit 1
 }
 
-# Без GPU: внутри virt-customize его нет. Проверяем, что это сборка
-# с CUDA нужной версии и что keras именно закреплённый.
+# No GPU inside virt-customize. Checked: a CUDA build of the right version, and
+# keras exactly the pinned one.
 python3 - <<'PYEOF' || { log_error "проверка импорта не прошла"; exit 1; }
 import os, warnings
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
-warnings.simplefilter("error", UserWarning)  # numpy/scipy не в паре — отказ
+warnings.simplefilter("error", UserWarning)  # numpy/scipy out of pair — refusal
 import numpy, scipy, tensorflow as tf
 info = tf.sysconfig.get_build_info()
 assert info.get("is_cuda_build"), "TensorFlow собран без CUDA"
@@ -99,7 +163,7 @@ print(f"tensorflow {tf.__version__} (CUDA {info['cuda_version']}, cuDNN {info['c
       f"keras {tf.keras.__version__}, numpy {numpy.__version__}, scipy {scipy.__version__}")
 PYEOF
 
-python3 "$SCRIPT_DIR/check-system-python.py" || {
+python3 "$EXT_DIR/check-system-python.py" || {
     log_error "установка повредила системный Python — см. выше"
     exit 1
 }

@@ -30,7 +30,7 @@
 - [x] Task 20: `nvidia` + `nvidia-container-toolkit`
 - [x] Task 21: `nvidia-jetpack`
 - [x] Task 22: `cuda-toolkit` + `tensorrt` + `l4t-gstreamer`
-- [ ] Task 23: `l4t-opencv` + `l4t-pytorch` + `l4t-tensorflow`
+- [x] Task 23: `l4t-opencv` + `l4t-pytorch` + `l4t-tensorflow`
 - [ ] Task 24: `l4t-board-fdt` + `l4t-boot-verify`
 - [ ] Task 25: `l4t-kernel-kvm`
 - [ ] Task 26: `sensing-gmsl2-camera` + `can-usb`
