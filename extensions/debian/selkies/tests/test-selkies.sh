@@ -115,8 +115,8 @@ print(" ".join(bad))
 PY
 )"
 eq "типы ключей: без \\n, кавычек, \$, \`, \\, пробела" "" "$bad_types"
-eq "пароль из live-test подходит под тип" True \
-    "$(mf 'bool(__import__("re").fullmatch(m["config"]["keys"]["SELKIES_BASIC_AUTH_PASSWORD"]["type"][3:], "live-SELKIES_BASIC_AUTH_PASSWORD-0123456789abcdef"))')"
+eq "фиктивный пароль (буквы, цифры, дефис) подходит под тип" True \
+    "$(mf 'bool(__import__("re").fullmatch(m["config"]["keys"]["SELKIES_BASIC_AUTH_PASSWORD"]["type"][3:], "fake-pass-0123456789abcdef"))')"
 for f in hooks/install hooks/configure hooks/apply hooks/remove files/selkies.sh files/run-selkies.sh; do
     check "$f исполняемый" test -x "$EXT/$f"
 done

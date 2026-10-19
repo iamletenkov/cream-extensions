@@ -136,8 +136,8 @@ print(" ".join(bad))
 PY
 )"
 eq "типы ключей: без \\n, кавычек, \$, \`, \\, пробела; none — не пароль" "" "$bad_types"
-eq "пароль из live-test подходит под тип" True \
-    "$(mf 'bool(__import__("re").fullmatch(m["config"]["keys"]["CODE_SERVER_PASSWORD"]["type"][3:], "live-CODE_SERVER_PASSWORD-0123456789abcdef"))')"
+eq "фиктивный пароль (буквы, цифры, дефис) подходит под тип" True \
+    "$(mf 'bool(__import__("re").fullmatch(m["config"]["keys"]["CODE_SERVER_PASSWORD"]["type"][3:], "fake-pass-0123456789abcdef"))')"
 for f in hooks/install hooks/configure hooks/apply hooks/remove files/code-server.sh; do
     check "$f исполняемый" test -x "$EXT/$f"
 done
