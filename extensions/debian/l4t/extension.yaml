@@ -1,0 +1,14 @@
+# l4t — library of the L4T stack extensions (tensorrt, l4t-gstreamer,
+# l4t-opencv, l4t-pytorch): one file, l4t.sh, sourced by the consumer's hooks
+# from /opt/cream/ext/l4t/l4t.sh (spec cream §4.5). No hooks: cream lays the
+# tree down and keeps it while a consumer depends on it.
+schema: cream/v1
+name: l4t
+kind: library
+version: 1.0.0
+summary: Общие функции расширений стека L4T — версия L4T и OPENBLAS_CORETYPE для Jetson
+cream: ">=1.0.0"
+platform:
+  family: deb
+  arch: [arm64]
+targets: {build: exec, live: "yes"}
