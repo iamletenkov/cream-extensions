@@ -85,7 +85,7 @@ actions:
       TELEPORT_LABELS: {}
       TELEPORT_OS_LOGINS: {}
       # token — сам join-токен, bound_keypair — секрет регистрации (рулинг РТ1).
-      TELEPORT_REGISTRATION_SECRET: {type: 're:^[[:graph:]]{8,}$', secret: true}
+      TELEPORT_REGISTRATION_SECRET: {type: 're:^[[:graph:]]{8,1000}$', secret: true}
       TELEPORT_FORCE: {type: bool}
       TELEPORT_DEFER: {type: bool}
     stdin: secret

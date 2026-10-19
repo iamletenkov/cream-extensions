@@ -18,6 +18,10 @@ ExecStart=/usr/local/bin/teleport start --config /etc/teleport.yaml --pid-file=/
 ExecReload=/usr/bin/cream run teleport render
 ExecReload=/bin/kill -HUP $MAINPID
 PIDFile=/run/teleport.pid
+# set-managed restarts this unit under lock/teleport and confirms the new run
+# within 30 s; the stvor-agent adapter gives the whole call 90 s. The default
+# stop (90 s) alone would eat it.
+TimeoutStopSec=30s
 LimitNOFILE=524288
 
 [Install]

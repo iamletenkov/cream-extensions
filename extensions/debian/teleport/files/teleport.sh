@@ -126,7 +126,7 @@ RE_APP_ICON='^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
 RE_LOOPBACK_URI='^https?://(127\.0\.0\.1|localhost|\[::1\])(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$'
 # The first-join secret: bound_keypair — one printable word; token — a join
 # token of Teleport (it lands in teleport.yaml in double quotes).
-RE_REG_SECRET='^[[:graph:]]{8,1024}$'
+RE_REG_SECRET='^[[:graph:]]{8,1000}$'
 RE_JOIN_TOKEN='^[A-Za-z0-9._-]{8,256}$'
 RE_VERSION='^[0-9]+\.[0-9]+\.[0-9]+$'
 
@@ -306,31 +306,26 @@ check_labels(){
 proxy_with_port(){ [[ "$1" == *:* ]] && echo "$1" || echo "$1:443"; }
 proxy_host(){ echo "${1%%:*}"; }
 
-nodename(){
-    local n="${C[TELEPORT_NODENAME]}"
+# resolve_nodename [TELEPORT_NODENAME] — NODE: the knob (by default the loaded
+# one) or the hostname. Called in the main shell, so a die there prints the
+# JSON of an action (DIE_JSON); nodename is the same for $(…) of a log line.
+resolve_nodename(){
+    local n="${1-${C[TELEPORT_NODENAME]}}"
     [[ -n "$n" ]] || n="$(hostname -s 2>/dev/null | tr '[:upper:]' '[:lower:]')"
     [[ "$n" =~ $RE_NODENAME ]] || die "имя ноды '$n' (hostname) не метка DNS — задайте TELEPORT_NODENAME"
-    echo "$n"
+    NODE="$n"
 }
+nodename(){ resolve_nodename && echo "$NODE"; }
 
 # ---------------------------------------------------------------------------
 # Приложения: apps.d + TELEPORT_APPS − TELEPORT_APPS_DISABLE
 # Выход: строки "имя<TAB>URI<TAB>источник<TAB>иконка", пропуски — в stderr.
 # ---------------------------------------------------------------------------
 read_decl(){
-    local f="$1" line key val name="" uri="" icon="" owner mode
+    local f="$1" line key val name="" uri="" icon="" why
     # A symlink would pass the owner check while pointing at anyone's file.
-    if [[ -L "$f" ]]; then
-        warn "пропускаю $f: символическая ссылка"; return 1
-    fi
-    owner="$(stat -c %u "$f")"; mode="$(stat -c %a "$f")"
-    [[ "$mode" =~ ^[0-7]{3,4}$ ]] || { warn "пропускаю $f: права не прочитаны"; return 1; }
-    if [[ -z "$ROOT" && "$owner" != 0 ]]; then
-        warn "пропускаю $f: владелец не root"; return 1
-    fi
-    if (( (8#$mode & 8#022) != 0 )); then
-        warn "пропускаю $f: права $mode, запись группе или всем"; return 1
-    fi
+    # The directory chain is checked once by collect_apps.
+    why="$(trusted_node "$f" "файл")" || { warn "пропускаю $f: $why"; return 1; }
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ "$line" =~ ^[[:space:]]*(#.*)?$ ]] && continue
         if [[ ! "$line" =~ ^([A-Z]+)=(.*)$ ]]; then
@@ -353,10 +348,18 @@ read_decl(){
     printf '%s\t%s\t%s\t%s\n' "$name" "$uri" "$f" "$icon"
 }
 
+# apps.d and every directory above it: root's, not writable by others, no
+# symlink — otherwise no declaration is read (a journal line says why).
+apps_dir_trusted(){
+    local why
+    why="$(trusted_path "$APPS_DIR" "каталог")" || { warn "пропускаю $APPS_DIR: $why"; return 1; }
+}
+
 collect_apps(){
     local -A uri=() src=() disabled=() icon=()
     local order=() f line name u ic item
-    if [[ "${C[TELEPORT_APPS_DISCOVERY]}" == 1 && -d "$APPS_DIR" ]]; then
+    if [[ "${C[TELEPORT_APPS_DISCOVERY]}" == 1 && ( -d "$APPS_DIR" || -L "$APPS_DIR" ) ]] \
+       && apps_dir_trusted; then
         for f in "$APPS_DIR"/*.conf; do
             [[ -f "$f" ]] || continue
             line="$(read_decl "$f")" || continue
@@ -419,16 +422,33 @@ overridden_labels(){
 # fixtures) — whoever runs this, the "root" of that tree.
 expected_uid(){ if [[ -n "$ROOT" ]]; then id -u; else echo 0; fi; }
 
-# trusted_file <path> <what> — owned by the expected uid, no write for group or
-# others; symlinks are followed (a link to a user's file is that file). Echo
-# the reason and return 1 otherwise.
-trusted_file(){
+# trusted_node <path> <what> — not a symlink, owned by the expected uid, no
+# write for group or others. Echo the reason and return 1 otherwise.
+trusted_node(){
     local owner mode
-    owner="$(stat -L -c %u -- "$1" 2>/dev/null)"; mode="$(stat -L -c %a -- "$1" 2>/dev/null)"
+    if [[ -L "$1" ]]; then echo "$2: символическая ссылка"; return 1; fi
+    owner="$(stat -c %u -- "$1" 2>/dev/null)"; mode="$(stat -c %a -- "$1" 2>/dev/null)"
     if [[ ! "$owner" =~ ^[0-9]+$ || ! "$mode" =~ ^[0-7]{3,4}$ ]]; then echo "$2: владелец и права не прочитаны"; return 1; fi
     if [[ "$owner" != "$(expected_uid)" ]]; then echo "$2: владелец не root"; return 1; fi
     if (( (8#$mode & 8#022) != 0 )); then echo "$2: права $mode, запись группе или всем"; return 1; fi
     return 0
+}
+
+# trusted_path <path> <what> — trusted_node for the path and for every
+# directory above it up to the root ($CREAM_ROOT for a path under it, else /):
+# whoever may write any of them may swap what Teleport runs as root.
+trusted_path(){
+    local p="$1" what="$2" base="" rel d node why
+    local -a dirs=()
+    if [[ -n "$ROOT" && "$p" == "$ROOT"/* ]]; then base="$ROOT"; rel="${p#"$ROOT"}"; else rel="$p"; fi
+    [[ "$rel" == /* ]] || { echo "$what: путь не абсолютный"; return 1; }
+    d="${rel%/*}"
+    while [[ -n "$d" ]]; do dirs=("$d" "${dirs[@]}"); d="${d%/*}"; done
+    for d in "" "${dirs[@]}"; do
+        node="$base$d"; [[ -n "$node" ]] || node=/
+        why="$(trusted_node "$node" "$what: каталог ${d:-/}")" || { echo "$why"; return 1; }
+    done
+    trusted_node "$p" "$what"
 }
 
 # read_cmd_label <file> <taken keys, "|k1|k2|"> — one checked line or 1.
@@ -447,7 +467,7 @@ read_cmd_label(){
     if [[ "$taken" == *"|$key|"* ]]; then
         warn "пропускаю $f: ключ '$key' уже задан статической меткой (TELEPORT_LABELS или управляемой)"; return 1
     fi
-    why="$(trusted_file "$f" "файл")" || { warn "пропускаю $f: $why"; return 1; }
+    why="$(trusted_node "$f" "файл")" || { warn "пропускаю $f: $why"; return 1; }
     if (( $(stat -c %s -- "$f") > 4096 )); then warn "пропускаю $f: больше 4 КиБ"; return 1; fi
     while IFS= read -r l || [[ -n "$l" ]]; do
         [[ -z "$l" ]] && continue
@@ -458,13 +478,19 @@ read_cmd_label(){
     fi
     read -r -a words <<< "${BASH_REMATCH[1]}"
     path="${words[0]:-}"
-    if [[ ! "$path" =~ $RE_CMD_PATH || "/$path/" == */../* || "/$path/" == */./* ]]; then
-        warn "пропускаю $f: путь — абсолютный, знаки [A-Za-z0-9._+/-], без . и .."; return 1
+    if [[ ! "$path" =~ $RE_CMD_PATH || "/$path/" == */../* || "/$path/" == */./* || "$path" == *//* ]]; then
+        warn "пропускаю $f: путь — абсолютный, знаки [A-Za-z0-9._+/-], без . и .. и //"; return 1
     fi
+    # A user may own these, and stvor-agent.service does not see them
+    # (ProtectHome, PrivateTmp).
+    case "$path" in
+        /home/*|/tmp/*|/var/tmp/*|/run/user/*)
+            warn "пропускаю $f: $path — под /home, /tmp, /var/tmp или /run/user"; return 1 ;;
+    esac
     if [[ ! -f "$ROOT$path" || ! -x "$ROOT$path" ]]; then
         warn "пропускаю $f: $path — не исполняемый файл"; return 1
     fi
-    why="$(trusted_file "$ROOT$path" "$path")" || { warn "пропускаю $f: $why"; return 1; }
+    why="$(trusted_path "$ROOT$path" "$path")" || { warn "пропускаю $f: $why"; return 1; }
     if (( ${#words[@]} - 1 > CMD_ARGS_MAX )); then
         warn "пропускаю $f: больше $CMD_ARGS_MAX аргументов"; return 1
     fi
@@ -476,9 +502,8 @@ read_cmd_label(){
 
 collect_cmd_labels(){
     local f line n=0 taken="|" item why
-    [[ -d "$CMD_LABELS_DIR" ]] || return 0
-    if [[ -L "$CMD_LABELS_DIR" ]]; then warn "пропускаю $CMD_LABELS_DIR: символическая ссылка"; return 0; fi
-    why="$(trusted_file "$CMD_LABELS_DIR" "каталог")" || { warn "пропускаю $CMD_LABELS_DIR: $why"; return 0; }
+    [[ -d "$CMD_LABELS_DIR" || -L "$CMD_LABELS_DIR" ]] || return 0
+    why="$(trusted_path "$CMD_LABELS_DIR" "каталог")" || { warn "пропускаю $CMD_LABELS_DIR: $why"; return 0; }
     while IFS= read -r item; do taken+="${item%%=*}|"; done \
         < <(split_list "${C[TELEPORT_LABELS]}"; split_list "${C[TELEPORT_MANAGED_LABELS]}")
     for f in "$CMD_LABELS_DIR"/*; do
@@ -508,7 +533,8 @@ render_file(){
     check_labels "${C[TELEPORT_LABELS]}"
     [[ -n "${C[TELEPORT_PROXY]}" ]] || die "TELEPORT_PROXY не задан — сначала cream run teleport join"
     local node proxy host apps labels cmds name uri icon first="" key path args a
-    node="$(nodename)" || exit 1
+    resolve_nodename
+    node="$NODE"
     proxy="$(proxy_with_port "${C[TELEPORT_PROXY]}")"
     host="$(proxy_host "$proxy")"
     labels="$(node_labels)"
@@ -995,6 +1021,13 @@ cmd_join(){
         N[$key]="$val"
     done
     [[ -n "${N[TELEPORT_PROXY]:-}" ]] || die "нужен TELEPORT_PROXY=host[:port]"
+    # Both meet (( )), which evaluates a[$(cmd)] in its operand: bool is
+    # checked here, not trusted to the caller.
+    for key in TELEPORT_FORCE TELEPORT_DEFER; do
+        if [[ -n "${N[$key]+x}" && ! "${N[$key]}" =~ ^[01]$ ]]; then
+            die "$key: ожидали 0 или 1"
+        fi
+    done
     local force="${N[TELEPORT_FORCE]:-0}" defer="${N[TELEPORT_DEFER]:-0}"
     unset 'N[TELEPORT_FORCE]' 'N[TELEPORT_DEFER]'
     # The method follows this join, not the history: a join without it is a
@@ -1016,7 +1049,7 @@ cmd_join(){
     if [[ "$method" == bound_keypair ]]; then
         [[ -n "${N[TELEPORT_TOKEN]:-}" ]] || die "bound_keypair: нужен TELEPORT_TOKEN — имя токена"
         if (( has_secret )) && [[ ! "$secret" =~ $RE_REG_SECRET ]]; then
-            die "секрет регистрации: ожидали 8–1024 печатных знаков без пробелов"
+            die "секрет регистрации: ожидали 8–1000 печатных знаков без пробелов"
         fi
     else
         [[ -z "${N[TELEPORT_TOKEN]:-}" ]] \
@@ -1036,6 +1069,11 @@ cmd_join(){
     load_conf
     local old_proxy="${C[TELEPORT_PROXY]}"
     [[ -n "$old_proxy" ]] && old_proxy="$(proxy_with_port "$old_proxy")"
+    # What render will check, by the final knobs (this join over the domain),
+    # before anything is written: a failure after step 3 would leave the
+    # registration in rollback/.
+    check_labels "${N[TELEPORT_LABELS]-${C[TELEPORT_LABELS]}}"
+    resolve_nodename "${N[TELEPORT_NODENAME]-${C[TELEPORT_NODENAME]}}"
 
     # 1. Idempotent: a rerun of runcmd (cloned card, cloud-init clean) must
     #    not wipe a working identity with the stale secret from the seed.

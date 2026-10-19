@@ -8,11 +8,13 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-# The proxy probe is cut at 15 s, the wait for the identity at 120 s.
-TimeoutStartSec=5min
+# The tick waits for lock/teleport while a join holds it (its timeout is 5m)
+# instead of failing on cream's default; then the action itself: the proxy
+# probe is cut at 15 s, the wait for the identity at 120 s (timeout 5m).
+TimeoutStartSec=12min
 # Still waiting ends with code 0 and one journal line: the next tick is the
 # retry. A refusal of the cluster fails the unit, its reason is in `status`.
-ExecStart=/usr/bin/cream run teleport join-retry
+ExecStart=/usr/bin/cream run --lock-timeout 6m teleport join-retry
 
 [Install]
 # Every boot, after network-online, while the join waits.

@@ -18,7 +18,7 @@ stvor-agent §11.
 
 | Хук | Что |
 |---|---|
-| `install` | выбирает версию и сумму (явные ключи или пин), берёт `.deb` из источника, сверяет sha256, `dpkg -i`. Та же версия уже стоит — пропуск |
+| `install` | выбирает версию и сумму (явные ключи или пин), берёт `.deb` из источника, сверяет sha256, `dpkg -i`, затем `systemctl --no-block start teleport-apps.service` (метка `stvor_agent`, ниже). Та же версия уже стоит — пропуск |
 | `upgrade` | то же; `postinst` пакета перезапускает службу, если агент включён |
 | `remove` | `stvor-agent disable` (служба, токен и `state.json`), затем `dpkg -r stvor-agent` |
 | `apply` | `systemctl --no-block try-restart stvor-agent.service` — служба перечитывает `/etc/cream/stvor-agent/config` |
@@ -32,8 +32,12 @@ stvor-agent §11.
 манифеста): владелец — эта обёртка, `cream remove stvor-agent` его убирает.
 Внутри одна строка `command=/usr/bin/stvor-agent version --label`. Teleport
 раз в 5 минут исполняет команду и публикует вывод — версию агента, если он
-включён, иначе пустую строку. Появление файла видит `teleport-apps.path`
-и делает reload (HUP), без разрыва сессий.
+включён, иначе пустую строку. cream кладёт файл до хука `install` (спека cream
+§6.5): `teleport-apps.path` видит его сразу, но render пропускает команду —
+бинаря ещё нет. Поэтому хуки `install` и `upgrade` после успешного `dpkg -i`
+(фаза live, systemd запущен) зовут `systemctl --no-block start
+teleport-apps.service`: render и reload (HUP), без restart и без разрыва
+сессий. До `join` юнит ничего не делает (`ConditionPathExists=/etc/teleport.yaml`).
 
 **Токен меток — не ручка cream.** Хуки токен не принимают и службу не
 включают; включение — `stvor-agent enable` с токеном на stdin. Дочерние
@@ -90,7 +94,7 @@ printf '%s' "$LABEL_TOKEN" | stvor-agent enable 'URL=https://<домен>/robot-
 
 `tools/test-stvor-agent.sh` (его зовёт `tools/check.sh`): манифест, пин,
 выбор источника, сверка суммы, отказ при неполном пине, явные версия и сумма
-побеждают пин, токен не попадает в argv и окружение `curl`/`dpkg`/
+побеждают пин, reload меток после `dpkg -i` (не в фазе build), токен не попадает в argv и окружение `curl`/`dpkg`/
 `stvor-agent`, хуки `remove` и `apply`. При `CREAM_DEB=<.deb>` (или кеше пина
 `tools/cream-pin.env`) и docker — ещё прогон настоящим cream в `debian:12`:
 drop-in на месте после `install`, убран `remove`.

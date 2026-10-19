@@ -16,7 +16,7 @@
 #      всегда, без сети;
 #   2. соседняя копия stvor-agent (STVOR_AGENT_DIR, по умолчанию
 #      ../stvor-agent рядом с репозиторием) несёт тот же набор. Копии нет —
-#      локально пропуск с предупреждением; в CI (CI=true) это ошибка: копию
+#      локально пропуск с предупреждением; в CI (CI=true или 1) это ошибка: копию
 #      даёт шаг checkout по ref (STVOR_AGENT_REF) в ci-release.yml.
 #
 # Ручки для тестов: FIXTURES_DIR, PIN_FILE.
@@ -62,7 +62,7 @@ else
 fi
 
 if [[ ! -d "$SA_FIXTURES" ]]; then
-    if [[ "${CI:-}" == true ]]; then
+    if [[ "${CI:-}" == true || "${CI:-}" == 1 ]]; then
         echo "ОШИБКА: нет копии stvor-agent с образцами ($SA_FIXTURES) — шаг checkout stvor-agent в CI?" >&2
         rc=1
     else
