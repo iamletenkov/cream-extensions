@@ -8,10 +8,10 @@
 ## Progress Tracker
 Исполнителю: после выполнения отметь свою задачу `- [x]` в том же коммите.
 
-- [ ] Task 1: [cream] стадии configure `early`, `cloud-user`, `graphical` (§6.4), `cream resolve --installed`, правка спеки по `desktop`
+- [x] Task 1: [cream] стадии configure `early`, `cloud-user`, `graphical` (§6.4), `cream resolve --installed`, правка спеки по `desktop`
 - [x] Task 2: конвертер `tools/convert-v1.py` (§4.7) с тестом на фикстурах
 - [x] Task 3: обвязка проверок — автообнаружение тестов расширений, живой стенд `tools/live-test.sh`, гейт имён bisquite
-- [ ] Task 4: [cream] статическая проверка графа в `cream validate --catalog` и выпуск cream 1.1.0
+- [x] Task 4: [cream] статическая проверка графа в `cream validate --catalog` и выпуск cream 1.1.0
 - [ ] Task 5: библиотека `cloud-user` (`kind: library`) + `yq`
 - [ ] Task 6: библиотека `l4t` (`kind: library`) + `btop` + `firefox`
 - [ ] Task 7: пин cream 1.1.0, линт хуков вместо `validate-extensions.py`, конвенция cream/v1 в документации и `new-extension.sh`
