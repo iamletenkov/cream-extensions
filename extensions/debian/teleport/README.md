@@ -11,23 +11,6 @@
 `TELEPORT_MANAGED_LABELS`, действия `set-managed` и `managed-status`) и другие
 расширения (командные метки `command-labels.d`).
 
-## Что изменилось против 3.x
-
-<!-- check-names: off — таблица переименований называет старые имена -->
-| Было | Стало |
-|---|---|
-| `bisquite-teleport <команда>` | `cream run teleport <действие>`; хуки `install`, `upgrade`, `remove`, `apply` |
-| `/etc/bisquite/teleport/config` (0600), `bisquite-conf` | домен cream `/etc/cream/teleport/config` (0644, секретов в нём нет); схема — `config.keys` манифеста; пишет `cream set` |
-| `/etc/bisquite/teleport/apps.d/` | `/etc/cream/teleport/apps.d/` |
-| `/var/lib/bisquite/teleport/` | `/var/lib/cream/ext/teleport/` |
-| свой `flock` (`.join.lock`) | блокировка cream `lock/teleport` (`lock: exclusive` у `join`, `join-retry`, `leave`, `scrub-token`, хука `apply`) |
-| `bisquite-teleport-{apps,token,join}.*` | `teleport-{apps,token,join}.*` |
-| метки `managed_by`, `bisquite_agent_version` | не ставятся: признак агента портала — динамическая метка `stvor_agent` расширения `stvor-agent` |
-| списки ручек через запятую | **через пробел** (тип `list:` cream); в значениях меток пробела нет |
-| `TELEPORT_TOKEN=-` / `TELEPORT_TOKEN=<токен>` | секрет первого входа — только `TELEPORT_REGISTRATION_SECRET=-` (см. ниже) |
-| `labels-enable`, `pull`, `TELEPORT_LABELS_URL`, таймер меток | удалено — это служба `stvor-agent` |
-<!-- check-names: on -->
-
 ## Установка — бинарь Teleport
 
 ```

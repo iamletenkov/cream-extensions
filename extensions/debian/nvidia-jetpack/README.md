@@ -14,7 +14,6 @@ sudo cream remove nvidia-jetpack                  # снимает binfmt-фай
 > **С 3.0.0 — формат cream/v1.** `install.sh` стал хуком `hooks/install`, появился
 > `hooks/remove`; udev-правило раскладывает cream (`files`); скрипты больше не
 > копируются в `/opt/nvidia-jetpack/` — они в `/opt/cream/ext/nvidia-jetpack/scripts/`.
-> Таблица переименований — в разделе «Переименования 3.0.0».
 
 Расширение ставится на **ПК**, а не на плату. Соседнее `jetson-stats` — про
 обратное, оно объявляет `arm64` и живёт на самой Jetson.
@@ -338,16 +337,6 @@ cat /sys/bus/usb/devices/*/power/control        # должно быть on
   поднимается: `proc-fs-nfsd.mount` и `run-rpc_pipefs.mount` разрешено упасть
   (`LIVE_FAILED_IGNORE`), раннер печатает их отдельной строкой.
 - **P** — прошивка платы на физической станции по `scripts/README.md`.
-
-## Переименования 3.0.0
-
-| Было (2.x, layout 2) | Стало (3.0.0, cream/v1) |
-|---|---|
-| `install.sh` | `hooks/install`; новый `hooks/remove` |
-| скрипты в `/opt/nvidia-jetpack/` | `/opt/cream/ext/nvidia-jetpack/scripts/` (копии нет) |
-| каталог расширения `/opt/bisquite/nvidia-jetpack/` <!-- check-names: allow --> | `/opt/cream/ext/nvidia-jetpack/` |
-| udev-правило из `install.sh` | `files` манифеста (тот же путь) |
-| `phase: [build]` | `targets: {build: exec, live: confirm}` |
 
 ## Лицензия
 

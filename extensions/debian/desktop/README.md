@@ -101,25 +101,6 @@ initialize the NVIDIA graphics device», AGX Orin 2026-09-14), а `systemd --use
 - Файлы `daemon.conf`/`lightdm.conf` рабочих столов ссылаются на ручку
   `DESKTOP_AUTOLOGIN` расширения `desktop`.
 
-## Переименования (вход для плана bisquite)
-
-<!-- check-names: off -->
-| Было (layout 2) | Стало |
-|---|---|
-| `lib/bisquite-desktop`, `lib/knobs/desktop{,.apply}` | расширение `desktop` |
-| `/etc/bisquite/desktop/config` | `/etc/cream/desktop/config` |
-| `bisquite-desktop set KEY=…` (`FIRSTBOOT_COMMAND`) | `cream set desktop KEY=…` |
-| `bisquite-desktop apply --now\|--boot` | `cream run desktop apply --now\|--boot` |
-| `bisquite-desktop defaults KEY=…` | `cream run desktop defaults KEY=…` |
-| `bisquite-desktop status` | `cream run desktop status` |
-| `bisquite-desktop install <каталог>` | `depends: desktop` |
-| `bisquite-desktop.service` (`graphical.target.wants`) | `cream-configure@desktop` (`multi-user.target.wants`, тот же порядок) |
-| `/etc/dconf/db/local.d/50-bisquite-screen-{lock,blank}` | `50-desktop-screen-{lock,blank}` |
-| `/etc/X11/Xsession.d/90-bisquite-disable-dpms` | `90-desktop-disable-dpms` |
-| `xfce4-*.bisquite.xml` | `xfce4-*.desktop-ext.xml` |
-| `/etc/default/bisquite-desktop`, `/usr/local/lib/bisquite-desktop`, `/usr/local/sbin/bisquite-desktop` | нет (прежние пути не читаются и не чистятся — Р1) |
-<!-- check-names: on -->
-
 ## Удаление
 
 `cream remove desktop` снимает файлы dconf, X и xfconf и выключает автологин в

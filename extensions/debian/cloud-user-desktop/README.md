@@ -41,14 +41,6 @@ DESKTOP_DISABLE_SCREEN_BLANK=1` (`cream show desktop`).
 | `CLOUD_USER_DESKTOP_REMOVE` (`scope: install`) | пусто | вендорская учётка, которую удалить вместе с домашним каталогом; только `[a-z_][a-z0-9_-]*` и uid ≥ 1000 |
 | `DESKTOP_*` | см. `desktop` | ручки рабочего стола — домен расширения `desktop` |
 
-<!-- check-names: off -->
-| Было (layout 2) | Стало (cream/v1) |
-|---|---|
-| `/opt/bisquite/cloud-user-desktop/`, `lib/bisquite-desktop` | `/opt/cream/ext/cloud-user-desktop/`; ручки — расширение `desktop` |
-| `bisquite-desktop set DESKTOP_AUTOLOGIN=1 …` (`FIRSTBOOT_COMMAND`) | `cream set desktop DESKTOP_AUTOLOGIN=1 …` |
-| `bisquite-desktop.service` | `cream-configure@desktop.service` (стадия `system` до менеджера входа) |
-<!-- check-names: on -->
-
 ## Зачем
 
 Готовые образы производителей приходят с **предустановленным пользователем

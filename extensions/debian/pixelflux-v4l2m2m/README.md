@@ -56,17 +56,6 @@ VA-API (которого на Малине нет) на M2M. Подменять 
 
 **`remove`** — снимает отпечаток.
 
-## Переименования (layout 2 → cream/v1)
-
-<!-- check-names: off -->
-| Было (1.x) | Стало (2.0.0) |
-|---|---|
-| `install.sh`, `configure.sh` | `hooks/install`, `hooks/configure` |
-| `verify-pixelflux-v4l2m2m.service` | `cream-configure@pixelflux-v4l2m2m` (стадия `graphical`) |
-| отпечаток `/opt/selkies/<версия>/.bisquite-pixelflux-v4l2m2m` | `/var/lib/cream/ext/pixelflux-v4l2m2m/stamp` |
-| нет M2M — сбой проверки на первой загрузке | на живой машине — `install` 20; на загрузке — предупреждение и 0 |
-<!-- check-names: on -->
-
 ## Проверки
 
 - **V** — `make cream-validate`; **H** — `tests/test-pixelflux-v4l2m2m.sh` (манифест,

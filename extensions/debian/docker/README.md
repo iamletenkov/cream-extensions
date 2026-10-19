@@ -17,16 +17,6 @@ EXTENSION docker                        # образ bisquite
 > `cloud-user` (`depends`), а не общий скрипт источника. Каталог
 > в госте — `/opt/cream/ext/docker/`.
 
-<!-- check-names: off -->
-| Было (3.x, раскладка 2) | Стало (4.0.0) |
-|---|---|
-| `/opt/bisquite/docker/configure.sh` + `configure-docker.service` | `hooks/configure` в `cream-configure@docker.service` |
-| `/usr/local/libexec/bisquite-docker-iptables-raw-check` | `/usr/local/libexec/docker-iptables-raw-check` |
-| `/etc/systemd/system/docker.service.d/10-bisquite-iptables-raw.conf` | `/etc/systemd/system/docker.service.d/10-docker-iptables-raw.conf` |
-| `/run/bisquite-docker/iptables-raw.env` | `/run/docker-iptables-raw/env` |
-| `/opt/bisquite/docker/lib/get_cloud_user.sh` | `/opt/cream/ext/cloud-user/get_cloud_user.sh` (библиотека `cloud-user`) |
-<!-- check-names: on -->
-
 Ключей настроек у расширения нет (см. «Параметров нет»), переименовывать нечего.
 
 ## Манифест

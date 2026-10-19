@@ -7,8 +7,7 @@ VNC-доступ к рабочему столу X11 пользователя, с
 > **С 5.0.0 — формат cream/v1** (план 2026-10-19, Task 18). Каталог в госте —
 > `/opt/cream/ext/x11vnc/`; настройки — домен `x11vnc` (`/etc/cream/x11vnc/config`,
 > пароль — в `/etc/cream/x11vnc/secrets`); донастройка — `cream-configure@x11vnc`
-> (стадия `graphical`, после менеджера входа, нужен cream ≥ 1.1.0). Таблица
-> переименований — ниже.
+> (стадия `graphical`, после менеджера входа, нужен cream ≥ 1.1.0).
 
 ## Манифест
 
@@ -152,20 +151,6 @@ EXTENSION x11vnc X11VNC_PORT=5901
 
 Пароль — не литералом в VMFILE (VMFILE едет в образ), а на машине:
 `echo 'пароль' | sudo cream set x11vnc X11VNC_PASSWORD=-`.
-
-## Переименования (layout 2 → cream/v1)
-
-<!-- check-names: off -->
-| Было (4.x) | Стало (5.0.0) |
-|---|---|
-| `/etc/bisquite/x11vnc/config` | `/etc/cream/x11vnc/config` (+ `secrets` для пароля) |
-| `bisquite-conf set x11vnc …` | `cream set x11vnc …` |
-| `X11VNC_PASSWORD` — `secret:hook`, `X11VNC_PASSFILE` — `ro:path` | `X11VNC_PASSWORD` — `secret: file`; `X11VNC_PASSFILE` нет, файл всегда `/etc/x11vnc/passwd` |
-| `configure-x11vnc.service` | `cream-configure@x11vnc.service` |
-| `/opt/bisquite/x11vnc/run-x11vnc.sh` | `/opt/cream/ext/x11vnc/files/run-x11vnc.sh` |
-| пароль: `x11vnc -storepasswd` (пароль в argv) | `openssl` со stdin |
-| нет файла пароля — `-nopw` | пустой пароль — сервер выключен; `-nopw` только при `X11VNC_ALLOW_NO_PASSWORD=1` |
-<!-- check-names: on -->
 
 ## Проверки
 

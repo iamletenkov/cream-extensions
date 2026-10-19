@@ -7,7 +7,7 @@ GNOME на Xorg (Wayland выключен), менеджер входа gdm3. Д
 > **С 5.0.0 — формат cream/v1** (план 2026-10-19, Task 13). Каталог в госте —
 > `/opt/cream/ext/gnome/`; ручки — домен `desktop` (`/etc/cream/desktop/config`),
 > применяет их `cream-configure@desktop` до gdm. Взаимоисключение с `xfce4`/`lxde` —
-> по способности `desktop-session`, а не перечнем имён. Таблица переименований — ниже.
+> по способности `desktop-session`, а не перечнем имён.
 
 ## Манифест
 
@@ -78,20 +78,6 @@ sudo reboot                                     # код 10 install: экран 
 
 Поверх `x11vnc` или `kiosk` без `DESKTOP_AUTOLOGIN=1` им не к чему подключаться:
 сессии пользователя нет.
-
-## Переименования (layout 2 → cream/v1)
-
-<!-- check-names: off -->
-| Было (4.x) | Стало (5.0.0) |
-|---|---|
-| `/opt/bisquite/gnome/install.sh` | `/opt/cream/ext/gnome/hooks/install` |
-| `bisquite-desktop set KEY=…` | `cream set desktop KEY=…` |
-| `bisquite-desktop status` | `cream run desktop status` |
-| `bisquite-desktop.service` | `cream-configure@desktop.service` |
-| `/etc/bisquite/desktop/config` | `/etc/cream/desktop/config` |
-| `daemon.conf` расширения поверх конфига gdm3 | ключ `WaylandEnable=false` в конфиге пакета |
-| `conflicts: [xfce4, lxde]` | `conflicts.capabilities: [desktop-session]` |
-<!-- check-names: on -->
 
 ## Проверки
 

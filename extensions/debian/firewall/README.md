@@ -32,24 +32,6 @@ EXTENSION firewall                      # образ bisquite
 > или руками. SSH, как и прежде, закрыт; новый ключ `FIREWALL_SSH_PORTS`
 > открывает его порты и в правилах, и в запасном наборе.
 
-<!-- check-names: off -->
-| Было (1.x, раскладка 2) | Стало (2.0.0) |
-|---|---|
-| таблица `inet bisquite` | `inet cream` |
-| цепочка `BISQUITE-INPUT` | `CREAM-INPUT` |
-| `bisquite-firewall.service` (`configure.sh apply`) | `cream-configure@firewall` (хук `configure`, стадия `early`) |
-| `/etc/bisquite/firewall/rules.d/` | `/etc/cream/firewall/rules.d/` |
-| `/etc/bisquite/firewall/config`, схема `knobs` | `/etc/cream/firewall/config`, `config.keys` манифеста |
-| `/var/lib/bisquite/firewall/backend` | `/var/lib/cream/ext/firewall/backend` |
-| `/run/bisquite-firewall/` | `/run/firewall/` |
-| `bisquite-firewall show` / `backend` | `cream run firewall status` |
-| `bisquite-firewall check` | `cream run firewall check` |
-| `systemctl restart bisquite-firewall` | `cream run firewall reload` |
-| `bisquite-firewall off` | `cream set firewall FIREWALL_ENABLE=0` или `cream remove firewall` |
-| `bisquite-conf set firewall …` | `cream set firewall …` |
-| `BISQUITE_FIREWALL_BACKEND`, `BISQUITE_FIREWALL_RUN`, `BISQUITE_FIREWALL_MODULES` (тестовые) | нет: тест подменяет корень (`CREAM_ROOT`), `check` берёт бэкенд аргументом |
-<!-- check-names: on -->
-
 Ключи `FIREWALL_ENABLE`, `FIREWALL_BACKEND` — прежние; новый — `FIREWALL_SSH_PORTS`.
 
 ## Манифест

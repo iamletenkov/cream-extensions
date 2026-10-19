@@ -158,22 +158,6 @@ ICON=desktop
 `Rejected WebSocket upgrade from disallowed Origin` — тогда
 `SELKIES_ALLOWED_ORIGINS=https://<публичный адрес>`.
 
-## Переименования (layout 2 → cream/v1)
-
-<!-- check-names: off -->
-| Было (5.x) | Стало (6.0.0) |
-|---|---|
-| `/opt/bisquite/selkies/` | `/opt/cream/ext/selkies/` |
-| `/etc/bisquite/selkies/config` (0600, с паролями) | `/etc/cream/selkies/config` (0644) + `/etc/cream/selkies/secrets` (0600) |
-| `bisquite-conf set selkies …` | `cream set selkies …` (секрет — `KEY=-` со stdin) |
-| `BISQUITE_SELKIES_ALLOW_NO_AUTH=true` | `SELKIES_ALLOW_NO_AUTH=1` |
-| `SELKIES_ENABLE_BASIC_AUTH=true` + пароль | только пароль: basic auth включает обёртка |
-| без пароля на петле — стартует | без пароля — не стартует нигде, если не `SELKIES_ALLOW_NO_AUTH=1` |
-| `configure-selkies.service`, `selkies@` включён в `graphical.target.wants` | `cream-configure@selkies` (стадия `graphical`) запускает `selkies@<пользователь>` |
-| `knobs.apply` | хук `apply` |
-| `teleport-app.sh`, `install.sh`, `configure.sh`, `run-selkies.sh` | `files/selkies.sh`, `hooks/*`, `files/run-selkies.sh` |
-<!-- check-names: on -->
-
 ## Проверки
 
 - **V** — `make cream-validate`.

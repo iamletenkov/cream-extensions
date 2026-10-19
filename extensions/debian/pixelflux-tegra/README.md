@@ -104,19 +104,6 @@ drop-in записан. Живой проверки здесь нет: в applia
 `remove` снимает все три. Ручек расширение не добавляет: кодер выбирает лестница
 pixelflux, `SELKIES_ENCODER` — в схеме `selkies`.
 
-## Переименования (layout 2 → cream/v1)
-
-<!-- check-names: off -->
-| Было (2.x) | Стало (3.0.0) |
-|---|---|
-| `install.sh`, `configure.sh` | `hooks/install`, `hooks/configure` |
-| `verify-pixelflux-tegra.service` | `cream-configure@pixelflux-tegra` (стадия `graphical`) |
-| `/opt/bisquite/pixelflux-tegra-runtime/gbm_shim.so` | `/var/lib/cream/ext/pixelflux-tegra/gbm_shim.so` |
-| отпечаток `/opt/selkies/<версия>/.bisquite-pixelflux-tegra` | `/var/lib/cream/ext/pixelflux-tegra/stamp` |
-| не Jetson — сбой `install.sh` | `install` — код 20 |
-| отказ проверки на загрузке — упавший юнит | предупреждение и код 0 |
-<!-- check-names: on -->
-
 ## Проверки
 
 - **V** — `make cream-validate`.

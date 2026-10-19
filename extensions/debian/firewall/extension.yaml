@@ -13,10 +13,8 @@
 #             There is no apply hook: applying is a restart of configure (§8.4).
 # remove    — takes down only our table and chain.
 #
-# check-names: off
-# 2.0.0: cream/v1 (was layout 2, 1.2.0): table `inet bisquite` -> `inet cream`,
-# chain BISQUITE-INPUT -> CREAM-INPUT without migrating loaded rules (owner's
-# check-names: on
+# 2.0.0: cream/v1 (was layout 2, 1.2.0): the table is now `inet cream`, the
+# chain CREAM-INPUT, loaded rules of the old names are not migrated (owner's
 # decision); the CLI -> actions status, reload, check; SSH stays closed by
 # default (FIREWALL_SSH_PORTS empty: Teleport is a reverse tunnel).
 schema: cream/v1

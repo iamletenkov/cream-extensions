@@ -12,16 +12,6 @@ Chromium в режиме киоска поверх работающего гра
 > клавиатура GNOME — системный ключ dconf. Только Debian (на Ubuntu `chromium` —
 > snap, и киоск там не работал).
 
-<!-- check-names: off -->
-| Было (layout 2) | Стало |
-|---|---|
-| `/etc/bisquite/kiosk/config`, `bisquite-conf set kiosk …` | `/etc/cream/kiosk/config`, `cream set kiosk …` |
-| `configure-kiosk.service` | стадия `graphical` cream (`cream-configure@kiosk`) |
-| `/opt/bisquite/kiosk/run-kiosk.sh` | `/usr/local/lib/kiosk/run-kiosk.sh` (`files`) |
-| `~/.config/xfce4/xfconf/…/xfce4-{panel,desktop}.xml` от root | `/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/` (`files`) |
-| `~/.config/autostart/enable-keyboard.desktop` от root | `/etc/dconf/db/local.d/50-kiosk-keyboard` |
-<!-- check-names: on -->
-
 ## Манифест
 
 | Поле | Значение |

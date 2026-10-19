@@ -39,15 +39,6 @@ WALLPAPER_MODE=scaled` (`configure` перезапускается сам).
 | `WALLPAPER_IMAGE` | `dst_1080.jpg` | имя файла в `/opt/cream/ext/wallpaper/images/`: буквы, цифры, `.` `_` `-`, расширение `.jpg` `.jpeg` `.png` `.svg`; каталогов, абсолютных путей и ссылок нет |
 | `WALLPAPER_MODE` | `zoom` | `zoom` — заполнить с обрезкой, `scaled` — целиком, `centered`, `stretched`, `spanned`, `wallpaper` — плиткой |
 
-<!-- check-names: off -->
-| Было (layout 2) | Стало (cream/v1) |
-|---|---|
-| `WALLPAPER_IMAGE=images/dst_1080.jpg` | `WALLPAPER_IMAGE=dst_1080.jpg` |
-| `/usr/share/backgrounds/bisquite-wallpaper.jpg` (копия) | `/opt/cream/ext/wallpaper/images/<файл>` (на месте) |
-| `configure-wallpaper.service` | `cream-configure@wallpaper.service` (стадия `cloud-user`) |
-| `gsettings` в dconf пользователя, маркеры `nvbackground_*` в его доме | `/etc/dconf/db/local.d/50-wallpaper` + замки |
-<!-- check-names: on -->
-
 ## Что и куда пишется
 
 | Стол | Файл | Как |

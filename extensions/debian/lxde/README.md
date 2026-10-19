@@ -7,8 +7,7 @@ LXDE с менеджером входа lightdm. Даёт X-сервер и се
 > **С 5.0.0 — формат cream/v1** (план 2026-10-19, Task 13). Каталог в госте —
 > `/opt/cream/ext/lxde/`; ручки — домен `desktop` (`/etc/cream/desktop/config`),
 > применяет их `cream-configure@desktop` до менеджера входа. Взаимоисключение с
-> `gnome`/`xfce4` — по способности `desktop-session`, а не перечнем имён. Таблица
-> переименований — ниже.
+> `gnome`/`xfce4` — по способности `desktop-session`, а не перечнем имён.
 
 ## Манифест
 
@@ -65,21 +64,6 @@ sudo cream install --accept-risk lxde           # desktop и cloud-user — по
 sudo cream set desktop DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_LOCK=1 DESKTOP_DISABLE_SCREEN_BLANK=1
 sudo reboot                                     # код 10 install: экран входа — после перезагрузки
 ```
-
-## Переименования (layout 2 → cream/v1)
-
-<!-- check-names: off -->
-| Было (4.x) | Стало (5.0.0) |
-|---|---|
-| `/opt/bisquite/lxde/install.sh` | `/opt/cream/ext/lxde/hooks/install` |
-| `bisquite-desktop set KEY=…` | `cream set desktop KEY=…` |
-| `bisquite-desktop status` | `cream run desktop status` |
-| `bisquite-desktop.service` | `cream-configure@desktop.service` |
-| `/etc/bisquite/desktop/config` | `/etc/cream/desktop/config` |
-| `/etc/lightdm/lightdm.conf` из шаблона расширения | drop-in `/etc/xdg/lightdm/lightdm.conf.d/60-lxde.conf` (`files`) |
-| `conflicts: [gnome, xfce4]` | `conflicts.capabilities: [desktop-session]` |
-| браузер `firefox-esr`, иначе `firefox` | только `firefox-esr` |
-<!-- check-names: on -->
 
 ## Проверки
 

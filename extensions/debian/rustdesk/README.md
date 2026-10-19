@@ -9,15 +9,6 @@
 > `cream set rustdesk …`; состояние — `/var/lib/cream/ext/rustdesk/`. Идентичность
 > RustDesk удаляется **только в сборке** — живая установка ID машины не трогает.
 
-<!-- check-names: off -->
-| Было (layout 2) | Стало |
-|---|---|
-| `/etc/bisquite/rustdesk/config`, `bisquite-conf set rustdesk …` | `/etc/cream/rustdesk/config`, `cream set rustdesk …` |
-| `configure-rustdesk.service` | стадия `system` cream (`cream-configure@rustdesk`) |
-| `/var/lib/bisquite/rustdesk/managed` | `/var/lib/cream/ext/rustdesk/managed` |
-| `BISQUITE_RUSTDESK_FOLLOWUP` (повторная сверка) | счётчик `/run/rustdesk/followup`, сверка — перезапуск `cream-configure@rustdesk` |
-<!-- check-names: on -->
-
 Образ один на флот и без секретов: **адресов и ключа сервера в образе нет**,
 и **нет идентичности RustDesk** (`RustDesk.toml` с ID, парой ключей и
 паролем). ID каждое устройство делает себе само при первом старте службы — из

@@ -17,14 +17,6 @@ EXTENSION locale                                       # образ bisquite
 > `/etc/cream/locale/config` (`cream show/set locale`), ключи не переименованы.
 > Каталог в госте — `/opt/cream/ext/locale/`.
 
-<!-- check-names: off -->
-| Было (1.x, раскладка 2) | Стало (2.0.0) |
-|---|---|
-| `/etc/bisquite/locale/config`, `bisquite-conf set/show locale` | `/etc/cream/locale/config`, `cream set/show locale` |
-| `/opt/bisquite/locale/apply.sh` + `knobs.apply` | `/opt/cream/ext/locale/hooks/apply` |
-| `/etc/dconf/db/local.d/40-bisquite-locale`, `gdm.d/40-bisquite-locale` | `/etc/dconf/db/local.d/40-locale`, `gdm.d/40-locale` |
-<!-- check-names: on -->
-
 ## Манифест
 
 | Поле | Значение | Почему |

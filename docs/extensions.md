@@ -539,9 +539,9 @@ tools/live-test.sh <имя>      # живой прогон настоящим cr
 
 - **V** — `cream validate` (`make cream-validate`), линт хуков `tools/lint-hooks.sh` и гейт имён
   `tools/check-names.sh`: прежних путей, ключей, юнитов и таблиц nft нет (список — в скрипте). Слово
-  `bisquite` как имя сборщика можно. Таблицу переименований в README оборачивают
-  `<!-- check-names: off -->` … `<!-- check-names: on -->`, одиночную строку (тест, проверяющий
-  отсутствие) помечают `check-names: allow`.
+  `bisquite` как имя сборщика можно. Таблиц переименований в README нет — они в описании PR
+  (`BREAKING CHANGE`); строку теста, проверяющего отсутствие, помечают `check-names: allow`, блок —
+  `check-names: off` … `check-names: on`.
 - **H** — хуки на подменённом корне: `extensions/<семейство>/<имя>/tests/test-*.sh`, исполняемый,
   код 0 — прошли. `tools/check.sh` находит такие файлы сам, править его не нужно. Общая обвязка —
   `tools/hooktest.sh` (`. "$HERE/../../../../tools/hooktest.sh"`): `ht_root` кладёт копию расширения в

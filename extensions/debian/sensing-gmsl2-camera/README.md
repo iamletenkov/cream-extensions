@@ -24,16 +24,7 @@ p3701-0000, носитель p3737-0000) с адаптером **SG8A-AGON-G2Y-A
 > `/opt/cream/ext/sensing-gmsl2-camera/`. Нет `/etc/nv_tegra_release` — код **20**
 > (рулинг Р11); что-то на пути загрузки поменялось — код **10** (перезагрузка), повтор
 > без изменений — 0. Настройки — ключи cream (`/etc/cream/sensing-gmsl2-camera/config`)
-> вместо домена `sensing-camera` библиотеки layout 2. Переименования:
->
-> | Было (layout 2) | Стало |
-> |---|---|
-> | CLI `…-sensing-camera-ctl videoN` / `--boost-clock` | действия `camera-profile videoN`, `boost-clock` (`cream run sensing-gmsl2-camera …`) |
-> | юнит `…-sensing-camera@.service` | `sensing-gmsl2-camera@.service` (`files`) |
-> | юнит `…-sensing-clock.service` | `sensing-gmsl2-clock.service` (`files`) |
-> | правило `99-…-sensing-camera.rules` | `99-sensing-gmsl2-camera.rules` (`files`) |
-> | `/etc/modprobe.d/…-sensing-gmsl2.conf` | `/etc/modprobe.d/sensing-gmsl2-camera.conf` |
-> | `SENSING_CAMERA_PKG_REL` | убран: путь пакета Sensing — закрепление, не параметр |
+> вместо домена `sensing-camera` библиотеки layout 2.
 >
 > Юниты зовут действия по абсолютному пути `/opt/cream/ext/sensing-gmsl2-camera/actions/…`
 > с `EnvironmentFile=/etc/cream/sensing-gmsl2-camera/config` (рулинг Р7); действия

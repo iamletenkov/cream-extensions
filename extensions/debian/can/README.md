@@ -18,15 +18,6 @@ EXTENSION can                                           # образ bisquite
 > переименован. Без ядер в `/lib/modules` (контейнер) `install` выходит с
 > кодом 20 — «неприменимо», а не 1. Каталог в госте — `/opt/cream/ext/can/`.
 
-<!-- check-names: off -->
-| Было (1.x, раскладка 2) | Стало (2.0.0) |
-|---|---|
-| `/etc/bisquite/can/config`, `bisquite-conf set/show can` | `/etc/cream/can/config`, `cream set/show can` |
-| `/opt/bisquite/can/render-modules-load.sh` + `knobs.apply` | `/opt/cream/ext/can/hooks/apply` |
-| `BISQUITE_CONF_ROOT` (тесты) | `CREAM_ROOT` |
-| нет ядра — отказ (1) | нет ядра — неприменимо (20) |
-<!-- check-names: on -->
-
 ## Манифест
 
 | Поле | Значение | Почему |

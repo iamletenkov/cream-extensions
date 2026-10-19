@@ -145,25 +145,6 @@ ICON=laptop
 `cream set teleport TELEPORT_APPS_DISABLE=code-server`. `ICON=laptop` — ближайшая
 к редактору кода иконка встроенного набора прокси.
 
-## Переименования (layout 2 → cream/v1)
-
-<!-- check-names: off -->
-| Было (4.x) | Стало (5.0.0) |
-|---|---|
-| `/opt/bisquite/code-server/` | `/opt/cream/ext/code-server/` |
-| `/etc/bisquite/code-server/config` (0600, с паролем) | `/etc/cream/code-server/config` (0644) + `/etc/cream/code-server/secrets` (0600) |
-| `bisquite-conf set code-server …` | `cream set code-server …` (пароль — `KEY=-` со stdin) |
-| `CODE_SERVER_PASSWORD` пусто или `none` — без аутентификации | без пароля — не стартует; без аутентификации — только `CODE_SERVER_ALLOW_NO_AUTH=1` |
-| `CODE_SERVER_BIND=0.0.0.0` по умолчанию | `127.0.0.1` по умолчанию |
-| `CODE_SERVER_VERSION`, установщик `code-server.dev/install.sh` | версия закреплена с sha256 `.deb` в расширении |
-| `mkcert` (свой CA в доверенных системы) | `cert: true` — самоподписанный сертификат code-server, CA в систему не ставится |
-| `configure-code-server.service` (`WantedBy=cloud-init.target`), метка `/var/lib/code-server/last-config-time` | `cream-configure@code-server` (стадия `cloud-user`), configure на каждой загрузке без метки |
-| `code-server@<пользователь>` включён (`enable`) | не включается: запускает configure, проверив пароль |
-| `config.yaml` пишет root (`chown` после) | пишет пользователь (`runuser`), `umask 077`, `rename` |
-| `knobs.apply` | хук `apply` |
-| `teleport-app.sh`, `install.sh`, `configure.sh` | `files/code-server.sh`, `hooks/*` |
-<!-- check-names: on -->
-
 ## Остатки 4.x — отказ установки и запуска
 
 Переходной совместимости нет (рулинг Р1). Расширение 4.x оставляло то, что

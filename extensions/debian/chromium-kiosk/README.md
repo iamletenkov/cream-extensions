@@ -16,15 +16,6 @@
 > Системную локаль расширение больше не меняет (прежде навязывало
 > `ru_RU.UTF-8`) — это работа расширения `locale`.
 
-<!-- check-names: off -->
-| Было (layout 2) | Стало |
-|---|---|
-| `/etc/bisquite/chromium-kiosk/config`, `bisquite-conf set chromium-kiosk …` | `/etc/cream/chromium-kiosk/config`, `cream set chromium-kiosk …` |
-| `configure-chromium-kiosk.service` | стадия `system` cream |
-| `wget …/salamek.gpg`, `/etc/apt/sources.list.d/salamek.cz.list` | `/etc/apt/keyrings/chromium-kiosk-salamek.asc`, `/etc/apt/sources.list.d/chromium-kiosk-salamek.sources` (`files`) |
-| списки через запятую | через пробел |
-<!-- check-names: on -->
-
 ## Манифест
 
 | Поле | Значение |

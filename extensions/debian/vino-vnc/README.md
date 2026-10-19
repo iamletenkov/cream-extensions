@@ -9,7 +9,6 @@ cloud-init. По умолчанию слушает только петлю (до
 > (стадия `system` до менеджера входа). **В домашний каталог больше ничего не пишется**:
 > настройки — системные базы dconf с блокировками, автозапуск — `/etc/xdg/autostart`.
 > Без пароля vino **выключен**, если не задан явный `VINO_ALLOW_NO_PASSWORD=1`.
-> Таблица переименований — ниже.
 
 ## Зачем отдельное расширение, а не режим `x11vnc`
 
@@ -126,19 +125,6 @@ Type=x11
 Wayland — это работа рабочего стола (`gnome`) и `desktop`. vino живёт внутри сессии,
 поэтому без `cream set desktop DESKTOP_AUTOLOGIN=1` до входа человека VNC не поднимется.
 Порт в межсетевом экране не открывает.
-
-## Переименования (layout 2 → cream/v1)
-
-<!-- check-names: off -->
-| Было (4.x) | Стало (5.0.0) |
-|---|---|
-| домен `vino`, `/etc/bisquite/vino/config` | домен `vino-vnc`, `/etc/cream/vino-vnc/config` (+ `secrets`) |
-| `bisquite-conf set vino …` | `cream set vino-vnc …` |
-| `VINO_PASSWORD` — `secret:hook`, `VINO_PASSWORD_FILE` — `ro:path`, `/etc/vino/vnc-password.b64` | `VINO_PASSWORD` — `secret: file`; производное — база `/etc/dconf/db/vino-vnc-secret` |
-| `configure-vino-vnc.service` (после `cloud-final`) | `cream-configure@vino-vnc.service` (после `cloud-init.service`, до менеджера входа) |
-| `gsettings` от имени пользователя в `~/.config/dconf/user` | системные базы dconf с блокировками |
-| `~/.config/autostart/vino-server.desktop` | `/etc/xdg/autostart/vino-server.desktop` |
-<!-- check-names: on -->
 
 ## Проверки
 
