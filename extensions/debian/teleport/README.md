@@ -213,9 +213,15 @@ merged-usr не годится, нужен `/usr/bin/…`); команда по�
 3. HUP встроенным `kill` bash процессу из pid-файла — самому новому Teleport.
    После HUP старый родитель, пока открыты SSH-сессии, остаётся главным
    процессом юнита; сигнал ему потерялся бы, а сессии рвать незачем. Нет
-   pid-файла — главному процессу. Сигнал получает только живой процесс из
-   cgroup `teleport.service`. Успех — новый pid-файл: потомок прочитал новый
-   конфиг и стартовал (до 60 с);
+   pid-файла — главному процессу. Сигнал получает только процесс Teleport
+   системного юнита: его cgroup совпадает с `ControlGroup` юнита целиком (v2 —
+   строка `0::…`, v1 — строка `name=systemd:…`; пользовательский юнит
+   `user@…/app.slice/teleport.service` — не он), исполняемый файл —
+   `/usr/local/bin/teleport` (в том числе `(deleted)` после обновления), и это
+   главный процесс или его потомок (не дальше 8 поколений по `PPid`): оболочки
+   SSH-сессий живут в том же cgroup. Проверка повторяется прямо перед `kill`.
+   Успех — новый pid-файл другого процесса Teleport юнита: потомок прочитал
+   новый конфиг и стартовал (до 60 с);
 4. restart (открытые сессии рвутся) — только если живого процесса Teleport в
    cgroup нет вовсе (ждёт до 30 с) или HUP не подтвердился.
 
@@ -231,16 +237,22 @@ merged-usr не годится, нужен `/usr/bin/…`); команда по�
 | `status` | none | регистрация, служба, ручки, приложения, управляемые и командные метки — текстом |
 | `render` | none | `/etc/teleport.yaml` (0600); `ExecStartPre`/`ExecReload` `teleport.service` |
 | `reload-apps` | exclusive | `teleport-apps.service`: render, HUP с подтверждением новым процессом или restart |
+| `hup` | none | `ExecReload` `teleport.service`: адресный HUP с подтверждением, иначе `reload-pending` |
 | `scrub-token` | exclusive | `teleport-token.service`: стирает секрет первого входа |
 
-`render`, `status`, `managed-status` — `lock: none`: их зовут
+`render`, `hup`, `status`, `managed-status` — `lock: none`: их зовут
 юниты, которые перезапускаются, пока блокировку держит другой процесс
 (`set-managed` держит её, перезапуская `teleport.service`; спека cream §7.3).
 
-Перезагрузка `teleport.service` (`ExecReload`) — render и HUP главному процессу через
-`systemctl kill --kill-who=main --signal=HUP` (с 4.0.1): `/bin/kill` (procps) в
-минимальных образах нет, `systemctl` есть везде, где есть systemd; `--kill-who`, а не
-`--kill-whom` — на Ubuntu 22.04 systemd 249.
+Перезагрузка `teleport.service` (`ExecReload`) — render и действие `hup` (с 4.0.2):
+адресный HUP встроенным `kill` bash новейшему процессу Teleport юнита с
+подтверждением новым pid-файлом — тот же код, что у `reload-apps`. Главному
+процессу (`systemctl kill --kill-who=main`, 4.0.1) сигнал не годится: после HUP
+старый родитель дренирует сессии и остаётся главным, и следующий HUP терялся бы
+(`cream set teleport …` молча не применялся). `/bin/kill` (procps) в минимальных
+образах нет. `hup` перезапусков не делает (он внутри reload-задания юнита):
+неподтверждённый HUP оставляет пометку `reload-pending`, и ближайший `reload-apps`
+досылает его, даже если `teleport.yaml` не изменился.
 
 `cream validate` предупреждает (`validate.unit_lock`) о `teleport-join.service`
 (`join-retry`), `teleport-token.service` (`scrub-token`) и `teleport-apps.service`

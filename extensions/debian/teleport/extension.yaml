@@ -6,9 +6,11 @@ cream: ">=1.0.0"
 # 4.0.2: командная метка попадает в конфиг и до появления команды, если та в
 #        /usr/bin, /usr/sbin или /usr/local/bin (drop-in кладётся раньше бинаря);
 #        reload-apps — lock: exclusive, ждёт выхода агента из перехода, без
-#        изменения teleport.yaml HUP не шлёт, HUP новейшему процессу Teleport из
-#        cgroup юнита с подтверждением новым pid-файлом; restart — только без
-#        живого процесса или без подтверждения.
+#        изменения teleport.yaml HUP не шлёт, HUP новейшему процессу Teleport
+#        системного юнита (cgroup = ControlGroup, бинарь, потомок MainPID) с
+#        подтверждением новым pid-файлом; restart — только без живого процесса
+#        или без подтверждения. ExecReload — действие hup (тот же адресный HUP,
+#        без restart; неподтверждённый — reload-pending для reload-apps).
 # 4.0.1: HUP агенту — `systemctl kill --kill-who=main`, а не /bin/kill (procps нет
 #        в минимальных образах; найдено гейтом Stvor на docker debian-12).
 # 4.0.0: перенос bisquite-teleport-agent 3.x под cream (спека stvor-agent §10):
@@ -140,6 +142,12 @@ actions:
     # 5m leaves twice that. The wait for lock/teleport is the unit's
     # (--lock-timeout 6m, TimeoutStartSec=12min in teleport-apps.service).
     timeout: 5m
+    phases: [live]
+  hup:
+    summary: "адресный HUP новейшему процессу Teleport юнита с подтверждением (ExecReload teleport.service)"
+    lock: none
+    # one HUP confirmation (60 s) and the checks around it
+    timeout: 2m
     phases: [live]
   scrub-token:
     summary: "стереть секрет первого входа после регистрации (teleport-token.service)"

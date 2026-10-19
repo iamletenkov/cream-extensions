@@ -13,7 +13,8 @@
 #                                 identity — the first-join secret goes
 #   leave                         off: agent disabled, registration erased
 #   render                        /etc/teleport.yaml (ExecStartPre/ExecReload)
-#   reload-apps                   teleport-apps.service: reload or render
+#   reload-apps                   teleport-apps.service: render, addressed HUP or restart
+#   hup                           ExecReload: addressed HUP, reload-pending if unconfirmed
 #   status                        what is configured and registered, as text
 #   set-managed k=v…              the full set of managed labels (stvor-agent);
 #                                 restart only when the config changed; JSON
@@ -1587,8 +1588,10 @@ cmd_status(){
 #      the pid file — the newest Teleport: after a HUP the parent drains open
 #      sessions and stays the MainPID for as long as they last, the child that
 #      wrote the pid file is the one to signal. No pid file — the MainPID. Only
-#      a process in the cgroup of teleport.service is signalled. Confirmed by a
-#      new pid file: the forked child read the new config and started;
+#      a Teleport process of the system unit is signalled (teleport_proc:
+#      exact cgroup, the binary, MainPID or its descendant), checked again
+#      right before kill. Confirmed by a new pid file of such a process: the
+#      forked child read the new config and started;
 #   4. restart (open sessions drop) only when no live Teleport process is in
 #      the cgroup at all, or the HUP is not confirmed in RELOAD_TIMEOUT.
 unit_state(){ systemctl show -p ActiveState --value teleport.service 2>/dev/null || true; }
@@ -1603,52 +1606,137 @@ settle_agent(){
         sleep 1; waited=$((waited + 1))
     done
 }
-# teleport_proc <pid>: 0 — a live process in the cgroup of teleport.service.
-teleport_proc(){
-    [[ "$1" =~ ^[1-9][0-9]{0,9}$ && -d "$PROC/$1" ]] || return 1
-    grep -qE '/teleport\.service$' "$PROC/$1/cgroup" 2>/dev/null
+# unit_main: the MainPID of teleport.service (digits, not 0) or 1.
+unit_main(){
+    local m
+    m="$(unit_prop MainPID)"
+    [[ "$m" =~ ^[1-9][0-9]{0,9}$ ]] || return 1
+    printf '%s\n' "$m"
 }
-# pidfile_pid: the pid of the pid file when it is a live Teleport process.
+# descends <pid> <main>: pid is main or its descendant within 8 generations
+# (PPid of /proc/<pid>/status; a HUP forks one generation per reload).
+descends(){
+    local p="$1" i ppid
+    for i in 0 1 2 3 4 5 6 7 8; do
+        [[ "$p" == "$2" ]] && return 0
+        ppid="$(sed -n 's/^PPid:[[:space:]]*\([0-9][0-9]*\)$/\1/p' "$PROC/$p/status" 2>/dev/null)"
+        [[ "$ppid" =~ ^[1-9][0-9]{0,9}$ ]] || return 1
+        p="$ppid"
+    done
+    return 1
+}
+# unit_cgroup: the cgroup of the system unit teleport.service as systemd
+# reports it (ControlGroup) — the same string /proc/<pid>/cgroup shows for its
+# processes: /system.slice/teleport.service on a machine, the full path under
+# the scope of a container whose cgroup namespace is the host's (seen live,
+# docker --cgroupns=host, 2026-10-19). A user unit of the same name lives under
+# user@<uid>.service and never has this path.
+unit_cgroup(){
+    local cg
+    cg="$(unit_prop ControlGroup)"
+    [[ "$cg" =~ ^/[A-Za-z0-9._@/-]{1,512}$ && "$cg" == */system.slice/teleport.service ]] || return 1
+    printf '%s\n' "$cg"
+}
+# teleport_proc <pid> <main> <cgroup>: 0 — a live Teleport process of the
+# system unit: its cgroup line is exactly <cgroup> (v2 `0::…`, or the
+# name=systemd line of v1 — a user unit user@…/app.slice/teleport.service is
+# not ours), its executable is the binary the unit runs (" (deleted)" after an
+# update of the binary still counts), and it is the MainPID or descends from it.
+teleport_proc(){
+    local pid="$1" main="$2" cg="$3" exe line ok=1
+    [[ "$pid" =~ ^[1-9][0-9]{0,9}$ && -d "$PROC/$pid" && -n "$cg" ]] || return 1
+    while IFS= read -r line; do
+        if [[ "$line" == "0::$cg" ]] || { [[ "$line" == *":name=systemd:$cg" ]] && [[ "${line%%:name=systemd:*}" =~ ^[0-9]+$ ]]; }; then
+            ok=0; break
+        fi
+    done < "$PROC/$pid/cgroup" 2>/dev/null
+    (( ok == 0 )) || return 1
+    exe="$(readlink -- "$PROC/$pid/exe" 2>/dev/null)" || return 1
+    exe="${exe% (deleted)}"
+    [[ "$exe" == "$TELEPORT_BIN" ]] || return 1
+    descends "$pid" "$main"
+}
+# pidfile_pid <main> <cgroup>: the pid of the pid file when it is a Teleport process of the unit.
 pidfile_pid(){
     local pid=""
     [[ -f "$PID_FILE" && ! -L "$PID_FILE" ]] && pid="$(head -c 32 -- "$PID_FILE" 2>/dev/null | tr -d '[:space:]')"
-    teleport_proc "$pid" || return 1
+    teleport_proc "$pid" "$1" "$2" || return 1
     printf '%s\n' "$pid"
 }
-# hup_target: the process a HUP must reach — the pid file, else the MainPID.
+# hup_target <main> <cgroup>: the process a HUP must reach — the pid file, else the MainPID.
 hup_target(){
-    local main
-    pidfile_pid && return 0
-    main="$(unit_prop MainPID)"
-    teleport_proc "$main" || return 1
-    printf '%s\n' "$main"
+    pidfile_pid "$1" "$2" && return 0
+    teleport_proc "$1" "$1" "$2" || return 1
+    printf '%s\n' "$1"
 }
-reload_agent(){
-    local target before now waited=0
-    until target="$(hup_target)"; do
-        if (( waited >= RESTART_TIMEOUT )); then
-            log "живого процесса Teleport в teleport.service нет — перезапуск"
-            restart_agent; return
-        fi
+# hup_confirm <wait for a target, s>: the addressed HUP shared by reload-apps
+# and ExecReload (`cream run teleport hup`). 0 — confirmed: a new pid file of a
+# Teleport process of the unit that is neither the one before nor the target
+# (the target writing its own pid file late is not a new run); 1 — no Teleport
+# process of the unit to signal; 2 — the signal was not delivered; 3 — not
+# confirmed in RELOAD_TIMEOUT.
+#
+# The window between the check and the signal: teleport_proc runs again right
+# before kill, so a pid that died and was reused in between is caught unless
+# the reuse falls into those two lines — by a process of the same cgroup, the
+# same binary and descending from the MainPID, i.e. Teleport itself. The shells
+# of SSH sessions live in the cgroup of the unit too: the binary and the
+# descent from the MainPID keep them out. A pidfd would close the window, but
+# bash has none; the confirmation by a new pid file stays the proof.
+hup_confirm(){
+    local wait_s="$1" target before now main="" cg="" waited=0
+    until main="$(unit_main)" && cg="$(unit_cgroup)" && target="$(hup_target "$main" "$cg")"; do
+        (( waited < wait_s )) || return 1
         sleep 1; waited=$((waited + 1))
     done
-    before="$(pidfile_pid || true)"
+    before="$(pidfile_pid "$main" "$cg" || true)"
     # The builtin kill: procps is not in minimal images. target is digits only.
-    if ! kill -HUP "$target" 2>/dev/null; then
-        log "HUP процессу $target не доставлен — перезапуск"
-        restart_agent; return
+    if ! teleport_proc "$target" "$main" "$cg" || ! kill -HUP "$target" 2>/dev/null; then
+        HUP_TARGET="$target"; return 2
     fi
+    HUP_TARGET="$target"
     waited=0
     while :; do
-        if now="$(pidfile_pid)" && [[ "$now" != "$before" && "$now" != "$target" ]] && agent_active; then
-            log "агент перечитал конфиг (HUP процессу $target, новый процесс $now)"
-            return 0
+        if now="$(pidfile_pid "$main" "$cg")" && [[ "$now" != "$before" && "$now" != "$target" ]] && agent_active; then
+            HUP_NEW="$now"; return 0
         fi
-        (( waited < RELOAD_TIMEOUT )) || break
+        (( waited < RELOAD_TIMEOUT )) || return 3
         sleep 1; waited=$((waited + 1))
     done
-    log "после HUP процессу $target нового процесса за ${RELOAD_TIMEOUT} с нет — перезапуск"
+}
+HUP_TARGET="" HUP_NEW=""
+reload_agent(){
+    local rc=0
+    hup_confirm "$RESTART_TIMEOUT" || rc=$?
+    case "$rc" in
+        0) log "агент перечитал конфиг (HUP процессу $HUP_TARGET, новый процесс $HUP_NEW)"; return 0 ;;
+        1) log "живого процесса Teleport в teleport.service нет — перезапуск" ;;
+        2) log "HUP процессу $HUP_TARGET не доставлен — перезапуск" ;;
+        *) log "после HUP процессу $HUP_TARGET нового процесса за ${RELOAD_TIMEOUT} с нет — перезапуск" ;;
+    esac
     restart_agent
+}
+# hup (ExecReload of teleport.service, after render; lock: none): the same
+# addressed HUP. It runs inside the reload job of the unit, so it never
+# restarts it; an unconfirmed HUP leaves the marker reload-pending (state, not
+# the domain) and the next reload-apps sends it again even when teleport.yaml
+# did not change. Exit 0 either way: the change is recorded, not lost.
+cmd_hup(){
+    local rc=0
+    need_root
+    hup_confirm 0 || rc=$?
+    if (( rc == 0 )); then
+        rm -f -- "$RELOAD_PENDING"
+        log "агент перечитал конфиг (HUP процессу $HUP_TARGET, новый процесс $HUP_NEW)"
+        return 0
+    fi
+    : > "$RELOAD_PENDING" 2>/dev/null || true
+    case "$rc" in
+        1) log "живого процесса Teleport для HUP нет — reload-pending: дошлёт reload-apps" ;;
+        2) log "HUP процессу $HUP_TARGET не доставлен — reload-pending: дошлёт reload-apps" ;;
+        *) log "HUP процессу $HUP_TARGET не подтвердился за ${RELOAD_TIMEOUT} с — reload-pending: дошлёт reload-apps" ;;
+    esac
+    return 0
 }
 yaml_sum(){ [[ -f "$YAML" ]] && sha256sum < "$YAML" | cut -c1-64; }
 cmd_reload_apps(){
@@ -1822,6 +1910,7 @@ case "${1:-}" in
     managed-status) cmd_managed_status ;;
     render) cmd_render ;;
     reload-apps) cmd_reload_apps ;;
+    hup) cmd_hup ;;
     # The token path unit: the agent registered — on its own, too, while the
     # join waited for the network; then the retries end here as well.
     scrub-token)
@@ -1831,5 +1920,5 @@ case "${1:-}" in
     hook-upgrade) hook_install upgrade ;;
     hook-remove) hook_remove ;;
     hook-apply) cmd_apply ;;
-    *) die "неизвестная команда '${1:-}' (join|join-retry|leave|status|set-managed|managed-status|render|reload-apps|scrub-token|hook-*)" ;;
+    *) die "неизвестная команда '${1:-}' (join|join-retry|leave|status|set-managed|managed-status|render|reload-apps|hup|scrub-token|hook-*)" ;;
 esac

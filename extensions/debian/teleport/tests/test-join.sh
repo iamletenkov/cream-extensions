@@ -889,13 +889,11 @@ check "teleport.service: ExecReload — render через cream" grep -qx 'ExecR
 # A restart inside set-managed: lock ≤ 20 s + restart + confirmation ≤ 30 s
 # within the 90 s of the stvor-agent adapter; the default stop is 90 s alone.
 check "teleport.service: TimeoutStopSec=30s" grep -qx 'TimeoutStopSec=30s' "$U/teleport.service"
-# HUP without /bin/kill: procps is not in minimal images (docker debian-12 of
-# the Stvor gate); systemctl is always there with systemd. --kill-who (not
-# --kill-whom): Ubuntu 22.04 has systemd 249.
-check "teleport.service: HUP через systemctl kill, только главному процессу" \
-    grep -qx 'ExecReload=systemctl kill --kill-who=main --signal=HUP %n' "$U/teleport.service"
-eq "teleport.service: render до HUP" "render HUP" \
-    "$(grep '^ExecReload=' "$U/teleport.service" | sed 's/.*teleport render$/render/; s/.*--signal=HUP.*/HUP/' | tr '\n' ' ' | sed 's/ $//')"
+# HUP without /bin/kill (procps is not in minimal images) and to the newest
+# Teleport process, not the MainPID that may be draining: the action `hup`
+# (lock: none, the bash builtin kill), after render.
+eq "teleport.service: ExecReload — render, затем cream run teleport hup" "render hup" \
+    "$(grep '^ExecReload=' "$U/teleport.service" | sed 's/.*teleport render$/render/; s/.*teleport hup$/hup/' | tr '\n' ' ' | sed 's/ $//')"
 # Every command an Exec* line of a unit runs exists on the machine: cream, the
 # Teleport binary of the extension, systemctl of systemd, or platform.commands.
 unit_cmds_unknown="$(python3 - "$EXT" <<'PY'
