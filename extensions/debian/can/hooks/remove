@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# cream hook `remove` of can: takes away /etc/modules-load.d/can.conf and
+# can-utils when install put it on (the record in $CREAM_STATE_DIR/packages).
+# On purpose NOT undone: iproute2 and kmod (base system), linux-modules-extra
+# and anything else of the kernels; modules already loaded stay until reboot
+# or `modprobe -r` (unloading under a running candump would be a surprise).
+# A repeat finds nothing and exits 0.
+set -euo pipefail
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}"
+
+if [[ -e "$R/etc/modules-load.d/can.conf" ]]; then
+    rm -f -- "$R/etc/modules-load.d/can.conf"
+    >&2 echo "[INFO] can: /etc/modules-load.d/can.conf снят (загруженные модули — до перезагрузки)"
+fi
+
+ours=()
+if [[ -f "$STATE/packages" ]]; then
+    mapfile -t ours < <(sed '/^$/d' "$STATE/packages")
+fi
+if (( ${#ours[@]} )); then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get -q -y remove "${ours[@]}" || { >&2 echo "[ERROR] can: apt-get remove ${ours[*]} не прошёл"; exit 1; }
+    >&2 echo "[INFO] can: удалены: ${ours[*]}"
+fi
+rm -f -- "$STATE/packages"
