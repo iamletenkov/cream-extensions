@@ -22,7 +22,7 @@
 #        instead of files written by root into ~/.config; Debian only.
 schema: cream/v1
 name: kiosk
-version: 4.0.0
+version: 4.0.1
 summary: Chromium в режиме киоска поверх графического сеанса — от пользователя сеанса, на весь экран
 cream: ">=1.1.0"
 platform:
@@ -44,6 +44,7 @@ provides: [kiosk-browser]
 requires: [x11-server, display-manager]
 depends:
   - {name: cloud-user, version: ">=1.0.0 <2"}
+  - {name: apt-guard, version: ">=1.0.0 <2"}
 # Both kiosks take the screen.
 conflicts:
   extensions: [chromium-kiosk]

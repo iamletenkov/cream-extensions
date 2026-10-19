@@ -45,7 +45,9 @@ line="$(grep -E "^${u}:" "$FAKE/passwd")" || exit 1
 case "$1" in -u) cut -d: -f3 <<< "$line" ;; *) ;; esac'
     ht_fake systemctl 'exit 0'
     ht_fake dpkg-query 'p="${*: -1}"; [[ -f "$FAKE/pkg-$p" ]] && printf installed; exit 0'
-    ht_fake apt-get 'if [[ " $* " == *" install "* ]]; then
+    ht_fake apt-get 'if [[ "$1" == -s ]]; then v=Remv; [[ "$2" == purge ]] && v=Purg
+    for a in "${@:3}"; do echo "$v $a [1.0]"; done; cat "$FAKE/sim-extra" 2>/dev/null; exit 0; fi
+if [[ " $* " == *" install "* ]]; then
   for a in "$@"; do case "$a" in -*|install|Dpkg::*) ;; *) : > "$FAKE/pkg-$a" ;; esac; done
 fi; exit 0'
     ht_fake dconf 'exit 0'
@@ -63,13 +65,13 @@ echo "== манифест =="
 # eval: test-only literal expressions over our own manifest, as in nvidia-jetpack.
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "мажор 4" 4.0.0 "$(mf 'm["version"]')"
+eq "мажор 4" 4.0.1 "$(mf 'm["version"]')"
 eq "cream >=1.1.0 (стадия graphical)" ">=1.1.0" "$(mf 'm["cream"]')"
 eq "live: confirm" confirm "$(mf 'm["targets"]["live"]')"
 check "live_note про захват экрана" grep -q 'экран' <<< "$(mf 'm["targets"]["live_note"]')"
 eq "стадия graphical" graphical "$(mf 'm["hooks"]["configure"]["stage"]')"
 eq "хуки" "['configure', 'install', 'remove']" "$(mf 'sorted(m["hooks"])')"
-eq "depends cloud-user" "cloud-user >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
+eq "depends cloud-user, apt-guard" "cloud-user >=1.0.0 <2 apt-guard >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
 eq "конфликт с chromium-kiosk" "['chromium-kiosk']" "$(mf 'm["conflicts"]["extensions"]')"
 eq "requires" "['x11-server', 'display-manager']" "$(mf 'm["requires"]')"
 eq "files" "files/kiosk-chromium@.service:/etc/systemd/system/kiosk-chromium@.service files/run-kiosk.sh:/usr/local/lib/kiosk/run-kiosk.sh files/xfce4-desktop.xml:/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml files/xfce4-panel.xml:/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml" \
@@ -201,5 +203,18 @@ check "умолчания обёртки = умолчания манифеста
     m="$(python3 -c "import sys,yaml; k=yaml.safe_load(open(sys.argv[1]))[\"config\"][\"keys\"]; print(k[\"KIOSK_URL\"][\"default\"]); print(k[\"KIOSK_DISPLAY\"][\"default\"]); print(k[\"KIOSK_CHROMIUM_FLAGS\"][\"default\"])" "$1/extension.yaml")"
     w="$(sed -n "s/^DEFAULT_\(URL\|DISPLAY\|FLAGS\)=\"\(.*\)\"$/\2/p" "$1/files/run-kiosk.sh")"
     [[ "$m" == "$w" ]]' _ "$EXT"
+
+echo "== remove: симуляция снимает чужой пакет — отказ =="
+kroot; live_systemd
+ht_hook install; ht_hook configure CREAM_REASON=install
+mkdir -p "$WANTS"; ln -sfn "../$UNIT" "$WANTS/kiosk-chromium@alice.service"
+echo 'Remv chromium-l10n [120.0]' > "$FAKE/sim-extra"
+: > "$FAKE/calls"
+ht_hook remove; eq "симуляция снимает чужой пакет — 1" 1 "$?"
+check "чужой пакет назван" grep -q 'chromium-l10n' "$ROOT/out"
+check_not "ничего не снято" ht_called '^apt-get -q -y remove'
+check "экземпляр не выключен" test -e "$WANTS/kiosk-chromium@alice.service"
+check_not "systemctl не звали" ht_called '^systemctl '
+check "запись пакетов осталась" test -s "$STATE/packages"
 
 ht_done
