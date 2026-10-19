@@ -1,18 +1,45 @@
+# cloud-user-desktop — for a VENDOR desktop (one that came with the base image,
+# not with the gnome/xfce4/lxde extensions: Jetson Nano by Q-engineering,
+# Raspberry Pi OS): takes away the vendor account with its well-known password
+# and brings the desktop settings (extension desktop, depends), so that the
+# autologin and the session groups go to the cloud-init user.
+#
+# install — removes the vendor account named in CLOUD_USER_DESKTOP_REMOVE with
+#           its home directory: at BUILD, not at first boot — otherwise the
+#           image carries a known password until then. Only a regular account
+#           (uid >= 1000) by a name of the right form; an account that survives
+#           userdel fails the hook. Empty key — nothing to do.
+# remove  — nothing to give back: a removed account is not restored.
+# No service of its own: the groups and the autologin are the configure of
+# desktop (every boot, before the display manager), which also turns off the
+# vendor autologin with its first run (DESKTOP_AUTOLOGIN=0 by default).
+#
+# 5.0.0: cream/v1; the shared desktop code of layout 2 → extension desktop
+#        (depends).
+schema: cream/v1
 name: cloud-user-desktop
-version: 4.1.0
-layout: 2
-# 4.1.0: ручки — домен desktop библиотеки bisquite-conf (схема lib/knobs/desktop);
-#        `bisquite-conf set desktop …` и `bisquite-desktop set` — одна проверка.
-# 3.0.0: файл ручек переехал в /etc/bisquite/desktop/config (был
-#        /etc/default/bisquite-desktop; прежний не читается, установка удаляет).
-family: deb
-arch: [amd64, arm64]
-# build     — убирает вендорскую учётку (CLOUD_USER_DESKTOP_REMOVE) и ставит
-#             bisquite-desktop — для вендорских рабочих столов, где нет
-#             расширения gnome/xfce4/lxde;
-# firstboot — bisquite-desktop.service до менеджера входа: группы и автологин
-#             на пользователя cloud-init. 2.0.0: автологин по умолчанию ВЫКЛЮЧЕН.
-phase: [build, firstboot]
+version: 5.0.0
+summary: Вендорский рабочий стол — удаление вендорской учётки и ручки desktop для пользователя cloud-init
+cream: ">=1.0.0"
+platform:
+  family: deb
+  arch: [amd64, arm64]
+  os: [{id: debian}, {id: ubuntu}]
+targets:
+  build: exec
+  live: "yes"
 provides: [cloud-user-desktop]
-requires: []
-conflicts: []
+depends:
+  - {name: desktop, version: ">=1.0.0 <2"}
+  - {name: cloud-user, version: ">=1.0.0 <2"}
+hooks:
+  install: {timeout: 2m}
+  remove: {timeout: 1m}
+config:
+  keys:
+    CLOUD_USER_DESKTOP_REMOVE:
+      type: "re:^[a-z_][a-z0-9_-]{0,31}$"
+      default: ""
+      empty: true
+      scope: install
+      description: "вендорская учётка, которую удалить вместе с домашним каталогом (только uid >= 1000); пусто — ничего"

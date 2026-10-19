@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# cream hook `remove` of cloud-user-desktop: nothing to give back. The vendor
+# account removed by install is not restored (its password was the point), and
+# the desktop settings belong to the extension desktop.
+set -euo pipefail
+>&2 echo "[INFO] cloud-user-desktop: снимать нечего; удалённая вендорская учётка не возвращается"
