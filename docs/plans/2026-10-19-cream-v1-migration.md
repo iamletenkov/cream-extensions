@@ -23,9 +23,9 @@
 - [x] Task 13: `gnome` + `xfce4` + `lxde`
 - [ ] Task 14: `cloud-user-desktop` + `wallpaper`
 - [ ] Task 15: `code-server`
-- [ ] Task 16: `kiosk` + `chromium-kiosk`
+- [x] Task 16: `kiosk` + `chromium-kiosk`
 - [ ] Task 17: `selkies`
-- [ ] Task 18: `x11vnc` + `vino-vnc`
+- [x] Task 18: `x11vnc` + `vino-vnc`
 - [ ] Task 19: `rustdesk` + `jetson-stats`
 - [x] Task 20: `nvidia` + `nvidia-container-toolkit`
 - [x] Task 21: `nvidia-jetpack`
@@ -33,7 +33,7 @@
 - [x] Task 23: `l4t-opencv` + `l4t-pytorch` + `l4t-tensorflow`
 - [x] Task 24: `l4t-board-fdt` + `l4t-boot-verify`
 - [x] Task 25: `l4t-kernel-kvm`
-- [ ] Task 26: `sensing-gmsl2-camera` + `can-usb`
+- [x] Task 26: `sensing-gmsl2-camera` + `can-usb`
 - [ ] Task 27: `pixelflux-tegra` + `pixelflux-v4l2m2m`
 - [ ] Task 28: уборка переходного — `lib/`, layout 2 в инструментах, `extensions/openwrt/`, документация
 - [ ] Task 29: Финальная интеграция + `make ci`, выпуск каталога 5.0.0

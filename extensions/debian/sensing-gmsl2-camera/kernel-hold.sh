@@ -1,8 +1,8 @@
 # shellcheck shell=bash
 # Pin the L4T kernel packages so that apt never puts the stock NVIDIA kernel
-# back over the Sensing one. Sourced by install.sh, never executed:
+# back over the Sensing one. Sourced by hooks/install, never executed:
 #
-#   source "$SCRIPT_DIR/kernel-hold.sh"
+#   source "$CREAM_EXT_DIR/kernel-hold.sh"
 #
 # WHY. The NVIDIA repository of the image (repo.download.nvidia.com/jetson,
 # suite r36.4) carries newer point releases of the same packages: the index of

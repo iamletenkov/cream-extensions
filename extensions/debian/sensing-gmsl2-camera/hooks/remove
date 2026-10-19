@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# cream hook `remove` of sensing-gmsl2-camera: puts the board back on the stock
+# L4T kernel by the records of hooks/install in $CREAM_STATE_DIR —
+#   /boot/Image            from /boot/Image.backup;
+#   extlinux.conf          from extlinux.conf.orig;
+#   modules                each file as it was (orig/), or removed if it was
+#                          absent; depmod for the kernel of the image;
+#   overlays, /opt/sensing, modprobe.d, the clock unit link — removed;
+#   libnvisppg.so          the stock one back, the diversion off (nvisppg.sh);
+#   held                   apt-mark unhold of the holds it added — never one
+#                          held before cream or recorded by another extension
+#                          (/var/lib/cream/ext/*/held);
+#   packages               apt-get remove of what it installed (v4l-utils).
+# cream itself takes away the `files` (units, udev rule).
+#
+# Refuses BEFORE any change (code 1, README «Как снять»: by hand or
+# `cream remove --forget sensing-gmsl2-camera`) when:
+#   - can-usb modules are built for the Sensing kernel (remove can-usb first);
+#   - extlinux.conf changed since install (the operator's edit is not lost);
+#   - libnvisppg.so is not the overlay one any more;
+#   - apt would take away more than our packages.
+# Exit: 10 — the stock kernel is back, reboot; 0 — nothing to undo.
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] sensing-gmsl2-camera: $*"; }
+log_warn(){ >&2 echo "[WARN] sensing-gmsl2-camera: $*"; }
+log_error(){ >&2 echo "[ERROR] sensing-gmsl2-camera: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}"
+EXT_DIR="${CREAM_EXT_DIR:?run by cream}"
+KERNEL_VERSION="5.15.148-tegra"
+NVISPPG_OVERLAY_SHA256=3970c9cc85f86b978fdca1d20f2798c022f6852d26cfe03ae5bceec6ae0666ca
+NVISPPG_STOCK_SHA256=7e7c7500fae24da5bbb09dbed8d4235346c5110ab19b78e5daccbd8d078d5a2c
+# shellcheck disable=SC2034  # read by the sourced functions
+NVISPPG_ROOT="$R"
+# shellcheck source=../nvisppg.sh
+source "$EXT_DIR/nvisppg.sh"
+
+forget(){ log_error "сними руками (README, «Как снять») или забудь запись: cream remove --forget sensing-gmsl2-camera"; }
+lines(){ if [[ -f "$1" && ! -L "$1" ]]; then sed '/^$/d' "$1"; fi; }
+# put_copy SRC DEST: through a temporary file in the same directory and a rename.
+put_copy(){
+    local tmp
+    tmp="$(mktemp "$(dirname "$2")/.sensing.XXXXXX")"
+    cp -p -- "$1" "$tmp"
+    mv -f -T -- "$tmp" "$2"
+}
+
+# --- checks, before anything changes --------------------------------------------
+canusb="$R/lib/modules/$KERNEL_VERSION/updates/can-usb"
+if compgen -G "$canusb/*.ko" >/dev/null; then
+    log_error "модули can-usb собраны под ядро Sensing — сначала cream remove can-usb"
+    exit 1
+fi
+EXTLINUX="$R/boot/extlinux/extlinux.conf"
+if [[ -f "$STATE/extlinux.sha256" ]]; then
+    want="$(cat "$STATE/extlinux.sha256")"
+    have="$(sha256sum < "$EXTLINUX" 2>/dev/null | cut -d' ' -f1 || true)"
+    if [[ "$have" != "$want" ]]; then
+        log_error "/boot/extlinux/extlinux.conf правили после установки — правку не затираю"
+        forget
+        exit 1
+    fi
+fi
+if [[ -e "$STATE/diverted" ]] && nvisppg_diverted; then
+    cur="$(sha256sum "$R$NVISPPG_LIB" 2>/dev/null | cut -d' ' -f1 || true)"
+    if [[ "$cur" != "$NVISPPG_OVERLAY_SHA256" ]]; then
+        log_error "libnvisppg.so уже не из оверлея — её меняли после установки"
+        forget
+        exit 1
+    fi
+fi
+export DEBIAN_FRONTEND=noninteractive
+mapfile -t ours < <(lines "$STATE/packages")
+if (( ${#ours[@]} )); then
+    sim="$(apt-get -s remove "${ours[@]}")" || { log_error "apt-get -s remove ${ours[*]} не прошёл"; exit 1; }
+    extra=()
+    while read -r verb pkg _; do
+        [[ "$verb" == Remv ]] || continue
+        mine=""
+        for p in "${ours[@]}"; do [[ "$p" == "$pkg" ]] && mine=1; done
+        [[ -n "$mine" ]] || extra+=("$pkg")
+    done <<< "$sim"
+    if (( ${#extra[@]} )); then
+        log_error "вместе с ${ours[*]} apt снял бы и чужие пакеты: ${extra[*]}"
+        forget
+        exit 1
+    fi
+fi
+
+rc=0
+# --- boot path ----------------------------------------------------------------------
+if [[ -f "$STATE/extlinux.conf.orig" ]]; then
+    put_copy "$STATE/extlinux.conf.orig" "$EXTLINUX"
+    log_info "extlinux.conf — как до установки"
+    rc=10
+fi
+if [[ -f "$R/boot/Image.backup" && ! -L "$R/boot/Image.backup" ]]; then
+    put_copy "$R/boot/Image.backup" "$R/boot/Image"
+    rm -f -- "$R/boot/Image.backup"
+    log_info "/boot/Image — снова штатное ядро"
+    rc=10
+fi
+mapfile -t mods < <(lines "$STATE/modules")
+for rel in "${mods[@]}"; do
+    [[ "$rel" == "/lib/modules/$KERNEL_VERSION/updates/"*.ko && "$rel" != *..* ]] || { log_warn "чужая запись модуля пропущена"; continue; }
+    if [[ -f "$STATE/orig$rel" ]]; then
+        put_copy "$STATE/orig$rel" "$R$rel"
+    else
+        rm -f -- "$R$rel"
+    fi
+done
+if (( ${#mods[@]} )); then
+    depmod_args=("$KERNEL_VERSION")
+    [[ -n "$R" ]] && depmod_args=(-b "$R" "$KERNEL_VERSION")
+    depmod "${depmod_args[@]}" || log_warn "depmod $KERNEL_VERSION не отработал"
+    log_info "модули — как до установки"
+    rc=10
+fi
+mapfile -t ovl < <(lines "$STATE/overlays")
+for o in "${ovl[@]}"; do
+    [[ "$o" =~ ^tegra234-camera[A-Za-z0-9._+-]*\.dtbo$ ]] && rm -f -- "$R/boot/$o"
+done
+rm -f -- "$R/etc/modprobe.d/sensing-gmsl2-camera.conf" \
+    "$R/etc/systemd/system/multi-user.target.wants/sensing-gmsl2-clock.service"
+[[ -e "$STATE/opt" ]] && rm -r -f -- "$R/opt/sensing"
+
+# --- libnvisppg.so --------------------------------------------------------------------
+if [[ -e "$STATE/diverted" ]]; then
+    nvisppg_remove "$NVISPPG_STOCK_SHA256" "$NVISPPG_OVERLAY_SHA256" || { forget; exit 1; }
+fi
+
+# --- holds ------------------------------------------------------------------------------
+mapfile -t held < <(lines "$STATE/held")
+release=()
+for p in "${held[@]}"; do
+    other=""
+    for f in "$R"/var/lib/cream/ext/*/held; do
+        [[ "$f" == "$STATE/held" || ! -f "$f" ]] && continue
+        grep -qxF -- "$p" "$f" && other=1
+    done
+    if [[ -n "$other" ]]; then
+        log_info "$p держит и другое расширение — hold остаётся"
+    else
+        release+=("$p")
+    fi
+done
+if (( ${#release[@]} )); then
+    apt-mark unhold "${release[@]}" >/dev/null || { log_error "apt-mark unhold ${release[*]} не прошёл"; exit 1; }
+    log_info "сняты с hold: ${release[*]}"
+fi
+
+# --- packages ---------------------------------------------------------------------------
+if (( ${#ours[@]} )); then
+    apt-get -q -y remove "${ours[@]}" || { log_error "apt-get remove ${ours[*]} не прошёл"; exit 1; }
+    log_info "удалены: ${ours[*]}"
+fi
+
+rm -r -f -- "$STATE/orig"
+rm -f -- "$STATE/modules" "$STATE/overlays" "$STATE/held" "$STATE/packages" "$STATE/diverted" \
+    "$STATE/opt" "$STATE/extlinux.conf.orig" "$STATE/extlinux.sha256"
+(( rc == 10 )) && log_info "штатное ядро L4T вернётся после перезагрузки"
+exit "$rc"

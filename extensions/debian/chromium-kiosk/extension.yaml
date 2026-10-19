@@ -1,20 +1,102 @@
+# chromium-kiosk — the kiosk of the package chromium-kiosk by Salamek
+# (repository.salamek.cz): the package brings its own graphical session (xorg,
+# xinit, xfwm4, a Qt browser) and a config watcher; this extension adds the
+# repository and builds the package's /etc/chromium-kiosk/config.yml from the
+# keys of the domain.
+#
+# install   — chromium-kiosk (and ca-certificates for the https repository);
+#             only the missing packages, recorded for remove.
+# configure — stage system, before chromium-kiosk_configwatcher.service: every
+#             boot and after `cream set chromium-kiosk …` (no own apply) writes
+#             config.yml through a temporary file and rename, only on a change;
+#             every value is checked by its form and quoted for YAML.
+# remove    — our packages away; cream takes the repository files away.
+# files     — the repository (deb822) and its key, pinned in the tree by
+#             fingerprint: nothing is downloaded but the packages apt verifies.
+#
+# 4.0.0: cream/v1; repository and key as `files` instead of wget at install;
+#        lists (white list, buttons, features) separated by spaces; the system
+#        locale is not touched any more (the extension locale does that).
+schema: cream/v1
 name: chromium-kiosk
-version: 3.0.0
-layout: 2
-# 3.0.0: /etc/bisquite/chromium-kiosk/config.yaml (формат пакета) -> config
-#        (KEY=VALUE, CHROMIUM_KIOSK_*); /etc/chromium-kiosk/config.yml
-#        собирается из ручек, прежний файл переносится и удаляется.
-family: deb
-# Пакет тянется из стороннего репозитория repository.salamek.cz (suite `all`),
-# набор архитектур там не проверялся; на сборках bisquite подтверждён amd64
-# (debian12/chromium-kiosk.vmfile, debian12/nuc-kiosk.vmfile).
-arch: [amd64, arm64]
-# build     — install.sh ставит пакет chromium-kiosk и локаль;
-# firstboot — configure-chromium-kiosk.service собирает из ручек
-#             в /etc/chromium-kiosk/config.yml до старта config watcher'а.
-phase: [build, firstboot]
+version: 4.0.0
+summary: Киоск пакета chromium-kiosk (Salamek) — своя графическая сессия, config.yml из ключей домена
+cream: ">=1.0.0"
+platform:
+  family: deb
+  # The package is `Architecture: all` for amd64 and arm64 in the repository;
+  # bisquite builds confirmed amd64 only.
+  arch: [amd64, arm64]
+targets:
+  build: exec
+  live: confirm
+  live_note: >-
+    подключает сторонний репозиторий repository.salamek.cz (ключ в дереве
+    расширения) и ставит пакет chromium-kiosk с собственной графической сессией
+    (xorg, xinit, xfwm4): после перезагрузки экран машины занимает киоск
 provides: [kiosk-browser]
-# Пакет salamek приносит собственную графическую сессию: оба использующих его
-# VMFILE ставят его БЕЗ расширения десктопа. Поэтому x11-server не требуется.
-requires: []
-conflicts: [kiosk]
+# Both kiosks take the screen.
+conflicts:
+  extensions: [kiosk]
+hooks:
+  install: {timeout: 30m}
+  configure: {stage: system, before: [chromium-kiosk_configwatcher.service], timeout: 2m}
+  remove: {timeout: 10m}
+config:
+  keys:
+    CHROMIUM_KIOSK_HOME_PAGE:
+      type: "re:^(https?|file)://[A-Za-z0-9._~:/?#@!&()*+,;=%-]+$"
+      default: "https://github.com/iamletenkov/bisquite"
+      description: "стартовая страница: http(s):// или file://, без пробелов, кавычек и $"
+    CHROMIUM_KIOSK_WINDOW_MODE:
+      type: "enum:hidden,automaticvisibility,windowed,minimized,maximized,fullscreen"
+      default: fullscreen
+      description: "режим окна"
+    CHROMIUM_KIOSK_TOUCHSCREEN: {type: "enum:true,false", default: "true", description: "поддержка тач-ввода"}
+    CHROMIUM_KIOSK_IDLE_TIME:
+      type: "re:^[0-9]{1,6}$"
+      default: "0"
+      description: "секунды простоя до возврата на стартовую страницу; 0 — выключено"
+    CHROMIUM_KIOSK_WHITE_LIST_ENABLED: {type: "enum:true,false", default: "false", description: "белый список адресов"}
+    CHROMIUM_KIOSK_WHITE_LIST_URLS:
+      type: "list:re:^[A-Za-z0-9._~:/?#@!&()*+,;=%-]+$"
+      default: ""
+      empty: true
+      description: "адреса белого списка через пробел, glob (*.example.org google.*/news)"
+    CHROMIUM_KIOSK_WHITE_LIST_IFRAME_ENABLED: {type: "enum:true,false", default: "true", description: "разрешить iframe"}
+    CHROMIUM_KIOSK_NAV_BAR_ENABLED: {type: "enum:true,false", default: "false", description: "панель навигации"}
+    CHROMIUM_KIOSK_NAV_BAR_BUTTONS:
+      type: "list:enum:home,reload,back,forward"
+      default: "home reload back forward"
+      empty: true
+      description: "кнопки панели по порядку, через пробел"
+    CHROMIUM_KIOSK_VIRTUAL_KEYBOARD_ENABLED: {type: "enum:true,false", default: "true", description: "экранная клавиатура"}
+    CHROMIUM_KIOSK_DISPLAY_ROTATION:
+      type: "enum:normal,left,right,inverted"
+      default: ""
+      empty: true
+      description: "поворот экрана и тача вместе; пусто — normal, если не заданы два ключа ниже"
+    CHROMIUM_KIOSK_SCREEN_ROTATION:
+      type: "enum:normal,left,right,inverted"
+      default: ""
+      empty: true
+      description: "поворот только экрана (при пустом DISPLAY_ROTATION)"
+    CHROMIUM_KIOSK_TOUCHSCREEN_ROTATION:
+      type: "enum:normal,left,right,inverted"
+      default: ""
+      empty: true
+      description: "поворот только тача (при пустом DISPLAY_ROTATION)"
+    CHROMIUM_KIOSK_EXTRA_ARGUMENTS:
+      type: "list:re:^--[a-z0-9][a-z0-9-]*(=[A-Za-z0-9._,:/=+-]*)?$"
+      default: "--disable-pinch --overscroll-history-navigation=0"
+      empty: true
+      description: "флаги браузера через пробел"
+    CHROMIUM_KIOSK_ALLOWED_FEATURES:
+      type: "list:enum:desktop-audio-video-capture,desktop-video-capture,geolocation,invalid-certificate,media-audio-capture,media-audio-video-capture,media-video-capture,mouse-lock,notifications"
+      default: ""
+      empty: true
+      description: "разрешения браузера через пробел; пусто — ни одного"
+    CHROMIUM_KIOSK_CURSOR_ENABLED: {type: "enum:true,false", default: "false", description: "показывать курсор"}
+files:
+  - {src: files/salamek.asc, dst: /etc/apt/keyrings/chromium-kiosk-salamek.asc, mode: "0644"}
+  - {src: files/salamek.sources, dst: /etc/apt/sources.list.d/chromium-kiosk-salamek.sources, mode: "0644"}

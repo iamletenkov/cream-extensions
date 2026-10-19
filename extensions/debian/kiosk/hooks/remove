@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# cream hook `remove` of kiosk: every instance kiosk-chromium@<user> disabled
+# (and stopped without blocking on a running system), the GNOME keyboard
+# keyfile away (only if it is still ours), the packages recorded by install
+# removed. cream itself takes away the `files` (unit template, wrapper, Xfce4
+# defaults). A repeat finds nothing and exits 0.
+set -euo pipefail
+log_info(){ >&2 echo "[INFO] kiosk: $*"; }
+log_warn(){ >&2 echo "[WARN] kiosk: $*"; }
+log_error(){ >&2 echo "[ERROR] kiosk: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}/packages"
+WANTS="$R/etc/systemd/system/graphical.target.wants"
+KBD="$R/etc/dconf/db/local.d/50-kiosk-keyboard"
+KBD_TEXT=$'# kiosk (cream): the GNOME on-screen keyboard on, a system default.\n[org/gnome/desktop/a11y/applications]\nscreen-keyboard-enabled=true'
+
+running=""
+[[ "${CREAM_PHASE:-}" == live && -d "$R/run/systemd/system" ]] && running=1
+
+shopt -s nullglob
+for link in "$WANTS"/kiosk-chromium@*.service; do
+    name="${link##*/}"
+    rm -f -- "$link"
+    [[ -n "$running" ]] && systemctl --no-block stop "$name" || true
+    log_info "$name выключен"
+done
+shopt -u nullglob
+
+if [[ -f "$KBD" && ! -L "$KBD" ]] && [[ "$(cat -- "$KBD")" == "$KBD_TEXT" ]]; then
+    rm -f -- "$KBD"
+    if command -v dconf >/dev/null 2>&1; then
+        dconf update || log_warn "dconf update не прошёл"
+    fi
+    log_info "экранная клавиатура GNOME — системное умолчание снято"
+fi
+
+ours=()
+if [[ -f "$STATE" ]]; then
+    mapfile -t ours < <(sed '/^$/d' "$STATE")
+fi
+if (( ${#ours[@]} )); then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get -q -y remove "${ours[@]}" || { log_error "apt-get remove ${ours[*]} не прошёл"; exit 1; }
+    log_info "удалены: ${ours[*]}"
+fi
+rm -f -- "$STATE"
+log_info "готово"

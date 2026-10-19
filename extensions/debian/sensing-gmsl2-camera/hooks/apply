@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# cream hook `apply` of sensing-gmsl2-camera: after `cream set` of
+# SENSING_CAMERA_CONTROLS or SENSING_BOOST_CLOCK, restart the camera profile
+# units and the clocks — queued (--no-block): `cream set` may run inside a boot
+# unit. Not a running system (build) — nothing to restart: the units read the
+# keys on the next boot. SENSING_GMSLMODE is scope install (a module parameter).
+set -euo pipefail
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+[[ -d "$R/run/systemd/system" ]] || exit 0
+systemctl --no-block restart 'sensing-gmsl2-camera@*.service' sensing-gmsl2-clock.service
+>&2 echo "sensing-gmsl2-camera: перезапуск профиля камер и частот поставлен в очередь"
