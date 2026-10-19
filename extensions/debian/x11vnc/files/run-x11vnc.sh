@@ -62,15 +62,52 @@ log_info(){ >&2 echo -e "${GREEN}[INFO]${NC} x11vnc: $*"; }
 log_warn(){ >&2 echo -e "${YELLOW}[WARN]${NC} x11vnc: $*"; }
 log_error(){ >&2 echo -e "${RED}[ERROR]${NC} x11vnc: $*"; }
 
+# The password decision, built by configure (files/x11vnc.sh): the rfbauth file
+# (0600, owned by this user), or -nopw — only with the marker nopw (derived by
+# configure) AND X11VNC_ALLOW_NO_PASSWORD=1 in the root-owned config, with a
+# warning on every start. Anything else, or a file this user cannot read: a
+# refusal, never -nopw.
+PASSFILE=/etc/x11vnc/passwd
+NOPW=/etc/x11vnc/nopw
+
+# decide_auth: prints the -rfbauth/-nopw argument, or "refuse" with status 1.
+decide_auth(){
+    if [[ -e "$PASSFILE" || -L "$PASSFILE" ]]; then
+        if [[ -f "$PASSFILE" && -r "$PASSFILE" ]]; then
+            echo "-rfbauth $PASSFILE"; return 0
+        fi
+        log_error "файл пароля $PASSFILE не читается пользователем $(id -un)"
+        log_error "сервер без пароля не поднимаю: пароль задан X11VNC_PASSWORD"
+        log_error "починить: sudo cream configure x11vnc"
+        echo refuse; return 1
+    fi
+    if [[ -f "$NOPW" && "${X11VNC_ALLOW_NO_PASSWORD:-0}" == 1 ]]; then
+        log_warn "сервер БЕЗ ПАРОЛЯ: X11VNC_ALLOW_NO_PASSWORD=1 (снять: cream set x11vnc X11VNC_ALLOW_NO_PASSWORD=0)"
+        echo "-nopw"; return 0
+    fi
+    if [[ -f "$NOPW" ]]; then
+        log_error "есть $NOPW, но X11VNC_ALLOW_NO_PASSWORD не 1 — без пароля не поднимаю"
+        echo refuse; return 1
+    fi
+    log_error "нет ни $PASSFILE, ни решения «без пароля» ($NOPW) — configure x11vnc не отработал"
+    echo refuse; return 1
+}
+
+# Test entry (tests/test-x11vnc.sh): the decision for the given paths.
+if [[ "${1:-}" == --decide-auth ]]; then
+    PASSFILE="${2:?}"; NOPW="${3:?}"
+    decide_auth || true
+    exit 0
+fi
+
 USERNAME="${1:?usage: run-x11vnc.sh <user>}"
 UID_OF_USER="$(id -u "$USERNAME")"
 
-# Параметры приходят из EnvironmentFile /etc/bisquite/x11vnc/config (домен
-# x11vnc библиотеки bisquite-conf, схема knobs). Умолчания здесь — последний
-# рубеж на случай отсутствующего файла и совпадают со схемой.
+# Параметры приходят из EnvironmentFile /etc/cream/x11vnc/config (домен x11vnc,
+# config.keys манифеста; секретов там нет — пароль только в файле выше).
+# Умолчания здесь — последний рубеж на случай отсутствующего файла.
 PORT="${X11VNC_PORT:-5900}"
 DISPLAY_NUM="${X11VNC_DISPLAY:-:0}"
-PASSFILE="${X11VNC_PASSFILE:-}"
 LISTEN="${X11VNC_LISTEN:-localhost}"
 
 # Wayland: x11vnc обслуживает X11 и на Wayland-сессии бесполезен.
@@ -151,33 +188,18 @@ args=(
 # ставят `firewall: false`. Позиция проекта на этот счёт записана в
 # examples/build/ubuntu1804/README.md: только loopback, доступ через
 # SSH-туннель. Расширение с ней расходилось.
+auth="$(decide_auth)" || exit 1
 if [[ "$LISTEN" == "localhost" ]]; then
     args+=(-localhost)
 else
     log_warn "слушаю ВСЕ интерфейсы (X11VNC_LISTEN=$LISTEN)"
-    [[ -z "$PASSFILE" ]] && log_warn "и БЕЗ ПАРОЛЯ — кто угодно в сети получит рабочий стол"
+    [[ "$auth" == -nopw ]] && log_warn "и БЕЗ ПАРОЛЯ — кто угодно в сети получит рабочий стол"
 fi
-
-if [[ -n "$PASSFILE" ]]; then
-    # Файл пароля объявлен, но не читается — ОТКАЗ, а не `-nopw`.
-    #
-    # Файл лежит 0600 и принадлежит пользователю, которому его передаёт
-    # configure.sh на первой загрузке (см. его hand_over_passfile). Если
-    # чтение не удалось, значит передача не состоялась, и молчаливый откат
-    # на `-nopw` поднял бы рабочий стол БЕЗ пароля там, где пароль задали
-    # явно, — при `X11VNC_LISTEN=all` это открытая сессия в сети. Цикл
-    # рестарта со строкой в журнале виден хотя бы через `systemctl status`,
-    # открытый рабочий стол не виден никак.
-    if [[ ! -r "$PASSFILE" ]]; then
-        log_error "файл пароля $PASSFILE не читается пользователем '$USERNAME'"
-        log_error "сервер без пароля не поднимаю: пароль задан X11VNC_PASSWORD"
-        log_error "починить: chown $USERNAME $PASSFILE && chmod 0600 $PASSFILE"
-        exit 1
-    fi
+if [[ "$auth" == -nopw ]]; then
+    args+=(-nopw)
+else
     args+=(-rfbauth "$PASSFILE")
     log_info "пароль из $PASSFILE"
-else
-    args+=(-nopw)
 fi
 
 exec /usr/bin/x11vnc "${args[@]}"

@@ -1,0 +1,25 @@
+[Unit]
+Description=x11vnc VNC server for user %i
+After=graphical.target display-manager.service
+Requires=display-manager.service
+
+[Service]
+Type=simple
+User=%i
+Environment=DISPLAY=:0
+# Non-secret settings of the domain x11vnc (cream set x11vnc …); the dash: no
+# file is not an error, the defaults live in the wrapper. The secrets file is
+# NOT read: the password never enters the server's environment — the wrapper
+# takes the derived /etc/x11vnc/passwd built by configure.
+EnvironmentFile=-/etc/cream/x11vnc/config
+# Wait for the X socket. It exists under Wayland too (mutter makes it for
+# Xwayland), so the socket is not a sign of a usable session; the wrapper
+# checks the session type.
+ExecStartPre=/bin/bash -c 'for i in {1..30}; do [ -S /tmp/.X11-unix/X0 ] && break || sleep 2; done'
+# The X authority is found at runtime by the wrapper (its header has the why).
+ExecStart=/bin/bash /opt/cream/ext/x11vnc/files/run-x11vnc.sh %i
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical.target
