@@ -457,7 +457,10 @@ lxsession_user(){
             env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C.UTF-8 \
             "${BASH_SOURCE[0]}" lxsession-user "$conf" < /dev/null > "$out" 2>&1
     ) || rc=$?
-    head -c 4096 "$out" >&2 || true
+    # The output is the user's: no control characters into the journal (ESC
+    # sequences, C1 controls), bytes of UTF-8 text stay.
+    head -c 4096 "$out" | LC_ALL=C tr -d '\000-\011\013-\037\177' \
+        | LC_ALL=C sed 's/\xc2[\x80-\x9f]//g' >&2 || true
     rm -f -- "$out"
     if (( rc != 0 )); then
         log "lxsession: ${conf#"$R"} не исправлен от имени $user (код $rc)"
@@ -468,6 +471,11 @@ lxsession_user(){
 # close_fds: close every descriptor above 2 of this (sub)shell.
 close_fds(){
     local fd fds=()
+    # The lock of cream explicitly: without /proc the loop below sees nothing.
+    if [[ "${CREAM_LOCK_FD:-}" =~ ^[0-9]+$ ]] && (( CREAM_LOCK_FD > 2 )); then
+        eval "exec ${CREAM_LOCK_FD}>&-" 2>/dev/null || true
+    fi
+    [[ -d /proc/self/fd ]] || return 0
     for fd in /proc/self/fd/*; do fds+=("${fd##*/}"); done
     for fd in "${fds[@]}"; do
         [[ "$fd" =~ ^[0-9]+$ ]] && (( fd > 2 )) || continue
