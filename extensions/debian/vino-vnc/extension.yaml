@@ -1,41 +1,58 @@
+# vino-vnc — vino, the VNC server of GNOME, inside the session of the
+# cloud-init user; loopback only by default.
+#
+# install   — vino, dconf-cli, libglib2.0-bin, dbus; autostart
+#             /etc/xdg/autostart/vino-server.desktop (a copy of the package's).
+# configure — every boot, stage system after cloud-init.service and BEFORE the
+#             display manager (plan ruling R5): the settings are system dconf
+#             databases with locks — /etc/dconf/db/vino-vnc and, for the
+#             password (secret VINO_PASSWORD), vino-vnc-secret 0640
+#             root:<group of the session user>; nothing in the home directory.
+#             No own apply: `cream set` restarts configure.
+# remove    — databases, profile lines and autostart gone; vino only when ours.
+# No conflict with x11vnc: both default to port 5900 and are told apart by a
+# parameter (VINO_PORT, X11VNC_PORT), not by excluding each other.
+schema: cream/v1
 name: vino-vnc
-version: 4.0.0
-layout: 2
-# 4.0.0: настройки — домен vino библиотеки bisquite-conf (схема knobs):
-#        configure.sh не исполняет файл (`source`), установка его не
-#        переписывает; пароль — secret:hook.
-# 2.0.0: файл параметров переехал в /etc/bisquite/vino/config (был
-#        /etc/default/bisquite-vino; прежний не читается, установка удаляет).
-family: deb
-# Только apt-пакеты (vino, libglib2.0-bin, dbus) — ничего не качается по
-# ссылке, зависящей от архитектуры. Замер по архиву Ubuntu 2026-09-03:
-# исходник `vino` публикуется от precise до questing, то есть обе цели
-# закрыты. Расширение не Jetson-специфично.
-arch: [amd64, arm64]
-# build     — install.sh ставит vino и кладёт параметры в EnvironmentFile;
-# firstboot — configure.sh применяет gsettings и кладёт автозапуск.
-#
-# Граница проходит по природе задачи, а не по удобству: gsettings пишет
-# в dconf КОНКРЕТНОГО пользователя, автозапуск — в его домашний каталог,
-# а имя пользователя создаёт cloud-init уже на устройстве. Тот же довод,
-# по которому автологин у xfce4 и gnome настраивается на первой загрузке.
-phase: [build, firstboot]
+version: 5.0.0
+summary: VNC через vino (GNOME) в сессии пользователя cloud-init — настройки системным dconf, по умолчанию только петля
+cream: ">=1.0.0"
+platform:
+  family: deb
+  arch: [amd64, arm64]
+  os: [{id: debian}, {id: ubuntu}]
+targets:
+  build: exec
+  live: "yes"
 provides: [remote-desktop]
-# x11-server      — vino обслуживает X11 и под Wayland бесполезен (README);
-# display-manager — сервер живёт внутри пользовательской сессии, а открывает
-#                   её дисплей-менеджер; на безголовой плате — автологином.
 requires: [x11-server, display-manager]
-# Конфликт с x11vnc НЕ объявлен, и это решение, а не недосмотр.
-#
-# Мешают друг другу не расширения, а их умолчания: оба берут RFB-порт 5900,
-# и второй сервер просто не займёт его. Разводятся они параметром
-# (`VINO_PORT`, `X11VNC_PORT`), то есть препятствие снимается без правки
-# кода — а объявленный конфликт этого различия не выражает. Вдобавок
-# bisquite поле `conflicts` только печатает: запрета из него не следует,
-# следует лишь утверждение. Утверждать «эти двое несовместимы» было бы
-# неправдой, а симметричная запись потребовала бы правки чужого манифеста
-# ради неё же.
-#
-# Что действительно стоит знать — в README: два VNC-сервера на одном
-# дисплее уживаются, если развести порты, и не уживаются иначе.
-conflicts: []
+depends:
+  - {name: cloud-user, version: ">=1.0.0 <2"}
+hooks:
+  install: {timeout: 15m}
+  configure:
+    stage: system
+    after: [cloud-init.service]
+    before: [display-manager.service, gdm.service, gdm3.service, lightdm.service]
+    timeout: 2m
+  remove: {timeout: 10m}
+config:
+  keys:
+    VINO_PORT:
+      type: "re:^(5[0-9]{3}|[1-4][0-9]{4}|50000)$"
+      default: "5900"
+      description: "порт 5000–50000 (диапазон alternative-port схемы org.gnome.Vino)"
+    VINO_LISTEN:
+      type: "enum:localhost,all"
+      default: localhost
+      description: "localhost — только петля (доступ ssh-туннелем), all — все интерфейсы"
+    VINO_ENCRYPTION:
+      type: "enum:true,false"
+      default: "false"
+      description: "require-encryption"
+    VINO_PASSWORD:
+      type: str
+      default: ""
+      empty: true
+      secret: file
+      description: "пароль VNC (значимы первые 8 символов); пусто — без аутентификации; задаётся только через stdin: cream set vino-vnc VINO_PASSWORD=-"
