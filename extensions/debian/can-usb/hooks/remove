@@ -8,7 +8,7 @@
 #             before cream or recorded by another extension
 #             (/var/lib/cream/ext/*/held, e.g. sensing-gmsl2-camera);
 #   packages  apt-get remove of what it installed (headers, build tools).
-# apt is asked first in simulation: when it would take away anything besides
+# apt is asked first in simulation (library apt-guard): when it would take away anything besides
 # our packages, the hook refuses before changing anything (README, «Как снять»).
 # A repeat finds nothing and exits 0.
 set -euo pipefail
@@ -27,19 +27,11 @@ lines(){ if [[ -f "$1" && ! -L "$1" ]]; then sed '/^$/d' "$1"; fi; }
 export DEBIAN_FRONTEND=noninteractive
 mapfile -t ours < <(lines "$STATE/packages")
 if (( ${#ours[@]} )); then
-    sim="$(apt-get -s remove "${ours[@]}")" || { log_error "apt-get -s remove ${ours[*]} не прошёл"; exit 1; }
-    extra=()
-    while read -r verb pkg _; do
-        [[ "$verb" == Remv ]] || continue
-        mine=""
-        for p in "${ours[@]}"; do [[ "$p" == "$pkg" ]] && mine=1; done
-        [[ -n "$mine" ]] || extra+=("$pkg")
-    done <<< "$sim"
-    if (( ${#extra[@]} )); then
-        log_error "вместе с ${ours[*]} apt снял бы и чужие пакеты: ${extra[*]}"
-        log_error "сними руками или забудь запись: cream remove --forget can-usb"
-        exit 1
-    fi
+    APT_GUARD="$R/opt/cream/ext/apt-guard/apt-guard.sh"
+    [[ -f "$APT_GUARD" ]] || { log_error "нет библиотеки apt-guard ($APT_GUARD) — cream ставит её по depends"; exit 1; }
+    # shellcheck source=../../apt-guard/apt-guard.sh
+    source "$APT_GUARD"
+    apt_guard_check remove "${ours[@]}" || exit 1
 fi
 
 if [[ -d "$MODDIR" && ! -L "$MODDIR" ]]; then
