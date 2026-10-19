@@ -64,8 +64,16 @@ for want in cream-catalog.yaml LICENSE NOTICE extensions/debian/teleport/extensi
             extensions/debian/stvor-agent/extension.yaml; do
     if grep -qxF "$want" <<<"$listing"; then ok "в снимке $want"; else bad "в снимке нет $want"; fi
 done
-if grep -q '^extensions/debian/btop/' <<<"$listing"; then
-    bad "в снимке расширение layout 2 (btop)"
+# Ни одно расширение старого формата (без `schema: cream/v1`) в снимок не
+# попадает; какие из них ещё не переведены — смотрим по дереву, а не по имени.
+leaked=""
+for m in "$REPO"/extensions/*/*/extension.yaml; do
+    grep -q '^schema: cream/v1' "$m" && continue
+    rel="${m#"$REPO"/}"; d="${rel%/extension.yaml}"
+    grep -q "^$d/" <<<"$listing" && leaked+=" $d"
+done
+if [[ -n "$leaked" ]]; then
+    bad "в снимке расширения layout 2:$leaked"
 else
     ok "расширений layout 2 в снимке нет"
 fi
