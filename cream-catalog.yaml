@@ -6,5 +6,5 @@
 # покрывать каждое расширение под extensions/ — скрипт это проверяет.
 schema: cream/v1
 name: cream-extensions
-version: 4.0.0 # x-release-please-version
+version: 5.0.0 # x-release-please-version
 roots: [extensions/debian]

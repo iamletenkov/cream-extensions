@@ -1,5 +1,73 @@
 # Changelog
 
+## [5.0.0](https://github.com/iamletenkov/cream-extensions/compare/v4.0.0...v5.0.0) (2026-10-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* каталог только на cream/v1. Расширения живут в `/opt/cream/ext/<имя>`, настройки — `/etc/cream/<имя>/config` (секреты — `secrets`, 0600), состояние — `/var/lib/cream/ext/<имя>`; `lib/` и раскладка 2 (`install.sh`, `configure.sh`, `knobs`) удалены из каталога и инструментов. nft: таблица `inet bisquite` → `inet cream`, цепочка `BISQUITE-INPUT` → `CREAM-INPUT`, без миграции загруженных правил. `extensions/openwrt` перенесён в bisquite (берёт файлы по тегу `v3.3.0`). `x11vnc`, `vino-vnc`, `selkies`, `code-server` без пароля не стартуют. Общее для всех: `/opt/bisquite/<имя>` → `/opt/cream/ext/<имя>`; `/etc/bisquite/<имя>/config` → `/etc/cream/<имя>/config`; `/var/lib/bisquite/<имя>` → `/var/lib/cream/ext/<имя>`; `bisquite-conf set|show <имя>` → `cream set|show <имя>`; `install.sh`, `configure.sh`, `knobs.apply` → `hooks/install|configure|apply`; `configure-<имя>.service` → `cream-configure@<имя>`; списки в ключах — через пробел. По расширениям:
+    - `teleport` — `bisquite-teleport <команда>` → `cream run teleport <действие>`; юниты
+      `bisquite-teleport-{apps,token,join}.*` → `teleport-{apps,token,join}.*`; метки `managed_by`,
+      `bisquite_agent_version` не ставятся (признак агента — `stvor_agent`); `TELEPORT_TOKEN` →
+      `TELEPORT_REGISTRATION_SECRET=-`; `labels-enable`, `pull`, `TELEPORT_LABELS_URL` удалены.
+    - `desktop` (новое, вместо `lib/bisquite-desktop`, `lib/knobs/desktop`) — `bisquite-desktop set` →
+      `cream set desktop`; `bisquite-desktop apply|defaults|status` → `cream run desktop …`;
+      `bisquite-desktop install` → `depends: desktop`; `bisquite-desktop.service` →
+      `cream-configure@desktop`; `50-bisquite-screen-{lock,blank}` → `50-desktop-screen-{lock,blank}`;
+      `90-bisquite-disable-dpms` → `90-desktop-disable-dpms`; `xfce4-*.bisquite.xml` →
+      `xfce4-*.desktop-ext.xml`.
+    - `cloud-user`, `l4t` (новые библиотеки) — `lib/get_cloud_user.sh` →
+      `/opt/cream/ext/cloud-user/get_cloud_user.sh`; `lib/l4t` → библиотека `l4t`.
+    - `gnome`, `xfce4`, `lxde` — `conflicts` перечнем → `conflicts.capabilities: [desktop-session]`;
+      `lightdm.conf` из шаблона → drop-in `/etc/xdg/lightdm/lightdm.conf.d/60-<стол>.conf`; браузер —
+      только `firefox-esr`; `gnome` — `WaylandEnable=false` в конфиге пакета.
+    - `cloud-user-desktop` — ручки стола через `cream set desktop DESKTOP_AUTOLOGIN=1 …`.
+    - `wallpaper` — `WALLPAPER_IMAGE=images/dst_1080.jpg` → `dst_1080.jpg`; копии
+      `/usr/share/backgrounds/bisquite-wallpaper.jpg` нет; dconf пользователя →
+      `/etc/dconf/db/local.d/50-wallpaper`.
+    - `locale` — `40-bisquite-locale` (dconf `local.d`, `gdm.d`) → `40-locale`.
+    - `can` — нет ядра → код 20 вместо 1; `BISQUITE_CONF_ROOT` → `CREAM_ROOT`.
+    - `docker` — `bisquite-docker-iptables-raw-check` → `docker-iptables-raw-check`;
+      `10-bisquite-iptables-raw.conf` → `10-docker-iptables-raw.conf`;
+      `/run/bisquite-docker/iptables-raw.env` → `/run/docker-iptables-raw/env`.
+    - `firewall` — `bisquite-firewall.service` → `cream-configure@firewall` (стадия `early`);
+      `bisquite-firewall show|backend|check` → `cream run firewall status|check`;
+      `systemctl restart bisquite-firewall` → `cream run firewall reload`; `bisquite-firewall off` →
+      `cream set firewall FIREWALL_ENABLE=0`; `/run/bisquite-firewall/` → `/run/firewall/`; тестовые
+      `BISQUITE_FIREWALL_*` удалены.
+    - `nocloud-cidata` — `zz-bisquite-nocloud.cfg` → `zz-cream-nocloud.cfg`.
+    - `kiosk` — `run-kiosk.sh` → `/usr/local/lib/kiosk/run-kiosk.sh`; xfconf — в `/etc/xdg`,
+      клавиатура — `/etc/dconf/db/local.d/50-kiosk-keyboard`; в `$HOME` не пишет; только Debian.
+    - `chromium-kiosk` — ключ и репозиторий → `/etc/apt/keyrings/chromium-kiosk-salamek.asc`,
+      `chromium-kiosk-salamek.sources`; системную локаль не меняет.
+    - `rustdesk` — `BISQUITE_RUSTDESK_FOLLOWUP` → счётчик `/run/rustdesk/followup`.
+    - `selkies` — `BISQUITE_SELKIES_ALLOW_NO_AUTH=true` → `SELKIES_ALLOW_NO_AUTH=1`;
+      `SELKIES_ENABLE_BASIC_AUTH` не нужен (basic auth включает пароль).
+    - `code-server` — `CODE_SERVER_PASSWORD=none` → `CODE_SERVER_ALLOW_NO_AUTH=1`; `CODE_SERVER_BIND`
+      по умолчанию `127.0.0.1`; `CODE_SERVER_VERSION` и mkcert удалены (пин `.deb`, `cert: true`);
+      `code-server@` не включается; остатки 4.x блокируют установку.
+    - `x11vnc` — `X11VNC_PASSFILE` удалён (файл — `/etc/x11vnc/passwd`); `-nopw` — только
+      `X11VNC_ALLOW_NO_PASSWORD=1`.
+    - `vino-vnc` — домен `vino` → `vino-vnc`; `VINO_PASSWORD_FILE` удалён; автозапуск —
+      `/etc/xdg/autostart`.
+    - `pixelflux-tegra`, `pixelflux-v4l2m2m` — `verify-<имя>.service` → `cream-configure@<имя>`;
+      отпечаток `.bisquite-<имя>` → `/var/lib/cream/ext/<имя>/stamp`;
+      `/opt/bisquite/pixelflux-tegra-runtime/gbm_shim.so` →
+      `/var/lib/cream/ext/pixelflux-tegra/gbm_shim.so`.
+    - `sensing-gmsl2-camera` — `bisquite-sensing-camera-ctl` →
+      `cream run sensing-gmsl2-camera camera-profile|boost-clock`; `bisquite-sensing-camera@.service`,
+      `bisquite-sensing-clock.service` → `sensing-gmsl2-camera@.service`, `sensing-gmsl2-clock.service`;
+      `99-bisquite-sensing-camera.rules` → `99-sensing-gmsl2-camera.rules`;
+      `bisquite-sensing-gmsl2.conf` (modprobe.d) → `sensing-gmsl2-camera.conf`;
+      `SENSING_CAMERA_PKG_REL` удалён.
+    - `l4t-boot-verify` — `bisquite-l4t-boot-verify.service` → `l4t-boot-verify.service`.
+    - `nvidia-jetpack` — `phase: [build]` → `targets: {build: exec, live: confirm}`; скрипты —
+      `/opt/cream/ext/nvidia-jetpack/scripts/`.
+
+### Добавлено
+
+* каталог на формате cream/v1 ([f163a3f](https://github.com/iamletenkov/cream-extensions/commit/f163a3f71b4a1b96fc28797c3978ae8e567c7d6e))
+
 ## [4.0.0](https://github.com/iamletenkov/cream-extensions/compare/v3.3.0...v4.0.0) (2026-10-19)
 
 
