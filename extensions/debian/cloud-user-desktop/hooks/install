@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# cream hook `install` of cloud-user-desktop: removes the vendor account named
+# in CLOUD_USER_DESKTOP_REMOVE together with its home directory.
+#
+# AT BUILD, NOT AT FIRST BOOT, and that is a choice. Waiting for cloud-init
+# sounds more careful, but until the first boot the image STILL carries the
+# vendor user with a publicly known password (Q-engineering: jetson/jetson;
+# measured 2026-09-06 on a live board: `passwd -S jetson` answers `P`). Nothing
+# is lost: /home/jetson held empty Public/Pictures/… and the only processes of
+# that user were the autologin session itself.
+#
+# THE PRICE: if the cloud-init seed is not read, no interactive account is left
+# on the device — only root with the vendor password. The root password is left
+# alone on purpose: taking it away would turn a failed boot into a brick.
+#
+# The vendor autologin pointing at the removed account is turned off by the
+# configure of desktop (depends) on its first run, before the display manager.
+#
+# Refuses (exit 1) a name of the wrong form, root and system accounts
+# (uid < 1000), and an account that survives userdel: an image must not carry
+# the known password silently.
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] cloud-user-desktop: $*"; }
+log_warn(){ >&2 echo "[WARN] cloud-user-desktop: $*"; }
+log_error(){ >&2 echo "[ERROR] cloud-user-desktop: $*"; }
+
+user="${CLOUD_USER_DESKTOP_REMOVE:-}"
+if [[ -z "$user" ]]; then
+    log_info "удаление вендорской учётки не запрошено (CLOUD_USER_DESKTOP_REMOVE)"
+    exit 0
+fi
+# cream checked the form already; checked again before the name reaches a command.
+if [[ ! "$user" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
+    log_error "CLOUD_USER_DESKTOP_REMOVE: имя учётки вида [a-z_][a-z0-9_-]*, получено другое"
+    exit 1
+fi
+
+entry="$(getent passwd "$user" || true)"
+if [[ -z "$entry" ]]; then
+    log_info "учётки '$user' нет — удалять нечего"
+    exit 0
+fi
+uid="$(cut -d: -f3 <<< "$entry")"
+if [[ ! "$uid" =~ ^[0-9]+$ ]] || (( 10#$uid < 1000 )); then
+    log_error "'$user' — системная учётка (uid $uid): удаляются только обычные (uid >= 1000)"
+    exit 1
+fi
+
+log_info "удаляю вендорскую учётку '$user' вместе с домашним каталогом"
+if ! userdel -r -- "$user" 2>/dev/null; then
+    log_warn "userdel -r отказал, пробую без домашнего каталога"
+    userdel -- "$user" 2>/dev/null || true
+fi
+if id -- "$user" >/dev/null 2>&1; then
+    log_error "'$user' осталась (занята процессом или сессией?) — образ вёз бы известный пароль"
+    exit 1
+fi
+log_info "'$user' удалена"
