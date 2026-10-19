@@ -1,0 +1,27 @@
+# kiosk (cream): Chromium in kiosk mode for the user %i, enabled by the
+# configure hook of kiosk (a link in graphical.target.wants).
+#
+# The browser runs as the session user, never as root. The settings come from
+# the domain file of cream (KEY=VALUE, systemd EnvironmentFile grammar) and
+# reach the wrapper as environment variables, not through a shell: ExecStart
+# has no `bash -c` and no $ substitution. The wrapper checks the form of every
+# value before chromium sees it, and finds the X authority at run time (it is
+# different under LightDM and GDM).
+[Unit]
+Description=Chromium kiosk mode for user %i
+After=graphical.target display-manager.service
+Wants=graphical.target
+
+[Service]
+Type=simple
+User=%i
+EnvironmentFile=-/etc/cream/kiosk/config
+ExecStart=/usr/local/lib/kiosk/run-kiosk.sh %i
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kiosk-chromium-%i
+
+[Install]
+WantedBy=graphical.target

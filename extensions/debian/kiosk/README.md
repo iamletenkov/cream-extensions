@@ -1,304 +1,120 @@
 # kiosk
 
-Chromium в режиме киоска: браузер разворачивается на весь экран после входа
-пользователя, которого создаёт cloud-init.
+Chromium в режиме киоска поверх работающего графического сеанса: браузер
+занимает весь экран от имени пользователя сеанса, которого менеджер входа
+пустил автологином (`desktop`, `DESKTOP_AUTOLOGIN=1`).
 
-> **С 3.0.0 — `KEY=VALUE` и библиотека настроек.** Настройки устройства —
-> `/etc/bisquite/kiosk/config` (домен `kiosk` библиотеки `bisquite-conf`,
-> схема `knobs`, ключи `KIOSK_*`) вместо `config.yaml`; прежний файл установка
-> переносит и удаляет. У расширения появились параметры VMFILE (те же имена).
-> `yq` больше не нужен. Копии настроек в `/var/lib/kiosk/config` нет — обёртка
-> читает файл сама.
->
-> **С 2.0.0 — раскладка 2.** Каталог расширения в госте —
-> `/opt/bisquite/kiosk/` (был `/opt/vmsetup/kiosk/`), в том числе в `ExecStart`
-> юнитов; `lib/get_cloud_user.sh` — ссылкой на общий код источника, а не копией.
+> **4.0.0 — cream/v1.** Хуки `install`, `configure` (стадия `graphical`, нужен
+> cream ≥ 1.1.0) и `remove`; настройки — домен cream `/etc/cream/kiosk/config`,
+> юнит читает его как `EnvironmentFile`; своего `configure-kiosk.service` нет.
+> В домашний каталог пользователя расширение больше **не пишет**: панель и
+> рабочий стол Xfce4 — системные умолчания xfconf в `/etc/xdg`, экранная
+> клавиатура GNOME — системный ключ dconf. Только Debian (на Ubuntu `chromium` —
+> snap, и киоск там не работал).
+
+<!-- check-names: off -->
+| Было (layout 2) | Стало |
+|---|---|
+| `/etc/bisquite/kiosk/config`, `bisquite-conf set kiosk …` | `/etc/cream/kiosk/config`, `cream set kiosk …` |
+| `configure-kiosk.service` | стадия `graphical` cream (`cream-configure@kiosk`) |
+| `/opt/bisquite/kiosk/run-kiosk.sh` | `/usr/local/lib/kiosk/run-kiosk.sh` (`files`) |
+| `~/.config/xfce4/xfconf/…/xfce4-{panel,desktop}.xml` от root | `/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/` (`files`) |
+| `~/.config/autostart/enable-keyboard.desktop` от root | `/etc/dconf/db/local.d/50-kiosk-keyboard` |
+<!-- check-names: on -->
 
 ## Манифест
 
 | Поле | Значение |
 |---|---|
-| `arch` | `amd64`, `arm64` |
-| `phase` | `build` (`install.sh`), `firstboot` (`configure.sh`) |
+| `platform` | `deb`, `amd64`/`arm64`, Debian |
+| `targets` | `build: exec`, `live: confirm` (`--accept-risk`: захват экрана) |
 | `provides` | `kiosk-browser` |
-| `requires` | `x11-server`, `display-manager` |
-| `conflicts` | `chromium-kiosk` |
+| `requires` | `x11-server`, `display-manager` — их дают `gnome`, `xfce4`, `lxde` |
+| `depends` | `cloud-user` (библиотека: пользователь cloud-init) |
+| `conflicts.extensions` | `chromium-kiosk` (оба забирают экран; установка поверх — отказ cream 67) |
+| хуки | `install`, `configure` (`graphical`), `remove` |
+| `files` | `kiosk-chromium@.service`, `run-kiosk.sh`, `xfce4-panel.xml`, `xfce4-desktop.xml` |
 
-`requires` объявлено родово — «любой X-сервер и любой дисплей-менеджер», —
-и это верно: путь к X authority больше не зашит в юните, а ищется в рантайме,
-под LightDM и под GDM он разный. **Резолвер `requires` не сверяет**, порядок
-держится строкой в VMFILE.
+## Подключение
 
-## Что делает
+```vmfile
+EXTENSION xfce4
+EXTENSION desktop DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_LOCK=1 DESKTOP_DISABLE_SCREEN_BLANK=1
+EXTENSION kiosk KIOSK_URL=https://dashboard.example.org
+```
 
-**Сборка** (`install.sh`)
+На живой машине — `cream install --accept-risk kiosk KIOSK_URL=…`; сменить
+страницу — `cream set kiosk KIOSK_URL=…` (cream перезапускает configure, тот —
+браузер).
 
-- ставит `curl`, `wget`, `x11-xserver-utils`, `x11-utils`, `xauth`,
-  `dbus-x11`, а затем `chromium` и `chromium-driver` — оба списка
-  с `|| exit 1`;
-- проверяет, что рядом с ним лежат все свои файлы
-  (`configure-kiosk.service`, `kiosk-chromium@.service`, `run-kiosk.sh`,
-  `configure.sh`, `knobs`, `knobs.apply`, `lib/get_cloud_user.sh`,
-  `lib/bisquite-conf`); **отсутствие любого — отказ сборки**. Раньше громким был только `run-kiosk.sh`, а ненайденные
-  юниты давали предупреждение и зелёную сборку: выходило, что обёртка важнее
-  юнита, который её запускает. Проверка смотрит **рядом с собой**
-  (`$SCRIPT_DIR`), а не по зашитому `/opt/bisquite/kiosk/`, — вопрос
-  «файл приехал рядом со мной?», а не «раскладка всё ещё такая?»;
-- кладёт `kiosk-chromium@.service` и `configure-kiosk.service`
-  в `/etc/systemd/system/`, включает **только** второй (первый — шаблон,
-  его поднимает `configure.sh` по имени пользователя);
-- регистрирует схему и создаёт `/etc/bisquite/kiosk/config` (`0644` — секретов
-  нет) один раз; параметры VMFILE — поверх, через проверку; прежний
-  `/etc/bisquite/kiosk/config.yaml` переносит и удаляет;
-- ставит бит исполнения на `run-kiosk.sh`.
+| Ключ | Умолчание | Что делает |
+|---|---|---|
+| `KIOSK_USER` | пусто — пользователь cloud-init | пользователь киоска (`[a-z_][a-z0-9_-]*`); root — отказ |
+| `KIOSK_URL` | `https://github.com/iamletenkov/bisquite` | страница: `http(s)://` или `file://`, без пробелов, кавычек и `$` |
+| `KIOSK_DISPLAY` | `:0` | X-дисплей |
+| `KIOSK_KEYBOARD_ENABLED` | `true` | экранная клавиатура — только под GNOME |
+| `KIOSK_CHROMIUM_FLAGS` | `--disable-pinch --overscroll-history-navigation=0` | флаги `--имя[=значение]` через пробел к базовому набору; заданное значение **заменяет** умолчание |
 
-**Первая загрузка** (`configure.sh`)
+## Что делают хуки
 
-- читает `/etc/bisquite/kiosk/config` библиотекой `bisquite-conf`;
-- резолвит пользователя: `KIOSK_USER`, иначе из cloud-init —
-  в обоих случаях с ожиданием до 120 секунд, 40 попыток по 3 с;
-- определяет рабочий стол и настраивает **только то, что этому столу
-  подходит** (см. ниже);
-- удаляет `/var/lib/kiosk/config` образов до 3.0.0;
-- **гасит прежние экземпляры** `kiosk-chromium@*`, включённые
-  в `graphical.target.wants/`, и только потом поднимает
-  `kiosk-chromium@<пользователь>.service`.
+- **`install`** — `chromium`, `x11-utils` (`xdpyinfo`), `x11-xserver-utils`,
+  `xauth`, `dbus-x11`; только недостающие, поставленные записываются для
+  `remove`. X-сервер и менеджер входа **не** ставит.
+- **`configure`** (на каждой загрузке после менеджера входа, после установки
+  и после `cream set`):
+  1. нет менеджера входа (`display-manager.service`) — предупреждение и 0,
+     экземпляры браузера выключаются;
+  2. пользователь — `KIOSK_USER`, иначе cloud-init (на загрузке ждёт до 60 с);
+     нет, неизвестен или root — предупреждение и 0;
+  3. экранная клавиатура под GNOME — системный ключ dconf (профиль `user` с
+     `system-db:local`, то же правило, что у `desktop` и `locale`);
+  4. `kiosk-chromium@<пользователь>` — ссылка в `graphical.target.wants`,
+     экземпляры других пользователей выключаются (смена `KIOSK_USER` не
+     оставляет двух браузеров на одном дисплее); на работающей машине —
+     `systemctl --no-block restart`.
+- **`remove`** — все экземпляры выключены, ключ клавиатуры снят (если наш),
+  свои пакеты удалены; юнит, обёртку и умолчания xfconf снимает cream.
 
-**Каждый запуск браузера** (`run-kiosk.sh`)
+## Безопасность
 
-- ищет X authority перебором кандидатов, проверяя каждого `xdpyinfo`;
-- ждёт дисплей до 60 секунд, при неудаче отказывает вслух со списком
-  проверенных путей;
-- читает `KIOSK_URL`, `KIOSK_DISPLAY`, `KIOSK_CHROMIUM_FLAGS` библиотекой
-  (от имени пользователя — файл `0644`);
-- запускает `chromium` с базовым набором флагов плюс `KIOSK_CHROMIUM_FLAGS`.
-
-## `yq` не нужен
-
-До 3.0.0 `configure.sh` читал `config.yaml` через `yq` и отказывал без него,
-а расширение `yq` не ставило — образ собирался зелёным, отказ приезжал на
-первую загрузку. Теперь файл настроек — `KEY=VALUE`, и читает его библиотека
-`bisquite-conf` (bash, без внешних утилит). `EXTENSION yq` в VMFILE ради
-киоска больше не нужен.
-
-## Расширение НЕ ставит X-сервер
-
-`install.sh` ставит клиентские утилиты X (`x11-xserver-utils`, `x11-utils`,
-`xauth`) и `dbus-x11`, но **не** `xorg` и не дисплей-менеджер. X-сервер
-даёт `gnome`, `xfce4` или `lxde`, а сессию пользователя — только их ручка
-`DESKTOP_AUTOLOGIN=1`: с 2.0.0 десктопных расширений автологин по умолчанию
-выключен, и без ручки киоску не во что запускаться (`bisquite-desktop set
-DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_LOCK=1 DESKTOP_DISABLE_SCREEN_BLANK=1`
-в `FIRSTBOOT_COMMAND`). Это
-записано в манифесте (`requires: [x11-server, display-manager]`), но
-**сборкой не проверяется**: топологической сортировки у резолвера нет,
-и киоск без десктопа соберётся зелёным. На устройстве это теперь видно
-в журнале: `run-kiosk.sh` минуту ищет дисплей, а потом печатает список
-проверенных путей и прямо говорит, что десктоп ставит не он.
-
-Отношение видно в юнитах: `kiosk-chromium@.service` несёт `DISPLAY=:0`,
-а `configure-kiosk.service` — `After=graphical.target … display-manager.service`.
+- Браузер — **от пользователя сеанса** (`User=%i`); обёртка от root отказывает.
+- Значения настроек доходят до браузера как переменные окружения юнита
+  (`EnvironmentFile`), без оболочки: в `ExecStart` нет `bash -c` и подстановок.
+  Обёртка ещё раз проверяет форму каждого значения (файл домена можно поправить
+  руками) и отказывает громко; адрес — отдельный последний аргумент `chromium`.
+- В `$HOME` пользователя root не пишет ничего.
 
 ## X authority ищется в рантайме
 
-Юнит раньше нёс `XAUTHORITY=/home/%i/.Xauthority`. Путь верен под LightDM
-и **не существует под GDM ≥ 42**, где authority лежит в
-`/run/user/<uid>/gdm/Xauthority`. Отказ был немым: `ExecStartPre` проверял
-дисплей тем же неверным authority, сдавался, а `Restart=always` крутил цикл
-раз в десять секунд навсегда — в журнале только «Failed to open display».
+`run-kiosk.sh` перебирает кандидатов (`$XAUTHORITY`, `~/.Xauthority`,
+`/run/user/<uid>/gdm/Xauthority`, `/run/lightdm/<user>/xauthority`, `-auth`
+работающего `Xorg`, старая раскладка GDM), проверяя каждого `xdpyinfo`, ждёт
+дисплей до 60 с и при неудаче печатает весь список: путь под LightDM и GDM ≥ 42
+разный, и прибитый в юните `~/.Xauthority` прежде давал немой цикл рестарта.
 
-Теперь путь ищет `run-kiosk.sh`: перебирает кандидатов (`$XAUTHORITY`,
-`~/.Xauthority`, `/run/user/<uid>/gdm/Xauthority`,
-`/run/lightdm/<user>/xauthority`, `-auth` работающего `Xorg`, legacy-раскладка
-GDM), проверяя каждого `xdpyinfo`, и при неудаче печатает весь список.
-Тот же приём и по той же причине уже применён в расширении `x11vnc` —
-замеры на живой ВМ под GDM и LightDM записаны в шапке
-`extensions/debian/x11vnc/run-x11vnc.sh`.
+## Рабочий стол
 
-Заодно вскрылось, что `xdpyinfo` расширение не ставило вовсе:
-`x11-xserver-utils` даёт `xset`/`xrandr`/`xhost`, а `xdpyinfo` лежит
-в `x11-utils`. Проверка работала только тогда, когда пакет приезжал прицепом
-за `xorg` от расширения десктопа, то есть зависела от порядка слоёв в VMFILE.
-Теперь он объявлен явно.
-
-## Расширение рассчитано на разные рабочие столы по-разному
-
-Две ветки настройки исторически рассчитаны на разные окружения, и до правки
-это нигде не проверялось: Xfce-конфиги раскладывались **безусловно**,
-в том числе под GNOME и LXDE, а экранная клавиатура работает только под GNOME.
-
-`configure.sh` теперь спрашивает гостя о нём самом — сначала какая сессия
-**работает** (`xfce4-session`, `gnome-shell`, `lxsession` у нужного
-пользователя), потом, если сессии ещё нет, что **установлено**:
-
-| Рабочий стол | Панель и иконки | Экранная клавиатура |
-|---|---|---|
-| Xfce4 | прячутся (xfconf-каналы `xfce4-desktop`, `xfce4-panel`) | нет, в журнал уходит предупреждение |
-| GNOME | не трогаются | включается через `gsettings` |
-| LXDE | не трогаются | нет, в журнал уходит предупреждение |
-| не определился | не трогаются | нет, в журнал уходит предупреждение |
-
-Строки «не трогаются» — не недоделка. Окно киоска полноэкранное поверх всего,
-панель под ним не видна; прятать её у каждого окружения пришлось бы своим
-способом, и ни один из них не проверялся.
-
-### Почему под Xfce4 конфиги перезаписываются на каждой загрузке
-
-`xfce4-desktop.xml` и `xfce4-panel.xml` — файлы, которые пишет **сторонний
-компонент** (`xfconf`), и расширение переписывает их целиком при каждом
-запуске `configure.sh`, то есть на каждой загрузке (`Type=oneshot` с
-`RemainAfterExit=yes` перезагрузку не переживает). Это решение, и вот оно:
-
-> Расширение вправе безусловно перезаписывать файл, если **настраивать его
-> некому**: либо файл создало само расширение и других писателей у него нет,
-> либо весь сеанс — продукт расширения, а не рабочее место человека.
-
-Граница «своего» файла проходит не по «кто создал», а по «кому разрешено
-менять». У киоска панель и рабочий стол **и есть** то, что расширение
-делает: человек там ничего не настраивает, а уехавший конфиг панели ломает
-сам киоск. Поэтому безусловная запись здесь — правильный исход правила,
-а не исключение из него.
-
-Обратный исход того же правила — у расширения `lxde`: `desktop.conf`
-сессии пишет `lxsession` на рабочем столе, где человек работает, и
-затирать его целиком нельзя. Разрешение «безусловно» ограничено двумя
-каналами `xfconf` и только под Xfce4; под GNOME и LXDE те же файлы были
-мусором в `~/.config`, выглядящим как настройка.
-
-## Параметры
-
-Имена, типы и умолчания — в схеме `knobs`; те же имена — параметры VMFILE:
-
-```vmfile
-EXTENSION kiosk KIOSK_URL=https://dashboard.example.org KIOSK_KEYBOARD_ENABLED=false
-```
-
-| Ключ | Умолчание | Кто читает | Что |
-|---|---|---|---|
-| `KIOSK_USER` | пусто — из cloud-init | `configure.sh` | пользователь киоска |
-| `KIOSK_URL` | `https://github.com/iamletenkov/bisquite` | `run-kiosk.sh` | страница киоска |
-| `KIOSK_DISPLAY` | `:0` | `run-kiosk.sh` | X-дисплей |
-| `KIOSK_KEYBOARD_ENABLED` | `true` | `configure.sh` | экранная клавиатура — только под GNOME |
-| `KIOSK_CHROMIUM_FLAGS` | `--disable-pinch --overscroll-history-navigation=0` | `run-kiosk.sh` | флаги Chromium через пробел |
-
-Прежний `config.yaml` (`USER`, `URL`, `DISPLAY`, `KEYBOARD_ENABLED`,
-`CHROMIUM_FLAGS`) переносится в эти ключи при установке расширения поверх
-образа, где он был.
-
-**`KIOSK_USER` перекрывает cloud-init.** Заданное значение сильнее: расширение
-ждёт **названного** пользователя (те же 120 секунд) и, не дождавшись,
-отказывает вслух, а не подставляет чужого. Ровно так работает
-`CODE_SERVER_USER` у соседнего `code-server`.
-
-**Умолчание `KIOSK_URL` — публичная страница.** В `configure.sh` когда-то
-стояло `http://192.168.202.785` (октета 785 не существует), а в `config.yaml` —
-`192.168.202.78`, адрес конкретной лаборатории; оба недостижимы для любого
-другого оператора, и молча. Умолчание теперь одно на всю цепочку — в схеме.
-
-Флаги из `KIOSK_CHROMIUM_FLAGS` добавляются **к** базовому набору
-(`--kiosk --noerrdialogs --disable-infobars --no-first-run --disable-translate
---disable-session-crashed-bubble --disable-features=TranslateUI`), а не
-заменяют его.
-
-## Что править и чем перезапускать
-
-Копия настроек одна — `/etc/bisquite/kiosk/config`:
-
-| Что менять | Как | Чем применяется |
-|---|---|---|
-| страница, дисплей, флаги, клавиатура, пользователь | `sudo bisquite-conf set kiosk KIOSK_URL=…` | хук ставит в очередь `configure-kiosk`: он перечитает настройки и перезапустит браузер |
-| логика запуска браузера, ожидание X | `/opt/bisquite/kiosk/run-kiosk.sh` | `systemctl restart kiosk-chromium@<user>` |
-
-Во время загрузки (команды первой загрузки манифеста) `set` только пишет:
-`configure-kiosk` стартует после графической цели и прочтёт файл сам.
-
-`USER` из прежнего `/var/lib/kiosk/config` был справочным: какой экземпляр
-шаблона запущен, решает `%i` в имени юнита.
-
-Старый экземпляр шаблона гасит сам `configure.sh`. Сменили `KIOSK_USER` — на
-следующем прогоне он переберёт `graphical.target.wants/kiosk-chromium@*`,
-выключит всё, кроме нужного экземпляра (`systemctl disable --now`), и только
-после этого включит новый. Раньше этого не делал никто: в `wants` оставались
-**оба**, и на следующей загрузке поднимались два браузера на один дисплей
-`:0`, оба с `Restart=always`.
-
-Ищется это именно в `graphical.target.wants/`, потому что там и лежит
-результат `systemctl enable` шаблонного юнита; сам шаблон включённых
-экземпляров не помнит, а `systemctl list-units 'kiosk-chromium@*'` показывает
-запущенные, а не включённые.
-
-**Устройство, где два экземпляра уже включены, новым образом не лечится.**
-Симлинк лежит в его образе: либо перезапись носителя, либо
-`systemctl disable --now kiosk-chromium@<старый>` руками.
-
-## Экранная клавиатура
-
-`KIOSK_KEYBOARD_ENABLED=true` включает **встроенную клавиатуру GNOME** —
-`gsettings set org.gnome.desktop.a11y.applications screen-keyboard-enabled true`,
-плюс `.desktop` в `~/.config/autostart/`, чтобы настройка применилась
-и в сессии, которой на момент настройки ещё нет.
-
-Других вариантов расширение не ставит и не умеет: `onboard`,
-`matchbox-keyboard` и `florence` в `install.sh` не упоминаются. Под Xfce
-и LXDE эта ветка ничего не даёт — `gsettings` там некому прочитать, — и
-`configure.sh` больше не изображает работу: он говорит об этом
-предупреждением и не кладёт бесполезный `.desktop` в автозапуск.
-
-## Подключение в VMFILE
-
-Десктоп идёт **первым**:
-
-```vmfile
-EXTENSION gnome
-EXTENSION kiosk
-```
-
-Порядок держится только этой строкой: `requires` резолвер не сверяет,
-а отказ из-за нарушенного порядка приезжает не на сборку, а на первую
-загрузку устройства.
-
-Ручной формы через `COPY_IN` больше нет: сборка кладёт каталог в
-`/opt/bisquite/kiosk/` и ставит рядом ссылку `lib` на общий код источника,
-а это делает только `EXTENSION` (раскладка 2, см. `docs/extensions.md`).
-
-Свои значения на сборке — параметрами `EXTENSION kiosk KIOSK_…=…` или
-`FIRSTBOOT_COMMAND "bisquite-conf set kiosk …"`; на устройстве —
-`bisquite-conf set kiosk …` в командах первой загрузки манифеста.
-
-Взаимоисключающе с `chromium-kiosk`: оба автостартом на `graphical.target`
-разворачивают полноэкранный браузер на одном месте. Сборка этого **не
-проверяет**.
+Окно киоска полноэкранное поверх всего. Под Xfce4 системные умолчания прячут
+панель и иконки и делают фон чёрным — для **всех** пользователей машины, у
+которых нет своего канала xfconf (свой `~/.config/xfce4/xfconf/…` их
+перекрывает). Под GNOME и LXDE эти файлы никто не читает.
 
 ## Диагностика
 
 ```bash
-systemctl status configure-kiosk.service
-systemctl status kiosk-chromium@<user>.service
-
-journalctl -u configure-kiosk -f
-journalctl -u kiosk-chromium@<user> -f
-
-bisquite-conf show kiosk               # итоговая конфигурация
-ls -la /home/<user>/.config/autostart  # автозапуск клавиатуры
+systemctl status 'cream-configure@kiosk' 'kiosk-chromium@*'
+journalctl -u cream-configure@kiosk -u 'kiosk-chromium@*' -b
+cream show kiosk
 ```
 
-- **Chromium не стартует** — `run-kiosk.sh` минуту ищет X authority
-  и печатает в журнал весь список проверенных путей с пометкой, какой
-  из них есть, а какой нет. Начинайте с этого списка, а не с догадок:
-  чаще всего в образе просто нет десктопа, и дисплея не существует.
-- **Клавиатура не появилась** — в журнале сказано, какой рабочий стол
-  определился. Клавиатура есть только под GNOME.
-- **Нужно больше времени на X11** — правьте цикл ожидания
-  в `run-kiosk.sh` (30 попыток по 2 с).
-- **`configure-kiosk` упал сразу** — это `check_prereqs`: в журнале прямо
-  сказано, чего нет (`chromium`, `lib/get_cloud_user.sh`, `lib/bisquite-conf`).
-- **`Timeout waiting for cloud-init user`** — 40 попыток по 3 с прошли зря;
-  если задан `KIOSK_USER`, в журнале будет другая строка —
-  «пользователь … из KIOSK_USER так и не появился», и молчаливого отката
-  на cloud-init нет намеренно.
+- **Браузер не стартует** — в журнале `kiosk-chromium@<user>` список
+  проверенных путей X authority; чаще всего в образе нет рабочего стола или
+  автологина.
+- **«не по форме»** — значение ключа поправлено в файле руками; исправить
+  `cream set kiosk KEY=…`.
+- **«менеджер входа не включён»** — нет `gnome`/`xfce4`/`lxde`.
 
-## Лицензия
+## Проверки
 
-Расширение распространяется на условиях публичной некоммерческой лицензии
-Bisquite (PolyForm Noncommercial 1.0.0, см. `LICENSE`). Для коммерческого
-использования требуется отдельная платная лицензия — см. `COMMERCIAL-LICENSE.md`.
+H — `tests/test-kiosk.sh`; L — `make test-live EXT=kiosk` (поверх `xfce4`,
+`tests/live.env`); экрана в контейнере нет, браузер там не запускается.

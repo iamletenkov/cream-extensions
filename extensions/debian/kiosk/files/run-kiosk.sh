@@ -1,5 +1,14 @@
 #!/usr/bin/env bash
 # Start Chromium in kiosk mode, resolving the X authority at runtime.
+# Installed by cream (`files`) as /usr/local/lib/kiosk/run-kiosk.sh and run by
+# kiosk-chromium@<user>.service as that user, without a shell.
+#
+# SETTINGS come from the environment — the unit's EnvironmentFile, the domain
+# file of cream /etc/cream/kiosk/config. cream checks the type of a key on
+# `cream set`, but the file can be edited by hand, so every value is checked
+# here once more by its form before chromium sees it: a value out of form is a
+# loud refusal, not a guess. No value is ever evaluated by a shell. Not set —
+# the defaults below (the same as in extension.yaml; the H test compares them).
 #
 # ПОЧЕМУ ОБЁРТКА, А НЕ ПУТЬ В ЮНИТЕ. В `kiosk-chromium@.service` было прибито
 #
@@ -30,20 +39,48 @@ log_info(){ >&2 echo -e "${GREEN}[INFO]${NC} kiosk: $*"; }
 log_warn(){ >&2 echo -e "${YELLOW}[WARN]${NC} kiosk: $*"; }
 log_error(){ >&2 echo -e "${RED}[ERROR]${NC} kiosk: $*"; }
 
+DEFAULT_URL="https://github.com/iamletenkov/bisquite"
+DEFAULT_DISPLAY=":0"
+DEFAULT_FLAGS="--disable-pinch --overscroll-history-navigation=0"
+URL_RE='^(https?|file)://[A-Za-z0-9._~:/?#@!&()*+,;=%-]+$'
+DISPLAY_RE='^:[0-9]{1,3}(\.[0-9]{1,2})?$'
+FLAG_RE='^--[a-z0-9][a-z0-9-]*(=[A-Za-z0-9._,:/=+-]*)?$'
+USER_RE='^[a-z_][a-z0-9_-]{0,31}$'
+
 USERNAME="${1:?usage: run-kiosk.sh <user>}"
+[[ "$USERNAME" =~ $USER_RE ]] || { log_error "имя пользователя не по форме: $(printf '%q' "$USERNAME")"; exit 1; }
+# The browser of a kiosk is the session user's, never root's: a page with a
+# root browser behind it is a root shell one exploit away.
+if [[ "$(id -u)" == 0 ]]; then
+    log_error "обёртка запущена от root — браузер киоска запускается только от пользователя сеанса"
+    exit 1
+fi
 UID_OF_USER="$(id -u "$USERNAME")"
 HOME_OF_USER="$(getent passwd "$USERNAME" | cut -d: -f6)"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Параметры — /etc/bisquite/kiosk/config через библиотеку bisquite-conf (без
-# `source`: файл правят манифесты). Нет файла — умолчания схемы knobs. До 3.0.0
-# их приносила копия /var/lib/kiosk/config через EnvironmentFile юнита.
-# shellcheck source=/dev/null
-source "$SCRIPT_DIR/lib/bisquite-conf"
-conf_load kiosk
-DISPLAY_NUM="$KIOSK_DISPLAY"
-URL="$KIOSK_URL"
-EXTRA_FLAGS_RAW="$KIOSK_CHROMIUM_FLAGS"
+URL="${KIOSK_URL:-$DEFAULT_URL}"
+DISPLAY_NUM="${KIOSK_DISPLAY:-$DEFAULT_DISPLAY}"
+# An unset key means the default; a key set to empty means "no extra flags".
+EXTRA_FLAGS_RAW="${KIOSK_CHROMIUM_FLAGS-$DEFAULT_FLAGS}"
+
+if [[ ! "$URL" =~ $URL_RE ]]; then
+    log_error "KIOSK_URL не по форме (http(s):// или file://, без пробелов, кавычек и \$): $(printf '%q' "$URL")"
+    exit 1
+fi
+if [[ ! "$DISPLAY_NUM" =~ $DISPLAY_RE ]]; then
+    log_error "KIOSK_DISPLAY не по форме (:N или :N.M): $(printf '%q' "$DISPLAY_NUM")"
+    exit 1
+fi
+extra_flags=()
+if [[ -n "$EXTRA_FLAGS_RAW" ]]; then
+    read -r -a extra_flags <<< "$EXTRA_FLAGS_RAW"
+fi
+for flag in "${extra_flags[@]}"; do
+    if [[ ! "$flag" =~ $FLAG_RE ]]; then
+        log_error "KIOSK_CHROMIUM_FLAGS: флаг не по форме (--имя[=значение]): $(printf '%q' "$flag")"
+        exit 1
+    fi
+done
 
 # Кандидаты в authority — в порядке убывания надёжности, у каждого источник
 # знания. Список пересобирается на каждой попытке: под GDM файл
@@ -106,7 +143,7 @@ if [[ -z "$AUTH" ]]; then
     for candidate in "${candidates[@]}"; do
         log_error "  $candidate $( [[ -r "$candidate" ]] && echo '(есть, но xdpyinfo не прошёл)' || echo '(нет)' )"
     done
-    log_error "расширение kiosk X-сервер и автологин НЕ ставит — их даёт gnome, xfce4 или lxde"
+    log_error "расширение kiosk X-сервер и автологин НЕ ставит — их дают gnome, xfce4 или lxde и desktop"
     exit 1
 fi
 log_info "authority: $AUTH"
@@ -115,7 +152,8 @@ export XAUTHORITY="$AUTH"
 export DISPLAY="$DISPLAY_NUM"
 
 # Базовый набор — тот же, что был зашит в юните. Флаги из KIOSK_CHROMIUM_FLAGS
-# ДОБАВЛЯЮТСЯ к нему, а не заменяют его.
+# ДОБАВЛЯЮТСЯ к нему (каждый проверен по форме выше), адрес — последним
+# отдельным аргументом: ни один не проходит через оболочку.
 args=(
     --kiosk
     --noerrdialogs
@@ -124,15 +162,8 @@ args=(
     --disable-translate
     --disable-session-crashed-bubble
     --disable-features=TranslateUI
+    "${extra_flags[@]}"
 )
-# Разбиение по пробелам, кавычки внутри значения не поддерживаются — так же,
-# как в прежнем `bash -c` с неэкранированным $CHROMIUM_FLAGS. Флаги Chromium
-# пробелов внутри себя не содержат, поэтому цена нулевая; если однажды
-# понадобится, значение придётся передавать массивом, а не строкой.
-if [[ -n "$EXTRA_FLAGS_RAW" ]]; then
-    read -r -a extra_flags <<< "$EXTRA_FLAGS_RAW"
-    args+=("${extra_flags[@]}")
-fi
 
 log_info "открываю $URL"
 exec chromium "${args[@]}" "$URL"
