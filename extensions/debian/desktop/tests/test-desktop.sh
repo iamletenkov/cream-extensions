@@ -66,7 +66,7 @@ exit 0'
 if [[ -e /proc/$$/fd/9 ]]; then echo open; else echo closed; fi > "$FAKE/runuser-lockfd"
 readlink /proc/$$/fd/0 > "$FAKE/runuser-stdin"
 [[ -e "$FAKE/runuser-fails" ]] && exit 1
-[[ -e "$FAKE/runuser-noisy" ]] && printf "\033[2J\033]0;title\007noisy\302\233x\n" >&2
+[[ -e "$FAKE/runuser-noisy" ]] && printf "\033[2J\033]0;title\007noisy\302\233x \302\302\233\233y \233z привет\ncream: forged\n" >&2
 [[ "$1" == -u && "$3" == -- ]] || exit 2
 shift 3; exec "$@"'
     ht_fake sleep
@@ -268,6 +268,11 @@ check "в пределе времени: timeout -k 5 30 runuser" ht_called '^ti
 check "вывод процесса пользователя дошёл" grep -q 'noisy' <<< "$(ht_out)"
 check_not "вывод процесса пользователя без ESC и BEL" grep -q $'[\033\007]' <<< "$(ht_out)"
 check_not "вывод процесса пользователя без C1 (CSI)" grep -q $'\302\233' <<< "$(ht_out)"
+check_not "вывод процесса пользователя без байтов C1 (и без обхода через вложенную пару)" \
+    env LC_ALL=C grep -q $'\233' <<< "$(ht_out)"
+check "текст UTF-8 из вывода пользователя сохранён" grep -q 'привет' <<< "$(ht_out)"
+check_not "строки пользователя не выдают себя за запись журнала" grep -q '^cream: forged' <<< "$(ht_out)"
+check "строки пользователя помечены" grep -q '^lxsession-user: cream: forged' <<< "$(ht_out)"
 eq "fd блокировки cream процессу пользователя не достаётся" closed "$(cat "$FAKE/runuser-lockfd")"
 eq "stdin процесса пользователя — /dev/null" /dev/null "$(cat "$FAKE/runuser-stdin")"
 : > "$FAKE/runuser-fails"
