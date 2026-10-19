@@ -4,7 +4,7 @@
 # Not Tegra-specific, unlike jetson-stats; the two install side by side.
 schema: cream/v1
 name: btop
-version: 2.0.0
+version: 2.0.1
 summary: TUI-монитор ресурсов btop — пакет apt или статическая сборка релиза по sha256
 cream: ">=1.0.0"
 platform:
@@ -12,6 +12,8 @@ platform:
   arch: [amd64, arm64]
 targets: {build: exec, live: "yes"}
 provides: [system-monitor]
+depends:
+  - {name: apt-guard, version: ">=1.0.0 <2"}
 hooks:
   install: {timeout: 15m}
   remove: {timeout: 10m}

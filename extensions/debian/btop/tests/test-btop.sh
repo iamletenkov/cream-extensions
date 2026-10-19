@@ -22,7 +22,9 @@ ht_init
 fresh() {
     ht_root "$EXT"
     printf 'aarch64\n' > "$FAKE/machine"
-    ht_fake apt-get 'if [[ "$*" == *" install "* || "$*" == install* ]]; then : > "$FAKE/installed"; fi; exit 0'
+    ht_fake apt-get 'if [[ "$1" == -s ]]; then v=Remv; [[ "$2" == purge ]] && v=Purg
+    for a in "${@:3}"; do echo "$v $a [1.0]"; done; cat "$FAKE/sim-extra" 2>/dev/null; exit 0; fi
+if [[ "$*" == *" install "* || "$*" == install* ]]; then : > "$FAKE/installed"; fi; exit 0'
     ht_fake apt-cache "printf 'btop:\n  Installed: (none)\n  Candidate: %s\n' '$1'"
     ht_fake dpkg-query '[[ -f "$FAKE/installed" ]] || exit 1; case "$*" in *Version*) printf 1.2.3-2 ;; *) printf installed ;; esac'
     ht_fake uname 'cat "$FAKE/machine"'
@@ -38,7 +40,7 @@ mkdir -p "$dir/btop/bin"; printf "#!/bin/sh\necho btop 1.4.4\n" > "$dir/btop/bin
 echo "== манифест =="
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "мажор 2" 2.0.0 "$(mf 'm["version"]')"
+eq "мажор 2" 2.0.1 "$(mf 'm["version"]')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
 eq "хуки install и remove" "['install', 'remove']" "$(mf 'sorted(m["hooks"])')"
 check "install с явным timeout" test -n "$(mf 'm["hooks"]["install"].get("timeout", "")')"
@@ -54,11 +56,20 @@ ht_hook install; eq "повтор install — 0" 0 "$?"
 eq "повтор не теряет «поставлено нами»" apt "$(cat "$STATE")"
 : > "$FAKE/calls"
 ht_hook remove; eq "remove — 0" 0 "$?"
-check "remove: apt-get remove btop" ht_called '^apt-get remove .*btop$'
+check "remove: apt-get remove btop" ht_called '^apt-get -q -y remove btop$'
 check_not "состояние снято" test -e "$STATE"
 : > "$FAKE/calls"
 ht_hook remove; eq "повтор remove — 0" 0 "$?"
-check_not "повтор remove ничего не удаляет" ht_called '^apt-get remove'
+check_not "повтор remove ничего не удаляет" ht_called '^apt-get .*remove'
+
+fresh 1.2.3-2
+ht_hook install; eq "install — 0" 0 "$?"
+echo 'Remv btop-themes [1.0]' > "$FAKE/sim-extra"
+: > "$FAKE/calls"
+ht_hook remove; eq "симуляция снимает чужой пакет — 1" 1 "$?"
+check "чужой пакет назван" grep -q 'btop-themes' "$ROOT/out"
+check_not "ничего не снято" ht_called '^apt-get -q -y remove'
+eq "состояние осталось" apt "$(cat "$STATE")"
 
 echo "== apt: пакет стоял до cream =="
 fresh 1.2.3-2
@@ -66,7 +77,7 @@ fresh 1.2.3-2
 ht_hook install; eq "install — 0" 0 "$?"
 eq "состояние: preexisting" preexisting "$(cat "$STATE")"
 ht_hook remove; eq "remove — 0" 0 "$?"
-check_not "чужой пакет не удаляется" ht_called '^apt-get remove'
+check_not "чужой пакет не удаляется" ht_called '^apt-get .*remove'
 
 echo "== статическая сборка (нет пакета) =="
 fresh '(none)'
@@ -79,7 +90,7 @@ eq "состояние: static" static "$(cat "$STATE")"
 check_not "apt-get install не звали" ht_called '^apt-get install'
 ht_hook remove; eq "remove — 0" 0 "$?"
 check_not "remove: бинарь удалён" test -e "$BIN"
-check_not "remove: apt-get remove не звали" ht_called '^apt-get remove'
+check_not "remove: apt-get remove не звали" ht_called '^apt-get .*remove'
 
 fresh ''
 ht_hook install; eq "пустой Candidate — тоже статическая" 0 "$?"
