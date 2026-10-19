@@ -1,7 +1,7 @@
 #!/bin/bash
 # Шаг 6: ЗАЛИВКА уже собранных образов на плату (--flash-only).
 #
-#     sudo /opt/nvidia-jetpack/06-flash.sh
+#     sudo /opt/cream/ext/nvidia-jetpack/scripts/06-flash.sh
 #
 # ЭТО НЕОБРАТИМО. Записывается:
 #   - загрузчик в QSPI-NOR на модуле;
@@ -329,7 +329,7 @@ else
 по SSH: загрузчик, разделы и GPT уже записаны, не хватает только
 содержимого APP. Разверни rootfs SSH-потоком, минуя NFS:
 
-    sudo /opt/nvidia-jetpack/07-flash-rootfs-ssh.sh
+    sudo /opt/cream/ext/nvidia-jetpack/scripts/07-flash-rootfs-ssh.sh
 
 Тот же объём по тому же кабелю проходил SSH-потоком с первого раза.
 Плату при этом НЕ обесточивай — из initrd она выйдет и обход станет

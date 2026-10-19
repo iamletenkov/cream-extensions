@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# cream hook `remove` of nvidia-jetpack: takes away what install put on — the
+# aarch64 binfmt file (only if it is still ours, byte for byte) and the packages
+# recorded in $CREAM_STATE_DIR/packages. Packages that were there before cream
+# stay, and so does everything the station scripts produced (/srv/l4t, BSP
+# trees, images): that is the operator's data. cream itself takes away the udev
+# rule (`files`) and the extension tree with the scripts. A repeat finds nothing
+# and exits 0.
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] nvidia-jetpack: $*"; }
+log_warn(){ >&2 echo "[WARN] nvidia-jetpack: $*"; }
+log_error(){ >&2 echo "[ERROR] nvidia-jetpack: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+EXT_DIR="${CREAM_EXT_DIR:?run by cream}"
+STATE="${CREAM_STATE_DIR:?run by cream}/packages"
+CONF="$R/etc/binfmt.d/qemu-aarch64.conf"
+
+conf_removed=""
+if [[ -L "$CONF" ]]; then
+    log_warn "/etc/binfmt.d/qemu-aarch64.conf — ссылка, не наш файл; оставляю"
+elif [[ -f "$CONF" ]]; then
+    if cmp -s -- "$EXT_DIR/files/qemu-aarch64.conf" "$CONF"; then
+        rm -f -- "$CONF"
+        conf_removed=1
+        log_info "снят /etc/binfmt.d/qemu-aarch64.conf"
+    else
+        log_warn "/etc/binfmt.d/qemu-aarch64.conf изменён не этим расширением — оставляю"
+    fi
+fi
+
+# The handler stays registered in the running kernel until systemd-binfmt
+# re-reads its files; same conditions as in install (live, systemd, not a container).
+if [[ -n "$conf_removed" && "${CREAM_PHASE:-}" == live && -d "$R/run/systemd/system" ]]; then
+    if command -v systemd-detect-virt >/dev/null 2>&1 && ! systemd-detect-virt --container --quiet; then
+        systemctl --no-block restart systemd-binfmt.service
+        log_info "systemd-binfmt перезапущен"
+    else
+        log_warn "контейнер: binfmt_misc общий с хостом — systemd-binfmt не перезапускаю"
+    fi
+fi
+
+ours=()
+if [[ -f "$STATE" ]]; then
+    mapfile -t ours < <(sed '/^$/d' "$STATE")
+fi
+if (( ${#ours[@]} )); then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get -q -y remove "${ours[@]}" || { log_error "apt-get remove ${ours[*]} не прошёл"; exit 1; }
+    log_info "удалены: ${ours[*]}"
+else
+    log_info "своих пакетов нет — apt не трогаю"
+fi
+rm -f -- "$STATE"
+log_info "готово; данные станции (WORK, по умолчанию /srv/l4t) оставлены"

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Ставит NVIDIA SDK Manager (GUI-заливка Jetson) на станцию прошивки.
 #
-#     sudo /opt/nvidia-jetpack/90-install-sdkmanager.sh
+#     sudo /opt/cream/ext/nvidia-jetpack/scripts/90-install-sdkmanager.sh
 #
 # Что важно знать до установки.
 #

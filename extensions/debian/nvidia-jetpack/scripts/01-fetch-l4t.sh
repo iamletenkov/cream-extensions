@@ -2,10 +2,10 @@
 # Шаг 1: скачивание L4T — BSP, sample rootfs и оверлей QSPI. Умолчания — AGX Orin
 # (JetPack 6.2, L4T 36.4.3); другая плата задаётся ПРОФИЛЕМ, а не правкой.
 #
-#     bash /opt/nvidia-jetpack/01-fetch-l4t.sh
-#     WORK=/mnt/big/jetson bash /opt/nvidia-jetpack/01-fetch-l4t.sh
-#     . /opt/nvidia-jetpack/profile.sh && load_profile agx-xavier 35.6.5
-#     bash /opt/nvidia-jetpack/01-fetch-l4t.sh
+#     bash /opt/cream/ext/nvidia-jetpack/scripts/01-fetch-l4t.sh
+#     WORK=/mnt/big/jetson bash /opt/cream/ext/nvidia-jetpack/scripts/01-fetch-l4t.sh
+#     . /opt/cream/ext/nvidia-jetpack/scripts/profile.sh && load_profile agx-xavier 35.6.5
+#     bash /opt/cream/ext/nvidia-jetpack/scripts/01-fetch-l4t.sh
 #
 # Качается ~2.4 GB. Скрипт идемпотентен: целые файлы повторно не качаются,
 # оборванные — докачиваются.
