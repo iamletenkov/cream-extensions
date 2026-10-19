@@ -584,6 +584,88 @@ mklabel probe15 'command=/usr/bin/probe a b c d e f g h'
 check "8 аргументов — можно" tp render 2>/dev/null
 check "8 аргументов — в teleport.yaml" grep -q '"/usr/bin/probe", "a", "b", "c", "d", "e", "f", "g", "h"' "$Y"
 rm -f "$CMDS/probe15"
+# The whole chain up to the root: every directory above the command is root's,
+# without write for group or others, and no symlink anywhere (the file too).
+mkdir -p "$ROOT/opt/tool/bin"; chmod 0755 "$ROOT/opt" "$ROOT/opt/tool" "$ROOT/opt/tool/bin"
+mkcmd /opt/tool/bin/probe
+mklabel probe16 'command=/opt/tool/bin/probe'
+check "команда в /opt/tool/bin — можно" tp render 2>/dev/null
+check "команда в /opt/tool/bin — в teleport.yaml" grep -q 'name: "probe16"' "$Y"
+chmod 0777 "$ROOT/opt/tool"
+skipped "каталог над командой с записью всем" probe16
+chmod 0755 "$ROOT/opt/tool"
+chmod 0775 "$ROOT/opt"
+mklabel probe17 'command=/opt/tool/bin/probe'
+skipped "каталог-предок с записью группе" probe17
+chmod 0755 "$ROOT/opt"
+echo "$ROOT/opt/tool/bin" >> "$FAKE/foreign"
+mklabel probe18 'command=/opt/tool/bin/probe'
+skipped "каталог команды — владелец не root" probe18
+: > "$FAKE/foreign"
+ln -s bin "$ROOT/usr/lbin"
+mklabel probe19 'command=/usr/lbin/probe'
+skipped "каталог в пути — символическая ссылка" probe19
+ln -s probe "$ROOT/usr/bin/probe-link"
+mklabel probe20 'command=/usr/bin/probe-link'
+skipped "команда — символическая ссылка" probe20
+chmod 0777 "$ROOT"
+tp render 2>"$TMP/err"; rc=$?
+eq "корень с записью всем — render цел" 0 "$rc"
+check "корень с записью всем — command-labels.d пропущен строкой журнала" grep -q "пропускаю $CMDS: каталог: каталог /: права" "$TMP/err"
+check_not "корень с записью всем — командных меток нет" grep -q 'stvor_agent' "$Y"
+chmod 0700 "$ROOT"
+# Under these stvor-agent.service has ProtectHome/PrivateTmp, and a user may
+# own them: no command from there, whatever the modes say.
+for d in /home/u /tmp /var/tmp /run/user/0; do
+    mkdir -p "$ROOT$d"; chmod 0755 "$ROOT$d" "$ROOT${d%/*}" 2>/dev/null
+    mkcmd "$d/probe"
+    mklabel probe22 "command=$d/probe"
+    skipped "команда под $d" probe22
+done
+mklabel probe23 'command=//home/u/probe'
+skipped "команда под //home" probe23
+chmod 0775 "$ROOT/etc/cream/teleport"
+tp render 2>"$TMP/err"; rc=$?
+eq "каталог над command-labels.d с записью группе — render цел" 0 "$rc"
+check "каталог над command-labels.d — строка журнала" grep -q "пропускаю $CMDS:" "$TMP/err"
+check_not "каталог над command-labels.d — командных меток нет" grep -q 'stvor_agent' "$Y"
+chmod 0755 "$ROOT/etc/cream/teleport"
+echo "$ROOT/etc/cream" >> "$FAKE/foreign"
+tp render 2>"$TMP/err"
+check "предок command-labels.d не root — строка журнала" grep -q "пропускаю $CMDS:" "$TMP/err"
+check_not "предок command-labels.d не root — командных меток нет" grep -q 'stvor_agent' "$Y"
+: > "$FAKE/foreign"
+tp render 2>/dev/null
+check "цепочка снова цела — метка на месте" grep -q 'name: "stvor_agent"' "$Y"
+
+echo "== apps.d: файл, каталог и цепочка до корня =="
+APPS="$ROOT/etc/cream/teleport/apps.d"
+chmod 0755 "$APPS"
+printf 'NAME=code-server\nURI=https://127.0.0.1:9002\n' > "$APPS/code-server.conf"; chmod 0644 "$APPS/code-server.conf"
+has_decl(){ tp render 2>"$TMP/err" && grep -q 'name: "code-server-lab-1"' "$Y"; }
+check "apps.d: объявление опубликовано" has_decl
+chmod 0775 "$APPS"
+check_not "apps.d с записью группе — объявлений нет" has_decl
+check "apps.d с записью группе — строка журнала" grep -q "пропускаю $APPS" "$TMP/err"
+check "apps.d с записью группе — приложения оператора целы" grep -q 'name: "web-lab-1"' "$Y"
+chmod 0755 "$APPS"
+chmod 0777 "$ROOT/etc/cream/teleport"
+check_not "каталог над apps.d с записью всем — объявлений нет" has_decl
+chmod 0755 "$ROOT/etc/cream/teleport"
+echo "$APPS" >> "$FAKE/foreign"
+check_not "apps.d не root — объявлений нет" has_decl
+: > "$FAKE/foreign"
+echo "$APPS/code-server.conf" >> "$FAKE/foreign"
+check_not "файл apps.d не root (и под корнем стенда) — пропущен" has_decl
+check "файл apps.d не root — строка журнала" grep -q "пропускаю $APPS/code-server.conf" "$TMP/err"
+: > "$FAKE/foreign"
+mv "$APPS" "$ROOT/etc/cream/teleport/apps.real"; ln -s apps.real "$APPS"
+check_not "apps.d — символическая ссылка: объявлений нет" has_decl
+rm -f -- "$APPS"; mv "$ROOT/etc/cream/teleport/apps.real" "$APPS"
+check "apps.d снова цел — объявление опубликовано" has_decl
+rm -f -- "$APPS/code-server.conf"
+tp render 2>/dev/null
+
 for i in 1 2 3 4 5 6 7 8; do mklabel "m$i" 'command=/usr/bin/probe'; done
 tp render 2>"$TMP/err"
 eq "9 файлов — в teleport.yaml 8 командных меток (кроме os_logins)" 8 \
