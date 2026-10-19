@@ -457,10 +457,14 @@ lxsession_user(){
             env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C.UTF-8 \
             "${BASH_SOURCE[0]}" lxsession-user "$conf" < /dev/null > "$out" 2>&1
     ) || rc=$?
-    # The output is the user's: no control characters into the journal (ESC
-    # sequences, C1 controls), bytes of UTF-8 text stay.
-    head -c 4096 "$out" | LC_ALL=C tr -d '\000-\011\013-\037\177' \
-        | LC_ALL=C sed 's/\xc2[\x80-\x9f]//g' >&2 || true
+    # The output is the user's: no control characters into the journal and no
+    # line passing for ours. iconv -c keeps valid UTF-8 only (a stray 0x80–0x9f
+    # byte goes), so C0 and DEL are ASCII bytes and C1 is exactly \xc2[\x80-\x9f]:
+    # deleting whole characters of valid UTF-8 cannot build a new one. Every
+    # line is marked as the user's.
+    head -c 4096 "$out" | iconv -c -f UTF-8 -t UTF-8 2>/dev/null \
+        | LC_ALL=C tr -d '\000-\011\013-\037\177' \
+        | LC_ALL=C sed -e 's/\xc2[\x80-\x9f]//g' -e 's/^/lxsession-user: /' >&2 || true
     rm -f -- "$out"
     if (( rc != 0 )); then
         log "lxsession: ${conf#"$R"} не исправлен от имени $user (код $rc)"
