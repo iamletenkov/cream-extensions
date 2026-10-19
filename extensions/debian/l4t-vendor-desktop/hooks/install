@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# cream hook `install` of l4t-vendor-desktop: checks that the vendor L4T R32
+# image carries a desktop — Xorg, a display manager, an X session — and installs
+# nothing. The capabilities x11-server, display-manager and desktop-session are
+# a promise to x11vnc, selkies and wallpaper; a promise without the thing behind
+# it would fail later, on the first boot of a board, so the check is here.
+#
+# Exit codes (spec §6.2, ruling R11): 20 — not L4T R32 (no /etc/nv_tegra_release
+# or another major release); 1 — a part of the desktop is missing (named in the
+# log); 0 — all three are there.
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] l4t-vendor-desktop: $*"; }
+log_warn(){ >&2 echo "[WARN] l4t-vendor-desktop: $*"; }
+log_error(){ >&2 echo "[ERROR] l4t-vendor-desktop: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+
+# Names from the image are data for the log: printable characters only.
+printable(){ printf '%s' "$1" | tr -cd '[:print:]'; }
+
+# --- 1. L4T R32? ---------------------------------------------------------------
+TEGRA_RELEASE="$R/etc/nv_tegra_release"
+if [[ ! -f "$TEGRA_RELEASE" ]]; then
+    log_warn "нет /etc/nv_tegra_release — это не образ NVIDIA L4T: рабочий стол ставят gnome, xfce4 или lxde"
+    exit 20
+fi
+# String comparison: the release line never goes to arithmetic.
+if [[ "$(sed -n '1s/^# R\([0-9]\{1,3\}\) (release).*/\1/p' "$TEGRA_RELEASE")" != 32 ]]; then
+    log_warn "L4T не R32 — у образов R36 рабочего стола вендора нет, его ставят gnome, xfce4 или lxde"
+    exit 20
+fi
+
+missing=0
+
+# --- 2. X server -----------------------------------------------------------------
+xorg=""
+for x in /usr/lib/xorg/Xorg /usr/bin/Xorg; do
+    if [[ -x "$R$x" ]]; then xorg="$x"; break; fi
+done
+if [[ -n "$xorg" ]]; then
+    log_info "X-сервер: $xorg"
+else
+    log_error "нет Xorg (/usr/lib/xorg/Xorg, /usr/bin/Xorg) — образ без X-сервера"
+    missing=1
+fi
+
+# --- 3. Display manager ----------------------------------------------------------
+# The enabled unit (a link that resolves inside the root) or Debian's
+# /etc/X11/default-display-manager naming a binary that exists.
+dm=""
+unit="$R/etc/systemd/system/display-manager.service"
+if [[ -L "$unit" ]]; then
+    target="$(readlink -- "$unit")"
+    [[ "$target" == /* ]] || target="/etc/systemd/system/$target"
+    if [[ -f "$R$target" ]]; then dm="$(basename -- "$target" .service)"; fi
+fi
+ddm="$R/etc/X11/default-display-manager"
+if [[ -z "$dm" && -f "$ddm" ]]; then
+    bin="$(head -n 1 -- "$ddm")"
+    if [[ "$bin" == /* && -x "$R$bin" ]]; then dm="$(basename -- "$bin")"; fi
+fi
+if [[ -n "$dm" ]]; then
+    log_info "менеджер входа: $(printable "$dm")"
+else
+    log_error "нет менеджера входа: ни display-manager.service, ни /etc/X11/default-display-manager с существующим бинарём"
+    missing=1
+fi
+
+# --- 4. X session ----------------------------------------------------------------
+sessions=()
+for s in "$R"/usr/share/xsessions/*.desktop; do
+    [[ -f "$s" ]] && sessions+=("$(printable "$(basename -- "$s")")")
+done
+if (( ${#sessions[@]} )); then
+    log_info "X-сессии: ${sessions[*]}"
+else
+    log_error "нет X-сессии в /usr/share/xsessions — менеджеру входа нечего открыть"
+    missing=1
+fi
+
+if (( missing )); then
+    log_error "рабочего стола вендора в образе нет целиком — способности x11-server, display-manager, desktop-session не даю"
+    exit 1
+fi
+log_info "готово: рабочий стол вендора на месте, ничего не ставилось"

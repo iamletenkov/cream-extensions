@@ -417,9 +417,9 @@ LightDM он разный, а под самим LightDM зависит от ег
 
 | Способность | Кто даёт | Откуда выведено |
 |---|---|---|
-| `x11-server` | `gnome`, `xfce4`, `lxde` | `apt-get install ... xorg xinput` (`hooks/install` у всех трёх) |
-| `display-manager` | `gnome`, `xfce4`, `lxde` | `systemctl enable gdm3`/`lightdm` + `set-default graphical.target` (`hooks/install`) |
-| `desktop-session` | `gnome`, `xfce4`, `lxde` | `task-gnome-desktop` / `xfce4 xfce4-goodies` / `lxde` |
+| `x11-server` | `gnome`, `xfce4`, `lxde`; `l4t-vendor-desktop` | `apt-get install ... xorg xinput` (`hooks/install` у всех трёх); `l4t-vendor-desktop` — Xorg образа вендора L4T R32, проверка без установки |
+| `display-manager` | `gnome`, `xfce4`, `lxde`; `l4t-vendor-desktop` | `systemctl enable gdm3`/`lightdm` + `set-default graphical.target` (`hooks/install`); `l4t-vendor-desktop` — менеджер входа образа вендора (проверка) |
+| `desktop-session` | `gnome`, `xfce4`, `lxde`; `l4t-vendor-desktop` | `task-gnome-desktop` / `xfce4 xfce4-goodies` / `lxde`; `l4t-vendor-desktop` — сессия в `/usr/share/xsessions` образа вендора (проверка) |
 | `container-runtime` | `docker` | Docker CE из apt-репозитория Docker |
 | `kiosk-browser` | `kiosk`, `chromium-kiosk` | обе реализации автостартом забирают экран |
 | `remote-desktop` | `x11vnc`, `vino-vnc` | `x11vnc@.service` на `rfbport` из `X11VNC_PORT`; у `vino-vnc` — `gsettings` `org.gnome.Vino` и автозапуск XDG (умолчание у обоих 5900) |
@@ -434,7 +434,7 @@ LightDM он разный, а под самим LightDM зависит от ег
 | `nocloud-cidata-seed` | `nocloud-cidata` | `/etc/cloud/cloud.cfg.d/zz-cream-nocloud.cfg` с `fs_label: cidata` |
 | `network-manager` | `network-manager` | пакеты `network-manager` и `wpasupplicant`, включённый `NetworkManager.service` |
 | `jetson-monitor` | `jetson-stats` | `jtop` из PyPI плюс `jtop.service`; данные идут из `tegrastats` и sysfs Tegra, а не из NVML |
-| `cuda` | `cuda-toolkit` | `cuda-toolkit-12-6` из `jetson/common`, `nvcc` в `/usr/local/cuda/bin` |
+| `cuda` | `cuda-toolkit` | `cuda-toolkit-12-6` из `jetson/common` (R36), `cuda-toolkit-10-2` или CUDA 10.2 образа (R32); `nvcc` в `/usr/local/cuda/bin` |
 | `tensorrt` | `tensorrt` | мета-пакет `tensorrt` плюс `python3-libnvinfer` и `nvidia-l4t-dla-compiler` |
 | `web-remote-desktop` | `selkies` | Selkies 2.0 (AppImage) на существующем X-дисплее, WebSocket на `127.0.0.1:8080`; `selkies@.service` от пользователя сессии |
 | `web-browser` | `firefox` | `firefox` из `packages.mozilla.org` с пином 1000 поверх транзитного пакета снапа |

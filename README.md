@@ -17,7 +17,7 @@ extensions/
     ├── cloud-user/  l4t/    # библиотеки (kind: library) — общий код других расширений
     ├── code-server/
     ├── chromium-kiosk/  kiosk/
-    ├── desktop/  gnome/  xfce4/  lxde/
+    ├── desktop/  gnome/  xfce4/  lxde/  l4t-vendor-desktop/
     ├── x11vnc/  vino-vnc/  selkies/
     ├── network-manager/  nocloud-cidata/  cloud-growroot/
     ├── nvidia/  nvidia-container-toolkit/  jetson-stats/
@@ -226,6 +226,9 @@ sha256. Подробнее — [docs/extensions.md](docs/extensions.md#сним�
 - `gnome`, `xfce4`, `lxde` дают `x11-server` + `display-manager` + `desktop-session`
   и взаимоисключающи (конфликт по способности `desktop-session`); ручки
   рабочего стола — домен расширения `desktop`, от которого они зависят;
+- `l4t-vendor-desktop` даёт те же три способности на Jetson Nano (L4T R32),
+  ничего не ставя: проверяет рабочий стол образа вендора; с тремя
+  остальными взаимоисключающ так же;
 - `x11vnc`, `vino-vnc` и `kiosk` требуют `x11-server` и `display-manager` —
   то самое отношение, которое держится только порядком слоёв в VMFILE.
   `x11vnc` и `vino-vnc` дают одну способность `remote-desktop`, но конфликта
