@@ -178,8 +178,15 @@ ICON=laptop
 | юнит экземпляра и его drop-in | `/etc/systemd/system/code-server@<пользователь>.service[.d]` (свой шаблон `code-server@.service` — не остаток) |
 | ссылки включения экземпляров | `/etc/systemd/system/*.wants/code-server@*.service`, `*.requires/…` (это расширение экземпляры не включает) |
 | служба настройки 4.x и её включение | `/etc/systemd/system/configure-code-server.service[.d]`, `*.wants/configure-code-server.service` |
-| `config.yaml` без аутентификации, написанный не этим расширением | `~<пользователь>/.config/code-server/config.yaml` с `auth: none` без заголовка `# Written by cream (extension code-server)` |
 | CA mkcert в системном хранилище | `/usr/local/share/ca-certificates/mkcert_development_CA_*.crt` |
+
+Проверяются **только пути во владении root**. Файлы в домашних каталогах root не
+открывает вовсе: иначе любой локальный пользователь положил бы себе `config.yaml` с
+`auth: none` и тем погасил бы службу или заблокировал установку, а FIFO на месте
+файла подвесил бы хук. Прежний `config.yaml` пользователя безвреден: configure
+переписывает его от имени пользователя, а обёртка не запустит `auth: none` без
+`CODE_SERVER_ALLOW_NO_AUTH=1`. Со стороны root к домашнему каталогу — только `stat`
+(есть ли каталог и `config.yaml`), без открытия файлов.
 
 Уборка:
 
@@ -188,7 +195,6 @@ sudo systemctl disable --now configure-code-server.service 'code-server@*.servic
 sudo rm -r -f -- /etc/systemd/system/configure-code-server.service* /etc/systemd/system/code-server@?*.service* \
     /etc/systemd/system/*.wants/configure-code-server.service /etc/systemd/system/*.wants/code-server@*.service
 sudo systemctl daemon-reload
-sudo rm ~<пользователь>/.config/code-server/config.yaml        # configure напишет свой
 # CA mkcert: его же инструментом…
 sudo CAROOT=~<пользователь>/.local/share/code-server/certs mkcert -uninstall
 # …или руками
@@ -213,7 +219,8 @@ sudo rm /usr/local/share/ca-certificates/mkcert_development_CA_*.crt && sudo upd
   `teleport/files/teleport.sh render`, `apply`, `remove`, обёртка `start` (отказ
   78, чистое окружение code-server), `write-config` (не по форме, чужой каталог), остатки 4.x (каждый вид — отказ
   `install` до сети и apt и отказ `configure` без старта; свой шаблон и свой
-  `config.yaml` с `auth: none` — не остатки).
+  `config.yaml` с `auth: none` — не остатки; чужой `config.yaml` с `auth: none` и
+  FIFO в чужом доме не мешают `install`/`configure` и не гасят службу — сторож 20 с).
 - **L** — `make test-live EXT=code-server` (`tests/live.env`: dep `cloud-user`,
   пароль — случайный секрет): установка `.deb`, повтор, `--reinstall` без
   изменений, аудит секрета (`ps`, журнал, реестр, `config`), загрузка, `remove`.
