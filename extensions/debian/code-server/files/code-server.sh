@@ -42,8 +42,8 @@
 # and rename — never through a symlink, and not at all when /etc/cream,
 # /etc/cream/teleport or apps.d is one. Harmless without the teleport extension.
 #
-# LEFTOVERS OF 4.x (units, enablement links, configs with `auth: none`, the
-# mkcert CA): install, configure and apply refuse with the list — see below.
+# LEFTOVERS OF 4.x (units, enablement links, the mkcert CA — root-owned paths
+# only): install, configure and apply refuse with the list — see below.
 #
 # systemctl in configure and apply: start/restart/stop only with --no-block
 # (configure runs at boot inside a systemd job, apply inside `cream set`). The
@@ -153,8 +153,12 @@ decide_auth(){
 # There is no transition (plan ruling R1). The 4.x extension left things that
 # start code-server around this extension's password check, or keep a trusted
 # root CA: its own instance units and their enablement links, the
-# configure-code-server.service with its link, user configs with `auth: none`
-# it wrote, and the mkcert CA in the system trust store. install refuses before
+# configure-code-server.service with its link, and the mkcert CA in the system
+# trust store. Only root-owned paths are looked at: nothing in a home directory
+# is opened by root (any user could plant a file there to block install or stop
+# the service, or a FIFO to hang the hook). An old config.yaml of the user is
+# harmless — write-config replaces it (as the user) and the wrapper refuses
+# `auth: none` without CODE_SERVER_ALLOW_NO_AUTH=1. install refuses before
 # changing anything, configure and apply refuse (the service is not started)
 # while any of them is there — the operator cleans up by the listed commands.
 CONFIG_HEADER="# Written by cream (extension code-server)"
@@ -163,7 +167,7 @@ CA_DIR="$R/usr/local/share/ca-certificates"
 
 # legacy_leftovers: one line per leftover (path on the machine), nothing when clean.
 legacy_leftovers(){
-    local f ent home conf
+    local f
     shopt -s nullglob
     # Instance units and drop-ins; the template code-server@.service is ours (files).
     for f in "$SYSTEMD_ETC"/code-server@?*.service "$SYSTEMD_ETC"/code-server@*.service.d \
@@ -177,18 +181,6 @@ legacy_leftovers(){
     done
     for f in "$CA_DIR"/mkcert_development_CA_*.crt; do echo "${f#"$R"}"; done
     shopt -u nullglob
-    # User configs without authentication not written by this extension. Only
-    # regular files are looked at (a symlink is not followed); only a match is told.
-    while IFS= read -r ent; do
-        IFS=: read -r _ _ _ _ _ home _ <<< "$ent"
-        [[ "$home" == /* ]] || continue
-        conf="$R$home/.config/code-server/config.yaml"
-        [[ -f "$conf" && ! -L "$conf" ]] || continue
-        if grep -qE '^auth:[[:space:]]*none[[:space:]]*$' -- "$conf" 2>/dev/null \
-            && ! grep -qF -- "$CONFIG_HEADER" "$conf" 2>/dev/null; then
-            echo "${conf#"$R"}"
-        fi
-    done < <(getent passwd 2>/dev/null || true)
 }
 
 # refuse_on_leftovers: 0 — clean; otherwise the list and the cleanup to stderr, 1.
@@ -203,7 +195,6 @@ refuse_on_leftovers(){
     log "  sudo rm -r -f -- /etc/systemd/system/configure-code-server.service* /etc/systemd/system/code-server@?*.service* \\"
     log "      /etc/systemd/system/*.wants/configure-code-server.service /etc/systemd/system/*.wants/code-server@*.service"
     log "  sudo systemctl daemon-reload"
-    log "  config.yaml с auth: none — удалить (sudo rm <путь>); configure расширения напишет свой"
     log "  CA mkcert: sudo CAROOT=<домашний каталог>/.local/share/code-server/certs mkcert -uninstall,"
     log "      или sudo rm /usr/local/share/ca-certificates/mkcert_development_CA_*.crt && sudo update-ca-certificates --fresh"
     return 1

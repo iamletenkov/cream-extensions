@@ -201,12 +201,11 @@ plant() {
         instance-wants) mkdir -p "$sd/multi-user.target.wants"; ln -s /lib/systemd/system/code-server@.service "$sd/multi-user.target.wants/code-server@alice.service" ;;
         configure-unit) mkdir -p "$sd"; printf '[Service]\nExecStart=/bin/bash /opt/bisquite/code-server/configure.sh\n' > "$sd/configure-code-server.service" ;;
         configure-wants) mkdir -p "$sd/cloud-init.target.wants"; ln -s ../configure-code-server.service "$sd/cloud-init.target.wants/configure-code-server.service" ;;
-        old-config) mkdir -p "$(dirname "$CONF")"; printf 'bind-addr: 0.0.0.0:9001\nauth: none\ncert: /home/alice/.local/share/code-server/certs/localhost.crt\n' > "$CONF" ;;
         mkcert-ca) mkdir -p "$ROOT/usr/local/share/ca-certificates"; : > "$ROOT/usr/local/share/ca-certificates/mkcert_development_CA_1234.crt" ;;
     esac
 }
 # check-names: on
-LEFTOVERS="instance instance-dropin instance-wants configure-unit configure-wants old-config mkcert-ca"
+LEFTOVERS="instance instance-dropin instance-wants configure-unit configure-wants mkcert-ca"
 for k in $LEFTOVERS; do
     cs_root; plant "$k"
     ht_fake dpkg 'echo amd64'; ht_fake dpkg-query 'exit 1'; ht_fake apt-get; ht_fake curl
@@ -227,6 +226,37 @@ cs_root; plant configure-unit; plant instance-wants; ht_fake dpkg 'echo amd64'; 
 check "перечень: configure-code-server.service" grep -q 'configure-code-server.service' "$ROOT/out"
 check "перечень: ссылка включения" grep -q 'multi-user.target.wants/code-server@alice.service' "$ROOT/out"
 check "инструкция: systemctl disable" grep -q 'systemctl disable' "$ROOT/out"
+echo "== файлы в домашних каталогах — не остатки, root их не открывает =="
+# Any local user can put anything into a home directory: a config.yaml with
+# `auth: none` must not stop the service or block install (DoS), and root must
+# not open such files at all (a FIFO would hang it).
+# with_watchdog <seconds> <hook> <env…>: the hook, killed if it hangs.
+with_watchdog() {
+    local t="$1"; shift
+    ht_hook "$@" & local pid=$!
+    ( sleep "$t"; kill "$pid" 2>/dev/null ) & local w=$!
+    wait "$pid"; local rc=$?
+    kill "$w" 2>/dev/null; wait "$w" 2>/dev/null
+    return "$rc"
+}
+cs_root; ht_secret CODE_SERVER_PASSWORD "$PW"
+mkdir -p "$ROOT/home/bob/.config/code-server"
+printf 'bind-addr: 0.0.0.0:9001\nauth: none\n' > "$ROOT/home/bob/.config/code-server/config.yaml"
+ht_hook configure CREAM_REASON=boot; eq "чужой config.yaml с auth: none — configure 0" 0 "$?"
+check "служба стартует" started alice
+check_not "служба не гасится" ht_called '^systemctl stop --no-block code-server@alice'
+check_not "чужой config.yaml не назван остатком" grep -q 'остатки' "$ROOT/out"
+ht_fake dpkg 'echo amd64'; ht_fake dpkg-query "echo installed $VER"
+ht_hook install; eq "чужой config.yaml — install 0" 0 "$?"
+cs_root; ht_secret CODE_SERVER_PASSWORD "$PW"
+mkdir -p "$ROOT/home/bob/.config/code-server"
+mkfifo "$ROOT/home/bob/.config/code-server/config.yaml"
+ht_fake dpkg 'echo amd64'; ht_fake dpkg-query "echo installed $VER"
+with_watchdog 20 install; eq "FIFO в чужом доме — install не зависает, 0" 0 "$?"
+with_watchdog 20 configure CREAM_REASON=boot; eq "FIFO в чужом доме — configure не зависает, 0" 0 "$?"
+check "служба стартует" started alice
+timeout 1 sh -c ': > "$1"' _ "$ROOT/home/bob/.config/code-server/config.yaml" 2>/dev/null || true
+
 echo "== остатки: свой шаблон и свой config.yaml — не остатки =="
 cs_root; mkdir -p "$ROOT/etc/systemd/system"; cp "$EXT/files/code-server@.service" "$ROOT/etc/systemd/system/"
 ht_hook configure CREAM_REASON=boot CODE_SERVER_ALLOW_NO_AUTH=1; eq "свой шаблон юнита — configure 0" 0 "$?"
