@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# cream hook `install` of x11vnc: the packages. The unit x11vnc@.service is laid
+# by cream (field `files`), the password file and the instance of the session
+# user are configure's (stage graphical, every boot). Paths of the machine go
+# under $CREAM_ROOT (hooktest).
+#
+# xauth and x11-utils are explicit: the wrapper needs xdpyinfo to test an
+# authority candidate, and x11vnc has them only in Recommends. openssl builds
+# the password file from stdin (x11vnc -storepasswd takes it in argv only).
+# What this install put on is recorded in $CREAM_STATE_DIR/installed — remove
+# takes away only x11vnc itself, and only when it was ours.
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] x11vnc: $*"; }
+log_warn(){ >&2 echo "[WARN] x11vnc: $*"; }
+log_error(){ >&2 echo "[ERROR] x11vnc: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}"
+
+apt_retry(){
+    local i
+    for i in 1 2 3; do
+        "$@" && return 0
+        log_warn "попытка $i: $* — не удалась, повтор через 10 с"
+        sleep 10
+    done
+    return 1
+}
+pkg_installed(){ dpkg-query -W -f='${db:Status-Status}\n' "$1" 2>/dev/null | grep -qx installed; }
+
+if [[ ! -s "$STATE/installed" ]] && ! pkg_installed x11vnc; then
+    install -d -m 0755 "$STATE"
+    echo x11vnc > "$STATE/installed"
+fi
+
+export DEBIAN_FRONTEND=noninteractive
+apt_retry apt-get -q update || { log_error "apt-get update не прошёл"; exit 1; }
+apt_retry apt-get -q -y install x11vnc xauth x11-utils openssl \
+    || { log_error "x11vnc, xauth, x11-utils, openssl не установились"; exit 1; }
+
+# Before 2.0.0 the settings lived in /etc/default/bisquite-x11vnc; never read
+# since — one source of truth.
+if [[ -e "$R/etc/default/bisquite-x11vnc" || -L "$R/etc/default/bisquite-x11vnc" ]]; then
+    rm -f -- "$R/etc/default/bisquite-x11vnc"
+    log_info "удалён прежний /etc/default/bisquite-x11vnc"
+fi
+log_info "готово: порт ${X11VNC_PORT:-5900}, слушает ${X11VNC_LISTEN:-localhost}; сервер включит configure для пользователя сессии"

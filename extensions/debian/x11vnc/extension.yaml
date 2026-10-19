@@ -1,28 +1,60 @@
+# x11vnc — VNC access to the X11 desktop of the cloud-init user: the system
+# template unit x11vnc@<user>.service, loopback only by default.
+#
+# install   — x11vnc, xauth, x11-utils, openssl; the unit is laid by cream
+#             (files); the legacy /etc/default/bisquite-x11vnc goes.
+# configure — every boot, stage graphical after the display manager: the
+#             password file /etc/x11vnc/passwd (0600, owned by the session user)
+#             from the secret X11VNC_PASSWORD, or the marker nopw when it is
+#             empty; x11vnc@<user> on, stale instances off. A password that
+#             cannot be built is a failure, never -nopw (plan ruling R4).
+# apply     — the same without waiting for the user, instance restarted.
+# remove    — instances off, password file gone, x11vnc only when ours.
+schema: cream/v1
 name: x11vnc
-version: 4.0.0
-layout: 2
-# 4.0.0: настройки — домен x11vnc библиотеки bisquite-conf (схема knobs):
-#        установка не переписывает файл, проверяет значения; пароль —
-#        secret:hook (X11VNC_PASSFILE меняет только хук).
-# 2.0.0: файл параметров переехал в /etc/bisquite/x11vnc/config (был
-#        /etc/default/bisquite-x11vnc; прежний не читается, установка удаляет).
-family: deb
-arch: [amd64, arm64]
-# build     — install.sh ставит x11vnc и кладёт x11vnc@.service;
-# firstboot — configure.sh включает x11vnc@<пользователь>.service, а имя
-#             пользователя приходит из cloud-init уже на устройстве.
-phase: [build, firstboot]
+version: 5.0.0
+summary: VNC к рабочему столу X11 пользователя cloud-init — x11vnc@<пользователь>, по умолчанию только петля
+cream: ">=1.1.0"
+platform:
+  family: deb
+  arch: [amd64, arm64]
+  os: [{id: debian}, {id: ubuntu}]
+targets:
+  build: exec
+  live: "yes"
 provides: [remote-desktop]
-# x11-server      — сервер прицепляется к DISPLAY=:0;
-# display-manager — `Requires=display-manager.service` в юните.
-#
-# Требование родовое, и это верно: путь к X authority больше не зашит
-# в юните, а ищется в рантайме — под LightDM и под GDM он разный, а под
-# самим LightDM зависит от его конфига, а не от имени пакета. Различать
-# в манифесте «какой именно дисплей-менеджер» значило бы зафиксировать ось,
-# которая ответа не определяет.
-#
-# Ровно то отношение, которое сегодня держится только порядком слоёв
-# в четырёх VMFILE: desktop, затем x11vnc.
+# The X authority is found at runtime (it differs under LightDM and GDM), so the
+# requirement is generic: any X server, any display manager.
 requires: [x11-server, display-manager]
-conflicts: []
+depends:
+  - {name: cloud-user, version: ">=1.0.0 <2"}
+hooks:
+  install: {timeout: 15m}
+  configure:
+    stage: graphical
+    after: [display-manager.service]
+    timeout: 2m
+  apply: {timeout: 1m}
+  remove: {timeout: 10m}
+config:
+  keys:
+    X11VNC_PORT:
+      type: port
+      default: "5900"
+      description: "порт RFB"
+    X11VNC_DISPLAY:
+      type: "re:^:[0-9]+(\\.[0-9]+)?$"
+      default: ":0"
+      description: "X-дисплей"
+    X11VNC_LISTEN:
+      type: "enum:localhost,all"
+      default: localhost
+      description: "localhost — только петля (доступ ssh-туннелем), all — все интерфейсы"
+    X11VNC_PASSWORD:
+      type: str
+      default: ""
+      empty: true
+      secret: file
+      description: "пароль VNC (значимы первые 8 символов); пусто — сервер без пароля; задаётся только через stdin: cream set x11vnc X11VNC_PASSWORD=-"
+files:
+  - {src: files/x11vnc@.service, dst: /etc/systemd/system/x11vnc@.service, mode: "0644"}
