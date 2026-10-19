@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# cream hook `remove` of code-server — the code is files/code-server.sh (its header).
+set -euo pipefail
+exec "${CREAM_EXT_DIR:?run by cream}/files/code-server.sh" remove
