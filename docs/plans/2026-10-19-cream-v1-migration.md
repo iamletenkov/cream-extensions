@@ -415,3 +415,5 @@ depends `l4t` (opencv, pytorch), requires `cuda`; `check-system-python.py`, `con
    у файла один владелец; `make ci` и живые прогоны на хосте — по одному.
 9. **P-проверки (плата, ВМ с GPU, сборка через bisquite) — вне CI.** Выпуск 5.0.0 их не ждёт (машин нет, решение владельца),
    но STATUS перечисляет каждую; первая сборка образа через bisquite с cream — приёмка плана bisquite.
+
+**Заметка для Task 29 (squash в main):** из BREAKING CHANGE коммита 68f5f0f (firewall) не переносить фразу об открытом по умолчанию SSH — исправлено 12fefd9, SSH закрыт как раньше.
