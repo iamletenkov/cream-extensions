@@ -8,6 +8,7 @@ cloud-init. По умолчанию слушает только петлю (до
 > пароль — в `/etc/cream/vino-vnc/secrets`); донастройка — `cream-configure@vino-vnc`
 > (стадия `system` до менеджера входа). **В домашний каталог больше ничего не пишется**:
 > настройки — системные базы dconf с блокировками, автозапуск — `/etc/xdg/autostart`.
+> Без пароля vino **выключен**, если не задан явный `VINO_ALLOW_NO_PASSWORD=1`.
 > Таблица переименований — ниже.
 
 ## Зачем отдельное расширение, а не режим `x11vnc`
@@ -47,7 +48,8 @@ GNOME и живёт внутри пользовательской сессии. 
 | `VINO_PORT` | `5900` | порт 5000–50000 (диапазон `alternative-port` схемы `org.gnome.Vino`) |
 | `VINO_LISTEN` | `localhost` | `localhost` — только петля, `all` — все интерфейсы |
 | `VINO_ENCRYPTION` | `false` | `require-encryption` |
-| `VINO_PASSWORD` | пусто | секрет (`secret: file`); пусто — без аутентификации |
+| `VINO_PASSWORD` | пусто | секрет (`secret: file`); пусто — vino **выключен** |
+| `VINO_ALLOW_NO_PASSWORD` | `0` | `1` — разрешить vino без аутентификации при пустом `VINO_PASSWORD` (предупреждение при каждом configure) |
 
 ```bash
 echo 'пароль' | sudo cream set vino-vnc VINO_PASSWORD=-   # только stdin
@@ -59,18 +61,26 @@ sudo cream set vino-vnc VINO_LISTEN=all
 
 ## Что делает
 
-- **`install`**: `vino`, `dconf-cli`, `libglib2.0-bin`, `dbus`; автозапуск
-  `/etc/xdg/autostart/vino-server.desktop` — копия `.desktop` пакета с
-  `X-GNOME-Autostart-enabled=true` (у пользовательского юнита vino нет `[Install]`, а путь
-  к бинарю зависит от выпуска — поэтому копия, а не свой файл).
+- **`install`**: `vino`, `dconf-cli`, `libglib2.0-bin`, `dbus`.
 - **`configure`** — на каждой загрузке до менеджера входа и после `cream set`:
+  - автозапуск `/etc/xdg/autostart/vino-server.desktop` — копия `.desktop` пакета с
+    `X-GNOME-Autostart-enabled=true` (у пользовательского юнита vino нет `[Install]`, а
+    путь к бинарю зависит от выпуска — поэтому копия). **Только** при пароле или
+    `VINO_ALLOW_NO_PASSWORD=1`; иначе снят — vino не стартует («пароль не задан — vino
+    выключен»), а метод аутентификации остаётся `['vnc']` — без пароля никто не войдёт;
   - `/etc/dconf/db/vino-vnc` (0644): `prompt-enabled=false` (подтверждать некому),
-    `require-encryption`, `authentication-methods` (`['vnc']` с паролем, `['none']` без),
+    `require-encryption`, `authentication-methods` (`['none']` — только при
+    `VINO_ALLOW_NO_PASSWORD=1`, иначе `['vnc']`),
     `network-interface` (`'lo'` или все), порт; все ключи **заблокированы** — база
     пользователя их не перекрывает;
-  - `/etc/dconf/db/vino-vnc-secret` (0640 `root:<основная группа пользователя сессии>`):
-    `vnc-password` в base64 (так хочет ключ — то есть сам пароль), заблокирован. Читает её
-    только пользователь сессии, другим dconf отказывает. Пароля нет — базы нет;
+  - `/etc/dconf/db/vino-vnc-secret` (0640 `root:<личная группа пользователя сессии>`):
+    `vnc-password` в base64 (так хочет ключ — то есть сам пароль), заблокирован. Группа
+    обязана быть личной — по имени пользователя, без других членов в `/etc/group` и без
+    других учёток с тем же основным gid; иначе (`users` и т. п.) — сбой `configure`, без
+    ослабления. Читает базу только пользователь сессии. Пароля нет — базы нет;
+  - прежний `/etc/vino/vnc-password.b64` (4.x) при пустом секрете не удаляется и не
+    используется: vino выключен, в журнале — как перенести пароль
+    (`echo 'пароль' | sudo cream set vino-vnc VINO_PASSWORD=-`);
   - `/etc/dconf/profile/user`: строки `system-db:vino-vnc-secret` и `system-db:vino-vnc`
     (профиль `desktop` с `system-db:local` сохраняется).
 - **`remove`**: базы, строки профиля и автозапуск сняты; пакет `vino` — только если его
@@ -132,8 +142,9 @@ Wayland — это работа рабочего стола (`gnome`) и `deskto
 
 ## Проверки
 
-- **H** — `tests/test-vino-vnc.sh`: манифест; автозапуск в `/etc/xdg`; нет пароля — нет
-  секретной базы, `['none']`; есть — база 0640 с группой пользователя, пароля нет в
+- **H** — `tests/test-vino-vnc.sh`: манифест; нет пароля без ключа — автозапуска нет,
+  `['vnc']`; ключ — `['none']` и предупреждение; унаследованный файл без секрета —
+  выключено, файл не тронут; общая или непустая группа — сбой; есть — база 0640 с группой пользователя, пароля нет в
   общей базе, argv, окружении и журнале; повтор не переписывает; ссылка на месте базы
   или профиля — сбой; профиль `desktop` сохраняется; отказ `dconf compile` — сбой;
   `remove`; в домашний каталог не пишется ничего.

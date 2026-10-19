@@ -5,8 +5,9 @@
 #             (files); the legacy /etc/default/bisquite-x11vnc goes.
 # configure — every boot, stage graphical after the display manager: the
 #             password file /etc/x11vnc/passwd (0600, owned by the session user)
-#             from the secret X11VNC_PASSWORD, or the marker nopw when it is
-#             empty; x11vnc@<user> on, stale instances off. A password that
+#             from the secret X11VNC_PASSWORD; empty — the server stays off,
+#             unless X11VNC_ALLOW_NO_PASSWORD=1 (then the marker nopw);
+#             x11vnc@<user> on, stale instances off. A password that
 #             cannot be built is a failure, never -nopw (plan ruling R4).
 # apply     — the same without waiting for the user, instance restarted.
 # remove    — instances off, password file gone, x11vnc only when ours.
@@ -55,6 +56,10 @@ config:
       default: ""
       empty: true
       secret: file
-      description: "пароль VNC (значимы первые 8 символов); пусто — сервер без пароля; задаётся только через stdin: cream set x11vnc X11VNC_PASSWORD=-"
+      description: "пароль VNC (значимы первые 8 символов); пусто — сервер выключен; задаётся только через stdin: cream set x11vnc X11VNC_PASSWORD=-"
+    X11VNC_ALLOW_NO_PASSWORD:
+      type: bool
+      default: "0"
+      description: "1 — разрешить сервер без пароля при пустом X11VNC_PASSWORD (предупреждение при каждом configure и старте); 0 — без пароля сервер выключен"
 files:
   - {src: files/x11vnc@.service, dst: /etc/systemd/system/x11vnc@.service, mode: "0644"}

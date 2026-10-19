@@ -45,8 +45,21 @@ env > "$FAKE/dconf.env"
 [[ "$1" == compile ]] || exit 0
 [[ -f "$FAKE/dconf-fail" ]] && exit 1
 ( cd "$3" && find . -type f | LC_ALL=C sort | while read -r f; do echo "## $f"; cat "$f"; done ) > "$2"'
-    ht_fake getent '[[ "$1" == passwd && "$2" == alice ]] && echo "alice:x:1000:1000::/home/alice:/bin/bash"'
-    ht_fake id '[[ "${*: -1}" == alice ]] || exit 1; case "$1" in -gn) echo alice ;; *) echo 1000 ;; esac'
+    # passwd/group of the fakes: $FAKE/passwd, $FAKE/group (alice — personal group).
+    printf '%s\n' 'alice:x:1000:1000::/home/alice:/bin/bash' 'bob:x:1001:100::/home/bob:/bin/bash' > "$FAKE/passwd"
+    printf '%s\n' 'alice:x:1000:' 'users:x:100:' > "$FAKE/group"
+    ht_fake getent '
+f="$FAKE/$1"; [[ -f "$f" ]] || exit 2
+if [[ -z "${2-}" ]]; then cat "$f"; exit 0; fi
+grep -E "^$2:" "$f" || exit 2'
+    ht_fake id '
+u="${*: -1}"; line="$(grep -E "^$u:" "$FAKE/passwd")" || exit 1
+gid="$(cut -d: -f4 <<< "$line")"
+case "$1" in
+    -gn) grep -E "^[^:]*:[^:]*:$gid:" "$FAKE/group" | cut -d: -f1 ;;
+    -g) echo "$gid" ;;
+    *) cut -d: -f3 <<< "$line" ;;
+esac'
     ht_fake chgrp
     ht_fake apt-get
     ht_fake dpkg-query 'exit 1'
@@ -76,25 +89,34 @@ eq "after cloud-init" "['cloud-init.service']" "$(mf 'm["hooks"]["configure"]["a
 eq "before менеджеров входа" "['display-manager.service', 'gdm.service', 'gdm3.service', 'lightdm.service']" "$(mf 'm["hooks"]["configure"]["before"]')"
 eq "пароль — secret: file" file "$(mf 'm["config"]["keys"]["VINO_PASSWORD"]["secret"]')"
 eq "VINO_PASSWORD_FILE больше нет" False "$(mf '"VINO_PASSWORD_FILE" in m["config"]["keys"]')"
+eq "без пароля — только явным ключом, по умолчанию 0" "bool 0" "$(mf 'm["config"]["keys"]["VINO_ALLOW_NO_PASSWORD"]["type"] + " " + m["config"]["keys"]["VINO_ALLOW_NO_PASSWORD"]["default"]')"
 for old in install.sh configure.sh knobs knobs.apply knobs.secret configure-vino-vnc.service; do
     check_not "layout 2: $old убран" test -e "$EXT/$old"
 done
 
-echo "== install: пакеты и автозапуск в /etc/xdg =="
+echo "== install: пакеты =="
 fresh
 ht_hook install; eq "install — 0" 0 "$?"
 for p in vino dconf-cli; do check "ставит $p" grep -qE "^apt-get .*install( .*)? $p( |\$)" "$FAKE/calls"; done
+check_not "автозапуск пишет configure, не install" test -e "$AUTO"
+check_not "в домашний каталог ничего" compgen -G "$ROOT/home/alice/*"
+
+echo "== configure: пароля нет, ключа нет — vino выключен, аутентификация не снята =="
+fresh
+mkdir -p "${AUTO%/*}"; : > "$AUTO"
+ht_hook configure CREAM_REASON=boot; eq "configure — 0" 0 "$?"
+check "authentication-methods=['vnc'] (без пароля — никто)" grep -qxF "authentication-methods=['vnc']" "$PUB"
+check_not "автозапуска нет" test -e "$AUTO"
+check_not "секретной базы нет" test -e "$SEC"
+check "предупреждение «vino выключен»" grep -q 'пароль не задан — vino выключен' <(ht_out)
+
+echo "== configure: пароля нет, VINO_ALLOW_NO_PASSWORD=1 — без аутентификации, с предупреждением =="
+fresh
+ht_hook configure CREAM_REASON=boot VINO_ALLOW_NO_PASSWORD=1; eq "configure — 0" 0 "$?"
+check "предупреждение БЕЗ ПАРОЛЯ" grep -q 'БЕЗ ПАРОЛЯ' <(ht_out)
 check "автозапуск в /etc/xdg/autostart" grep -qx 'X-GNOME-Autostart-enabled=true' "$AUTO"
 check "автозапуск — копия файла пакета" grep -qx 'Exec=/usr/libexec/vino-server' "$AUTO"
 eq "автозапуск 0644" 644 "$(stat -c %a "$AUTO")"
-check_not "в домашний каталог ничего" compgen -G "$ROOT/home/alice/*"
-ino="$(stat -c %i "$AUTO")"
-ht_hook install; eq "повтор install — 0" 0 "$?"
-eq "повтор: автозапуск не переписан" "$ino" "$(stat -c %i "$AUTO")"
-
-echo "== configure: пароля нет — без секретной базы, аутентификации нет =="
-fresh
-ht_hook configure CREAM_REASON=boot; eq "configure — 0" 0 "$?"
 check "профиль: user-db первым" test "$(head -n1 "$PROFILE")" = user-db:user
 check "профиль: system-db:vino-vnc" grep -qx 'system-db:vino-vnc' "$PROFILE"
 check "база настроек есть" test -f "$PUB"
@@ -118,6 +140,7 @@ check "require-encryption=true" grep -qx 'require-encryption=true' "$PUB"
 check_not "пароля в общей базе нет" grep -qF "$B64" "$PUB"
 check "секретная база есть" test -f "$SEC"
 eq "секретная база 0640" 640 "$(stat -c %a "$SEC")"
+check "автозапуск есть" test -f "$AUTO"
 check "группа — пользователя сессии" ht_called '^chgrp alice '
 check "пароль в секретной базе base64" grep -qxF "vnc-password='$B64'" "$SEC"
 check "пароль заблокирован" grep -qx '/org/gnome/desktop/remote-access/vnc-password' "$SEC"
@@ -127,17 +150,49 @@ check_not "временных каталогов не осталось" compgen 
 check_not "в домашний каталог ничего" compgen -G "$ROOT/home/alice/*"
 
 echo "== повтор configure: без изменений =="
-ip="$(stat -c %i "$PUB")"; is="$(stat -c %i "$SEC")"; pr="$(sha256sum "$PROFILE")"
+ip="$(stat -c %i "$PUB")"; is="$(stat -c %i "$SEC")"; pr="$(sha256sum "$PROFILE")"; ia="$(stat -c %i "$AUTO")"
 ht_hook configure CREAM_REASON=apply VINO_PORT=5901 VINO_LISTEN=all VINO_ENCRYPTION=true; eq "повтор — 0" 0 "$?"
 eq "база настроек не переписана" "$ip" "$(stat -c %i "$PUB")"
 eq "секретная база не переписана" "$is" "$(stat -c %i "$SEC")"
 eq "профиль тот же" "$pr" "$(sha256sum "$PROFILE")"
+eq "автозапуск не переписан" "$ia" "$(stat -c %i "$AUTO")"
 
-echo "== пароль снят — секретная база снимается =="
+echo "== пароль снят без ключа — секретная база снимается, vino выключен =="
 : > "$FAKE/secret"
 ht_hook configure CREAM_REASON=apply; eq "configure — 0" 0 "$?"
 check_not "секретной базы нет" test -e "$SEC"
-check "authentication-methods=['none']" grep -qxF "authentication-methods=['none']" "$PUB"
+check "authentication-methods=['vnc']" grep -qxF "authentication-methods=['vnc']" "$PUB"
+check_not "автозапуска нет" test -e "$AUTO"
+
+echo "== общая группа пользователя — сбой, без ослабления =="
+fresh
+printf '%s' "$PASS" > "$FAKE/secret"
+printf '%s\n' 'alice:x:1000:100::/home/alice:/bin/bash' > "$FAKE/passwd"
+ht_hook configure CREAM_REASON=boot; rc=$?
+check "основная группа users — сбой configure" test "$rc" -ne 0
+check_not "секретная база не записана" test -e "$SEC"
+check "сообщение про личную группу" grep -q 'личн' <(ht_out)
+fresh
+printf '%s' "$PASS" > "$FAKE/secret"
+printf '%s\n' 'alice:x:1000:bob' 'users:x:100:' > "$FAKE/group"
+ht_hook configure CREAM_REASON=boot; rc=$?
+check "в группе alice есть bob — сбой configure" test "$rc" -ne 0
+check_not "секретная база не записана" test -e "$SEC"
+fresh
+printf '%s' "$PASS" > "$FAKE/secret"
+printf '%s\n' 'alice:x:1000:1000::/home/alice:/bin/bash' 'carol:x:1002:1000::/home/carol:/bin/bash' > "$FAKE/passwd"
+ht_hook configure CREAM_REASON=boot; rc=$?
+check "группа alice — основная и у carol — сбой configure" test "$rc" -ne 0
+
+echo "== унаследованный /etc/vino/vnc-password.b64 без секрета — выключено, файл не тронут =="
+fresh
+mkdir -p "$ROOT/etc/vino"; printf 'bGVnYWN5' > "$ROOT/etc/vino/vnc-password.b64"
+sum="$(sha256sum "$ROOT/etc/vino/vnc-password.b64")"
+ht_hook configure CREAM_REASON=boot VINO_ALLOW_NO_PASSWORD=1; eq "configure — 0" 0 "$?"
+eq "файл не тронут" "$sum" "$(sha256sum "$ROOT/etc/vino/vnc-password.b64")"
+check_not "автозапуска нет и с ключом" test -e "$AUTO"
+check "authentication-methods=['vnc']" grep -qxF "authentication-methods=['vnc']" "$PUB"
+check "подсказка, как перенести пароль" grep -qF 'cream set vino-vnc VINO_PASSWORD=-' <(ht_out)
 
 echo "== подмена ссылкой — отказ =="
 fresh

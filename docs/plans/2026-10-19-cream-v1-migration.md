@@ -25,7 +25,7 @@
 - [ ] Task 15: `code-server`
 - [ ] Task 16: `kiosk` + `chromium-kiosk`
 - [ ] Task 17: `selkies`
-- [ ] Task 18: `x11vnc` + `vino-vnc`
+- [x] Task 18: `x11vnc` + `vino-vnc`
 - [ ] Task 19: `rustdesk` + `jetson-stats`
 - [x] Task 20: `nvidia` + `nvidia-container-toolkit`
 - [x] Task 21: `nvidia-jetpack`

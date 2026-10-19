@@ -63,8 +63,10 @@ log_warn(){ >&2 echo -e "${YELLOW}[WARN]${NC} x11vnc: $*"; }
 log_error(){ >&2 echo -e "${RED}[ERROR]${NC} x11vnc: $*"; }
 
 # The password decision, built by configure (files/x11vnc.sh): the rfbauth file
-# (0600, owned by this user) or the marker nopw — the only way to -nopw.
-# Neither, or a file this user cannot read: a refusal, never -nopw.
+# (0600, owned by this user), or -nopw — only with the marker nopw (derived by
+# configure) AND X11VNC_ALLOW_NO_PASSWORD=1 in the root-owned config, with a
+# warning on every start. Anything else, or a file this user cannot read: a
+# refusal, never -nopw.
 PASSFILE=/etc/x11vnc/passwd
 NOPW=/etc/x11vnc/nopw
 
@@ -79,8 +81,13 @@ decide_auth(){
         log_error "починить: sudo cream configure x11vnc"
         echo refuse; return 1
     fi
-    if [[ -f "$NOPW" ]]; then
+    if [[ -f "$NOPW" && "${X11VNC_ALLOW_NO_PASSWORD:-0}" == 1 ]]; then
+        log_warn "сервер БЕЗ ПАРОЛЯ: X11VNC_ALLOW_NO_PASSWORD=1 (снять: cream set x11vnc X11VNC_ALLOW_NO_PASSWORD=0)"
         echo "-nopw"; return 0
+    fi
+    if [[ -f "$NOPW" ]]; then
+        log_error "есть $NOPW, но X11VNC_ALLOW_NO_PASSWORD не 1 — без пароля не поднимаю"
+        echo refuse; return 1
     fi
     log_error "нет ни $PASSFILE, ни решения «без пароля» ($NOPW) — configure x11vnc не отработал"
     echo refuse; return 1

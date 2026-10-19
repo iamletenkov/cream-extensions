@@ -1,13 +1,15 @@
 # vino-vnc — vino, the VNC server of GNOME, inside the session of the
 # cloud-init user; loopback only by default.
 #
-# install   — vino, dconf-cli, libglib2.0-bin, dbus; autostart
-#             /etc/xdg/autostart/vino-server.desktop (a copy of the package's).
+# install   — vino, dconf-cli, libglib2.0-bin, dbus.
 # configure — every boot, stage system after cloud-init.service and BEFORE the
 #             display manager (plan ruling R5): the settings are system dconf
 #             databases with locks — /etc/dconf/db/vino-vnc and, for the
 #             password (secret VINO_PASSWORD), vino-vnc-secret 0640
-#             root:<group of the session user>; nothing in the home directory.
+#             root:<personal group of the session user> (a shared group is a
+#             failure); autostart /etc/xdg/autostart/vino-server.desktop only
+#             with a password or VINO_ALLOW_NO_PASSWORD=1 (fail-closed);
+#             nothing in the home directory.
 #             No own apply: `cream set` restarts configure.
 # remove    — databases, profile lines and autostart gone; vino only when ours.
 # No conflict with x11vnc: both default to port 5900 and are told apart by a
@@ -55,4 +57,8 @@ config:
       default: ""
       empty: true
       secret: file
-      description: "пароль VNC (значимы первые 8 символов); пусто — без аутентификации; задаётся только через stdin: cream set vino-vnc VINO_PASSWORD=-"
+      description: "пароль VNC (значимы первые 8 символов); пусто — vino выключен; задаётся только через stdin: cream set vino-vnc VINO_PASSWORD=-"
+    VINO_ALLOW_NO_PASSWORD:
+      type: bool
+      default: "0"
+      description: "1 — разрешить vino без аутентификации при пустом VINO_PASSWORD (предупреждение при каждом configure); 0 — без пароля vino выключен"

@@ -78,6 +78,7 @@ eq "стадия graphical" graphical "$(mf 'm["hooks"]["configure"]["stage"]')"
 eq "after display-manager" "['display-manager.service']" "$(mf 'm["hooks"]["configure"]["after"]')"
 eq "пароль — secret: file" file "$(mf 'm["config"]["keys"]["X11VNC_PASSWORD"]["secret"]')"
 eq "X11VNC_PASSFILE больше нет" False "$(mf '"X11VNC_PASSFILE" in m["config"]["keys"]')"
+eq "без пароля — только явным ключом, по умолчанию 0" "bool 0" "$(mf 'm["config"]["keys"]["X11VNC_ALLOW_NO_PASSWORD"]["type"] + " " + m["config"]["keys"]["X11VNC_ALLOW_NO_PASSWORD"]["default"]')"
 eq "юнит — files" /etc/systemd/system/x11vnc@.service "$(mf '",".join(f["dst"] for f in m["files"])')"
 unit="$EXT/files/x11vnc@.service"
 check "юнит зовёт обёртку из дерева cream" grep -q 'ExecStart=/bin/bash /opt/cream/ext/x11vnc/files/run-x11vnc.sh %i' "$unit"
@@ -97,9 +98,20 @@ done
 check_not "legacy /etc/default/bisquite-x11vnc удалён" test -e "$ROOT/etc/default/bisquite-x11vnc"
 check "состояние: x11vnc поставлен нами" grep -qx x11vnc "$STATE/installed"
 
-echo "== configure: пароля нет — файла нет, явный отказ от пароля =="
+echo "== configure: пароля нет и ключа нет — сервер не включается =="
 fresh
+mkdir -p "$ROOT/etc/x11vnc"; : > "$NOPW"   # a marker made by hand is not the truth
+ln -s /etc/systemd/system/x11vnc@.service "$WANTS/x11vnc@alice.service"
 ht_hook configure CREAM_REASON=boot; eq "configure — 0" 0 "$?"
+check_not "файла пароля нет" test -e "$PF"
+check_not "маркер, сделанный руками, снят" test -e "$NOPW"
+check_not "x11vnc@alice выключен" test -L "$WANTS/x11vnc@alice.service"
+check_not "перезапуска нет" ht_called '^systemctl --no-block restart'
+check "предупреждение про ключ" grep -q 'X11VNC_ALLOW_NO_PASSWORD' <(ht_out)
+
+echo "== configure: пароля нет, X11VNC_ALLOW_NO_PASSWORD=1 — явный отказ от пароля =="
+fresh
+ht_hook configure CREAM_REASON=boot X11VNC_ALLOW_NO_PASSWORD=1; eq "configure — 0" 0 "$?"
 check_not "файла пароля нет" test -e "$PF"
 check "маркер nopw есть" test -f "$NOPW"
 check "x11vnc@alice включён" test -L "$WANTS/x11vnc@alice.service"
@@ -138,11 +150,34 @@ fresh
 printf '%s' "$PASS" > "$FAKE/secret"
 ht_hook configure CREAM_REASON=apply >/dev/null
 
+echo "== пароль есть и ключ разрешает без пароля — побеждает пароль =="
+ht_hook configure CREAM_REASON=apply X11VNC_ALLOW_NO_PASSWORD=1; eq "configure — 0" 0 "$?"
+check "файл пароля на месте" test -f "$PF"
+check_not "маркера nopw нет" test -e "$NOPW"
+
 echo "== пароль снят — файл снимается =="
 : > "$FAKE/secret"
-ht_hook configure CREAM_REASON=apply; eq "configure — 0" 0 "$?"
+ht_hook configure CREAM_REASON=apply X11VNC_ALLOW_NO_PASSWORD=1; eq "configure — 0" 0 "$?"
 check_not "файла пароля нет" test -e "$PF"
 check "маркер nopw есть" test -f "$NOPW"
+
+echo "== унаследованный файл пароля без секрета cream — выключено, файл не тронут =="
+fresh
+mkdir -p "$ROOT/etc/x11vnc"; printf 'legacy01' > "$PF"; chmod 0600 "$PF"
+ln -s /etc/systemd/system/x11vnc@.service "$WANTS/x11vnc@alice.service"
+sum="$(sha256sum "$PF")"
+ht_hook configure CREAM_REASON=boot X11VNC_ALLOW_NO_PASSWORD=1; eq "configure — 0" 0 "$?"
+eq "унаследованный файл не тронут" "$sum" "$(sha256sum "$PF")"
+check_not "маркера nopw нет и с ключом" test -e "$NOPW"
+check_not "сервер выключен" test -L "$WANTS/x11vnc@alice.service"
+check_not "перезапуска нет" ht_called '^systemctl --no-block restart'
+check "подсказка, как перенести пароль" grep -qF 'cream set x11vnc X11VNC_PASSWORD=-' <(ht_out)
+printf '%s' "$PASS" > "$FAKE/secret"
+ht_hook configure CREAM_REASON=apply; eq "секрет задан — configure 0" 0 "$?"
+check_not "файл построен из секрета, не унаследованный" grep -q legacy01 "$PF"
+: > "$FAKE/secret"
+ht_hook configure CREAM_REASON=apply; eq "секрет снят — configure 0" 0 "$?"
+check_not "свой файл при пустом пароле снимается" test -e "$PF"
 
 echo "== подмена ссылкой — отказ, по ссылке не пишем =="
 fresh
@@ -188,7 +223,7 @@ ht_hook configure CREAM_REASON=apply; eq "без пользователя — 0"
 check_not "ничего не включено" ht_called '^systemctl enable'
 fresh
 rm -f "$SYSD/display-manager.service"
-ht_hook configure CREAM_REASON=apply; eq "без менеджера входа — 0" 0 "$?"
+ht_hook configure CREAM_REASON=apply X11VNC_ALLOW_NO_PASSWORD=1; eq "без менеджера входа — 0" 0 "$?"
 check_not "экземпляр не включён" ht_called '^systemctl enable'
 check "файл решения о пароле всё равно записан" test -f "$NOPW"
 
@@ -214,16 +249,23 @@ check "экземпляр выключен" ht_called '^systemctl disable x11vnc
 check_not "файла пароля нет" test -e "$PF"
 check_not "каталога /etc/x11vnc нет" test -e "$ROOT/etc/x11vnc"
 ht_hook remove; eq "повтор remove — 0" 0 "$?"
+fresh
+mkdir -p "$ROOT/etc/x11vnc"; printf 'legacy01' > "$PF"
+ht_hook remove; eq "remove с унаследованным файлом — 0" 0 "$?"
+check "remove не снимает чужой (унаследованный) файл пароля" test -f "$PF"
 
 echo "== обёртка: пароль задан, файла нет — отказ, а не -nopw =="
-wrap() { # wrap <passfile> <nopw>: the -rfbauth/-nopw decision of the wrapper
-    "$EXT/files/run-x11vnc.sh" --decide-auth "$1" "$2" 2>&1
+wrap() { # wrap <passfile> <nopw> [allow]: the -rfbauth/-nopw decision of the wrapper
+    X11VNC_ALLOW_NO_PASSWORD="${3:-0}" "$EXT/files/run-x11vnc.sh" --decide-auth "$1" "$2" 2>&1
 }
 fresh
 mkdir -p "$ROOT/etc/x11vnc"
 eq "нет ни файла, ни маркера — отказ" "refuse" "$(wrap "$PF" "$NOPW" | tail -n1)"
 : > "$NOPW"
-eq "маркер nopw — -nopw" "-nopw" "$(wrap "$PF" "$NOPW" | tail -n1)"
+eq "маркер без ключа — отказ" "refuse" "$(wrap "$PF" "$NOPW" 0 | tail -n1)"
+eq "маркер и X11VNC_ALLOW_NO_PASSWORD=1 — -nopw" "-nopw" "$(wrap "$PF" "$NOPW" 1 | tail -n1)"
+check "-nopw — предупреждение в журнал при каждом старте" grep -q 'БЕЗ ПАРОЛЯ' <(wrap "$PF" "$NOPW" 1)
+eq "ключ без маркера — отказ" "refuse" "$(rm -f "$NOPW"; wrap "$PF" "$NOPW" 1 | tail -n1; : > "$NOPW")"
 printf 'xxxxxxxx' > "$PF"; chmod 0600 "$PF"
 eq "файл есть — -rfbauth" "-rfbauth $PF" "$(wrap "$PF" "$NOPW" | tail -n1)"
 chmod 0000 "$PF"
