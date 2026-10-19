@@ -6,7 +6,9 @@
 # по расширениям cream/v1 (cream-validate.sh: cream по пину tools/cream-pin.env,
 # пустой пин — пропуск со строкой; локально — CREAM_DEB=<.deb>); тесты
 # библиотеки настроек lib/bisquite-conf и расширений на подменённом корне.
-# Тесты, которых ещё нет (extensions/debian/teleport/tests/*.sh,
+# Сверка файлов-образцов контракта stvor-agent (check-contract-fixtures.sh:
+# пин набора — всегда, без сети; соседняя копия stvor-agent — если есть,
+# в CI её даёт checkout по ref). Тесты, которых ещё нет (extensions/debian/teleport/tests/*.sh,
 # tools/test-stvor-agent.sh), пропускаются со строкой, а не молча. Сверки копий
 # lib/ нет: копий нет, общий код доставляет в гостя сама сборка
 # (`/opt/bisquite/<имя>/lib`, см. docs/extensions.md). Все проверки доводятся
@@ -52,6 +54,9 @@ echo "== test-firewall =="
 
 echo "== test-can-usb =="
 "$HERE/test-can-usb.sh" || rc=1
+
+echo "== check-contract-fixtures =="
+"$HERE/check-contract-fixtures.sh" || rc=1
 
 teleport_tests=()
 for t in "$HERE"/../extensions/debian/teleport/tests/*.sh; do

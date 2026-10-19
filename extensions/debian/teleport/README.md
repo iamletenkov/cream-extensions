@@ -7,10 +7,10 @@
 (layout 2), который пока живёт рядом; оба дают способность `teleport-node` и
 взаимоисключимы.
 
-> Управляемые метки (`TELEPORT_MANAGED_LABELS`, действия `set-managed` и
-> `managed-status`) и командные метки `command-labels.d` появятся следующей
-> версией этого расширения (задача 12 плана stvor-agent). Каталог
-> `command-labels.d` и слежение за ним уже на месте.
+Метки узла задают три стороны: оператор (`TELEPORT_ENV`, `TELEPORT_LABELS`),
+внешний управляющий — служба `stvor-agent` (управляемые метки
+`TELEPORT_MANAGED_LABELS`, действия `set-managed` и `managed-status`) и другие
+расширения (командные метки `command-labels.d`).
 
 ## Что изменилось против 3.x
 
@@ -106,6 +106,7 @@ stdout `join` — один JSON-объект:
 | `TELEPORT_APPS_ICONS` | `имя=иконка` через пробел; сильнее `ICON=` объявления |
 | `TELEPORT_APPS_DISCOVERY` | `0` — не читать `apps.d` |
 | `TELEPORT_OS_LOGINS` | `0` — без динамической метки `os_logins` |
+| `TELEPORT_MANAGED_LABELS` | `readonly`: пишет только `set-managed` (и `leave`) — см. ниже |
 
 Хук `apply` (после `cream set`): render и `systemctl --no-block
 reload-or-restart teleport.service` — HUP, открытые сессии живут.
@@ -125,27 +126,88 @@ ICON=mcpVscode                  иконка в веб-морде прокси (
 видит `teleport-apps.path` и делает `reload` (render + HUP). Имя иконки — ключ
 вшитого в прокси набора; неизвестное имя прокси не считает ошибкой.
 
+## Управляемые метки — `set-managed`, `managed-status`
+
+`TELEPORT_MANAGED_LABELS` — метки внешнего управляющего (`stvor-agent`: `env`,
+`space`), не больше 16, ключ `^[a-z][a-z0-9_]{0,62}$`, значение
+`^[a-z0-9][a-z0-9._-]{0,62}$`; `app`, `os_logins` зарезервированы. Правило
+render: метки ноды = `TELEPORT_LABELS` → поверх них управляемые (побеждают по
+ключу) → `env` = управляемый `env`, если задан, иначе `TELEPORT_ENV`. Те же
+метки получает каждое приложение. `status` показывает перекрытые ключи
+оператора.
+
+```
+cream run --lock-timeout 20s teleport set-managed env=prod space=sp-1
+cream run teleport managed-status
+```
+
+`set-managed` задаёт **полный** набор (замена; без аргументов — снять все).
+Маркер `/var/lib/cream/ext/teleport/managed-pending` пишется **до** записи
+ручки (`cream set --no-apply --allow-readonly` под блокировкой действия), затем
+render в кандидат. Restart (не HUP: метки — решение о доступе, старые сессии
+не должны пережить переезд) с подтверждением нового запуска юнита по
+`InvocationID`, `MainPID` или `ActiveEnterTimestampMonotonic` за 30 с — только
+если узел зарегистрирован **и** кандидат отличается от `/etc/teleport.yaml`,
+или остался маркер прошлого неподтверждённого вызова, или агент не активен.
+Итоговый конфиг тот же — без restart (первый вызов после `join`: те же `env`
+и `space` уже стоят ручками оператора).
+
+stdout — один JSON-объект схемы 1 (эталон — `tests/fixtures/*.json`, копия
+`stvor-agent/internal/teleport/testdata`, сверка — `tools/check-contract-fixtures.sh`):
+
+```
+{"schema":1,"managed":{"env":"prod","space":"sp-1"},"pending":false,"joined":true,"active":true,"result":"applied"}
+```
+
+| Код | `result` | Когда |
+|---|---|---|
+| 0 | `applied` | записано и действует (restart подтверждён или не нужен) |
+| 0 | `unchanged` | набор тот же, конфиг тот же — ничего не тронуто |
+| 0 | `deferred` | узел не зарегистрирован или systemd не запущен — только запись |
+| 1 | `unconfirmed` | restart не подтверждён — маркер остаётся, следующий вызов перезапустит |
+| 2 | — | неверный ввод, `{"schema":1,"error":"…"}`; ничего не тронуто |
+| 3 | — | прочая ошибка (домен не по типу, cream set), `{"schema":1,"error":"…"}` |
+
+`managed-status` (`lock: none`) — тот же объект без `result`, только читает;
+домен не по типу — код 3. `leave` стирает управляемые метки и маркер.
+
+## Командные метки — `command-labels.d`
+
+Другое расширение кладёт `/etc/cream/teleport/command-labels.d/<ключ>` (через
+`files` своего манифеста) с одной строкой `command=<абсолютный путь> [аргумент…]`.
+render добавляет `ssh_service.commands`: `{name: <ключ>, command: [путь,
+аргументы…], period: 5m0s}` — как у `os_logins`; только узлу. Файл пропускается
+строкой журнала (остальной конфиг цел), если: ключ не `^[a-z][a-z0-9_]{0,62}$`,
+это `env`, `space`, `app`, `os_logins` или ключ `TELEPORT_LABELS` /
+`TELEPORT_MANAGED_LABELS`; файл или команда не root или с записью группе и
+прочим; команда — не исполняемый файл; больше 8 аргументов или аргумент не из
+`[A-Za-z0-9._=-]`; больше 8 файлов. Каталог — 0755 root. Shell не участвует.
+Изменение каталога видит `teleport-apps.path` — reload (HUP, плавный).
+
 ## Действия и файлы
 
 | Действие | `lock` | Что делает |
 |---|---|---|
 | `join KEY=…` | exclusive | регистрация, JSON в stdout |
 | `join-retry` | exclusive | тик `teleport-join.timer`; ручная регистрация после `TELEPORT_DEFER=1` |
-| `leave` | exclusive | агент выключен, `/var/lib/teleport`, `teleport.yaml`, секрет, ожидание стёрты; JSON `{"result":"left"}` |
-| `status` | none | регистрация, служба, ручки, приложения — текстом |
+| `leave` | exclusive | агент выключен, `/var/lib/teleport`, `teleport.yaml`, секрет, ожидание, управляемые метки и `managed-pending` стёрты; JSON `{"result":"left"}` |
+| `set-managed k=v…` | exclusive | полный набор управляемых меток; JSON схемы 1 |
+| `managed-status` | none | управляемые метки, маркер, регистрация, агент; JSON схемы 1 |
+| `status` | none | регистрация, служба, ручки, приложения, управляемые и командные метки — текстом |
 | `render` | none | `/etc/teleport.yaml` (0600); `ExecStartPre`/`ExecReload` `teleport.service` |
 | `reload-apps` | none | `ExecStart` `teleport-apps.service` |
 | `scrub-token` | exclusive | `teleport-token.service`: стирает секрет первого входа |
 
-`render`, `reload-apps`, `status` — `lock: none`: их зовут юниты, которые
-перезапускаются, пока блокировку держит другой процесс (спека cream §7.3).
+`render`, `reload-apps`, `status`, `managed-status` — `lock: none`: их зовут
+юниты, которые перезапускаются, пока блокировку держит другой процесс
+(`set-managed` держит её, перезапуская `teleport.service`; спека cream §7.3).
 
 | Путь | Что |
 |---|---|
 | `/opt/cream/ext/teleport/` | дерево расширения: `hooks/`, `actions/` (тонкие входы), `files/teleport.sh` (общая библиотека), `files/os-logins` (метка `os_logins`, её зовёт Teleport) |
 | `/etc/systemd/system/teleport{,-apps,-token,-join}.*` | юниты (раскладывает cream) |
 | `/etc/cream/teleport/{config,apps.d,command-labels.d}` | домен ручек и объявления |
-| `/var/lib/cream/ext/teleport/{registration-secret,join-pending,join-refused,rollback}` | состояние (каталог 0700, файлы 0600) |
+| `/var/lib/cream/ext/teleport/{registration-secret,join-pending,join-refused,managed-pending,rollback}` | состояние (каталог 0700, файлы 0600) |
 | `/etc/teleport.yaml`, `/var/lib/teleport/`, `/usr/local/bin/teleport` | Teleport, как прежде |
 
 Хук `remove`: `leave`, path-юниты выключены, бинарь и состояние стёрты; юниты
@@ -153,6 +215,13 @@ ICON=mcpVscode                  иконка в веб-морде прокси (
 
 ## Тесты
 
-`bash extensions/debian/teleport/tests/test-join.sh` — подменённый корень
-(`CREAM_ROOT`), поддельные `systemctl`, `journalctl`, `curl`, `teleport`, `dpkg`,
-`cream`; без root, systemd и сети. Запускается из `tools/check.sh`.
+`bash extensions/debian/teleport/tests/test-join.sh` и `test-managed.sh` —
+подменённый корень (`CREAM_ROOT`; «systemd запущен» — каталог-маркер
+`$CREAM_ROOT/run/systemd/system`), поддельные `systemctl`, `journalctl`, `curl`,
+`teleport`, `dpkg`, `cream`, `stat`, `sleep` через `PATH`; без root, systemd и
+сети. Тестовых переключателей в окружении у боевого скрипта нет. Запускаются
+из `tools/check.sh` вместе с `tools/check-contract-fixtures.sh`.
+
+Версия кластера из `/webapi/find` — внешний ввод: до любой арифметики она
+проверяется как `X.Y.Z[-pre][+build]` (компоненты до 9 цифр) и обрезается до
+`X.Y.Z`; иное — «прокси назвал версию не по форме», join ждёт.

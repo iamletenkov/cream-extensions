@@ -18,7 +18,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXT="$(dirname "$HERE")"
 
 TMP="$(mktemp -d)"
-trap 'rm -r -f -- "$TMP"' EXIT
+PWN_DIR=""
+trap 'rm -r -f -- "$TMP" ${PWN_DIR:+"$PWN_DIR"}' EXIT
 
 pass=0; fail=0
 ok(){ pass=$((pass + 1)); }
@@ -50,6 +51,7 @@ STVOR_ARGS=(TELEPORT_PROXY="$PROXY" TELEPORT_JOIN_METHOD=bound_keypair TELEPORT_
 #                  hang   — the agent logs a network error and keeps trying
 #                  fail   — the start fails
 #   active       exists — teleport.service is active
+#   find         the body of /webapi/find with net=up (default: server 18.10.0)
 #   journal      what journalctl prints
 #   tarball      what curl -o downloads; cdn.sha256 — the .sha256 of the CDN
 #   *.log        every call of systemctl, curl, cream, flock; ps.log — `ps`
@@ -79,7 +81,10 @@ if [[ "${!#}" == *.sha256 ]]; then
     echo "$(cat "$FAKE/cdn.sha256")  teleport.tar.gz"; exit 0
 fi
 net="$(cat "$FAKE/net")"
-if [[ "$net" == up ]]; then echo '{"server_version":"18.10.0"}'; exit 0; fi
+if [[ "$net" == up ]]; then
+    if [[ -f "$FAKE/find" ]]; then cat "$FAKE/find"; else echo '{"server_version":"18.10.0"}'; fi
+    exit 0
+fi
 if [[ "$net" == html ]]; then echo '<html>captive portal</html>'; exit 0; fi
 exit "$net"
 EOF
@@ -156,6 +161,8 @@ echo "teleport: изменено"
 EOF
     printf '#!/bin/sh\necho flock "$@" >> "$FAKE/flock.log"\nexit 0\n' > "$ROOT/bin/flock"
     printf '#!/bin/sh\necho amd64\n' > "$ROOT/bin/dpkg"
+    # Waits count their sleeps: a fake sleep makes the 120 s join wait instant.
+    printf '#!/bin/sh\necho sleep "$@" >> "$FAKE/sleep.log"\nexit 0\n' > "$ROOT/bin/sleep"
     chmod +x "$ROOT/bin/"*
     use_root "$ROOT"
 }
@@ -190,8 +197,9 @@ cream_env=()
 mk_env(){
     cream_env=(CREAM_PHASE="$PHASE" CREAM_EXT=teleport CREAM_EXT_VERSION=4.0.0
         CREAM_EXT_DIR="$STAGED" CREAM_ETC_DIR="$ROOT/etc/cream/teleport" CREAM_STATE_DIR="$STATE"
-        CREAM_ROOT="$ROOT" CREAM_CONFIG_FILE="$CONF" CREAM_SECRETS_FILE="$ROOT/etc/cream/teleport/secrets"
-        TELEPORT_TEST_SYSTEMD="$SYSTEMD" TELEPORT_TEST_JOIN_TIMEOUT=2)
+        CREAM_ROOT="$ROOT" CREAM_CONFIG_FILE="$CONF" CREAM_SECRETS_FILE="$ROOT/etc/cream/teleport/secrets")
+    # systemd "runs" in the scratch root: the sd_booted marker under it.
+    if (( SYSTEMD )); then mkdir -p "$ROOT/run/systemd/system"; else rm -r -f -- "$ROOT/run"; fi
 }
 # tp <action> [args…] — `cream run teleport <action>`.
 tp(){
@@ -521,6 +529,56 @@ check "FORCE без сети — регистрацию не трогает" gre
 check_not "FORCE без сети — ожидания нет" test -e "$PENDING"
 eq "FORCE без сети — регистрация цела" 55555555-6666 "$(cat "$HOST_UUID")"
 
+echo "== версия кластера из /webapi/find — внешний ввод, не арифметика bash =="
+# bash evaluates a[$(cmd)] inside (( )): a hostile proxy would run cmd as root.
+# The marker path has no dots: the version is split on them.
+PWN_DIR="$(mktemp -d /tmp/pwnXXXXXX)"
+for v in 'a[$(touch PWN)]' '1.2.3$(touch PWN)' '18.10.0+x[$(touch PWN)]' '18.x.0' '99999999999.0.0'; do
+    new_root
+    pwn="$PWN_DIR/pwn"; rm -f -- "$pwn"
+    printf '{"server_version":"%s"}\n' "${v//PWN/$pwn}" > "$FAKE/find"
+    echo up > "$FAKE/net"; echo join > "$FAKE/agent"
+    out="$(stvor_line 2>"$TMP/err")"; rc=$?
+    msg="$(cat "$TMP/err")"
+    check_not "версия '$v': команда не выполнена" test -e "$pwn"
+    eq "версия '$v': код 0, ждём" 0 "$rc"
+    eq "версия '$v': JSON result" pending "$(json_get "$out" result)"
+    check "версия '$v': строка журнала о версии" grep -q 'версию не по форме X.Y.Z' <<< "$msg"
+    check_not "версия '$v': агент не стартовал" grep -qx 'start teleport.service' <<< "$(slog)"
+    tp join-retry >/dev/null 2>&1
+    check_not "версия '$v': тик — команда не выполнена" test -e "$pwn"
+    check "версия '$v': тик — ждёт дальше" grep -q '^error=.*не по форме' "$PENDING"
+done
+new_root
+printf '{"server_version":"18.10.0-rc.1+abc"}\n' > "$FAKE/find"
+echo up > "$FAKE/net"; echo join > "$FAKE/agent"
+msg="$(stvor_line 2>&1)"; rc=$?
+eq "версия с суффиксом -rc.1+abc — код 0" 0 "$rc"
+check "версия с суффиксом — зарегистрирован" test -s "$HOST_UUID"
+check "версия с суффиксом — в журнале X.Y.Z" grep -q 'кластер 18.10.0, агент' <<< "$msg"
+new_root
+printf '{"server_version":"20.0.0"}\n' > "$FAKE/find"
+echo up > "$FAKE/net"
+msg="$(stvor_line 2>&1)"; rc=$?
+check "кластер 20.0.0 при агенте 18 — отказ" test "$rc" -ne 0
+check "кластер 20.0.0 — текст про мажор" grep -q 'больше чем на мажор' <<< "$msg"
+# Leading zeros are decimal: 18.09.0 is older than the agent 18.10.0 (no octal
+# error), 18.010.0 is the same version.
+new_root
+printf '{"server_version":"18.09.0"}\n' > "$FAKE/find"
+echo up > "$FAKE/net"; echo join > "$FAKE/agent"
+msg="$(stvor_line 2>&1)"; rc=$?
+check "кластер 18.09.0 при агенте 18.10.0 — отказ" test "$rc" -ne 0
+check "кластер 18.09.0 — агент новее" grep -q 'новее кластера 18.09.0' <<< "$msg"
+check_not "кластер 18.09.0 — без ошибки арифметики" grep -q 'value too great\|syntax error' <<< "$msg"
+new_root
+printf '{"server_version":"18.010.0"}\n' > "$FAKE/find"
+echo up > "$FAKE/net"; echo join > "$FAKE/agent"
+msg="$(stvor_line 2>&1)"; rc=$?
+eq "кластер 18.010.0 (десятичная) — код 0" 0 "$rc"
+check "кластер 18.010.0 — зарегистрирован" test -s "$HOST_UUID"
+rm -r -f -- "$PWN_DIR"; PWN_DIR=""
+
 echo "== метод token: join-токен — секрет первого входа (рулинг РТ1) =="
 new_root
 echo up > "$FAKE/net"; echo hang > "$FAKE/agent"
@@ -598,6 +656,22 @@ check_not "render: значение не по типу — отказ" tp render
 printf '%s\n' 'root:x:0:0::/root:/bin/bash' 'svc:x:999:999::/:/bin/bash' 'ann:x:1000:1000::/home/ann:/bin/bash' \
     'nob:x:65534:65534::/:/bin/bash' 'bot:x:1001:1001::/:/usr/sbin/nologin' > "$ROOT/etc/passwd"
 eq "os-logins: root и uid ≥ 1000 с shell" "ann,root" "$(CREAM_ROOT="$ROOT" "$EXT/files/os-logins")"
+# The uid field meets (( )): a[$(cmd)] there would run cmd; 01000 is decimal.
+PWN_DIR="$(mktemp -d /tmp/pwnXXXXXX)"
+printf '%s\n' 'root:x:0:0::/root:/bin/bash' "evil:x:a[\$(touch $PWN_DIR/pwn)]:0::/:/bin/bash" \
+    'zed:x:01000:1000::/:/bin/bash' 'big:x:99999999999999999999:1:::/bin/bash' > "$ROOT/etc/passwd"
+eq "os-logins: uid не цифрами — пропущен, 01000 — десятичный" "root,zed" "$(CREAM_ROOT="$ROOT" "$EXT/files/os-logins" 2>&1)"
+check_not "os-logins: команда из uid не выполнена" test -e "$PWN_DIR/pwn"
+rm -r -f -- "$PWN_DIR"; PWN_DIR=""
+
+echo "== боевой скрипт без тестовых переключателей =="
+check_not "teleport.sh: нет TELEPORT_TEST_*" grep -q 'TELEPORT_TEST_' "$EXT/files/teleport.sh"
+check "ожидание регистрации — 120 с, константа" grep -qx 'JOIN_TIMEOUT=120' "$EXT/files/teleport.sh"
+new_root
+echo up > "$FAKE/net"; echo hang > "$FAKE/agent"
+msg="$(stvor_line 2>&1)"
+check "join ждёт до 120 с" grep -q 'жду регистрации (до 120 с)' <<< "$msg"
+eq "join ждёт 60 снов по 2 с" 60 "$(grep -c '^sleep 2$' "$FAKE/sleep.log")"
 
 echo "== хук apply: render и reload без ожидания =="
 new_root
