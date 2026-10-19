@@ -60,7 +60,14 @@ exit 0'
     ht_fake chown
     # runuser: the tests cannot drop privileges — the fake logs the user and runs
     # the command as is (the caller of the hook is not root anyway).
-    ht_fake runuser '[[ "$1" == -u && "$3" == -- ]] || exit 2; shift 3; exec "$@"'
+    # It also records whether the lock descriptor of cream (fd 9 in the tests)
+    # reached it and what its stdin is; $FAKE/runuser-fails makes it fail.
+    ht_fake runuser '
+if [[ -e /proc/$$/fd/9 ]]; then echo open; else echo closed; fi > "$FAKE/runuser-lockfd"
+readlink /proc/$$/fd/0 > "$FAKE/runuser-stdin"
+[[ -e "$FAKE/runuser-fails" ]] && exit 1
+[[ "$1" == -u && "$3" == -- ]] || exit 2
+shift 3; exec "$@"'
     ht_fake sleep
     ht_fake cream
     LIB="$ROOT/opt/cream/ext/cloud-user/get_cloud_user.sh"
@@ -211,7 +218,17 @@ check_not "lxsession: в домашний каталог root не пишет (�
 check_not "lxsession: runuser без файла пользователя не зовётся" ht_called '^runuser'
 ht_hook configure CREAM_REASON=boot; eq "выключено — 0" 0 "$?"
 check_not "lxsession: системное умолчание снято" grep -q '^screensaver=' "$LXSYS"
-check "lxsession: файл пакета остался" test -f "$LXSYS"
+check_not "lxsession: созданный нами системный файл удалён целиком" test -e "$LXSYS"
+check_not "lxsession: маркер «создан нами» снят" test -e "$ROOT/var/lib/cream/ext/desktop/lxsession-desktop-conf.created"
+desk_root; ht_fake lxsession
+LXSYS="$ROOT/etc/xdg/lxsession/LXDE/desktop.conf"
+mkdir -p "$(dirname "$LXSYS")"; printf '[Session]\nwindow_manager=openbox-lxde\n\n[Startup]\nlxpolkit=true\n' > "$LXSYS"
+pkg="$(cat "$LXSYS")"
+ht_hook configure CREAM_REASON=boot DESKTOP_DISABLE_SCREEN_BLANK=1; eq "файл пакета: включено — 0" 0 "$?"
+check "файл пакета: screensaver=disabled в [Startup]" grep -qx 'screensaver=disabled' "$LXSYS"
+check_not "файл пакета: маркера нет" test -e "$ROOT/var/lib/cream/ext/desktop/lxsession-desktop-conf.created"
+ht_hook configure CREAM_REASON=boot; eq "файл пакета: выключено — 0" 0 "$?"
+eq "файл пакета: остался как был (ключ снят)" "$pkg" "$(cat "$LXSYS")"
 check_not "xfconf: файл снят" test -e "$XFC/xfce4-power-manager.desktop-ext.xml"
 check_not "xfconf: ссылка снята" test -L "$XFC/xfce4-power-manager.xml"
 check_not "X: DPMS-файл снят" test -e "$XSESS"
@@ -225,23 +242,41 @@ desk_root; ht_fake lxsession
 UC="$ROOT/home/alice/.config/lxsession/LXDE"
 mkdir -p "$UC"; printf '[Session]\nwindow_manager=openbox-lxde\n' > "$UC/desktop.conf"
 ht_hook configure CREAM_REASON=boot DESKTOP_DISABLE_SCREEN_BLANK=1; eq "файл пользователя — 0" 0 "$?"
-check "правка от имени пользователя (runuser -u alice)" ht_called '^runuser -u alice -- .*/files/desktop.sh lxsession-user .*/home/alice/.config/lxsession/LXDE/desktop.conf$'
+check "правка от имени пользователя, с пустым окружением и таймаутом" \
+    ht_called '^runuser -u alice -- env -i PATH=[^ ]+ LANG=C.UTF-8 .*/files/desktop.sh lxsession-user .*/home/alice/.config/lxsession/LXDE/desktop.conf$'
 check "файл пользователя: screensaver=disabled" grep -qx 'screensaver=disabled' "$UC/desktop.conf"
 check_not "chown от root не нужен" ht_called '^chown'
-for case in file dir; do
+printf '[Session]\nwindow_manager=openbox-lxde\n' > "$UC/desktop.conf"
+exec 9> "$ROOT/lockfile"
+ht_hook configure CREAM_REASON=boot DESKTOP_DISABLE_SCREEN_BLANK=1 CREAM_LOCK_FD=9 CREAM_LOCK_MODE=exclusive
+eq "с блокировкой cream — 0" 0 "$?"
+exec 9>&-
+eq "fd блокировки cream процессу пользователя не достаётся" closed "$(cat "$FAKE/runuser-lockfd")"
+eq "stdin процесса пользователя — /dev/null" /dev/null "$(cat "$FAKE/runuser-stdin")"
+: > "$FAKE/runuser-fails"
+printf '[Session]\nwindow_manager=openbox-lxde\n' > "$UC/desktop.conf"
+ht_hook configure CREAM_REASON=boot DESKTOP_DISABLE_SCREEN_BLANK=1; eq "runuser упал — предупреждение, 0" 0 "$?"
+check "runuser упал: предупреждение" grep -q 'не исправлен от имени alice' <<< "$(ht_out)"
+check_not "runuser упал: файл не тронут" grep -q '^screensaver=' "$UC/desktop.conf"
+for case in file dir middle; do
     desk_root; ht_fake lxsession
     mkdir -p "$ROOT/outside"; printf 'root:secret:1::\n' > "$ROOT/outside/shadow"
     mkdir -p "$ROOT/home/alice/.config"
     if [[ "$case" == file ]]; then
         mkdir -p "$ROOT/home/alice/.config/lxsession/LXDE"
         ln -s "$ROOT/outside/shadow" "$ROOT/home/alice/.config/lxsession/LXDE/desktop.conf"
-    else
+    elif [[ "$case" == dir ]]; then
         mkdir -p "$ROOT/outside/LXDE"; ln -s "$ROOT/outside/shadow" "$ROOT/outside/LXDE/desktop.conf"
         ln -s "$ROOT/outside" "$ROOT/home/alice/.config/lxsession"
+    else
+        # A directory link in the middle, an ordinary file at its end.
+        mkdir -p "$ROOT/outside/LXDE"; cp "$ROOT/outside/shadow" "$ROOT/outside/LXDE/desktop.conf"
+        ln -s "$ROOT/outside" "$ROOT/home/alice/.config/lxsession"
     fi
-    snap="$(sha256sum < "$ROOT/outside/shadow")"
+    snap="$(cat "$ROOT/outside/shadow" "$ROOT/outside/LXDE/desktop.conf" 2>/dev/null | sha256sum)"
     ht_hook configure CREAM_REASON=boot DESKTOP_DISABLE_SCREEN_BLANK=1; eq "ссылка ($case) — предупреждение, 0" 0 "$?"
-    eq "ссылка ($case): цель вне \$HOME не изменена" "$snap" "$(sha256sum < "$ROOT/outside/shadow")"
+    eq "ссылка ($case): цель вне \$HOME не изменена" "$snap" \
+        "$(cat "$ROOT/outside/shadow" "$ROOT/outside/LXDE/desktop.conf" 2>/dev/null | sha256sum)"
     check "ссылка ($case): отказ назван" grep -q 'символическая ссылка' <<< "$(ht_out)"
     check_not "ссылка ($case): runuser не зовётся" ht_called '^runuser'
 done
@@ -251,6 +286,18 @@ HT_ACTION_FILE="$HT_EXT/files/desktop.sh"
 (cd "$HT_EXT" && env -i PATH="$ROOT/bin:/usr/bin:/bin" "$HT_ACTION_FILE" lxsession-user "$ROOT/link.conf") 2>/dev/null
 eq "от имени пользователя: ссылку не открывает — 1" 1 "$?"
 eq "от имени пользователя: цель не изменена" x "$(cat "$ROOT/target")"
+# EUID 0 without root: a user namespace (unshare -r); skipped where not allowed.
+printf 'y\n' > "$ROOT/own.conf"
+if unshare -r true 2>/dev/null; then
+    (cd "$HT_EXT" && unshare -r env -i PATH=/usr/bin:/bin "$HT_ACTION_FILE" lxsession-user "$ROOT/own.conf") 2>/dev/null
+    eq "lxsession-user от root (EUID 0) — отказ 1" 1 "$?"
+    eq "lxsession-user от root: файл не тронут" y "$(cat "$ROOT/own.conf")"
+else
+    echo "пропуск: unshare -r недоступен — проверка EUID 0 не выполнена" >&2
+fi
+(cd "$HT_EXT" && env -i PATH=/usr/bin:/bin "$HT_ACTION_FILE" lxsession-user "$ROOT/own.conf") 2>/dev/null
+eq "lxsession-user от пользователя — правит свой файл" 0 "$?"
+check "lxsession-user: screensaver=disabled в своём файле" grep -qx 'screensaver=disabled' "$ROOT/own.conf"
 
 echo "== configure: без менеджера входа и без пользователя =="
 desk_root; with_dconf
@@ -308,6 +355,9 @@ check_not "defaults без пар: cream не зовётся" ht_called '^cream'
 echo "== remove =="
 desk_root; with_gdm; with_lightdm; with_dconf; mkdir -p "$XFC"
 mkdir -p "$ROOT/etc/dconf/profile"; printf 'user-db:user\nsystem-db:gdm\n' > "$ROOT/etc/dconf/profile/gdm"
+ht_fake lxsession
+LXSYS="$ROOT/etc/xdg/lxsession/LXDE/desktop.conf"
+mkdir -p "$(dirname "$LXSYS")"; printf '[Session]\nwindow_manager=openbox-lxde\n' > "$LXSYS"
 # shellcheck disable=SC2086
 ht_hook configure CREAM_REASON=boot $all_on; eq "configure перед remove — 0" 0 "$?"
 : > "$FAKE/calls"
@@ -316,6 +366,8 @@ for f in "$LOCKF" "$LOCKL" "$BLANKF" "$BLANKL" "$GDMBLANK" "$XSESS" "$XFC/xfce4-
     "$XFC/xfce4-screensaver.desktop-ext.xml" "$XFC/xfce4-power-manager.xml"; do
     check_not "remove: ${f#"$ROOT"} снят" test -e "$f"
 done
+check_not "remove: screensaver=disabled снят из системного desktop.conf" grep -q '^screensaver=' "$LXSYS"
+check "remove: системный desktop.conf пакета остался" test -f "$LXSYS"
 check "remove: gdm без автологина" grep -qx 'AutomaticLoginEnable=false' "$GDM"
 check_not "remove: lightdm без автологина" grep -q '^autologin-user' "$LDM"
 check_not "remove: lightdm без своего xserver-command" grep -q '^xserver-command' "$LDM"

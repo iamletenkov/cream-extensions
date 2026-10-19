@@ -378,6 +378,11 @@ EOF
 LXSESSION_SYS="$R/etc/xdg/lxsession/LXDE/desktop.conf"
 LXSESSION_KEY=screensaver
 LXSESSION_OFF=disabled
+# Marker: the system desktop.conf did not exist and was created by us — then
+# turning the key off removes the whole file, not just the key.
+LXSESSION_OURS="${CREAM_STATE_DIR:-$R/var/lib/cream/ext/desktop}/lxsession-desktop-conf.created"
+# The edit as the user is bounded: a user could stop the process (SIGSTOP).
+LXSESSION_USER_TIMEOUT=30
 
 apply_lxsession(){
     local user="$1"
@@ -387,7 +392,11 @@ apply_lxsession(){
         return 0
     fi
     install -d -m 0755 "${LXSESSION_SYS%/*}"
-    [[ -f "$LXSESSION_SYS" ]] || printf '[Session]\nwindow_manager=openbox-lxde\n' > "$LXSESSION_SYS"
+    if [[ ! -f "$LXSESSION_SYS" ]]; then
+        printf '[Session]\nwindow_manager=openbox-lxde\n' > "$LXSESSION_SYS"
+        install -d -m 0755 "${LXSESSION_OURS%/*}"
+        : > "$LXSESSION_OURS"
+    fi
     set_ini_key "$LXSESSION_SYS" Startup "$LXSESSION_KEY" "$LXSESSION_OFF" \
         || log "lxsession: не записался $LXSESSION_KEY=$LXSESSION_OFF в ${LXSESSION_SYS#"$R"}"
     [[ -n "$user" ]] && lxsession_user "$user"
@@ -395,6 +404,11 @@ apply_lxsession(){
 }
 
 unset_lxsession_system(){
+    if [[ -e "$LXSESSION_OURS" ]]; then
+        rm -f -- "$LXSESSION_SYS" "$LXSESSION_OURS"
+        rmdir "${LXSESSION_SYS%/*}" "${LXSESSION_SYS%/*/*}" 2>/dev/null || true
+        return 0
+    fi
     [[ -f "$LXSESSION_SYS" ]] || return 0
     if grep -qxF "$LXSESSION_KEY=$LXSESSION_OFF" "$LXSESSION_SYS"; then
         del_ini_key "$LXSESSION_SYS" "$LXSESSION_KEY"
@@ -430,8 +444,36 @@ lxsession_user(){
         return 0
     fi
     # As the user, never as root: runuser drops to the user's uid, gid and groups.
-    runuser -u "$user" -- "${BASH_SOURCE[0]}" lxsession-user "$conf" \
-        || log "lxsession: ${conf#"$R"} не исправлен (от имени $user)"
+    # The user owns that process, so it gets nothing of ours: every descriptor
+    # above stderr is closed (CREAM_LOCK_FD — the flock of the domain, which a
+    # stopped or ptraced process would hold), stdin is /dev/null, its output goes
+    # to a file of ours (not the pipe of cream), the environment is empty but
+    # PATH and LANG, and it is killed after LXSESSION_USER_TIMEOUT seconds.
+    local out rc=0
+    out="$(mktemp)"
+    (
+        close_fds
+        exec timeout -k 5 "$LXSESSION_USER_TIMEOUT" runuser -u "$user" -- \
+            env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C.UTF-8 \
+            "${BASH_SOURCE[0]}" lxsession-user "$conf" < /dev/null > "$out" 2>&1
+    ) || rc=$?
+    head -c 4096 "$out" >&2 || true
+    rm -f -- "$out"
+    if (( rc != 0 )); then
+        log "lxsession: ${conf#"$R"} не исправлен от имени $user (код $rc)"
+    fi
+    return 0
+}
+
+# close_fds: close every descriptor above 2 of this (sub)shell.
+close_fds(){
+    local fd fds=()
+    for fd in /proc/self/fd/*; do fds+=("${fd##*/}"); done
+    for fd in "${fds[@]}"; do
+        [[ "$fd" =~ ^[0-9]+$ ]] && (( fd > 2 )) || continue
+        # fd is digits only (checked above): safe for eval.
+        eval "exec ${fd}>&-" 2>/dev/null || true
+    done
 }
 
 # The edit itself, run as the user by lxsession_user: refuses a symlink once
@@ -439,6 +481,7 @@ lxsession_user(){
 # to follow it).
 cmd_lxsession_user(){
     local conf="$1"
+    (( EUID != 0 )) || { log "lxsession-user: не от root — только от имени пользователя"; exit 1; }
     [[ -f "$conf" && ! -L "$conf" ]] || { log "lxsession: $conf — не обычный файл"; exit 1; }
     set_ini_key "$conf" Startup "$LXSESSION_KEY" "$LXSESSION_OFF"
 }
