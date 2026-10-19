@@ -1,0 +1,81 @@
+# desktop — the settings of a desktop shared by gnome, xfce4, lxde and
+# cloud-user-desktop: autologin (gdm3, lightdm), no auto-lock, no blanking
+# (dconf, X DPMS, xfconf, lxsession), the groups of the session user. One code
+# for every display manager, so the desktop extensions cannot diverge.
+#
+# install   — dconf-cli and x11-xserver-utils (dconf update, xset); applies
+#             nothing: configure does.
+# configure — every boot, stage system BEFORE the display manager (plan ruling
+#             R5): the autologin user is in group video before Xorg of the
+#             session opens the GPU, and gdm/lightdm read the autologin already
+#             written. Not stage graphical: that one is After=display-manager.
+#             After cloud-init.service (it creates the user), NOT cloud-final
+#             (After=multi-user — a cycle that made systemd drop gdm twice).
+#             On a working machine (install, `cream set desktop …`) it also
+#             restarts the display manager when the autologin changed and no
+#             graphical session is open.
+# remove    — takes away the dconf, X and xfconf files and the autologin; the
+#             groups stay.
+# Actions   — apply (now or as at boot), status, defaults (write without applying).
+schema: cream/v1
+name: desktop
+version: 1.0.0
+summary: Ручки рабочего стола — автологин gdm3/lightdm, без автоблокировки и затемнения, группы пользователя
+cream: ">=1.0.0"
+platform:
+  family: deb
+  arch: [amd64, arm64]
+  os: [{id: debian}, {id: ubuntu}]
+targets:
+  build: exec
+  live: "yes"
+depends:
+  - {name: cloud-user, version: ">=1.0.0 <2"}
+hooks:
+  install: {timeout: 10m}
+  # 30 s of waiting for the cloud-init user at boot, then the rest is files.
+  configure:
+    stage: system
+    after: [cloud-init.service, guestfs-firstboot.service]
+    before: [display-manager.service, gdm.service, gdm3.service, lightdm.service]
+    timeout: 2m
+  remove: {timeout: 2m}
+config:
+  keys:
+    DESKTOP_AUTOLOGIN:
+      type: bool
+      default: "0"
+      description: "1 — вход без пароля (gdm3, lightdm)"
+    DESKTOP_AUTOLOGIN_USER:
+      type: "re:^[a-z_][a-z0-9_-]{0,31}$"
+      default: ""
+      empty: true
+      description: "пользователь автологина и групп сеанса; пусто — пользователь cloud-init (библиотека cloud-user)"
+    DESKTOP_DISABLE_SCREEN_LOCK:
+      type: bool
+      default: "0"
+      description: "1 — без автоблокировки экрана (заблокировать вручную можно)"
+    DESKTOP_DISABLE_SCREEN_BLANK:
+      type: bool
+      default: "0"
+      description: "1 — без затемнения, гашения, DPMS и сна"
+actions:
+  apply:
+    summary: "применить ручки сейчас (--now, умолчание) или как на загрузке (--boot)"
+    args: free
+    lock: exclusive
+    phases: [live]
+  status:
+    summary: "ручки и что из них применено"
+    lock: none
+    phases: [live]
+  defaults:
+    summary: "записать ручки, не применяя (cream set --no-apply desktop …)"
+    args: pairs
+    params:
+      DESKTOP_AUTOLOGIN: {}
+      DESKTOP_AUTOLOGIN_USER: {}
+      DESKTOP_DISABLE_SCREEN_LOCK: {}
+      DESKTOP_DISABLE_SCREEN_BLANK: {}
+    lock: exclusive
+    phases: [build, live]

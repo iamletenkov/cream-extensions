@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# cream hook `remove` of desktop: takes away the dconf, X and xfconf files of
+# the extension and turns the autologin off in the gdm3/lightdm configs; the
+# groups of the session user stay. A repeat finds nothing and exits 0.
+set -euo pipefail
+exec "${CREAM_EXT_DIR:?run by cream}/files/desktop.sh" remove

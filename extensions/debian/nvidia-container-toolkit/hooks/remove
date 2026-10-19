@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# cream hook `remove` of nvidia-container-toolkit: puts /etc/docker/daemon.json
+# back as it was before our first change — the copy daemon-json.before, or no
+# file at all (daemon-json.absent) — but only while the file is still exactly
+# what install left (daemon-json.sha256); edited since, it stays, and the
+# runtime nvidia is for the operator to take out. Then purges the packages
+# install put on ($CREAM_STATE_DIR/packages; those there before cream stay),
+# drops the source and the key and refreshes the apt lists. A running docker is
+# restarted when daemon.json changed. A repeat finds nothing and exits 0.
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] nvidia-container-toolkit: $*"; }
+log_warn(){ >&2 echo "[WARN] nvidia-container-toolkit: $*"; }
+log_error(){ >&2 echo "[ERROR] nvidia-container-toolkit: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}"
+PHASE="${CREAM_PHASE:-live}"
+DOCKER_DIR="$R/etc/docker"
+DAEMON_JSON="$DOCKER_DIR/daemon.json"
+
+put_file(){
+    local mode="$1" dest="$2" tmp
+    tmp="$(mktemp "$(dirname "$dest")/.nvidia-ctk.XXXXXX")"
+    cat > "$tmp"
+    chmod "$mode" "$tmp"
+    mv -f -T -- "$tmp" "$dest"
+}
+
+# --- daemon.json --------------------------------------------------------------
+restored=""
+if [[ -f "$STATE/daemon-json.sha256" && ! -L "$STATE/daemon-json.sha256" ]]; then
+    want="$(cat "$STATE/daemon-json.sha256")"
+    have=""
+    if [[ -L "$DOCKER_DIR" || -L "$DAEMON_JSON" ]]; then
+        log_warn "$DAEMON_JSON или $DOCKER_DIR — символическая ссылка: не трогаю"
+    elif [[ -f "$DAEMON_JSON" ]]; then
+        have="$(sha256sum < "$DAEMON_JSON" | cut -d' ' -f1)"
+    fi
+    if [[ -n "$have" && "$have" == "$want" ]]; then
+        if [[ -f "$STATE/daemon-json.before" && ! -L "$STATE/daemon-json.before" ]]; then
+            put_file 0644 "$DAEMON_JSON" < "$STATE/daemon-json.before"
+            log_info "$DAEMON_JSON возвращён к состоянию до установки"
+            restored=1
+        elif [[ -e "$STATE/daemon-json.absent" ]]; then
+            rm -f -- "$DAEMON_JSON"
+            log_info "$DAEMON_JSON снят: до установки его не было"
+            restored=1
+        fi
+    elif [[ -n "$have" ]]; then
+        log_warn "$DAEMON_JSON менялся после установки — оставляю как есть; runtime nvidia из него убирайте руками"
+    fi
+fi
+rm -f -- "$STATE/daemon-json.sha256" "$STATE/daemon-json.before" "$STATE/daemon-json.absent"
+if [[ -n "$restored" && "$PHASE" == live ]]; then
+    systemctl try-restart docker.service || log_warn "перезапуск docker не прошёл"
+fi
+
+# --- packages and source ------------------------------------------------------
+export DEBIAN_FRONTEND=noninteractive
+ours=()
+if [[ -f "$STATE/packages" && ! -L "$STATE/packages" ]]; then
+    mapfile -t ours < <(sed '/^$/d' "$STATE/packages")
+fi
+if (( ${#ours[@]} )); then
+    apt-get -q -y purge "${ours[@]}" || { log_error "apt-get purge ${ours[*]} не прошёл"; exit 1; }
+    log_info "удалены: ${ours[*]}"
+else
+    log_info "своих пакетов нет — тулкит не трогаю"
+fi
+
+SRC="$R/etc/apt/sources.list.d/nvidia-container-toolkit.sources"
+had_source=""
+[[ -e "$SRC" ]] && had_source=1
+rm -f -- "$SRC" "$R/etc/apt/keyrings/nvidia-container-toolkit.asc"
+# Lists of the removed source stay until the next update; refresh now.
+if [[ -n "$had_source" ]]; then
+    apt-get -q update || log_error "apt-get update после снятия источника не прошёл (не критично)"
+fi
+rm -f -- "$STATE/packages"

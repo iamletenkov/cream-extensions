@@ -19,7 +19,7 @@
 - [x] Task 9: `locale` + `can`
 - [x] Task 10: `firewall` (стадия `early`, `inet cream`, `CREAM-INPUT`, CLI → действия)
 - [x] Task 11: `network-manager` + `cloud-growroot` + `nocloud-cidata`
-- [ ] Task 12: новое расширение `desktop` (из `lib/bisquite-desktop` и `lib/knobs/desktop`)
+- [x] Task 12: новое расширение `desktop` (из `lib/bisquite-desktop` и `lib/knobs/desktop`)
 - [ ] Task 13: `gnome` + `xfce4` + `lxde`
 - [ ] Task 14: `cloud-user-desktop` + `wallpaper`
 - [ ] Task 15: `code-server`
@@ -27,7 +27,7 @@
 - [ ] Task 17: `selkies`
 - [ ] Task 18: `x11vnc` + `vino-vnc`
 - [ ] Task 19: `rustdesk` + `jetson-stats`
-- [ ] Task 20: `nvidia` + `nvidia-container-toolkit`
+- [x] Task 20: `nvidia` + `nvidia-container-toolkit`
 - [ ] Task 21: `nvidia-jetpack`
 - [ ] Task 22: `cuda-toolkit` + `tensorrt` + `l4t-gstreamer`
 - [ ] Task 23: `l4t-opencv` + `l4t-pytorch` + `l4t-tensorflow`
