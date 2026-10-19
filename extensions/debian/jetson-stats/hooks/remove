@@ -4,6 +4,8 @@
 # (records of install) removed — pip with HOME in a temporary directory and no
 # pip configuration, as at install. The group jtop stays: users are in it.
 # A repeat finds nothing and exits 0.
+# apt is asked first in simulation (library apt-guard), before anything changes:
+# when it would take anything besides our packages the hook refuses.
 set -euo pipefail
 log_info(){ >&2 echo "[INFO] jetson-stats: $*"; }
 log_error(){ >&2 echo "[ERROR] jetson-stats: $*"; }
@@ -13,6 +15,15 @@ STATE_DIR="${CREAM_STATE_DIR:?run by cream}"
 UNIT="$R/etc/systemd/system/jtop.service"
 
 read_list(){ [[ -f "$1" && ! -L "$1" ]] && grep -E '^[A-Za-z0-9][A-Za-z0-9._-]*$' "$1" || true; }
+
+mapfile -t debs < <(read_list "$STATE_DIR/packages")
+if (( ${#debs[@]} )); then
+    APT_GUARD="$R/opt/cream/ext/apt-guard/apt-guard.sh"
+    [[ -f "$APT_GUARD" ]] || { log_error "нет библиотеки apt-guard ($APT_GUARD) — cream ставит её по depends"; exit 1; }
+    # shellcheck source=../../apt-guard/apt-guard.sh
+    source "$APT_GUARD"
+    apt_guard_check remove "${debs[@]}" || exit 1
+fi
 
 if [[ -f "$UNIT" || -s "$STATE_DIR/pip" ]]; then
     if [[ "${CREAM_PHASE:-}" == live && -d "$R/run/systemd/system" ]]; then
@@ -37,7 +48,6 @@ if (( ${#pips[@]} )); then
         || { log_error "pip uninstall ${pips[*]} не прошёл"; exit 1; }
     log_info "pip: сняты ${pips[*]}"
 fi
-mapfile -t debs < <(read_list "$STATE_DIR/packages")
 if (( ${#debs[@]} )); then
     export DEBIAN_FRONTEND=noninteractive
     apt-get -q -y remove "${debs[@]}" || { log_error "apt-get remove ${debs[*]} не прошёл"; exit 1; }

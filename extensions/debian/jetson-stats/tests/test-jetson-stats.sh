@@ -40,7 +40,9 @@ grep -qE "^${*: -1}:" "$FAKE/passwd"'
 awk -F: -v OFS=: -v g="$2" -v u="$3" "\$1 == g { \$4 = (\$4 == \"\" ? u : \$4 \",\" u) } { print }" "$FAKE/group" > "$FAKE/g.new"; mv "$FAKE/g.new" "$FAKE/group"'
     ht_fake systemctl '[[ "$1" == is-active ]] && { [[ -f "$FAKE/active" ]]; exit; }; exit 0'
     ht_fake dpkg-query 'p="${*: -1}"; [[ -f "$FAKE/pkg-$p" ]] && printf installed; exit 0'
-    ht_fake apt-get 'if [[ " $* " == *" install "* ]]; then
+    ht_fake apt-get 'if [[ "$1" == -s ]]; then v=Remv; [[ "$2" == purge ]] && v=Purg
+    for a in "${@:3}"; do echo "$v $a [1.0]"; done; cat "$FAKE/sim-extra" 2>/dev/null; exit 0; fi
+if [[ " $* " == *" install "* ]]; then
   for a in "$@"; do case "$a" in -*|install|Dpkg::*) ;; *) : > "$FAKE/pkg-$a" ;; esac; done
 fi; exit 0'
     # python3 -m pip: list/install/uninstall over $FAKE/pip-installed; the
@@ -69,14 +71,14 @@ echo "== манифест =="
 # eval: test-only literal expressions over our own manifest, as in nvidia-jetpack.
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "мажор 3" 3.0.0 "$(mf 'm["version"]')"
+eq "мажор 3" 3.0.1 "$(mf 'm["version"]')"
 eq "cream >=1.1.1 (стадия cloud-user, Р14)" ">=1.1.1" "$(mf 'm["cream"]')"
 eq "только arm64" "['arm64']" "$(mf 'm["platform"]["arch"]')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
 eq "стадия cloud-user" cloud-user "$(mf 'm["hooks"]["configure"]["stage"]')"
 check_not "без порядка относительно jtop.service" grep -q 'jtop' <<< "$(mf 'm["hooks"]["configure"].get("after", []) + m["hooks"]["configure"].get("before", []) + m["hooks"]["configure"].get("wants", [])')"
 eq "хуки" "['configure', 'install', 'remove']" "$(mf 'sorted(m["hooks"])')"
-eq "depends cloud-user" "cloud-user >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
+eq "depends cloud-user, apt-guard" "cloud-user >=1.0.0 <2 apt-guard >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
 check "constraints закрепляют jetson-stats" grep -qE '^jetson-stats==[0-9.]+' "$EXT/constraints.txt"
 for f in install.sh configure.sh configure-jetson-stats.service; do
     check_not "layout 2: нет $f" test -e "$EXT/$f"
@@ -161,5 +163,18 @@ check_not "состояние снято" test -e "$STATE/pip" -o -e "$STATE/pac
 : > "$FAKE/calls"
 ht_hook remove; eq "повтор — 0" 0 "$?"
 check_not "повтор: pip и apt не звали" ht_called '^(apt-get|python3) '
+
+echo "== remove: симуляция снимает чужой пакет — отказ =="
+jroot; live_systemd
+ht_hook install >/dev/null
+echo 'Remv python3-jtop-plugins [1.0]' > "$FAKE/sim-extra"
+: > "$FAKE/calls"
+ht_hook remove; eq "симуляция снимает чужой пакет — 1" 1 "$?"
+check "чужой пакет назван" grep -q 'python3-jtop-plugins' "$ROOT/out"
+check_not "ничего не снято" ht_called '^apt-get -q -y remove'
+check_not "pip не тронут" ht_called 'pip uninstall'
+check_not "служба не выключена" ht_called '^systemctl disable'
+check "юнит на месте" test -e "$UNIT"
+check "запись пакетов осталась" test -s "$STATE/packages"
 
 ht_done
