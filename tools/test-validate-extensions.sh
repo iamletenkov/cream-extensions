@@ -12,14 +12,14 @@ bad() { total=$((total+1)); fails=$((fails+1)); echo "  FAIL $1"; }
 T="$(mktemp -d)"
 trap 'rm -rf -- "$T"' EXIT
 
-# repo DIR: a fresh repository with btop (layout 2) and the cream/v1 fixture
+# repo DIR: a fresh repository with the layout 2 fixture btop (tools/testdata/layout2-min) and the cream/v1 fixture
 # `ok`; btop requires the capability that only `ok` provides.
 repo() {
     local d="$1"
     mkdir -p "$d/tools" "$d/extensions/debian"
     cp "$HERE/validate-extensions.py" "$d/tools/"
     cp -a "$REPO/lib" "$d/lib"
-    cp -a "$REPO/extensions/debian/btop" "$d/extensions/debian/btop"
+    cp -a "$HERE/testdata/layout2-min/btop" "$d/extensions/debian/btop"
     cp -a "$HERE/testdata/cream-v1-min/ok" "$d/extensions/debian/ok"
     sed -i 's/^requires: \[\]$/requires: [cream-v1-min]/' "$d/extensions/debian/btop/extension.yaml"
 }
