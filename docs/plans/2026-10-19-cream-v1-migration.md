@@ -371,6 +371,8 @@ depends `l4t` (opencv, pytorch), requires `cuda`; `check-system-python.py`, `con
 - `l4t-pytorch`, `l4t-tensorflow`: колёса PyPI — только по `constraints.txt`, без `--require-hashes`.
 - `nvidia-jetpack`: шаг 04 принимает пароль в argv (`-p`) — перевести на файл/stdin; шаг 09 — `chown -R` каталога
   результатов на оператора, при повторе root пишет в каталог оператора (повышения нет, но стоит писать от оператора).
+- README обёртки `stvor-agent`: уточнить, что пакет включает юнит при установке, а старт ждёт токена
+  (`ConditionPathExists=/etc/stvor-agent/token`), который пишет `stvor-agent enable` (найдено приёмкой bisquite).
 - `network-manager`: живой прогон на Ubuntu не идёт в контейнере (polkit/hostnamed без `SYS_ADMIN`) — только debian-12.
 
 ### Task 29: Финальная интеграция + `make ci`, выпуск каталога 5.0.0
