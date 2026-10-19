@@ -65,6 +65,9 @@ mf() { python3 -c 'import sys,yaml; m=yaml.safe_load(open(sys.argv[1])); print(e
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
 eq "мажор 2" 2 "$(mf 'm["version"].split(".")[0]')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
+# Jetson Nano (L4T R32) is Ubuntu 18.04/20.04: a static binary has no reason to refuse it.
+eq "platform.os: Debian >= 12, Ubuntu >= 18.04" "debian>=12 ubuntu>=18.04" \
+    "$(mf '" ".join(o["id"] + o.get("version", "") for o in m["platform"]["os"])')"
 eq "хуки install и remove" "install remove" "$(mf '" ".join(sorted(m["hooks"]))')"
 eq "default YQ_VERSION = пин каталога" "$PIN_V" "$(mf 'm["config"]["keys"]["YQ_VERSION"]["default"]')"
 check "пин: sha256 amd64" grep -Eq '^YQ_PIN_SHA256_AMD64=[0-9a-f]{64}$' "$EXT/files/pin.env"
