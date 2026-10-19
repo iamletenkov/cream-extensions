@@ -3,8 +3,11 @@
   "packages": {
     ".": {
       "release-type": "simple",
-      "package-name": "bisquite-extensions",
+      "package-name": "cream-extensions",
       "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        { "type": "generic", "path": "cream-catalog.yaml" }
+      ],
       "include-component-in-tag": false,
       "include-v-in-tag": true,
       "changelog-sections": [

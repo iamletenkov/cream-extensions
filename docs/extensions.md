@@ -159,6 +159,34 @@ sources:
 `bs extension check <ссылка>`. Последняя печатает отчёт и при отказе, называя
 причину полем `refusal`, а код возврата при этом 1 — по нему её и ставят в CI.
 
+### Снимок каталога для cream
+
+Для cream (спека cream §9) каталог — это источник типа `archive`: снимок
+`cream-extensions-<v>.tar.gz` с `cream-catalog.yaml` в корне, который cream
+скачивает, сверяет по sha256 **до** распаковки и проверяет целиком. Снимок
+приложен к каждому релизу `vX.Y.Z` вместе с `SHA256SUMS` (job
+`release-assets` в `.github/workflows/ci-release.yml`); на PR тот же шаг
+идёт сухим прогоном без загрузки.
+
+```bash
+make snapshot        # tools/catalog-snapshot.sh: снимок HEAD в dist/
+make snapshot-check  # tools/test-snapshot.sh: воспроизводимость + приёмка cream
+cream source add cream-extensions --archive file:///…/cream-extensions-<v>.tar.gz \
+    --sha256 <сумма из SHA256SUMS> --sync
+```
+
+Каталог переходный: `cream validate --catalog .` по корню отвергает
+манифесты layout 2 (`manifest.schema`). Поэтому `tools/catalog-snapshot.sh`
+выгружает из коммита (`git archive`, не рабочее дерево) только
+`cream-catalog.yaml`, `LICENSE`, `NOTICE` и расширения `schema: cream/v1`
+без их `tests/` — по тем же путям, что в репозитории, — и запускает
+`cream catalog pack` по пину `tools/cream-pin.env` в `debian:12` без сети.
+`SOURCE_DATE_EPOCH` — время коммита: две сборки одного коммита дают одни
+байты, это проверяет `tools/test-snapshot.sh` (часть `tools/check.sh`), он же
+подключает снимок тем же cream и разрешает `teleport` и `stvor-agent`.
+`roots` в `cream-catalog.yaml` обязан покрывать каждое расширение `cream/v1`,
+иначе скрипт отказывает: расширение не должно пропасть из снимка молча.
+
 ### Ручной формы `COPY_IN` больше нет
 
 Прежняя запись — `COPY_IN <чекаут>/extensions/debian/<имя>:/opt/vmsetup/`

@@ -152,6 +152,8 @@ tools/check.sh                # все проверки (сегодня — ва
 tools/validate-extensions.py  # только манифесты (нужен python3 + PyYAML)
 tools/new-extension.sh <имя>  # каркас нового расширения
 tools/agent-bump.sh <тег> <SHA256SUMS>  # пин stvor-agent в обёртке stvor-agent (его зовёт agent-bump.yml)
+tools/catalog-snapshot.sh [OUT] # снимок каталога cream (make snapshot)
+tools/test-snapshot.sh          # воспроизводимость и приёмка снимка cream (make snapshot-check)
 ```
 
 Валидатор проверяет, что у каждого каталога с `install.sh` есть манифест, что
@@ -286,8 +288,9 @@ Workflow `CI and Release`, конфиг — `.github/release_please/`:
 2. После проверок на `main` release-please открывает (и дальше обновляет)
    PR «chore(main): release X.Y.Z» с секцией `CHANGELOG.md`.
 3. Владелец сливает этот PR — release-please создаёт тег `vX.Y.Z` и
-   опубликованный релиз с заметками. Файлов к релизу нет: потребителю нужен
-   только тег.
+   опубликованный релиз с заметками; job `release-assets` собирает на теге
+   снимок каталога и прикладывает к релизу `cream-extensions-X.Y.Z.tar.gz`
+   и `SHA256SUMS` (см. «Снимок каталога cream» ниже).
 4. Тот же прогон запускает в `iamletenkov/bisquite` workflow `extensions-bump.yml`
    (job `dispatch-bisquite`): там открывается PR, поднимающий подмодуль и
    `EXT_VERSION`/`ref` в примерах до нового тега. Токен — секрет
@@ -301,6 +304,35 @@ Workflow `CI and Release`, конфиг — `.github/release_please/`:
 с суммами обоих `.deb` из `SHA256SUMS` релиза. База PR — вход `base`, иначе
 переменная `AGENT_BUMP_BASE` (пока обёртка только в пилотной ветке —
 `feature/cream-v1-pilot`), иначе `main`.
+
+### Снимок каталога cream
+
+Потребители cream (портал Stvor, bisquite) берут каталог не git-чекаутом,
+а снимком — `tar.gz`, собранным `cream catalog pack` (спека cream §9):
+
+```bash
+make snapshot        # dist/cream-extensions-<v>.tar.gz + dist/SHA256SUMS из HEAD
+make snapshot-check  # две сборки дают одни байты; cream принимает снимок
+```
+
+Снимок собирается из коммита (`REF`, по умолчанию `HEAD`), а не из рабочего
+дерева; `SOURCE_DATE_EPOCH` — время коммита, cream — по пину
+`tools/cream-pin.env` в контейнере `debian:12`, поэтому сборка одного коммита
+воспроизводима побайтно. Пока каталог переходный, в снимок попадают только
+расширения `cream/v1` (без `tests/`), `cream-catalog.yaml`, `LICENSE` и
+`NOTICE`: манифесты layout 2 cream отвергает. Версия каталога —
+`version` в `cream-catalog.yaml`, её поднимает release-please вместе с тегом.
+
+Готовый снимок лежит в релизе `vX.Y.Z`; подключение:
+
+```bash
+cream source add cream-extensions \
+  --archive https://github.com/iamletenkov/cream-extensions/releases/download/vX.Y.Z/cream-extensions-X.Y.Z.tar.gz \
+  --sha256 <сумма из SHA256SUMS релиза> --sync
+```
+
+Stvor раздаёт тот же файл со своего зеркала (`--archive file://…`) по пину
+sha256. Подробнее — [docs/extensions.md](docs/extensions.md#снимок-каталога-для-cream).
 
 `ref: main` неподвижной точкой не является: ветка мутабельна, а git-тег
 переставляется `git tag -f`. Что фактически легло в кеш, записывает

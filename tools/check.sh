@@ -9,7 +9,9 @@
 # Сверка файлов-образцов контракта stvor-agent (check-contract-fixtures.sh:
 # пин набора — всегда, без сети; соседняя копия stvor-agent — если есть,
 # в CI её даёт checkout по ref). Тест tools/agent-bump.sh (пин обёртки
-# stvor-agent по SHA256SUMS релиза). Тесты, которых ещё нет
+# stvor-agent по SHA256SUMS релиза). Тест снимка каталога
+# (test-snapshot.sh: две сборки tools/catalog-snapshot.sh дают одни байты,
+# cream принимает снимок через source add --archive и resolve). Тесты, которых ещё нет
 # (extensions/debian/teleport/tests/*.sh, tools/test-stvor-agent.sh),
 # пропускаются со строкой, а не молча. Сверки копий
 # lib/ нет: копий нет, общий код доставляет в гостя сама сборка
@@ -56,6 +58,9 @@ echo "== test-firewall =="
 
 echo "== test-can-usb =="
 "$HERE/test-can-usb.sh" || rc=1
+
+echo "== test-snapshot =="
+"$HERE/test-snapshot.sh" || rc=1
 
 echo "== check-contract-fixtures =="
 "$HERE/check-contract-fixtures.sh" || rc=1
