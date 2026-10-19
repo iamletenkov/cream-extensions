@@ -3,10 +3,17 @@
 NetworkManager в образе — чтобы Wi-Fi, объявленный в манифесте устройства,
 на этом устройстве действительно поднялся.
 
-> **С 1.1.0 — раскладка 2.** Манифест объявляет `layout: 2`: каталог расширения
-> в госте — `/opt/bisquite/network-manager/` (был `/opt/vmsetup/network-manager/`). Путей гостя
-> расширение не прибивает, поэтому версия минорная; нужен bisquite
-> с поддержкой `layout: 2`.
+```
+cream install network-manager --accept-risk   # живая машина (live: confirm)
+cream remove network-manager
+EXTENSION network-manager                     # образ bisquite
+```
+
+> **С 2.0.0 — cream/v1.** `install.sh` стал хуком `hooks/install`, появился хук
+> `remove`; каталог в госте — `/opt/cream/ext/network-manager/`, запись «что поставлено» —
+> `/var/lib/cream/ext/network-manager/installed`. Проверка `ID` из `/etc/os-release`
+> ушла в манифест (`platform.os`: debian, ubuntu) — на другой системе отказывает cream.
+> Настроек нет.
 
 ## Зачем
 
@@ -34,38 +41,43 @@ EXTENSION network-manager
 
 Параметров нет.
 
-Ручной формы через `COPY_IN` больше нет: сборка кладёт каталог в
-`/opt/bisquite/network-manager/` и ставит рядом ссылку `lib` на общий код источника,
-а это делает только `EXTENSION` (раскладка 2, см. `docs/extensions.md`).
+На живой машине — `cream install network-manager --accept-risk` (`targets.live: confirm`).
+Риск в том, что пакет `network-manager` при установке **сразу запускает** NetworkManager,
+и он берёт под управление интерфейсы, которых не держат ifupdown или netplan, —
+соединение, по которому вы зашли, может оборваться. `systemd-networkd` расширение
+не выключает (см. «Ограничения»). Безопаснее всего — сборка образа.
 
 ## Манифест
 
 | Поле | Значение |
 |---|---|
-| `phase` | `[build]` — конфигурацию сети пишет cloud-init, донастраивать на первой загрузке нечего, `configure.sh` нет |
+| `targets` | `build: exec`, `live: confirm` (`live_note` — смена сетевого стека) |
+| `platform` | `deb`, `amd64`/`arm64`, `os`: debian, ubuntu |
 | `provides` | `network-manager` |
-| `requires` | — |
-| `conflicts` | — |
+| `hooks` | `install` (20 мин), `remove`; `configure` нет — конфигурацию сети пишет cloud-init |
+| `depends`, `conflicts` | — |
 
-`requires` пуст намеренно: NetworkManager нужен не расширению, а тому, кто
+Зависимостей нет намеренно: NetworkManager нужен не расширению, а тому, кто
 объявил Wi-Fi в манифесте устройства, — и это отношение живёт не в дереве
 расширений, а между образом и `bs device write`.
 
 ## Что делает
 
-**Сборка** (`install.sh`)
+**`hooks/install`** (сборка или живая машина)
 
-- отказывается работать не на `debian`/`ubuntu` — по `ID` из
-  `/etc/os-release`;
 - смотрит, что уже стоит: `network-manager` и `wpasupplicant`;
 - если оба на месте и юнит включён — сообщает и выходит, apt не трогая;
-- иначе ставит недостающее и проверяет, что `NetworkManager.service`
+- иначе ставит недостающее, записывает поставленное в
+  `/var/lib/cream/ext/network-manager/installed` и проверяет, что `NetworkManager.service`
   действительно включён;
 - предупреждает, если в образе включён ещё и `systemd-networkd`;
 - сообщает, нашлась ли в `/lib/firmware` прошивка Wi-Fi.
 
-Первой загрузки у расширения нет: конфигурацию сети пишет cloud-init,
-донастраивать нечего.
+**`hooks/remove`** снимает только пакеты из этой записи. Стоявшие до cream
+(случай Raspberry Pi OS) остаются, профили соединений — тоже: они принадлежат
+cloud-init и оператору.
+
+Донастройки на загрузке у расширения нет: конфигурацию сети пишет cloud-init.
 
 **`wpasupplicant` объявлен явно**, а не оставлен на `Recommends` пакета
 `network-manager`: образы собирают и с `--no-install-recommends`, и тогда
@@ -112,7 +124,7 @@ EXTENSION network-manager
 
 | Когда | Что делает |
 |---|---|
-| `ID` не `debian` и не `ubuntu` | отказ, код 1 |
+| `ID` не `debian` и не `ubuntu` | отказывает cream (`platform.os`), хук не запускается |
 | пакета нет в репозиториях образа | отказ с указанием проверить `sources.list` |
 | пакеты встали, а юнит не включился | отказ, код 1 — тихо отдавать образ без сети хуже |
 | прошивки Wi-Fi в образе нет | **предупреждение**, не отказ |
@@ -133,11 +145,21 @@ NetworkManager, а Ethernet может остаться за networkd.
 не создаёт: SSID и пароль приходят из манифеста устройства через cloud-init.
 Расширение отвечает только за то, чтобы было **чем** их применить.
 
-**`phase: build`** — значит, архитектуры хоста и образа обязаны совпасть:
-libguestfs не выполняет код в госте чужой архитектуры. Собрать arm64-образ
-с этим расширением на amd64-хосте нельзя, и отказ приходит до сборки.
+**`build: exec`** — хук выполняется в госте, значит архитектуры хоста и образа
+обязаны совпасть: libguestfs не выполняет код в госте чужой архитектуры.
+Собрать arm64-образ с этим расширением на amd64-хосте нельзя, и отказ приходит
+до сборки.
 
-## Проверка
+## Проверки
+
+- **V** — `make cream-validate`, `tools/check-names.sh`.
+- **H** — `tests/test-network-manager.sh`: «уже стоит» без apt, недостающее, повтор,
+  отказы (нет пакета, юнит не включился), предупреждения, `remove` только своего.
+- **L** — `make test-live EXT=network-manager` (`tests/live.env`, `--accept-risk`) на `debian-12`;
+  на Ubuntu в контейнере не стартуют `polkit`/`systemd-hostnamed` (нет `CAP_SYS_ADMIN`) — причина в
+  стенде, не в расширении (`tests/live.env`).
+
+### Вручную
 
 На собранном образе:
 
