@@ -143,7 +143,7 @@ eq "build: exec" exec "$(mf 'm["targets"]["build"]')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
 eq "provides" pytorch "$(mf '" ".join(m["provides"])')"
 eq "requires cuda" cuda "$(mf '" ".join(m["requires"])')"
-eq "depends l4t" "l4t >=1.0.0 <2" "$(mf '" ".join(d["name"] + " " + d["version"] for d in m["depends"])')"
+eq "depends l4t, apt-guard" "l4t >=1.0.0 <2 apt-guard >=1.0.0 <2" "$(mf '" ".join(d["name"] + " " + d["version"] for d in m["depends"])')"
 eq "хуки" "install remove" "$(mf '" ".join(sorted(m["hooks"]))')"
 check "install: timeout с запасом (≥ 2 ч)" python3 -c '
 import re, sys, yaml

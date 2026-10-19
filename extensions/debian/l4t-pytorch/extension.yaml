@@ -15,7 +15,7 @@
 # Tree: constraints.txt, check-system-python.py, pip-owned.py.
 schema: cream/v1
 name: l4t-pytorch
-version: 2.0.0
+version: 2.0.1
 summary: PyTorch и torchvision с CUDA для NVIDIA Jetson — колесо NVIDIA и сборка torchvision (R36), проверка образа (R32)
 cream: ">=1.0.0"
 platform:
@@ -30,6 +30,7 @@ provides: [pytorch]
 requires: [cuda]
 depends:
   - {name: l4t, version: ">=1.0.0 <2"}
+  - {name: apt-guard, version: ">=1.0.0 <2"}
 hooks:
   # The 769 MB wheel and torchvision built with CUDA: 128 s on 12 cores of a
   # board, much longer with one job in a small build appliance.
