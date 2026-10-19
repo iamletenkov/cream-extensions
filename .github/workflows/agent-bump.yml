@@ -60,6 +60,16 @@ jobs:
       BASE: ${{ inputs.base || vars.AGENT_BUMP_BASE || 'main' }}
       GH_TOKEN: ${{ github.token }}
     steps:
+      # База PR — только из белого списка, до любого checkout: иначе ручной запуск
+      # с произвольной веткой выполнил бы её скрипты с токеном, открывающим PR.
+      - name: Check base branch
+        run: |
+          set -euo pipefail
+          case "$BASE" in
+            main|feature/cream-v1-pilot) ;;
+            *) echo "::error::база PR '$BASE' не из белого списка (main, feature/cream-v1-pilot)"; exit 1 ;;
+          esac
+
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ env.BASE }}
