@@ -1,14 +1,15 @@
-# bisquite-extensions
+# cream-extensions
 
-Переиспользуемые «расширения» провизии для образов, собираемых
-[bisquite](https://github.com/iamletenkov/bisquite). Расширения сгруппированы по
-семейству ОС. Подключаются инструкцией `EXTENSION` в VMFILE.
+Каталог расширений провизии формата cream/v1 (бывший bisquite-extensions): их
+ставит [cream](https://github.com/iamletenkov/cream) на живую машину
+(`cream install`) и в образ, собираемый
+[bisquite](https://github.com/iamletenkov/bisquite) (инструкция `EXTENSION` в VMFILE).
 
 ## Структура
 
 ```
 extensions/
-├── debian/                  # для Debian/Ubuntu (install.sh + configure)
+├── debian/                  # для Debian/Ubuntu: cream/v1 (hooks/) и ещё не переведённые layout 2
 │   ├── docker/
 │   ├── teleport/            # cream/v1: узел Teleport (join, render, apps.d, метки)
 │   ├── stvor-agent/         # cream/v1: обёртка пакета stvor-agent (пин по архитектурам)
@@ -22,12 +23,12 @@ extensions/
 └── openwrt/                 # для OpenWrt (конфиги, UPLOAD) — не расширения, см. docs/
     ├── uci-defaults/
     └── wrt_cloudinit/
-lib/                         # общий код; сборка доставляет его в гостя (контракт)
-                             #   bisquite-conf — библиотека и CLI настроек, knobs/ — общие схемы
-tools/                       # check.sh, check-names.sh, live-test.sh, hooktest.sh, validate-extensions.py, new-extension.sh
+lib/                         # переходно: общий код layout 2 (bisquite-conf, knobs/); в cream/v1 — библиотеки kind: library
+tools/                       # check.sh, lint-hooks.sh, check-names.sh, live-test.sh, hooktest.sh, new-extension.sh,
+                             #   cream-pin.env (пин cream проверок), validate-extensions.py (layout 2)
 .github/workflows/ci-release.yml  # CI: tools/check.sh на push и PR, выпуск — release-please
 .github/workflows/live.yml        # живые прогоны L-расширений: изменённые на PR, все — ночью
-docs/extensions.md           # конвенция целиком: манифест, фазы, способности
+docs/extensions.md           # конвенция целиком: формат cream/v1, линт хуков, пин cream; layout 2 — переходно
 ```
 
 Ubuntu-образы используют расширения из `debian/` (Ubuntu — Debian-совместима).
@@ -47,113 +48,84 @@ Ubuntu-образы используют расширения из `debian/` (Ub
 совпало со ссылкой. Другой источник вправе разложить дерево иначе.
 
 Каталог называется `debian/`, а семейство внутри манифеста — `deb`; это разные
-вещи, и совмещать их не надо. Контрактом остаётся другое: **каталог `lib/` в
-корне источника** — его сборка доставляет в гостя рядом с каждым расширением
-(см. «Раскладка в госте»).
+вещи, и совмещать их не надо. Контракт — имя каталога расширения равно `name`
+(cream/v1 этого требует) и `cream-catalog.yaml` в корне (`roots: [extensions/debian]`).
 
 ## Конвенция
 
-**Debian/Ubuntu** (`extensions/debian/<name>/`) — скриптовая, двухфазная:
+Формат — **cream/v1**: расширение ставит и настраивает cream (исполнитель
+расширений), сборщик bisquite зовёт тот же cream в госте. Конвенция целиком —
+[docs/extensions.md](docs/extensions.md#формат-creamv1), спека — в репозитории cream
+(`docs/specs/2026-10-18-cream-core.md`).
+
 ```
-<name>/
-├── extension.yaml              # манифест: name/version/layout/family/arch/phase/deps
-├── install.sh                  # сборка: ставит софт, регистрирует configure-сервис
-├── configure.sh                # первый запуск: до-настройка под конкретную ВМ
-├── configure-<name>.service    # systemd-oneshot, гоняет configure.sh на загрузке
-├── knobs                       # опционально: схема настроек домена (/etc/bisquite/<домен>/config)
-├── knobs.apply, knobs.secret   # опционально: хуки применения и секретов
+extensions/debian/<name>/
+├── extension.yaml      # schema: cream/v1, name, version, summary, cream, platform, targets,
+│                       # provides/requires/depends/conflicts, hooks, config.keys, actions, files
+├── hooks/              # install, upgrade, configure, apply, secret, remove, check — объявленные
+├── actions/<действие>  # cream run <name> <действие>
+├── files/…             # юниты, udev, шаблоны — раскладывает cream (поле files)
+├── tests/              # H-тесты (tests/test-*.sh) и live.env; в снимок не попадают
 └── README.md
-
-Общий код рядом НЕ лежит: в госте он виден как `$SCRIPT_DIR/lib/` (ссылка).
-```
-1. **Сборка (`install.sh`)** — ставит софт (с ретраями), включает `configure-<name>.service`.
-2. **Первый запуск (`configure.sh`)** — резолвит cloud-init пользователя через
-   `$SCRIPT_DIR/lib/get_cloud_user.sh` и доделывает per-instance настройку
-   (идемпотентно).
-
-**Где потом менять настройки.** Одной командой у всех:
-`bisquite-conf show <домен>` / `sudo bisquite-conf set <домен> KEY=VALUE`.
-Файлы — `/etc/bisquite/<домен>/config` в формате `KEY=VALUE` (грамматика systemd
-`EnvironmentFile`), схема — `knobs` расширения; `set` проверяет значение,
-пишет атомарно и применяет хуком домена. Таблица доменов —
-[docs/extensions.md](docs/extensions.md#где-живут-параметры-времени-выполнения).
-
-В образе нужны `cloud-init` и `yq`, и ставит их **не** расширение:
-`cloud-init` приезжает с базовым образом, `yq` — отдельным `EXTENSION yq`,
-который обязан стоять в VMFILE **выше** потребителей. Пакетом `apt install yq`
-его заменять нельзя: под этим именем в репозиториях лежит другой инструмент
-(kislyuk/yq, язык jq) с несовместимым языком запросов — разбор
-в `extensions/debian/yq/README.md`.
-
-Отсутствие `cloud-init` само по себе не отказ: у `lib/get_cloud_user.sh` есть
-запасной путь — первая обычная учётка с домашним каталогом.
-
-**OpenWrt** (`extensions/openwrt/`) — конфиги, которые кладутся через `UPLOAD`
-(uci-defaults, init.d-скрипты), без install.sh. По текущей конвенции это **не
-расширения**: другой механизм доставки, и ни одна фаза не описывает их честно.
-Манифестов у них нет намеренно; вдобавок `OpenWrtBuilder` блокирует саму
-инструкцию `EXTENSION` — разбор в `docs/extensions.md`.
-
-### Манифест
-
-Рядом со скриптами лежит `extension.yaml` — девять полей, набор закрыт:
-
-```yaml
-name: x11vnc
-version: 3.0.0
-layout: 2                            # раскладка в госте; без него bisquite откажет
-family: deb                          # deb | rpm | apk | openwrt (НЕ имя каталога)
-arch: [amd64, arm64]                 # единственная объявляемая ось применимости
-phase: [build, firstboot]            # где выполняется работа
-provides: [remote-desktop]
-requires: [x11-server, display-manager]
-conflicts: []
 ```
 
-Значение каждого поля, что из него читает bisquite, а что только валидатор, —
-в `docs/extensions.md`.
+```
+cream install <name>                 # живая машина (EXTENSION <name> — образ bisquite)
+cream show <name>                    # настройки домена
+sudo cream set <name> KEY=VALUE      # проверка по схеме, атомарная запись, хук apply
+cream run <name> <действие> [аргументы]
+cream remove <name>
+```
 
-### Раскладка в госте (`layout: 2`)
+- **Настройки** — `config.keys` манифеста; в хук приходят переменными окружения
+  (без префикса `CREAM_` — это окружение cream, и без `BISQUITE_`), секреты — только
+  в `$CREAM_SECRETS_FILE`, дальше через stdin (`KEY=-`), не через argv.
+- **Донастройка на машине** — хук `configure` на стадии `system`, `early`,
+  `cloud-user` или `graphical` (юнит `cream-configure@<name>` ставит cream).
+  Стадии `early`/`graphical` требуют `cream: ">=1.1.0"`, `cloud-user` —
+  **`">=1.1.1"`** (в 1.1.0 стадия не стартует при выключенном cloud-init).
+- **Общий код** — библиотеки `kind: library` (`cloud-user` — пользователь
+  cloud-init, `l4t`): потребитель объявляет `depends` и зовёт
+  `"${CREAM_ROOT:-}/opt/cream/ext/<lib>/…"`. Копий и `lib/` в расширении нет.
+- **Коды хука:** 10 — нужна перезагрузка, 20 — неприменимо здесь (только `install`);
+  `configure` без устройства — предупреждение и 0. `remove` обязателен при
+  `targets.live: yes`.
+- **Новое расширение** — только `tools/new-extension.sh <name>` (каркас cream/v1).
 
-Всё, что ставят расширения, лежит под одним именем, по назначению:
+### Раскладка в госте
 
 | Что | Где |
 |---|---|
-| настройки расширений (`config`, `apps.d`) | `/etc/bisquite/<домен>/` |
-| код и данные расширения: `run-*.sh`, `configure.sh`, картинки | `/opt/bisquite/<имя>/` |
-| общий код источника (`get_cloud_user.sh`, `bisquite-desktop`) | `/opt/bisquite/lib/<sha256>/`; расширение видит его как `/opt/bisquite/<имя>/lib` |
-| состояние | `/var/lib/bisquite/<имя>/` |
-| команды для человека | `/usr/local/sbin/bisquite-*` |
+| код и данные расширения | `/opt/cream/ext/<name>/` |
+| настройки домена (`config`, `secrets`, `apps.d`) | `/etc/cream/<name>/` |
+| состояние | `/var/lib/cream/ext/<name>/` |
+| донастройка на загрузке | `cream-configure@<name>.service` |
 
-До раскладки 2 каталог расширения лежал в `/opt/vmsetup/<имя>`, настройки
-`code-server`, `kiosk` и `chromium-kiosk` — там же, а состояние
-прежнего `teleport-agent` — в `/var/lib/bisquite-teleport`. Переезд — мажорные версии
-расширений; уже записанные устройства не мигрируют, образы пересобираются.
+### Переходное: layout 2
 
-### Общий код: `lib/` — контракт доставки
+Ещё не переведённые расширения (без `schema: cream/v1` в манифесте) живут по
+layout 2: `install.sh` + `configure.sh` + `configure-<name>.service`, схема
+`knobs` и `lib/bisquite-conf`, общий код — `lib/` корня, доставляемый сборкой в
+`/opt/bisquite/<name>/lib`, настройки — `/etc/bisquite/<домен>/config`,
+манифест из девяти полей с `layout: 2`. Его описание — разделы «layout 2» в
+[docs/extensions.md](docs/extensions.md); проверяет его
+`tools/validate-extensions.py`. Каталог переводится по плану
+[2026-10-19-cream-v1-migration](docs/plans/2026-10-19-cream-v1-migration.md),
+расширение целиком и с мажором версии; layout 2, `lib/` и валидатор уходят
+в последней задаче плана.
 
-`lib/` в корне источника доставляет **сборка**: считает sha256 дерева, кладёт
-его в `/opt/bisquite/lib/<sha256>/` и ставит ссылку
-`/opt/bisquite/<имя>/lib → /opt/bisquite/lib/<sha256>` рядом с каждым
-расширением. Отсюда правило вызова:
-
-- в `install.sh` и `configure.sh` — `"$SCRIPT_DIR/lib/get_cloud_user.sh"`;
-- в юнитах — `/opt/bisquite/<имя>/lib/…`.
-
-Копий в каталогах расширений нет и заводить их нельзя: копии расходятся, и
-их приходилось сверять отдельным инструментом. Отпечаток вместо общего
-`/opt/bisquite/lib` нужен цепочкам `FROM`: дочерний образ не перезаписывает
-код, который зовут расширения базы. Ручной формы `COPY_IN` каталога поэтому
-тоже нет — `lib` рядом с расширением ставит только `EXTENSION`.
+**OpenWrt** (`extensions/openwrt/`) — конфиги для `UPLOAD`, не расширения; на
+cream/v1 не переводятся и уходят из каталога (bisquite берёт их по тегу `v3.3.0`).
 
 ## Проверки
 
 ```bash
-tools/check.sh                # все проверки: манифесты, cream validate, гейт имён, тесты расширений (make test)
+tools/check.sh                # все проверки: манифесты, cream validate, линт хуков, гейт имён, тесты (make test)
+tools/lint-hooks.sh           # линт хуков и действий cream/v1: шапки, --no-block, lock: none, секреты, CREAM_*
 tools/validate-extensions.py  # только манифесты (нужен python3 + PyYAML)
 tools/check-names.sh          # гейт имён bisquite в расширениях cream/v1 (make check-names)
 tools/live-test.sh <имя>      # живой прогон настоящим cream в контейнере с systemd (make test-live EXT=<имя>)
-tools/new-extension.sh <имя>  # каркас нового расширения
+tools/new-extension.sh <имя>  # каркас нового расширения cream/v1
 tools/agent-bump.sh <тег> <SHA256SUMS>  # пин stvor-agent в обёртке stvor-agent (его зовёт agent-bump.yml)
 tools/catalog-snapshot.sh [OUT] # снимок каталога cream (make snapshot)
 tools/test-snapshot.sh          # воспроизводимость и приёмка снимка cream (make snapshot-check)

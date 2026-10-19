@@ -5,7 +5,11 @@
 # настроек, и того, как скрипты обращаются с файлами настроек); `cream validate`
 # по расширениям cream/v1 (cream-validate.sh: cream по пину tools/cream-pin.env,
 # пустой пин — пропуск со строкой; локально — CREAM_DEB=<.deb>); гейт имён
-# bisquite в расширениях cream/v1 (check-names.sh) и его тест; тест H-раннера
+# bisquite в расширениях cream/v1 (check-names.sh) и его тест; линт хуков и
+# действий cream/v1 (lint-hooks.sh: шапки, systemctl --no-block, cream set при
+# lock: none, source lib/, секрет в argv, CREAM_*, стадия cloud-user) и его тест;
+# тест каркаса new-extension.sh (скелеты cream/v1 проходят линт, гейт имён, свой
+# H-тест и cream validate); тест H-раннера
 # (tools/hooktest.sh — хуки на подменённом корне, как их зовёт cream), тест
 # матрицы живых прогонов CI (live-matrix.sh); тесты
 # библиотеки настроек lib/bisquite-conf. Сверка файлов-образцов контракта
@@ -53,6 +57,15 @@ echo "== check-names =="
 
 echo "== test-check-names =="
 "$HERE/test-check-names.sh" || rc=1
+
+echo "== lint-hooks =="
+"$HERE/lint-hooks.sh" || rc=1
+
+echo "== test-lint-hooks =="
+"$HERE/test-lint-hooks.sh" || rc=1
+
+echo "== test-new-extension =="
+"$HERE/test-new-extension.sh" || rc=1
 
 echo "== test-hooktest =="
 "$HERE/test-hooktest.sh" || rc=1

@@ -95,10 +95,12 @@ mv "$T/badknobs" "$T/can"; printf 'BROKEN "re:^x\n' >> "$T/can/knobs"
 msg="$("$CONV" "$T/can" 2>&1)"; rc=$?
 eq "битая строка knobs — код 1" 1 "$rc"; has "битая строка knobs — где" "knobs:" "$msg"
 
-# 1.1 stages are marked in the report.
-for name in firewall code-server kiosk x11vnc; do
+# 1.1 stages are marked in the report; cloud-user needs 1.1.1 (ruling R14).
+for name in firewall kiosk x11vnc; do
     has "$name: пометка 1.1" "нужен cream >=1.1.0" "$(cat "$T/$name.report")"
 done
+has "code-server: пометка 1.1.1" "нужен cream >=1.1.1" "$(cat "$T/code-server.report")"
+has "code-server: cream >=1.1.1" 'cream: ">=1.1.1"' "$(cat "$T/out/code-server/extension.yaml")"
 
 # cream validate over the drafts.
 if [[ -n "${UPDATE_GOLDEN:-}" ]]; then
@@ -106,23 +108,30 @@ if [[ -n "${UPDATE_GOLDEN:-}" ]]; then
 elif ! command -v docker >/dev/null 2>&1; then
     echo "cream validate пропущен: нет docker"
 else
+    pinned="$(grep -E '^CREAM_VERSION=' "$HERE/cream-pin.env" | tail -n1 | cut -d= -f2-)"
     vdirs=()
     for name in "${names[@]}"; do
         v="$T/val/$name"
         mkdir -p "$v"; cp -a "$T/out/$name/." "$v/"
-        if grep -q '^cream: ">=1.1.0"' "$v/extension.yaml"; then
-            sed -i -e 's/^cream: ">=1.1.0"/cream: ">=1.0.0"/' \
-                -e 's/stage: \(early\|cloud-user\|graphical\)/stage: system/' "$v/extension.yaml"
+        # A draft that needs a cream newer than the pin would be set aside as
+        # not applicable: its requirement is lowered to the pinned cream.
+        need="$(sed -n 's/^cream: ">=\([0-9.]*\)"$/\1/p' "$v/extension.yaml")"
+        if [[ -n "$need" && -n "$pinned" && "$need" != "$pinned" \
+              && "$(printf '%s\n%s\n' "$need" "$pinned" | sort -V | tail -n1)" == "$need" ]]; then
+            sed -i "s/^cream: \">=$need\"/cream: \">=$pinned\"/" "$v/extension.yaml"
         fi
         vdirs+=("$v")
     done
-    if "$HERE/cream-validate.sh" "${vdirs[@]}" > "$T/validate.log" 2>&1; then
+    # cream >= 1.1.0 checks the graph: the libraries the drafts depend on come
+    # from the catalog itself.
+    libs=("$HERE/../extensions/debian/cloud-user" "$HERE/../extensions/debian/l4t")
+    if "$HERE/cream-validate.sh" "${vdirs[@]}" "${libs[@]}" > "$T/validate.log" 2>&1; then
         ok
     else
         bad "cream validate черновиков"; sed -n '1,40p' "$T/validate.log" >&2
     fi
     # Every draft is really checked: none is set aside as "needs a newer cream".
-    has "cream validate: проверены все" "расширений ${#names[@]}: " "$(cat "$T/validate.log")"
+    has "cream validate: проверены все" "расширений $(( ${#names[@]} + ${#libs[@]} )): " "$(cat "$T/validate.log")"
     if grep -q 'неприменим' "$T/validate.log"; then bad "cream validate: черновик отложен как неприменимый"; else ok; fi
     grep -E '^cream [0-9]|без ошибок' "$T/validate.log"
 fi

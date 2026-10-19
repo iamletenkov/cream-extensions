@@ -1,62 +1,61 @@
 #!/usr/bin/env bash
-# Scaffold a new extension.
+# Scaffold a new cream/v1 extension (docs/extensions.md, "Формат cream/v1").
 #
 # Without this, a new extension is written by copying a neighbour — together
 # with its capabilities in the manifest and its paths in the unit file. Those
 # copied values look deliberate and survive review, which is exactly how the
 # eight diverging copies of get_cloud_user.sh happened.
 #
-# Shared code is not copied into the extension at all: the build links the
-# source's lib/ in as /opt/bisquite/<name>/lib, and scripts call it as
-# "$SCRIPT_DIR/lib/<file>". Nothing to register, nothing to drift.
+# The scaffold passes `cream validate`, tools/lint-hooks.sh and its own H test
+# (tests/test-<name>.sh) right away; what only the author knows is left as TODO.
+# Shared code is never copied in: a library is an extension of its own
+# (`kind: library`), declared in `depends` and called by its stable path
+# ${CREAM_ROOT:-}/opt/cream/ext/<library>/….
+#
+# Test override: NEW_EXTENSION_ROOT — the catalog to write into (default: this
+# repository).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-
-# The manifest field `family` is not the directory name: `deb` lives under
-# extensions/debian/. The resolver behind `EXTENSION` finds an extension by the
-# `name` field of its manifest, not by the directory. The mapping stays explicit
-# anyway: the directory is what a human looks for in this repository.
-family_dir() {
-    case "$1" in
-        deb) echo debian ;;
-        openwrt) echo openwrt ;;
-        *) return 1 ;;
-    esac
-}
+REPO_ROOT="${NEW_EXTENSION_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
 usage() {
     cat >&2 <<'USAGE'
-Заводит скелет нового расширения.
+Заводит скелет нового расширения cream/v1 в extensions/debian/<имя>/.
 
   tools/new-extension.sh <имя> [ключи]
 
 Ключи:
-  --family <deb|openwrt>   семейство пакетов (умолчание: deb)
-  --arch <список>          через запятую (умолчание: amd64,arm64)
-  --no-firstboot           только фаза build: не создавать configure.sh и юнит
-  --no-shared-user         не подключать общий resolve пользователя cloud-init
+  --arch <список>          через запятую: amd64,arm64 (умолчание — оба)
+  --stage <стадия>         хук configure на загрузке: system | early | cloud-user | graphical
+                           (без ключа configure нет; early/graphical требуют cream >=1.1.0,
+                           cloud-user — >=1.1.1)
+  --live <yes|confirm|no>  targets.live (умолчание yes); confirm и no — с live_note
+  --cloud-user             configure узнаёт пользователя cloud-init библиотекой cloud-user
+                           (depends; без --stage — стадия system)
+  --library                kind: library — только файлы, без хуков
   -h, --help               эта справка
 
 Пример:
-  tools/new-extension.sh tailscale --arch amd64,arm64
+  tools/new-extension.sh tailscale --stage system
 USAGE
 }
 
 name=""
-family="deb"
 arch="amd64,arm64"
-want_firstboot=1
-want_shared_user=1
+stage=""
+live="yes"
+want_cloud_user=0
+library=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help) usage; exit 0 ;;
-        --family) family="${2:?--family требует значения}"; shift 2 ;;
         --arch) arch="${2:?--arch требует значения}"; shift 2 ;;
-        --no-firstboot) want_firstboot=0; shift ;;
-        --no-shared-user) want_shared_user=0; shift ;;
+        --stage) stage="${2:?--stage требует значения}"; shift 2 ;;
+        --live) live="${2:?--live требует значения}"; shift 2 ;;
+        --cloud-user) want_cloud_user=1; shift ;;
+        --library) library=1; shift ;;
         -*) echo "Неизвестный ключ: $1" >&2; usage; exit 2 ;;
         *)
             [[ -n "$name" ]] && { echo "Имя уже задано: $name" >&2; exit 2; }
@@ -66,271 +65,310 @@ done
 
 [[ -n "$name" ]] || { echo "Не задано имя расширения." >&2; usage; exit 2; }
 
-# The validator requires name == directory name, so reject anything that would
-# not survive it rather than creating a directory that fails checks.
-[[ "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]] || {
-    echo "Имя должно быть в нижнем регистре из букв, цифр и дефисов: '$name'" >&2
+# cream: [a-z0-9][a-z0-9._-]{0,63}, reserved words; stricter here — the name
+# also becomes a key prefix (FOO_BAR), so no dots or underscores.
+[[ "$name" =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]] || {
+    echo "Имя — строчные буквы, цифры и дефисы, до 64 знаков: '$name'" >&2
     exit 2
 }
-
-dir_name="$(family_dir "$family")" || {
-    echo "Неизвестное семейство: '$family' (ожидается deb или openwrt)" >&2
+case "$name" in
+    cream | lib | ext | installed | lock) echo "Имя «$name» зарезервировано cream" >&2; exit 2 ;;
+esac
+case "$stage" in
+    "" | system | early | cloud-user | graphical) ;;
+    *) echo "Неизвестная стадия: '$stage' (system | early | cloud-user | graphical)" >&2; exit 2 ;;
+esac
+case "$live" in
+    yes | confirm | no) ;;
+    *) echo "--live: yes | confirm | no, а не '$live'" >&2; exit 2 ;;
+esac
+arch_list=()
+IFS=',' read -r -a arch_in <<< "${arch// /}"
+for a in "${arch_in[@]}"; do
+    case "$a" in
+        amd64 | arm64) arch_list+=("$a") ;;
+        *) echo "--arch: amd64 и arm64, а не '$a'" >&2; exit 2 ;;
+    esac
+done
+(( ${#arch_list[@]} )) || { echo "--arch: пустой список" >&2; exit 2; }
+if (( library )) && [[ -n "$stage" || "$want_cloud_user" -eq 1 ]]; then
+    echo "--library: у библиотеки нет хуков — без --stage и --cloud-user" >&2
     exit 2
-}
-
-ext_dir="$REPO_ROOT/extensions/$dir_name/$name"
-[[ -e "$ext_dir" ]] && {
-    echo "Уже существует: extensions/$dir_name/$name" >&2
-    exit 1
-}
-
-# openwrt/ holds files delivered by UPLOAD, not extensions with install.sh —
-# the validator skips it. Say so instead of producing something it ignores.
-if [[ "$family" == "openwrt" ]]; then
-    echo "Внимание: extensions/openwrt/ сегодня расширениями не является —" >&2
-    echo "там файлы, доставляемые UPLOAD, и валидатор их пропускает." >&2
-    echo "См. docs/extensions.md, раздел «extensions/openwrt/ расширениями не является»." >&2
+fi
+if (( want_cloud_user )) && [[ -z "$stage" ]]; then
+    stage="system"
 fi
 
-arch_yaml="[$(echo "$arch" | tr -d ' ' | sed 's/,/, /g')]"
-# Префикс переменных окружения для примеров в README и install.sh: имя
-# расширения заглавными, дефисы в подчёркивания (`code-server` ->
-# `CODE_SERVER`). Так названы переменные у x11vnc и code-server.
-env_prefix="$(echo "$name" | tr 'a-z-' 'A-Z_')"
-if [[ "$want_firstboot" -eq 1 ]]; then
-    phase_yaml="[build, firstboot]"
+ext_dir="$REPO_ROOT/extensions/debian/$name"
+[[ -e "$ext_dir" ]] && { echo "Уже существует: extensions/debian/$name" >&2; exit 1; }
+
+# Minimal cream of a stage (cream docs/cli.md; cloud-user: plan ruling R14).
+case "$stage" in
+    early | graphical) cream_min="1.1.0" ;;
+    cloud-user) cream_min="1.1.1" ;;
+    *) cream_min="1.0.0" ;;
+esac
+arch_yaml="[$(printf '%s, ' "${arch_list[@]}" | sed 's/, $//')]"
+# Key prefix: the name in capitals, dashes to underscores (code-server ->
+# CODE_SERVER). CREAM_* is the hook environment and is never a key.
+prefix="$(echo "$name" | tr 'a-z-' 'A-Z_')"
+[[ "$prefix" == CREAM* ]] && prefix="EXT_$prefix"
+if [[ "$live" == yes ]]; then
+    targets="{build: exec, live: \"yes\"}"
 else
-    phase_yaml="[build]"
+    targets="{build: exec, live: \"$live\", live_note: \"TODO: чем опасна установка на живую машину\"}"
 fi
 
-mkdir -p "$ext_dir"
+mkdir -p "$ext_dir/tests"
 
-cat > "$ext_dir/extension.yaml" <<EOF
+# --- extension.yaml ----------------------------------------------------------
+{
+    cat <<EOF
+# $name — TODO: one line on what it gives the machine.
+schema: cream/v1
 name: $name
+EOF
+    if (( library )); then echo "kind: library"; fi
+    cat <<EOF
 version: 0.1.0
-# Раскладка в госте: каталог расширения — /opt/bisquite/<имя>/, общий код
-# lib/ источника — /opt/bisquite/<имя>/lib. Без этого поля bisquite откажет.
-layout: 2
-family: $family
-arch: $arch_yaml
-phase: $phase_yaml
-# Способности, а не имена расширений: на них ссылаются другие расширения.
-# Выводи их ИЗ КОДА — из того, что install.sh реально ставит и что требуют
-# юниты, — а не из головы. Словарь способностей в docs/extensions.md.
+summary: TODO одна фраза — что даёт расширение
+cream: ">=$cream_min"
+platform:
+  family: deb
+  arch: $arch_yaml
+targets: $targets
+EOF
+    if (( ! library )); then
+        cat <<'EOF'
+# Capabilities, not names: derive them FROM THE CODE — what the hooks really
+# install and what the units really need (docs/extensions.md, «Словарь способностей»).
 provides: []
 requires: []
-conflicts: []
 EOF
-
-cat > "$ext_dir/install.sh" <<'EOF'
-#!/usr/bin/env bash
-# Build phase: runs INSIDE the guest during image build, via virt-customize.
-#
-# systemd is not running here — this is a chroot. Anything that needs a live
-# daemon belongs in configure.sh, which runs on first boot on the device.
-#
-# Packages installed here are baked into the image, so every device gets
-# identical content. That is the point: moving an install to first boot trades
-# a guarantee for a hope, because the repository may have moved on by then.
-set -euo pipefail
-
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-
-log_info(){ >&2 echo -e "${GREEN}[INFO]${NC} $*"; }
-log_warn(){ >&2 echo -e "${YELLOW}[WARN]${NC} $*"; }
-log_error(){ >&2 echo -e "${RED}[ERROR]${NC} $*"; }
-
-# Placeholder used by the commented-out install below; drop the disable once
-# the TODO is filled in.
-# shellcheck disable=SC2034
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# Параметры из VMFILE приезжают сюда ПЕРЕМЕННЫМИ ОКРУЖЕНИЯ как есть:
-#
-#   EXTENSION __NAME__ __ENVPREFIX___PORT=9002
-#
-# Таблицы соответствия «параметр VMFILE -> переменная скрипта» нет намеренно:
-# она устарела бы молча. Единственный источник правды о том, какие переменные
-# читает расширение, — этот файл, поэтому умолчания объявляются здесь, а README
-# их перечисляет. Файл config.yaml рядом со скриптом такой ручкой НЕ является:
-# он лежит в кеше источников, который `bs extension sync` перезаписывает
-# целиком, и правка на хосте держится до первой синхронизации.
-#
-# Настройки, которые меняют на работающей машине, — схема `knobs` рядом и
-# библиотека lib/bisquite-conf: `conf_init <домен> "$SCRIPT_DIR/knobs" --env`
-# (docs/extensions.md, «Библиотека настроек»). Тогда умолчаний здесь НЕ
-# присваивают: для --env это выглядело бы параметром VMFILE.
-#
-# TODO: объявить свои параметры, если они есть.
-# __ENVPREFIX___PORT="${__ENVPREFIX___PORT:-9001}"
-
-log_info "Installing __NAME__..."
-
-# TODO: package names differ between targets. Branch on /etc/os-release here
-# rather than declaring the distribution in the manifest — the guest knows
-# itself, and a declared table goes stale silently.
-apt-get update || exit 1
-apt-get install -y \
-  __NAME__ || exit 1
-
-# TODO: install units and configs shipped next to this script, if any.
-# if [[ -f "$SCRIPT_DIR/__NAME__.service" ]]; then
-#     install -m 0644 "$SCRIPT_DIR/__NAME__.service" /etc/systemd/system/
-# fi
-
-log_info "__NAME__ installed"
-EOF
-
-if [[ "$want_firstboot" -eq 1 ]]; then
-    cat > "$ext_dir/configure.sh" <<'EOF'
-#!/usr/bin/env bash
-# First-boot phase: runs ON THE DEVICE, started by configure-__NAME__.service.
-#
-# Only what genuinely belongs here: binding to the cloud-init user, generating
-# keys, anything that depends on this particular machine. Installing packages
-# here is not equivalent to installing them at build time.
-set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-EOF
-
-    if [[ "$want_shared_user" -eq 1 ]]; then
-        cat >> "$ext_dir/configure.sh" <<'EOF'
-
-# Shared code of the source lives in $SCRIPT_DIR/lib/ — the build links the
-# source's lib/ there. Call it from there; never copy it into the extension.
-# Placeholder until the TODO below uses it; drop the disable then.
-# shellcheck disable=SC2034
-CLOUD_USER="$("$SCRIPT_DIR/lib/get_cloud_user.sh")" || {
-    echo "Не удалось определить пользователя cloud-init" >&2
-    exit 1
-}
+        if (( want_cloud_user )); then printf 'depends: [{name: cloud-user, version: ">=1.0.0"}]\n'; fi
+        echo "hooks:"
+        echo "  install: {timeout: 10m}"
+        if [[ -n "$stage" ]]; then echo "  configure: {stage: $stage}"; fi
+        echo "  remove: {}"
+        cat <<EOF
+config:
+  keys:
+    ${prefix}_EXAMPLE:
+      type: str
+      default: ""
+      empty: true
+      description: "TODO: что задаёт; ключ без префикса CREAM_ (окружение хука)"
 EOF
     fi
+} > "$ext_dir/extension.yaml"
 
-    cat >> "$ext_dir/configure.sh" <<'EOF'
-
-# TODO: configure for this machine.
-
-systemctl disable configure-__NAME__.service || true
+# --- hooks -------------------------------------------------------------------
+if (( library )); then
+    cat > "$ext_dir/$name.sh" <<'EOF'
+# shellcheck shell=bash
+# Library __NAME__: sourced or run by other extensions by the stable path
+# "${CREAM_ROOT:-}/opt/cream/ext/__NAME__/__NAME__.sh"; consumers declare
+# `depends: [{name: __NAME__}]`. Library code sets no shell options of its own.
+__FUNC___hello() { echo "__NAME__"; }
 EOF
+else
+    mkdir -p "$ext_dir/hooks"
+    cat > "$ext_dir/hooks/install" <<'EOF'
+#!/usr/bin/env bash
+# cream hook `install` of __NAME__: TODO what it installs.
+#
+# Runs as root at image build (CREAM_PHASE=build: a chroot, no systemd) and on
+# a live machine (CREAM_PHASE=live). Idempotent: a repeated install (and
+# `cream install --reinstall`) gives the same files. Settings come as the
+# environment (config.keys of extension.yaml), secrets only from
+# $CREAM_SECRETS_FILE — never through argv. Exit 10 asks for a reboot, 20 means
+# "not applicable here" (no device, kernel, GPU) — install only (ruling R11).
+set -euo pipefail
 
-    cat > "$ext_dir/configure-$name.service" <<EOF
-[Unit]
-Description=Configure $name on first boot
-# cloud-init must have created the user before the resolver can find it.
-After=cloud-init.service
-Wants=cloud-init.service
+log_info(){ >&2 echo "[INFO] __NAME__: $*"; }
 
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/opt/bisquite/$name/configure.sh
+# TODO: the packages. Branch on /etc/os-release here rather than in the
+# manifest — the guest knows itself. Something downloaded goes by a pinned
+# version and its sha256 (files/pin.env), checked before use.
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y --no-install-recommends __NAME__
 
-[Install]
-WantedBy=multi-user.target
+log_info "installed (example key: ${__PREFIX___EXAMPLE:-unset})"
 EOF
+    cat > "$ext_dir/hooks/remove" <<'EOF'
+#!/usr/bin/env bash
+# cream hook `remove` of __NAME__: takes away only what install put on. Files
+# of the manifest's `files:` cream removes itself.
+set -euo pipefail
+
+export DEBIAN_FRONTEND=noninteractive
+# TODO: a package that stood before cream is not ours — record the method in
+# $CREAM_STATE_DIR at install and leave a preexisting one alone (see btop).
+apt-get remove -y __NAME__
+EOF
+    if [[ -n "$stage" ]]; then
+        {
+            cat <<'EOF'
+#!/usr/bin/env bash
+# cream hook `configure` of __NAME__ (stage __STAGE__): what depends on this
+# very machine, on every boot (CREAM_REASON=boot) and after install, upgrade,
+# apply. No device, display manager or user — a warning on stderr and exit 0:
+# a failed boot unit helps nobody (ruling R11). systemctl only with --no-block.
+set -euo pipefail
+
+log_warn(){ >&2 echo "[WARN] __NAME__: $*"; }
+EOF
+            if (( want_cloud_user )); then
+                cat <<'EOF'
+
+# The cloud-init user: library cloud-user (depends), never a copy.
+CLOUD_USER="$("${CREAM_ROOT:-}/opt/cream/ext/cloud-user/get_cloud_user.sh")" || {
+    log_warn "пользователь cloud-init не найден — настройка пропущена"
+    exit 0
+}
+log_warn "TODO: configure for $CLOUD_USER (reason ${CREAM_REASON:-boot})"
+EOF
+            else
+                cat <<'EOF'
+
+log_warn "TODO: configure this machine (reason ${CREAM_REASON:-boot})"
+EOF
+            fi
+        } > "$ext_dir/hooks/configure"
+    fi
+    chmod +x "$ext_dir"/hooks/*
 fi
 
-cat > "$ext_dir/README.md" <<EOF
+# --- tests -------------------------------------------------------------------
+{
+    cat <<'EOF'
+#!/usr/bin/env bash
+# H-тесты __NAME__ (cream/v1): хуки на подменённом корне, как их зовёт cream
+# (tools/hooktest.sh). apt-get подставной; root и сеть не нужны.
+# TODO: проверки поведения — пишутся до кода хука.
+#
+#   extensions/debian/__NAME__/tests/test-__NAME__.sh        код 0 — все проверки прошли
+set -uo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../../../../tools/hooktest.sh
+. "$HERE/../../../../tools/hooktest.sh"
+EXT="$(dirname "$HERE")"
+
+ht_init
+
+echo "== манифест =="
+mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
+eq "schema" cream/v1 "$(mf 'm["schema"]')"
+eq "name" __NAME__ "$(mf 'm["name"]')"
+EOF
+    if (( library )); then
+        cat <<'EOF'
+
+echo "== библиотека =="
+ht_root "$EXT"
+# shellcheck source=../__NAME__.sh
+. "$ROOT/opt/cream/ext/__NAME__/__NAME__.sh"
+eq "функция библиотеки" __NAME__ "$(__FUNC___hello)"
+EOF
+    else
+        cat <<'EOF'
+
+echo "== install и remove =="
+ht_root "$EXT"
+ht_fake apt-get
+ht_hook install; eq "install — код 0" 0 "$?"
+check "apt-get install" ht_called '^apt-get install -y --no-install-recommends __NAME__$'
+ht_hook install; eq "повтор install — код 0" 0 "$?"
+ht_hook remove; eq "remove — код 0" 0 "$?"
+check "apt-get remove" ht_called '^apt-get remove -y __NAME__$'
+EOF
+        if [[ -n "$stage" ]]; then
+            cat <<'EOF'
+
+echo "== configure =="
+ht_hook configure CREAM_REASON=boot; eq "configure без устройства — код 0" 0 "$?"
+EOF
+        fi
+    fi
+    printf '\nht_done\n'
+} > "$ext_dir/tests/test-$name.sh"
+chmod +x "$ext_dir/tests/test-$name.sh"
+
+# --- README ------------------------------------------------------------------
+{
+    cat <<EOF
 # $name
 
-<одна фраза: что это расширение даёт>
+TODO: одна фраза — что это расширение даёт машине.
+
+\`\`\`
+cream install $name          # живая машина
+cream remove $name
+EXTENSION $name              # образ bisquite
+\`\`\`
 
 ## Зачем
 
-<чего не хватает без него и чем это заканчивается на устройстве. Ссылайся на
-замер, а не на общее соображение: «замерено на собранном образе <такой-то>,
-<дата>» — так написаны README расширений nocloud-cidata и docker.>
+TODO: чего не хватает без него и чем это заканчивается на машине. Ссылайся на
+замер, а не на общее соображение: «замерено на <образе>, <дата>».
 
-## Подключение
+## Настройки
 
-\`\`\`vmfile
-EXTENSION $name
-\`\`\`
+Ключи домена \`$name\` (\`config.keys\` манифеста): \`cream show $name\`,
+\`sudo cream set $name KEY=VALUE\`; в образе — \`EXTENSION $name KEY=VALUE\`.
 
-Сборка копирует каталог в \`/opt/bisquite/$name/\`, ставит рядом ссылку
-\`lib\` на общий код источника и запускает \`install.sh\`. Ручной формы
-через \`COPY_IN\` нет: \`lib\` доставляет только \`EXTENSION\`.
-
-## Параметры
-
-<Если параметров нет — так и напиши: «Параметров нет», и убери таблицу.>
-
-Инструкция \`EXTENSION\` передаёт параметры переменными окружения:
-
-\`\`\`vmfile
-EXTENSION $name ${env_prefix}_PORT=9002
-\`\`\`
-
-| Переменная | Что задаёт | Умолчание |
+| Ключ | Что задаёт | Умолчание |
 |---|---|---|
-| \`${env_prefix}_PORT\` | <что> | <умолчание из install.sh> |
+| \`${prefix}_EXAMPLE\` | TODO | пусто |
 
-Таблицы соответствия «параметр VMFILE -> переменная скрипта» нет: VMFILE
-называет переменные их собственными именами, а единственный источник правды —
-\`install.sh\`. Значит, эта таблица обязана совпадать с ним, и правится вместе
-с ним.
+## Манифест
 
-## Что делает
-
-- **Сборка** (\`install.sh\`) — <какие пакеты, какие файлы>
+| Поле | Значение |
+|---|---|
+| \`targets\` | \`build: exec\`, \`live: $live\` |
+| \`platform.arch\` | ${arch_list[*]} |
 EOF
+    if (( library )); then
+        echo "| \`kind\` | \`library\` — путь \`\${CREAM_ROOT:-}/opt/cream/ext/$name/$name.sh\` |"
+    else
+        echo "| \`hooks\` | \`install\`${stage:+, \`configure\` (стадия \`$stage\`)}, \`remove\` |"
+    fi
+    if (( want_cloud_user )); then echo "| \`depends\` | \`cloud-user\` |"; fi
+    cat <<EOF
 
-if [[ "$want_firstboot" -eq 1 ]]; then
-    cat >> "$ext_dir/README.md" <<EOF
-- **Первая загрузка** (\`configure.sh\`) — <что настраивается на устройстве>
-EOF
-fi
+## Проверки
 
-cat >> "$ext_dir/README.md" <<EOF
-
-## Отказы
-
-<Что расширение отвергает и почему громко, а не молча. Пустой раздел здесь —
-признак, что отказов нет ни одного, а это редко правда.>
-
-## Ограничения
-
-<Чего расширение НЕ делает и что обязан дать кто-то другой. Сюда же —
-ограничение архитектуры: \`phase: build\` требует совпадения архитектур хоста
-и образа, потому что libguestfs не выполняет код в госте чужой архитектуры.>
-
-## Проверка
-
-<Как убедиться, что оно отработало: команда на собранном образе
-(\`virt-cat\`, \`virt-ls\`) и команда на устройстве после первой загрузки.>
+- **V** — \`make cream-validate\`, \`make check-names\`, \`tools/lint-hooks.sh\`.
+- **H** — \`tests/test-$name.sh\`.
+- **L** — \`make test-live EXT=$name\` (умолчания прогона — \`tests/live.env\`; с ним
+  расширение попадает в живые прогоны CI).
 
 ## Проверено на
 
 | Система | Архитектура | Дата |
 |---|---|---|
-| <заполни после первой настоящей сборки> | | |
+| TODO после первого живого прогона | | |
 EOF
+} > "$ext_dir/README.md"
 
-chmod +x "$ext_dir/install.sh"
-[[ -f "$ext_dir/configure.sh" ]] && chmod +x "$ext_dir/configure.sh"
+# Substitute into the quoted templates (quoted so that $… stays literal).
+func="${name//-/_}"
+while IFS= read -r -d '' f; do
+    sed -i -e "s/__NAME__/$name/g" -e "s/__PREFIX__/$prefix/g" \
+        -e "s/__STAGE__/$stage/g" -e "s/__FUNC__/$func/g" "$f"
+done < <(find "$ext_dir" -type f -print0)
 
-# Substitute the name into the heredoc'd templates. Done after writing so the
-# templates stay quoted — an unquoted heredoc would expand $SCRIPT_DIR and
-# ${BASH_SOURCE} at scaffold time and produce broken scripts.
-for f in "$ext_dir/install.sh" "$ext_dir/configure.sh"; do
-    [[ -f "$f" ]] || continue
-    sed -i "s/__NAME__/$name/g; s/__ENVPREFIX__/$env_prefix/g" "$f"
-done
-
+echo "Создано: extensions/debian/$name (cream/v1, cream \">=$cream_min\")"
 echo
-echo "Создано: extensions/$dir_name/$name"
+echo "  extension.yaml          summary, provides/requires ПО КОДУ, config.keys"
+if (( library )); then
+    echo "  $name.sh                код библиотеки"
+else
+    echo "  hooks/install, remove   идемпотентно; секреты — из \$CREAM_SECRETS_FILE"
+    if [[ -n "$stage" ]]; then echo "  hooks/configure         стадия $stage"; fi
+fi
+echo "  tests/test-$name.sh     H-тест — поведение пишется до кода"
+echo "  README.md               что даёт, ключи, проверки"
 echo
-echo "  extension.yaml            заполни provides/requires ПО КОДУ"
-echo "  install.sh                фаза сборки"
-[[ "$want_firstboot" -eq 1 ]] && echo "  configure.sh              фаза первой загрузки"
-[[ "$want_firstboot" -eq 1 ]] && echo "  configure-$name.service   юнит первой загрузки"
-echo "  README.md                 заполни, чем это пользоваться"
-echo
-echo "  общий код — \$SCRIPT_DIR/lib/ (lib/ корня источника, ссылку ставит сборка)"
-echo
-echo "Дальше: заполнить TODO, потом  bash tools/check.sh"
+echo "Дальше: заполнить TODO, потом  make ci  и  make cream-validate"

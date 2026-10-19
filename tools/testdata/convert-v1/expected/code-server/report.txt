@@ -8,7 +8,7 @@ convert-v1: code-server 4.0.0 → 5.0.0 (черновик cream/v1)
 проверить руками:
   - targets.live: yes — по таблице плана
   - hooks.configure: configure-code-server.service: WantedBy cloud-init.target, отброшено cloud-final.service network-online.target network.target
-  - cream: ">=1.1.0" — стадия cloud-user: нужен cream >=1.1.0 (cream 1.0 откажет)
+  - cream: ">=1.1.1" — стадия cloud-user: нужен cream >=1.1.1 (cream старше откажет)
   - config.keys: CODE_SERVER_PASSWORD — secret → secret: file, тип str (без `$` и обратных кавычек)
   - depends: cloud-user — по общему коду; укажи диапазон версий
   - hooks.install: явный timeout рекомендован (§6.1)

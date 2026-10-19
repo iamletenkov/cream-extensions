@@ -15,7 +15,7 @@
 # cream_<v>_amd64.deb), checked before use; it runs inside debian:12 with no
 # network. CREAM_DEB=<local .deb> overrides the pin for local runs (the pin is
 # NOT checked then — a warning says so). Empty pin and no CREAM_DEB: the check
-# is skipped with a fixed line and exit 0 (cream 1.0.0 is not released yet).
+# is skipped with a fixed line and exit 0 (no cream release pinned).
 #
 # Exit: 0 — valid or skipped; cream's code when invalid (65 — bad manifest,
 # see cream docs/cli.md); 2 — setup failure (pin, download, docker).

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Action `show` (lock: none): reads the domain only.
+set -euo pipefail
+cat -- "$CREAM_CONFIG_FILE"

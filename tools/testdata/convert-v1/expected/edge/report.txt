@@ -9,7 +9,7 @@ convert-v1: edge 0.3.1 → 1.0.0 (черновик cream/v1)
   - targets.live: расширения нет в таблице плана — выбери yes|confirm|no
   - hooks.configure: стадии нет в таблице плана — взята из юнита (cloud-user), проверь
   - hooks.configure: configure-edge.service: WantedBy multi-user.target, отброшено cloud-final.service network-online.target
-  - cream: ">=1.1.0" — стадия cloud-user: нужен cream >=1.1.0 (cream 1.0 откажет)
+  - cream: ">=1.1.1" — стадия cloud-user: нужен cream >=1.1.1 (cream старше откажет)
   - files: юниты edge-worker.timer раскладывает cream — убрать их `install -m`/`ln -s` из hooks/install
   - config.keys: EDGE_LIST — list: в cream через пробел, в bisquite-conf было через запятую
   - config.keys: EDGE_STATE — readonly; кто пишет его теперь (хук, действие)?

@@ -106,7 +106,10 @@ STAGE: dict[str, tuple[str, list[str], list[str]]] = {
     "pixelflux-v4l2m2m": ("graphical", [], []),
 }
 
-STAGES_1_1 = {"early", "cloud-user", "graphical"}
+# Minimal cream of a configure stage newer than 1.0 (cream docs/cli.md): the 1.1
+# stages need 1.1.0, cloud-user needs 1.1.1 — 1.1.0 does not start it with
+# cloud-init disabled (plan 2026-10-19, ruling R14; tools/lint-hooks.sh).
+STAGE_CREAM = {"early": "1.1.0", "graphical": "1.1.0", "cloud-user": "1.1.1"}
 
 # Ordering a stage already gives (cream spec §6.4) or that only made sense for
 # a self-made unit; dropped from after/before/wants and reported.
@@ -437,9 +440,10 @@ def plan_tree(src: Path) -> tuple[str, list[str], dict]:
         todo.append(f"{unit.name}: зовёт configure.sh, а его нет — разберись руками")
 
     stage = configure["stage"] if configure else ""
-    cream = ">=1.1.0" if stage in STAGES_1_1 else ">=1.0.0"
-    if stage in STAGES_1_1:
-        todo.append(f"cream: \">=1.1.0\" — стадия {stage}: нужен cream >=1.1.0 (cream 1.0 откажет)")
+    need = STAGE_CREAM.get(stage, "1.0.0")
+    cream = f">={need}"
+    if stage in STAGE_CREAM:
+        todo.append(f"cream: \"{cream}\" — стадия {stage}: нужен cream {cream} (cream старше откажет)")
 
     # other systemd units -> files
     files: list[tuple[str, str]] = []

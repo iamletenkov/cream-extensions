@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# cream hook `configure` of the lint fixture.
+set -euo pipefail
+echo "reason ${CREAM_REASON:-boot}" >&2
+systemctl --no-block restart ok.service
