@@ -13,7 +13,7 @@
 # installed anyway and simply unused without X.
 schema: cream/v1
 name: l4t-gstreamer
-version: 2.0.0
+version: 2.0.1
 summary: GStreamer для NVIDIA Jetson — аппаратные плагины NVIDIA по версии стека L4T, RTSP, WebRTC, Python
 cream: ">=1.0.0"
 platform:
@@ -24,6 +24,7 @@ targets: {build: exec, live: "yes"}
 provides: [gstreamer, hw-video-codec]
 depends:
   - {name: l4t, version: ">=1.0.0 <2"}
+  - {name: apt-guard, version: ">=1.0.0 <2"}
 hooks:
   install: {timeout: 30m}
   remove: {timeout: 15m}

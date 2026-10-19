@@ -83,7 +83,7 @@ eq "только arm64" arm64 "$(mf '" ".join(m["platform"]["arch"])')"
 eq "build: exec" exec "$(mf 'm["targets"]["build"]')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
 eq "provides" "gstreamer hw-video-codec" "$(mf '" ".join(m["provides"])')"
-eq "depends l4t" "l4t >=1.0.0 <2" "$(mf '" ".join(d["name"] + " " + d["version"] for d in m["depends"])')"
+eq "depends l4t, apt-guard" "l4t >=1.0.0 <2 apt-guard >=1.0.0 <2" "$(mf '" ".join(d["name"] + " " + d["version"] for d in m["depends"])')"
 eq "хуки" "install remove" "$(mf '" ".join(sorted(m["hooks"]))')"
 check "install: явный timeout" test -n "$(mf 'm["hooks"]["install"]["timeout"]')"
 eq "ключ GSTREAMER_DEV" "enum:0,1 1 install" \
