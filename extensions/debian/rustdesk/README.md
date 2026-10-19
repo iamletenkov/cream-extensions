@@ -1,146 +1,97 @@
 # rustdesk
 
 Удалённый доступ RustDesk: пакет `.deb` с GitHub по версии и sha256, служба
-`rustdesk` в автозапуске, адреса **своего** сервера RustDesk — из настроек
+`rustdesk` в автозапуске, адреса **своего** сервера RustDesk — из ключей домена
 устройства, а не из образа.
+
+> **2.0.0 — cream/v1.** Хуки `install`, `configure` (стадия `system`, после
+> cloud-init, до `rustdesk.service`) и `remove`; домен `/etc/cream/rustdesk/config`,
+> `cream set rustdesk …`; состояние — `/var/lib/cream/ext/rustdesk/`. Идентичность
+> RustDesk удаляется **только в сборке** — живая установка ID машины не трогает.
+
+<!-- check-names: off -->
+| Было (layout 2) | Стало |
+|---|---|
+| `/etc/bisquite/rustdesk/config`, `bisquite-conf set rustdesk …` | `/etc/cream/rustdesk/config`, `cream set rustdesk …` |
+| `configure-rustdesk.service` | стадия `system` cream (`cream-configure@rustdesk`) |
+| `/var/lib/bisquite/rustdesk/managed` | `/var/lib/cream/ext/rustdesk/managed` |
+| `BISQUITE_RUSTDESK_FOLLOWUP` (повторная сверка) | счётчик `/run/rustdesk/followup`, сверка — перезапуск `cream-configure@rustdesk` |
+<!-- check-names: on -->
 
 Образ один на флот и без секретов: **адресов и ключа сервера в образе нет**,
 и **нет идентичности RustDesk** (`RustDesk.toml` с ID, парой ключей и
 паролем). ID каждое устройство делает себе само при первом старте службы — из
 `/etc/machine-id`, который сбрасывает завершающий `virt-sysprep` сборки.
 
-## Что ставится
-
-| Фаза | Что |
-|---|---|
-| build | `rustdesk-<версия>-x86_64.deb` на amd64 или `rustdesk-<версия>-aarch64.deb` на arm64 — по `dpkg --print-architecture` образа (sha256 своей архитектуры сверяется до установки, зависимости — apt); юнит `/usr/lib/systemd/system/rustdesk.service` (postinst пакета кладёт его только когда PID 1 — systemd, в appliance сборки — нет); `configure-rustdesk.service`; обе службы включены; удаляются `RustDesk*.toml` у `/root`, `/etc/skel` и пользователей с UID ≥ 1000 — **сборка отказывает**, если они остались |
-| каждая загрузка | `configure-rustdesk.service` (после cloud-init, **до** `rustdesk.service`) пишет `[options]` в `RustDesk2.toml`; пока RustDesk не запускался у кого-то из пользователей (нет `RustDesk.toml`) или значения пришлось вернуть — повторная сверка через минуту, не больше 10 раз (первый запуск RustDesk на свежей машине переписывал `RustDesk2.toml` своими умолчаниями) |
-
-Что пишется, если значение задано:
-
-```toml
-[options]
-custom-rendezvous-server = 'rustdesk.example.com'
-relay-server = 'rustdesk.example.com:21117'
-api-server = 'http://rustdesk.example.com:21114'
-key = '<открытый ключ сервера>'
-```
-
-в `/root/.config/rustdesk/RustDesk2.toml` (его читает служба) и в
-`~/.config/rustdesk/RustDesk2.toml` каждого пользователя с UID 1000…65533 и
-домашним каталогом. Владелец файла — пользователь: запись идёт **от его
-имени** (`runuser`), подложенная в домашний каталог ссылка не заставит root
-читать или писать чужой файл. Остальные ключи и таблицы файла остаются, как
-их записал RustDesk. Изменился хоть один файл — `rustdesk.service`
-перезапускается (`--no-block`), если он запущен.
-
-Правила пустых значений:
-
-- **все пусты и никогда не задавались** — ни один файл не создаётся и не
-  меняется, RustDesk работает с публичными серверами;
-- пустой ключ, который скрипт **сам** ставил раньше
-  (`/var/lib/bisquite/rustdesk/managed`), из файлов убирается — так
-  возвращаются к публичным умолчаниям;
-- пустой ключ, который ставил не скрипт (руками в RustDesk), не трогается.
-
-## Настройки
-
-### Сборки (переменные `install.sh`, в устройство не попадают)
-
-| Параметр | Умолчание | Что |
-|---|---|---|
-| `RUSTDESK_VERSION` | `1.5.0` | тег релиза `github.com/rustdesk/rustdesk` |
-| `RUSTDESK_SHA256_AMD64` | закреплён для `1.5.0` | sha256 `rustdesk-<версия>-x86_64.deb` (digest на странице релиза) |
-| `RUSTDESK_SHA256_ARM64` | закреплён для `1.5.0` | sha256 `rustdesk-<версия>-aarch64.deb` |
-| `RUSTDESK_SHA256` | пусто | сумма для той архитектуры, под которую собирается образ; `RUSTDESK_SHA256_<ARCH>` важнее. Для версии без закреплённой суммы одна из них обязательна |
-| `RUSTDESK_URL` | пусто | полный адрес `.deb` на зеркале — файла своей архитектуры; пусто — ассет релиза GitHub |
-
-Архитектуры: amd64 (`x86_64`) и arm64 (`aarch64`) — у каждой свой ассет
-релиза и своя закреплённая сумма; другая архитектура — отказ до скачивания.
-armhf (`armv7-sciter`) не объявлен: это другой клиент (Sciter), его не
-проверяли.
-
-### Устройства: домен `rustdesk`
-
-Файл `/etc/bisquite/rustdesk/config`, схема — `knobs`. Все умолчания пустые.
-
-| Ключ | Поле RustDesk (Settings → Network) | Формат |
-|---|---|---|
-| `RUSTDESK_ID_SERVER` | ID server — `custom-rendezvous-server` | `хост[:порт]` |
-| `RUSTDESK_RELAY_SERVER` | Relay server — `relay-server` | `хост[:порт]` |
-| `RUSTDESK_API_SERVER` | API server — `api-server` | `http(s)://хост[:порт][/путь]` |
-| `RUSTDESK_KEY` | Key — `key` | открытый ключ сервера (base64, `id_ed25519.pub` hbbs) — **не секрет**, задаётся аргументом |
-
-Значения проверяются схемой: кавычки, пробелы и `$` в них невозможны.
-Технически ключи можно передать и в `EXTENSION rustdesk RUSTDESK_ID_SERVER=…`,
-но тогда адреса окажутся в образе — для образа рабочей машины так не делаем.
-
-## Сборка
+## Подключение
 
 ```vmfile
 EXTENSION rustdesk
-EXTENSION rustdesk RUSTDESK_VERSION=<X.Y.Z> RUSTDESK_SHA256_AMD64=<64 hex> RUSTDESK_SHA256_ARM64=<64 hex>
 ```
 
-## Манифест записи / развёртывания
+На устройстве или живой машине:
 
-Строка первой загрузки (`firstboot-commands` манифеста записи,
-`firstboot_commands` манифеста развёртывания ВМ); ключ — заглушка:
-
-```yaml
-firstboot-commands:
-  - >-
-    bisquite-conf set --apply rustdesk
-    RUSTDESK_ID_SERVER=rustdesk.example.com
-    RUSTDESK_RELAY_SERVER=rustdesk.example.com:21117
-    RUSTDESK_API_SERVER=http://rustdesk.example.com:21114
-    RUSTDESK_KEY=<открытый ключ сервера>
+```console
+# cream install rustdesk
+# cream set rustdesk RUSTDESK_ID_SERVER=rustdesk.example.com RUSTDESK_KEY=<открытый ключ>
 ```
 
-Хук `--apply` неблокирующий и идемпотентный: ставит в очередь
-`systemctl --no-block restart configure-rustdesk`, тот переписывает файлы
-(к этому моменту cloud-init уже создал пользователя) и перезапускает
-`rustdesk`. Без `--apply` значения прочтутся на следующей загрузке.
+### Параметры установки (`scope: install`, смена — повтор `cream install rustdesk KEY=…`)
 
-## На работающей машине
+| Ключ | Умолчание | Что делает |
+|---|---|---|
+| `RUSTDESK_VERSION` | `1.5.0` | тег релиза `github.com/rustdesk/rustdesk` |
+| `RUSTDESK_SHA256_AMD64`, `RUSTDESK_SHA256_ARM64` | закреплённые для 1.5.0 | sha256 ассета своей архитектуры; перекрывают `RUSTDESK_SHA256` |
+| `RUSTDESK_SHA256` | пусто | sha256 для архитектуры машины; для версии без закреплённой суммы нужен один из трёх |
+| `RUSTDESK_URL` | пусто — ассет релиза | полный адрес `.deb` (зеркало) |
 
-```bash
-bisquite-conf show rustdesk
-sudo bisquite-conf set rustdesk RUSTDESK_ID_SERVER=rustdesk.example.com RUSTDESK_KEY=<ключ>
-sudo systemctl restart configure-rustdesk     # перерендерить вручную (то же делает хук)
-journalctl -u configure-rustdesk
-```
+### Ключи сервера (`cream set rustdesk …`)
 
-Новый пользователь получит файл на следующей загрузке или после
-`sudo systemctl restart configure-rustdesk`. Открытый у пользователя клиент
-RustDesk держит настройки в памяти — увидит новые после перезапуска клиента.
+| Ключ | `RustDesk2.toml [options]` | Форма |
+|---|---|---|
+| `RUSTDESK_ID_SERVER` | `custom-rendezvous-server` | `хост[:порт]` |
+| `RUSTDESK_RELAY_SERVER` | `relay-server` | `хост[:порт]` |
+| `RUSTDESK_API_SERVER` | `api-server` | `http(s)://хост[:порт][/путь]` |
+| `RUSTDESK_KEY` | `key` | base64 **открытого** ключа сервера (`id_ed25519.pub`) — не секрет |
+
+## Что делают хуки
+
+- **`install`** — `.deb` своей архитектуры (`dpkg --print-architecture`):
+  скачивается во временный каталог, **sha256 сверяется до того, как файл увидит
+  apt**; юнит `/usr/lib/systemd/system/rustdesk.service`, если его не положил
+  postinst (в appliance сборки PID 1 — не systemd); служба включена. В **сборке**
+  удаляются `RustDesk*.toml` у `/root`, `/etc/skel` и пользователей с UID ≥ 1000
+  (у пользователей — **от их имени**), остаток — отказ сборки.
+- **`configure`** — на каждой загрузке и после `cream set`: проверяет форму
+  каждого значения (вне формы — отказ, ничего не пишется), пишет `[options]` в
+  `/root/.config/rustdesk/RustDesk2.toml` (его читает служба) и в
+  `~/.config/rustdesk/RustDesk2.toml` каждого пользователя с UID 1000…65533.
+  Файл пользователя правит процесс **от его имени** (`runuser`, пустое
+  окружение, закрытые дескрипторы, предел 30 с); root в домашние каталоги не
+  пишет. Пустой ключ убирается, только если его ставили мы (`managed`); все
+  пусты и не ставились — файлы не трогаются (публичные серверы). Изменился
+  файл — `rustdesk.service` перезапускается (`--no-block`). Пока RustDesk не
+  запускался у кого-то из пользователей или значения пришлось вернуть —
+  повторная сверка через минуту, не больше 10 раз за загрузку (первый запуск
+  RustDesk на свежей машине переписывал `RustDesk2.toml` своими умолчаниями).
+- **`remove`** — свои опции убраны из всех `RustDesk2.toml`, пакет снят (если
+  ставили мы), положенный нами юнит снят. `RustDesk.toml` (ID машины) остаётся.
+
+## Доступ и пароль
+
+Расширение **не задаёт** ни постоянного пароля, ни способа проверки
+(`verification-method`), ни режима подтверждения (`approve-mode`): доступ
+остаётся таким, как его поставляет RustDesk, — одноразовый пароль, видимый
+только на экране машины. Тихого доступа без аутентификации расширение не
+открывает; постоянный пароль задаёт человек на машине.
 
 ## Проверка
 
-```bash
-systemctl is-active rustdesk                         # active
-sudo grep -A4 '^\[options\]' /root/.config/rustdesk/RustDesk2.toml
-grep -A4 '^\[options\]' ~/.config/rustdesk/RustDesk2.toml
-rustdesk --get-id                                    # у каждого устройства свой
+```console
+$ systemctl status rustdesk cream-configure@rustdesk
+$ sudo cat /root/.config/rustdesk/RustDesk2.toml
+$ cream show rustdesk
 ```
 
-и в клиенте: Settings → Network → ID/Relay server — прописан свой сервер.
-
-Проверено в контейнере `ubuntu:24.04`: установка 1.5.0 со сверкой sha256,
-юнит и `enable` без systemd, удаление подложенных `RustDesk.toml`, отказ без
-sha256 для чужой версии, рендер для root и пользователя UID 1000 (владелец,
-`0600`, чужие ключи и таблицы целы), идемпотентность, снятие очищенных
-ключей, отказ на ссылке в домашнем каталоге; в systemd-контейнере —
-`bisquite-conf set --apply` из манифеста и рендер при загрузке.
-
-arm64 (1.1.0, 2026-10-15) — в контейнере `ubuntu:22.04` arm64 (qemu-user;
-та же Ubuntu 22.04, что в rootfs L4T r36.4.3 / JetPack 6.2 на AGX Orin):
-установка `rustdesk-1.5.0-aarch64.deb` со сверкой закреплённой суммы
-(зависимости, включая `gstreamer1.0-pipewire`, приезжают из jammy), бинарь —
-ELF aarch64; юнит и `enable` без systemd, удаление подложенного
-`RustDesk.toml`, идемпотентность, рендер `RustDesk2.toml` для root и
-пользователя UID 1000; отказ без суммы для чужой версии (называет
-`RUSTDESK_SHA256_ARM64`) и при неверной сумме; `RUSTDESK_SHA256_ARM64`
-важнее `RUSTDESK_SHA256`. Повтор на amd64 — `ubuntu:24.04`. На самой плате
-не запускалось: показ экрана и служба под настоящим systemd на Orin не
-проверены.
+H — `tests/test-rustdesk.sh`; L — `make test-live EXT=rustdesk` (`debian-12`,
+`ubuntu-24.04`).
