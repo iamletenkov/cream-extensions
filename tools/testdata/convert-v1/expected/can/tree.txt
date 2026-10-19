@@ -1,5 +1,0 @@
-644 README.md
-644 extension.yaml
-755 hooks/apply
-755 hooks/install
-755 render-modules-load.sh

@@ -1,5 +1,5 @@
 # cream-extensions — публичный API репозитория (`make help`).
-# Проверки идут на хосте так же, как в CI: bash, python3 с PyYAML, shellcheck
+# Проверки идут на хосте так же, как в CI: bash, git, python3 с PyYAML, shellcheck
 # (нет на хосте — в контейнере koalaman/shellcheck), docker для cream validate
 # (контейнер debian:12, tools/cream-validate.sh).
 
@@ -12,10 +12,10 @@ help: ## список целей
 lint: ## shellcheck всех shell-скриптов (планка -S error, см. tools/lint.sh)
 	tools/lint.sh
 
-test: ## tools/check.sh: валидация, гейт имён, тесты расширений (extensions/*/*/tests/test-*.sh)
+test: ## tools/check.sh: cream validate, гейт имён, линт хуков, тесты инструментов и расширений
 	tools/check.sh
 
-check-names: ## гейт имён bisquite в расширениях cream/v1 (tools/check-names.sh)
+check-names: ## гейт имён bisquite по репозиторию, кроме истории (tools/check-names.sh)
 	tools/check-names.sh
 
 # Живой прогон: настоящий cream в контейнере с systemd, сеть, под замком flock.
@@ -29,7 +29,7 @@ test-live: ## живой прогон: make test-live EXT=<имя> [DISTRO=…] 
 test-live-self: ## самопроверка L-раннера на фикстурах tools/testdata/live [DISTRO=…] (тяжёлая)
 	tools/test-live-test.sh "$(DISTRO)"
 
-cream-validate: ## cream validate по расширениям cream/v1 (пин tools/cream-pin.env или CREAM_DEB=<.deb>)
+cream-validate: ## cream validate --catalog . по корню (пин tools/cream-pin.env или CREAM_DEB=<.deb>)
 	tools/cream-validate.sh
 
 snapshot: ## снимок каталога из HEAD: dist/cream-extensions-<v>.tar.gz + dist/SHA256SUMS (tools/catalog-snapshot.sh)

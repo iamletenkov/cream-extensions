@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Прогон shellcheck по всем shell-скриптам репозитория (по расширению или shebang).
 # Планка — SEVERITY (умолчание error): существующие скрипты не хуже, чем были;
-# новые пишутся чистыми на уровне warning (.claude/rules/shell.md). Расширения
-# cream/v1 (`schema: cream/v1` в extension.yaml) — новые по определению: их
-# скрипты (хуки, действия, files/, tests/) проходят вторым прогоном на уровне
+# новые пишутся чистыми на уровне warning (.claude/rules/shell.md). Скрипты
+# расширений (хуки, действия, files/, tests/) проходят вторым прогоном на уровне
 # CREAM_SEVERITY (умолчание warning). Остальные правила хуков — tools/lint-hooks.sh.
 # Нет shellcheck на хосте — тот же инструмент в контейнере.
 set -euo pipefail
@@ -19,12 +18,10 @@ shellcheck_run() {
     fi
 }
 
-# Directories of cream/v1 extensions, with a trailing slash.
+# Directories of the extensions, with a trailing slash.
 cream_dirs=()
 while IFS= read -r m; do
-    if grep -Eq "^schema:[[:space:]]*[\"']?cream/v1[\"']?[[:space:]]*(#.*)?$" "$m"; then
-        cream_dirs+=("$(dirname "$m")/")
-    fi
+    cream_dirs+=("$(dirname "$m")/")
 done < <(git ls-files 'extensions/*/*/extension.yaml')
 
 files=()
@@ -45,6 +42,6 @@ done < <(git ls-files)
 echo "shellcheck -S $SEVERITY: ${#files[@]} файлов"
 shellcheck_run -S "$SEVERITY" "${files[@]}"
 if (( ${#cream_files[@]} )); then
-    echo "shellcheck -S $CREAM_SEVERITY (cream/v1, расширений ${#cream_dirs[@]}): ${#cream_files[@]} файлов"
+    echo "shellcheck -S $CREAM_SEVERITY (расширения, ${#cream_dirs[@]}): ${#cream_files[@]} файлов"
     shellcheck_run -S "$CREAM_SEVERITY" "${cream_files[@]}"
 fi

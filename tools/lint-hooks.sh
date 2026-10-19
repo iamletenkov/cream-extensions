@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# Lint of the hooks and actions of cream/v1 extensions (plan 2026-10-19, Task 7):
-# the rules of tools/validate-extensions.py for layout 2 scripts, carried over
-# to cream/v1 before that validator goes away, plus the convention of the
-# catalog (docs/extensions.md, "Проверки").
+# Lint of the hooks and actions of the extensions (plan 2026-10-19, Task 7):
+# the script rules of the former layout 2 validator, carried over to cream/v1,
+# plus the convention of the catalog (docs/extensions.md, "Проверки").
 #
-#   tools/lint-hooks.sh            every extensions/<family>/<name>/ whose
-#                                  extension.yaml says `schema: cream/v1`
+#   tools/lint-hooks.sh            every extensions/<family>/<name>/ with an
+#                                  extension.yaml
 #   tools/lint-hooks.sh DIR...     the given extension directories
 #
 # Rules (the name in brackets is printed with every finding):
@@ -54,18 +53,16 @@ if (( $# )); then
     done
 else
     while IFS= read -r m; do
-        if grep -Eq "^schema:[[:space:]]*[\"']?cream/v1[\"']?[[:space:]]*(#.*)?$" "$m"; then
-            dirs+=("$(dirname "$m")")
-        fi
+        dirs+=("$(dirname "$m")")
     done < <(find "$REPO/extensions" -mindepth 3 -maxdepth 3 -name extension.yaml | sort)
 fi
 if (( ${#dirs[@]} == 0 )); then
-    echo "lint-hooks: расширений cream/v1 нет, проверять нечего"
+    echo "lint-hooks: расширений нет, проверять нечего"
     exit 0
 fi
 
 # Facts of a manifest, one per line: `hook NAME`, `stage S`, `cream RANGE`,
-# `locknone ACTION`, `secret KEY`. PyYAML, as tools/validate-extensions.py.
+# `locknone ACTION`, `secret KEY`. PyYAML.
 # shellcheck disable=SC2016  # Python source, not shell
 FACTS_PY='
 import sys, yaml
@@ -225,4 +222,4 @@ if (( found )); then
     echo "lint-hooks: нарушения в хуках и действиях cream/v1 (см. выше; правила — docs/extensions.md)" >&2
     exit 1
 fi
-echo "lint-hooks: ок, расширений cream/v1: ${#dirs[@]}"
+echo "lint-hooks: ок, расширений: ${#dirs[@]}"

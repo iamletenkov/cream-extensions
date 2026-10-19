@@ -2,9 +2,10 @@
 # Tests of tools/catalog-snapshot.sh (`make snapshot-check`).
 #
 # Reproducibility: two builds of one commit into different directories (the
-# second under another umask) give the same SHA256SUMS. Contents: only
-# cream-catalog.yaml, LICENSE, NOTICE and the cream/v1 extensions, without
-# tests/. The catalog version equals the release-please version. Acceptance by
+# second under another umask) give the same SHA256SUMS. Contents: the whole
+# catalog of the commit — cream-catalog.yaml, LICENSE, NOTICE and every
+# extension under extensions/ (no filtering by format), without tests/ and
+# nothing else of the repository (tools/, docs/). The catalog version equals the release-please version. Acceptance by
 # the same cream (pin tools/cream-pin.env), as Stvor and bisquite consume it:
 # `cream source add --archive file://… --sha256 … --sync`, `cream validate` of
 # the synced cache, `cream resolve` (phase build) of teleport and of
@@ -58,25 +59,25 @@ else
 fi
 sha="$(cut -d' ' -f1 "$T/a/SHA256SUMS" 2>/dev/null)"
 
-# 2. Contents: no layout 2 extension, no tests/.
+# 2. Contents: the whole catalog of the commit, nothing else, no tests/.
 listing="$(tar -tzf "$T/a/$asset" 2>/dev/null)"
 for want in cream-catalog.yaml LICENSE NOTICE extensions/debian/teleport/extension.yaml \
             extensions/debian/stvor-agent/extension.yaml; do
     if grep -qxF "$want" <<<"$listing"; then ok "в снимке $want"; else bad "в снимке нет $want"; fi
 done
-# Ни одно расширение старого формата (без `schema: cream/v1`) в снимок не
-# попадает; какие из них ещё не переведены — смотрим по дереву, а не по имени.
-leaked=""
-for m in "$REPO"/extensions/*/*/extension.yaml; do
-    grep -q '^schema: cream/v1' "$m" && continue
-    rel="${m#"$REPO"/}"; d="${rel%/extension.yaml}"
-    grep -q "^$d/" <<<"$listing" && leaked+=" $d"
-done
-if [[ -n "$leaked" ]]; then
-    bad "в снимке расширения layout 2:$leaked"
+missing=""; n=0
+while IFS= read -r m; do
+    n=$((n + 1))
+    grep -qxF "$m" <<<"$listing" || missing+=" ${m%/extension.yaml}"
+done < <(git -C "$REPO" ls-tree -r --name-only HEAD -- extensions \
+            | awk -F/ 'NF == 4 && $4 == "extension.yaml"')
+if [[ -z "$missing" && $n -gt 0 ]]; then
+    ok "в снимке все расширения коммита ($n)"
 else
-    ok "расширений layout 2 в снимке нет"
+    bad "в снимке нет расширений:$missing (всего в коммите $n)"
 fi
+extra="$(grep -vE '^(cream-catalog\.yaml|LICENSE|NOTICE|extensions/.*)$' <<<"$listing" | head -n5 | tr '\n' ' ')"
+if [[ -z "$extra" ]]; then ok "кроме каталога в снимке ничего"; else bad "в снимке лишнее: $extra"; fi
 if grep -q '/tests/' <<<"$listing"; then bad "в снимке есть tests/"; else ok "tests/ в снимок не попадают"; fi
 
 # 3. Acceptance by cream, as the consumers do it.

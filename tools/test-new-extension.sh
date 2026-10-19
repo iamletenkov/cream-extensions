@@ -24,6 +24,7 @@ has(){ if grep -qF -- "$2" <<< "$3"; then ok; else bad "$1: нет [$2] в вы�
 # A catalog copy: the tools the scaffold's test and checks need.
 mkdir -p "$T/cat/tools" "$T/cat/extensions/debian"
 cp "$HERE/hooktest.sh" "$HERE/lint-hooks.sh" "$HERE/check-names.sh" "$T/cat/tools/"
+git -C "$T/cat" init -q  # check-names без аргументов проверяет рабочее дерево git
 new(){ NEW_EXTENSION_ROOT="$T/cat" "$NEW" "$@"; }
 E="$T/cat/extensions/debian"
 
@@ -54,7 +55,7 @@ if grep -rq '__NAME__\|__PREFIX__\|__STAGE__\|__FUNC__' "$E"; then bad "оста
 
 out="$("$T/cat/tools/lint-hooks.sh" 2>&1)"; rc=$?
 eq "lint-hooks по скелетам — код 0" 0 "$rc"
-has "lint-hooks — все четыре" "расширений cream/v1: 4" "$out"
+has "lint-hooks — все четыре" "расширений: 4" "$out"
 out="$("$T/cat/tools/check-names.sh" 2>&1)"; rc=$?
 eq "check-names по скелетам — код 0" 0 "$rc"
 
