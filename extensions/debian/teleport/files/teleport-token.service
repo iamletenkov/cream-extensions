@@ -1,0 +1,13 @@
+[Unit]
+Description=Scrub the Teleport first-join secret from /var/lib/cream/ext/teleport
+
+[Service]
+Type=oneshot
+# PathExists= re-triggers the unit whenever it goes inactive while the file is
+# still there: without RemainAfterExit every boot ended in start-limit-hit
+# (AGX Orin, 2026-09-14). Scrubbing is idempotent, once per boot is enough.
+RemainAfterExit=yes
+# host_uuid appears while `join` still holds lock/teleport (up to ~5 min):
+# wait for it instead of failing on the default 2 min.
+TimeoutStartSec=7min
+ExecStart=/usr/bin/cream run --lock-timeout 6m teleport scrub-token

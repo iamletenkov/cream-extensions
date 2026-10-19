@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# cream hook `remove`: thin entry into the shared library files/teleport.sh.
+set -euo pipefail
+exec "${CREAM_EXT_DIR:-$(dirname "$0")/..}/files/teleport.sh" hook-remove "$@"

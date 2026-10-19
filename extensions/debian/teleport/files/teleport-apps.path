@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch /etc/cream/teleport/apps.d and command-labels.d
+
+[Path]
+PathChanged=/etc/cream/teleport/apps.d
+PathChanged=/etc/cream/teleport/command-labels.d
+Unit=teleport-apps.service
+
+[Install]
+WantedBy=paths.target
