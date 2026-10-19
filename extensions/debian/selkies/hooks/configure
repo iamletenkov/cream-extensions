@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# cream hook `configure` of selkies — the code is files/selkies.sh (its header).
+set -euo pipefail
+exec "${CREAM_EXT_DIR:?run by cream}/files/selkies.sh" configure

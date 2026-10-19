@@ -14,6 +14,23 @@
 # authority меняется. Юнит перезапускает службу всегда, а обёртка до появления
 # сессии ждёт молча (одна строка в журнал), вместо цикла падений каждые 5 с.
 # Пропажу сессии во время работы ловит сторож в конце файла.
+#
+# АУТЕНТИФИКАЦИЯ — FAIL-CLOSED. Без SELKIES_BASIC_AUTH_PASSWORD Selkies не
+# запускается вовсе, на любом адресе: петля не защищает от других учёток и
+# служб этой же машины, а рабочий стол, буфер обмена и файлы — пользователя.
+# Пароль есть — SELKIES_ENABLE_BASIC_AUTH=true ставится здесь, поверх того,
+# что пришло из настроек (шаблон SELKIES_* выключить его не может). Без пароля
+# снимает отказ только явный SELKIES_ALLOW_NO_AUTH=1 — с предупреждением при
+# каждом старте. Отказ — код 78: юнит (RestartPreventExitStatus=78) не крутит
+# перезапуски.
+#
+# СЕКРЕТЫ. Пароли и токен приходят окружением из /etc/cream/selkies/secrets
+# (EnvironmentFile юнита) и уходят только в окружение самого Selkies: у обёртки
+# и её помощников (loginctl, xdpyinfo, pactl) их нет, в argv и журнал они не
+# попадают.
+#
+# CREAM_ROOT — корень для тестов на подменённом корне; systemd его не задаёт,
+# а ключ CREAM_* в настройки cream не пустит.
 set -uo pipefail
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
@@ -21,38 +38,41 @@ log_info(){ >&2 echo -e "${GREEN}[INFO]${NC} selkies: $*"; }
 log_warn(){ >&2 echo -e "${YELLOW}[WARN]${NC} selkies: $*"; }
 log_error(){ >&2 echo -e "${RED}[ERROR]${NC} selkies: $*"; }
 
+R="${CREAM_ROOT:-}"; R="${R%/}"
+SECRET_KEYS=(SELKIES_BASIC_AUTH_PASSWORD SELKIES_BASIC_AUTH_VIEWONLY_PASSWORD SELKIES_MASTER_TOKEN)
+# The secrets stay shell variables of the wrapper, not its environment.
+for k in "${SECRET_KEYS[@]}"; do
+    if [[ -n "${!k:-}" ]]; then export -n "${k?}"; else unset "$k"; fi
+done
+
 USERNAME="${1:?usage: run-selkies.sh <user>}"
+(( EUID != 0 )) || { log_error "не от root: юнит запускает обёртку от имени пользователя (User=%i)"; exit 78; }
 UID_OF_USER="$(id -u "$USERNAME")" || { log_error "нет пользователя $USERNAME"; exit 1; }
-HOME_OF_USER="$(getent passwd "$USERNAME" | cut -d: -f6)"
-PREFIX=/opt/selkies/current
+HOME_OF_USER="$R$(getent passwd "$USERNAME" | cut -d: -f6)"
+PREFIX="$R/opt/selkies/current"
 DISPLAY_NUM="${SELKIES_DISPLAY:-:0}"
 
-[[ -x "$PREFIX/usr/conda/bin/selkies" ]] || { log_error "нет $PREFIX/usr/conda/bin/selkies — расширение не установлено"; exit 1; }
-
-# --- Наружу — только с паролем ---------------------------------------------------
-#
-# Selkies без basic auth на адресе не петли — это рабочий стол, буфер обмена
-# и передача файлов любому в сети. На петле защиту даёт тот, кто проксирует
-# (Teleport, ssh). Отказ, а не предупреждение: предупреждение в журнале
-# робота не прочитает никто. Снимает отказ только явная ручка
-# BISQUITE_SELKIES_ALLOW_NO_AUTH=true — решение, записанное в VMFILE или
-# манифесте, а не молчаливое умолчание.
 addr="${SELKIES_ADDR:-127.0.0.1}"
-loopback=1
-IFS=',' read -r -a addrs <<< "$addr"
-for a in "${addrs[@]}"; do
-    case "${a// /}" in 127.*|::1|localhost) ;; *) loopback=0 ;; esac
-done
-if (( ! loopback )) && [[ "${SELKIES_ENABLE_BASIC_AUTH:-false}" != true ]]; then
-  if [[ "${BISQUITE_SELKIES_ALLOW_NO_AUTH:-false}" == true ]]; then
-    log_warn "SELKIES_ADDR=$addr без аутентификации (BISQUITE_SELKIES_ALLOW_NO_AUTH=true) — стол открыт всей сети"
-  else
-    log_error "SELKIES_ADDR=$addr не петля, а SELKIES_ENABLE_BASIC_AUTH не true — не запускаюсь"
-    log_error "задайте пароль: echo <пароль> | sudo bisquite-conf set selkies SELKIES_ENABLE_BASIC_AUTH=true SELKIES_BASIC_AUTH_PASSWORD=-"
-    log_error "или откройте без пароля осознанно: BISQUITE_SELKIES_ALLOW_NO_AUTH=true"
-    exit 1
-  fi
+loopback=0
+case "$addr" in 127.*|::1|localhost) loopback=1 ;; esac
+
+if [[ -n "${SELKIES_BASIC_AUTH_PASSWORD:-}" ]]; then
+    export SELKIES_ENABLE_BASIC_AUTH=true
+    if (( ! loopback )) && [[ "${SELKIES_ENABLE_HTTPS:-false}" != true ]]; then
+        log_warn "SELKIES_ADDR=$addr без SELKIES_ENABLE_HTTPS=true — пароль basic auth идёт по сети открытым текстом"
+    fi
+elif [[ "${SELKIES_ALLOW_NO_AUTH:-0}" == 1 ]]; then
+    export SELKIES_ENABLE_BASIC_AUTH=false
+    log_warn "БЕЗ АУТЕНТИФИКАЦИИ (SELKIES_ALLOW_NO_AUTH=1): рабочий стол, буфер обмена и файлы '$USERNAME' — любому, кто достаёт до ${addr}:${SELKIES_PORT:-8080}"
+    (( loopback )) || log_warn "адрес $addr — не петля: стол открыт сети"
+else
+    log_error "нет SELKIES_BASIC_AUTH_PASSWORD — без аутентификации не запускаюсь"
+    log_error "задайте пароль: echo <пароль> | sudo cream set selkies SELKIES_BASIC_AUTH_PASSWORD=-"
+    log_error "или откройте без пароля осознанно: sudo cream set selkies SELKIES_ALLOW_NO_AUTH=1"
+    exit 78
 fi
+
+[[ -x "$PREFIX/usr/conda/bin/selkies" ]] || { log_error "нет $PREFIX/usr/conda/bin/selkies — расширение не установлено"; exit 1; }
 
 session_type(){
     local sid
@@ -133,7 +153,8 @@ fi
 # устройстве и переиспользует её между перезапусками. Ключ в образ не попадает.
 if [[ "${SELKIES_ENABLE_HTTPS:-false}" == true && -z "${SELKIES_HTTPS_CERT:-}" ]]; then
     tls_dir="${XDG_STATE_HOME:-$HOME_OF_USER/.local/state}/selkies"
-    mkdir -p "$tls_dir" && chmod 0700 "$tls_dir"
+    # The key is created right away private: umask 077 before mkdir, not chmod after.
+    ( umask 077 && mkdir -p "$tls_dir" ) && chmod 0700 "$tls_dir"
     export SELKIES_HTTPS_CERT="$tls_dir/selkies.pem" SELKIES_HTTPS_KEY="$tls_dir/selkies.key"
 fi
 scheme=http
@@ -170,7 +191,13 @@ log_info "${scheme}://${addr}:${SELKIES_PORT:-8080}/ файлы=${SELKIES_FILE_T
 # к новому X он не подключился бы. Поэтому Selkies — дочерний процесс, а
 # обёртка раз в 10 с проверяет дисплей и при двух неудачах подряд гасит его
 # и выходит с ошибкой: юнит перезапустит, обёртка дождётся новой сессии.
-"$PREFIX/usr/conda/bin/selkies" &
+# The secrets are exported in the subshell that becomes Selkies, and only there.
+(
+    for k in "${SECRET_KEYS[@]}"; do
+        if [[ -n "${!k:-}" ]]; then export "${k?}"; fi
+    done
+    exec "$PREFIX/usr/conda/bin/selkies"
+) &
 child=$!
 trap 'kill -TERM "$child" 2>/dev/null; wait "$child"; exit 0' TERM INT
 misses=0
