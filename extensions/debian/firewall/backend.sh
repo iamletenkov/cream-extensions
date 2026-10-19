@@ -1,15 +1,15 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2034  # FW_PICK_WHY is read by the callers
-# Which firewall backend a kernel can run. Sourced by install.sh (for every
-# kernel of the image) and by configure.sh (for the running kernel), never
+# Which firewall backend a kernel can run. Sourced by hooks/install (for every
+# kernel of the image) and by firewall.sh (for the running kernel), never
 # executed. Only the module lists of the kernel are read — modules.dep and
 # modules.builtin under /lib/modules/<version> — never `lsmod` or `uname -r`
 # of the caller: at build time the caller is the appliance, not the robot.
 #
-#   nft       nf_tables + nft_ct: the table `inet bisquite`, rules *.nft.
+#   nft       nf_tables + nft_ct: the table `inet cream`, rules *.nft.
 #   iptables  iptables-legacy: ip_tables, iptable_filter, ip6_tables,
 #             ip6table_filter, nf_conntrack, xt_conntrack, xt_tcpudp —
-#             the chain BISQUITE-INPUT, rules *.rules / *.rules6.
+#             the chain CREAM-INPUT, rules *.rules / *.rules6.
 #
 # WHY LEGACY AND NOT iptables-nft. iptables-nft 1.8.7 (Ubuntu 22.04) does not
 # turn `-m conntrack` into native nft: the rule is `match name conntrack`

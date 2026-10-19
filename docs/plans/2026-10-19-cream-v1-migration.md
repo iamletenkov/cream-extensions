@@ -17,7 +17,7 @@
 - [x] Task 7: пин cream 1.1.0, линт хуков вместо `validate-extensions.py`, конвенция cream/v1 в документации и `new-extension.sh`
 - [x] Task 8: `docker`
 - [x] Task 9: `locale` + `can`
-- [ ] Task 10: `firewall` (стадия `early`, `inet cream`, `CREAM-INPUT`, CLI → действия)
+- [x] Task 10: `firewall` (стадия `early`, `inet cream`, `CREAM-INPUT`, CLI → действия)
 - [ ] Task 11: `network-manager` + `cloud-growroot` + `nocloud-cidata`
 - [ ] Task 12: новое расширение `desktop` (из `lib/bisquite-desktop` и `lib/knobs/desktop`)
 - [ ] Task 13: `gnome` + `xfce4` + `lxde`

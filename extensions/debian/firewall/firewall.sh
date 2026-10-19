@@ -1,46 +1,59 @@
 #!/usr/bin/env bash
-# bisquite host firewall, two backends with the same default rules:
+# Host firewall of the cream extension `firewall`, two backends with the same
+# default rules:
 #
-#   nft       nftables table `inet bisquite`, built from
-#             /etc/bisquite/firewall/rules.d/*.nft in ONE nft transaction;
-#   iptables  iptables-legacy chain BISQUITE-INPUT (table filter, IPv4 and
-#             IPv6), built from rules.d/*.rules and *.rules6 in one
-#             iptables-restore transaction per family, plus a single jump
-#             first in INPUT. For kernels without nft_ct (stock L4T r36.4.3).
+#   nft       nftables table `inet cream`, built from
+#             /etc/cream/firewall/rules.d/*.nft in ONE nft transaction;
+#   iptables  iptables-legacy chain CREAM-INPUT (table filter, IPv4 and IPv6),
+#             built from rules.d/*.rules and *.rules6 in one
+#             iptables-legacy-restore transaction per family, plus a single
+#             jump first in INPUT. For kernels without nft_ct (stock L4T r36.4.3).
 #
 # The backend is chosen on every apply: FIREWALL_BACKEND=auto|nft|iptables;
 # auto — nft when the running kernel has nf_tables and nft_ct, otherwise
 # iptables when it has the legacy modules (backend.sh).
 #
-#   configure.sh apply    (ExecStart/ExecReload of bisquite-firewall.service)
-#   configure.sh off      remove our table/chains until the next apply/boot
-#   configure.sh show     the backend and our rules as loaded in the kernel
-#   configure.sh check    only check the files, apply nothing
-#   configure.sh backend  print the backend apply would use
+#   firewall.sh apply           hooks/configure (every boot, stage early, and
+#                               `cream set` — cream restarts cream-configure@firewall),
+#                               action reload
+#   firewall.sh off             hooks/configure with FIREWALL_ENABLE=0, hooks/remove
+#   firewall.sh show            action status
+#   firewall.sh check [BACKEND] action check; hooks/install checks both backends
 #
-# Also /usr/local/sbin/bisquite-firewall (a link to this file).
+# Settings come from the environment cream gives hooks and actions:
+# FIREWALL_ENABLE, FIREWALL_BACKEND, FIREWALL_SSH_PORTS.
+#
+# SSH is closed by default: a robot needs no inbound SSH — the Teleport node
+# dials out (reverse tunnel), its traffic is a reply that `established,related`
+# lets in. FIREWALL_SSH_PORTS (empty by default) opens TCP ports for SSH in the
+# rules and in the fallback set: an operator who set it is not cut off by a
+# broken rules file.
 #
 # Why a table/chain of our own and never `flush ruleset` or `iptables -F`:
 # Docker keeps its chains (DOCKER, DOCKER-USER, FORWARD, nat) in the same
 # kernel, and a flush would cut every container off until dockerd restarts.
 # We only filter the input hook: published ports go through prerouting DNAT
 # and forward, which we do not touch.
+#
+# No `set -e` on purpose: a failed load must go on to the fallback set, so
+# every step returns its status explicitly.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-# shellcheck source=/dev/null
-source "$SCRIPT_DIR/lib/bisquite-conf" || exit 1
 # shellcheck source=backend.sh
 source "$SCRIPT_DIR/backend.sh" || exit 1
 
-TABLE="inet bisquite"
-CHAIN="BISQUITE-INPUT"
-RULES_DIR="${BISQUITE_CONF_ROOT:-}/etc/bisquite/firewall/rules.d"
-RUN_DIR="${BISQUITE_FIREWALL_RUN:-/run/bisquite-firewall}"
+R="${CREAM_ROOT:-}"
+R="${R%/}"
+TABLE="inet cream"
+CHAIN="CREAM-INPUT"
+RULES_DIR="$R/etc/cream/firewall/rules.d"
+RUN_DIR="$R/run/firewall"
 # The backend picked at build time: used only when the running kernel has no
 # module lists to judge by (a container, a kernel without /lib/modules).
-BUILD_BACKEND_FILE="${BISQUITE_CONF_ROOT:-}/var/lib/bisquite/firewall/backend"
-MODULES_ROOT="${BISQUITE_FIREWALL_MODULES:-/lib/modules}"
+BUILD_BACKEND_FILE="${CREAM_STATE_DIR:-$R/var/lib/cream/ext/firewall}/backend"
+MODULES_ROOT="$R/lib/modules"
+PROC_NET="$R/proc/net"
 IPT4=(iptables-legacy -w)
 IPT6=(ip6tables-legacy -w)
 RESTORE4=(iptables-legacy-restore -w --noflush)
@@ -48,33 +61,50 @@ RESTORE6=(ip6tables-legacy-restore -w --noflush)
 
 log(){ >&2 echo "firewall: $*"; }
 
+# ------------------------------------------------------------- settings ---
+
+# SSH_PORTS: FIREWALL_SSH_PORTS, checked here as well as by cream (the value
+# goes into an nft script): numbers 1-65535 separated by spaces, or empty.
+SSH_PORTS=()
+read_ssh_ports(){
+    local p
+    SSH_PORTS=()
+    for p in ${FIREWALL_SSH_PORTS:-}; do
+        if [[ ! "$p" =~ ^[0-9]{1,5}$ ]] || (( 10#$p < 1 || 10#$p > 65535 )); then
+            log "FIREWALL_SSH_PORTS: «$p» — не порт (ожидаются числа 1–65535 через пробел); ничего не применено"
+            return 1
+        fi
+        SSH_PORTS+=("$((10#$p))")
+    done
+}
+
 # ---------------------------------------------------------------- backend --
 
-# Print the backend to use. BISQUITE_FIREWALL_BACKEND (install.sh) overrides
+# Print the backend to use. FORCE (an argument of `check`) overrides
 # everything. An explicit FIREWALL_BACKEND is honoured even when the kernel
 # looks short of modules — the operator said so; it is logged.
 resolve_backend(){
-    local want dir build
-    if [[ -n "${BISQUITE_FIREWALL_BACKEND:-}" ]]; then
-        echo "$BISQUITE_FIREWALL_BACKEND"
+    local want dir build kver
+    if [[ -n "${FORCE:-}" ]]; then
+        echo "$FORCE"
         return 0
     fi
-    want="$(conf_get firewall FIREWALL_BACKEND 2>/dev/null)" || want=auto
-    [[ -n "$want" ]] || want=auto
+    want="${FIREWALL_BACKEND:-auto}"
     build="$(cat "$BUILD_BACKEND_FILE" 2>/dev/null)" || build=""
     [[ "$build" == nft || "$build" == iptables ]] || build=""
-    dir="$MODULES_ROOT/$(uname -r)"
+    kver="$(uname -r)"
+    dir="$MODULES_ROOT/$kver"
     if ! fw_kernel_known "$dir"; then
         if [[ "$want" != auto ]]; then
             echo "$want"
         else
-            log "у ядра $(uname -r) нет списков модулей ($dir) — бэкенд ${build:-nft}${build:+ (выбран при сборке)}"
+            log "у ядра $kver нет списков модулей ($dir) — бэкенд ${build:-nft}${build:+ (выбран при сборке)}"
             echo "${build:-nft}"
         fi
         return 0
     fi
     fw_pick "$want" "$dir" && return 0
-    log "ядро $(uname -r): $FW_PICK_WHY"
+    log "ядро $kver: $FW_PICK_WHY"
     if [[ "$want" != auto ]]; then
         log "FIREWALL_BACKEND=$want задан явно — пробую его"
         echo "$want"
@@ -103,14 +133,22 @@ table $TABLE {
 EOF
 }
 
-# Without the files: loopback and replies only. Used when the files do not
-# load — closed rather than open.
+nft_ssh(){
+    (( ${#SSH_PORTS[@]} )) || return 0
+    local list
+    list="$(printf '%s, ' "${SSH_PORTS[@]}")"
+    printf 'add rule %s input tcp dport { %s } accept\n' "$TABLE" "${list%, }"
+}
+
+# Without the files: loopback, replies and the SSH ports the operator set
+# (none by default). Used when the files do not load — closed rather than open.
 nft_fallback(){
     nft_skeleton
     cat <<EOF
 add rule $TABLE input iif lo accept
 add rule $TABLE input ct state established,related accept
 EOF
+    nft_ssh
 }
 
 nft_render(){
@@ -123,6 +161,7 @@ nft_render(){
         printf 'include "%s"\n' "$f"
     done
     shopt -u nullglob
+    nft_ssh
 }
 
 need_nft(){
@@ -132,12 +171,12 @@ need_nft(){
 }
 
 nft_present(){
-    command -v nft >/dev/null 2>&1 && nft list table inet bisquite >/dev/null 2>&1
+    command -v nft >/dev/null 2>&1 && nft list table inet cream >/dev/null 2>&1
 }
 
 nft_off(){
     nft_present || return 0
-    nft delete table inet bisquite || return 1
+    nft delete table inet cream || return 1
     log "таблица $TABLE снята"
 }
 
@@ -147,13 +186,13 @@ nft_apply(){
     ruleset="$RUN_DIR/ruleset.nft"
     nft_render > "$ruleset" || return 1
     if out="$(nft -f "$ruleset" 2>&1)"; then
-        log "применено (nftables): $TABLE из $(grep -c '^include' "$ruleset") файл(ов) $RULES_DIR/*.nft"
+        log "применено (nftables): $TABLE из $(grep -c '^include' "$ruleset") файл(ов) $RULES_DIR/*.nft, SSH: ${SSH_PORTS[*]:-закрыт}"
         return 0
     fi
     log "правила не загрузились — каталог $RULES_DIR не применён:"
     printf '%s\n' "$out" >&2
     if nft_fallback > "$RUN_DIR/fallback.nft" && nft -f "$RUN_DIR/fallback.nft"; then
-        log "загружен запасной набор: только петля и ответы (входящее закрыто); исправьте файл и sudo systemctl restart bisquite-firewall"
+        log "загружен запасной набор: петля, ответы, SSH: ${SSH_PORTS[*]:-закрыт}; исправьте файл и sudo cream run firewall reload"
     else
         log "и запасной набор не загрузился — входящее НЕ фильтруется"
     fi
@@ -163,7 +202,7 @@ nft_apply(){
 nft_check(){
     local ruleset out
     need_nft || return 1
-    ruleset="$RUN_DIR/check.nft"
+    ruleset="$WORK/check.nft"
     nft_render > "$ruleset" || return 1
     if out="$(nft -c -f "$ruleset" 2>&1)"; then
         log "файлы $RULES_DIR/*.nft корректны"
@@ -185,7 +224,7 @@ need_ipt(){
 }
 
 # ipt_file FILE: print FILE as rules of our chain. A rule is either
-# `-A BISQUITE-INPUT …` or the short form `…` (the prefix is added). Anything
+# `-A CREAM-INPUT …` or the short form `…` (the prefix is added). Anything
 # that names another chain, a table, a policy or a flush is refused: the
 # files must not be able to touch Docker's or anyone else's chains.
 ipt_file(){
@@ -213,6 +252,13 @@ ipt_file(){
     done < "$f"
 }
 
+ipt_ssh(){
+    local p
+    for p in "${SSH_PORTS[@]}"; do
+        printf -- '-A %s -p tcp -m tcp --dport %s -j ACCEPT\n' "$CHAIN" "$p"
+    done
+}
+
 # ipt_render EXT: the restore input for one family from rules.d/*.EXT.
 # Declaring the chain in --noflush mode empties it, so the transaction
 # replaces our chain and nothing else; DROP closes it like policy drop.
@@ -227,19 +273,19 @@ ipt_render(){
         echo "# $f"
         ipt_file "$f" || return 1
     done
+    ipt_ssh
     echo "-A $CHAIN -j DROP"
     echo "COMMIT"
 }
 
 ipt_fallback(){
-    cat <<EOF
-*filter
-:$CHAIN - [0:0]
--A $CHAIN -i lo -j ACCEPT
--A $CHAIN -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
--A $CHAIN -j DROP
-COMMIT
-EOF
+    echo "*filter"
+    echo ":$CHAIN - [0:0]"
+    echo "-A $CHAIN -i lo -j ACCEPT"
+    echo "-A $CHAIN -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
+    ipt_ssh
+    echo "-A $CHAIN -j DROP"
+    echo "COMMIT"
 }
 
 # ipt_jump CMD...: exactly one jump INPUT -> our chain, first in INPUT.
@@ -262,7 +308,7 @@ ipt_load(){  # <v4 file> <v6 file>: both families, then both jumps
 ipt_present(){
     local names="$1"
     shift
-    grep -qx filter "/proc/net/$names" 2>/dev/null || return 1
+    grep -qx filter "$PROC_NET/$names" 2>/dev/null || return 1
     "$@" -n -L "$CHAIN" >/dev/null 2>&1
 }
 
@@ -291,24 +337,24 @@ ipt_apply(){
     if ipt_render rules > "$v4" && ipt_render rules6 > "$v6" \
         && out="$("${RESTORE4[@]}" --test < "$v4" 2>&1 && "${RESTORE6[@]}" --test < "$v6" 2>&1)" \
         && out="$(ipt_load "$v4" "$v6" 2>&1)"; then
-        log "применено (iptables): $CHAIN из $(grep -c '^# /' "$v4") файл(ов) *.rules и $(grep -c '^# /' "$v6") *.rules6 в $RULES_DIR"
+        log "применено (iptables): $CHAIN из $(grep -c '^# /' "$v4") файл(ов) *.rules и $(grep -c '^# /' "$v6") *.rules6 в $RULES_DIR, SSH: ${SSH_PORTS[*]:-закрыт}"
         return 0
     fi
     log "правила не загрузились — каталог $RULES_DIR не применён:"
     [[ -n "$out" ]] && printf '%s\n' "$out" >&2
     if ipt_fallback > "$RUN_DIR/fallback.v4" && cp "$RUN_DIR/fallback.v4" "$RUN_DIR/fallback.v6" \
         && ipt_load "$RUN_DIR/fallback.v4" "$RUN_DIR/fallback.v6"; then
-        log "загружен запасной набор: только петля и ответы (входящее закрыто); исправьте файл и sudo systemctl restart bisquite-firewall"
+        log "загружен запасной набор: петля, ответы, SSH: ${SSH_PORTS[*]:-закрыт}; исправьте файл и sudo cream run firewall reload"
     else
         log "и запасной набор не загрузился — входящее НЕ фильтруется"
     fi
     return 1
 }
 
-# rc 3 — a file breaks the format (no kernel needed: install.sh fails the
+# rc 3 — a file breaks the format (no kernel needed: hooks/install fails the
 # build); rc 1 — the restore test itself did not pass (may be the appliance).
 ipt_check(){
-    local v4="$RUN_DIR/check.v4" v6="$RUN_DIR/check.v6" out
+    local v4="$WORK/check.v4" v6="$WORK/check.v6" out
     ipt_render rules > "$v4" || return 3
     ipt_render rules6 > "$v6" || return 3
     need_ipt || return 1
@@ -326,18 +372,18 @@ do_off(){
     local rc=0
     nft_off || rc=1
     ipt_off || rc=1
-    (( rc == 0 )) && log "входящее не фильтруется (до следующей загрузки или apply)"
+    (( rc == 0 )) && log "входящее больше не фильтруется"
     return "$rc"
 }
 
 do_apply(){
-    local enable backend
-    enable="$(conf_get firewall FIREWALL_ENABLE)" || return 1
+    local enable="${FIREWALL_ENABLE:-1}" backend
     if [[ "$enable" != 1 ]]; then
         log "FIREWALL_ENABLE=$enable — файрвол выключен настройкой"
         do_off
         return
     fi
+    read_ssh_ports || return 1
     backend="$(resolve_backend)" || return 1
     install -d -m 0700 "$RUN_DIR" || return 1
     printf '%s\n' "$backend" > "$RUN_DIR/backend"
@@ -351,21 +397,26 @@ do_apply(){
 }
 
 do_check(){
-    local backend
+    local backend rc
+    read_ssh_ports || return 3
     backend="$(resolve_backend)" || return 1
-    install -d -m 0700 "$RUN_DIR" || return 1
+    WORK="$(mktemp -d)" || return 1
     case "$backend" in
-        nft) nft_check ;;
-        iptables) ipt_check ;;
-        *) log "бэкенд «$backend» неизвестен"; return 1 ;;
+        nft) nft_check; rc=$? ;;
+        iptables) ipt_check; rc=$? ;;
+        *) log "бэкенд «$backend» неизвестен"; rc=1 ;;
     esac
+    rm -r -f -- "$WORK"
+    return "$rc"
 }
 
 do_show(){
     local b
     b="$(cat "$RUN_DIR/backend" 2>/dev/null)" || b="(apply ещё не было)"
     echo "# бэкенд: $b"
-    nft_present && nft list table inet bisquite
+    echo "# apply выберет: $(resolve_backend 2>/dev/null)"
+    echo "# FIREWALL_ENABLE=${FIREWALL_ENABLE:-1} FIREWALL_SSH_PORTS=${FIREWALL_SSH_PORTS:-}"
+    nft_present && nft list table inet cream
     if command -v iptables-legacy >/dev/null 2>&1; then
         if ipt_present ip_tables_names "${IPT4[@]}"; then
             echo "# iptables-legacy, IPv4"; "${IPT4[@]}" -S INPUT; "${IPT4[@]}" -S "$CHAIN"
@@ -377,11 +428,15 @@ do_show(){
     return 0
 }
 
+FORCE=""
 case "${1:-}" in
     apply) do_apply ;;
     off) do_off ;;
     show) do_show ;;
-    check) do_check ;;
-    backend) resolve_backend ;;
-    *) >&2 echo "usage: ${0##*/} apply|off|show|check|backend"; exit 2 ;;
+    check)
+        case "${2:-}" in
+            ""|nft|iptables) FORCE="${2:-}"; do_check ;;
+            *) log "check: бэкенд «$2» — ожидается nft или iptables"; exit 2 ;;
+        esac ;;
+    *) >&2 echo "usage: ${0##*/} apply|off|show|check [nft|iptables]"; exit 2 ;;
 esac

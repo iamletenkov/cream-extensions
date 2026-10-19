@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# cream hook `configure` of firewall, stage early (before network-pre.target):
+# build our table/chain from /etc/cream/firewall/rules.d on every boot, after
+# install on a live machine and on `cream set firewall …` (cream restarts
+# cream-configure@firewall — there is no apply hook of our own, spec §8.4).
+# A broken rules file loads the fallback (loopback, replies, SSH) and fails
+# the unit: closed rather than open, visible in `systemctl --failed`.
+set -euo pipefail
+exec "${CREAM_EXT_DIR:-$(dirname "$0")/..}/firewall.sh" apply
