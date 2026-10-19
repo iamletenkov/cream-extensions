@@ -1,7 +1,7 @@
 #!/bin/bash
 # Шаг 4: подготовка rootfs Jetson ДО генерации system.img.
 #
-#     sudo /opt/nvidia-jetpack/04-customize-rootfs.sh -u jetson -p 'пароль' [-n orin]
+#     sudo /opt/cream/ext/nvidia-jetpack/scripts/04-customize-rootfs.sh -u jetson -p 'пароль' [-n orin]
 #
 # Правка Linux_for_Tegra/rootfs/ перед сборкой образа официально поддерживается
 # NVIDIA — это штатный способ внести в систему то, что иначе пришлось бы

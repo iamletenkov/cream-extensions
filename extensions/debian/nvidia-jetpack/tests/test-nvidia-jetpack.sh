@@ -225,9 +225,11 @@ chmod +x "$vi/bin/"*
 # rvi <function> [VAR=value …] — the nano profile pointed at the test image.
 rvi() { local fn="$1"; shift
   ( . "$S/profile.sh" && load_profile nano 32.7.4 || exit 1
+    VENDOR_IMG_SIZE="$(stat -c %s "$vi/src.img.xz")"
+    VENDOR_IMG_SHA256="$(sha256sum "$vi/src.img.xz" | cut -d' ' -f1)"
     export PATH="$vi/bin:$PATH" VI_LOG="$vi" WORK="$vi/w" OUT_DIR="$vi/out" \
-           VENDOR_IMG_URL="file://$vi/src.img.xz" VENDOR_IMG_SIZE="$(stat -c %s "$vi/src.img.xz")" \
-           VENDOR_IMG_SHA256="$(sha256sum "$vi/src.img.xz" | cut -d' ' -f1)"
+           VENDOR_IMG_URL="file://$vi/src.img.xz" VENDOR_IMG_SIZE VENDOR_IMG_SHA256
+    # shellcheck disable=SC2163  # "$@" is VAR=value pairs: export each of them
     [ $# -eq 0 ] || export "$@"
     . "$S/vendor-image.sh" && "$fn" ); }
 check   "fetch: скачал в кеш и сверил sha256"          rvi vendor_fetch

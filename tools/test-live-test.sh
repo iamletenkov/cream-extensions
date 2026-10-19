@@ -5,7 +5,9 @@
 # --expect-skip у применимого, упавший юнит после загрузки, configure с кодом 20,
 # неидемпотентный --reinstall, секрет в журнале, цикл порядка), код 20 install
 # с --expect-skip — зелёный (skipped); зависимость с кодом 20 — «пропущена (skipped)»,
-# упавшая зависимость — красная с кодом cream. Плюс приёмка плана: настоящее расширение
+# упавшая зависимость — красная с кодом cream. LIVE_FAILED_IGNORE: разрешённый юнит —
+# зелёный с пометкой «разрешено упасть», юнит не из списка — красный, выражение без
+# якорей ^…$ — отказ (код 2). Плюс приёмка плана: настоящее расширение
 # stvor-agent (с teleport) — LIVE_REAL=1 (сеть: тарбол Teleport, .deb агента).
 #
 # Тяжёлая (контейнеры с systemd): не входит в make ci; цель make test-live-self.
@@ -50,6 +52,10 @@ run skip-but-installed 1 "ждали код 20 хука install" --expect-skip l
 run dep-skipped 0 "ok   зависимость live-skip пропущена (skipped)" --secret LIVE_OK_TOKEN --deps live-skip live-ok
 run dep-fails 1 "FAIL зависимость live-fail: cream install — код 79" --deps live-fail live-ok
 run unit-failed 1 "FAIL после перезапуска есть упавшие юниты" live-unit-failed
+run unit-allowed 0 "разрешено упасть: live-unit-allowed.service" live-unit-allowed
+run unit-not-listed 1 "FAIL после перезапуска есть упавшие юниты" \
+    --failed-ignore '^other\.service$' live-unit-failed
+run ignore-unanchored 2 "LIVE_FAILED_IGNORE" --failed-ignore 'live-unit-failed\.service' live-unit-failed
 run configure-20 1 "FAIL configure на загрузке: cream-configure@live-configure-20.service — failed" live-configure-20
 run not-idempotent 1 "FAIL --reinstall изменил файлы" live-nonidem
 run secret-leak 1 "FAIL после install: секрет LIVE_LEAK_TOKEN виден: журнал" --secret LIVE_LEAK_TOKEN live-leak

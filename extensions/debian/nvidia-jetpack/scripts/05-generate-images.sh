@@ -1,7 +1,7 @@
 #!/bin/bash
 # Шаг 5: генерация образов БЕЗ записи на плату (--no-flash).
 #
-#     sudo /opt/nvidia-jetpack/05-generate-images.sh
+#     sudo /opt/cream/ext/nvidia-jetpack/scripts/05-generate-images.sh
 #
 # Разделение «сначала собрать, потом залить» — не удобство, а способ дёшево
 # платить за ошибку: генерация занимает 15-40 минут и ничего не пишет на

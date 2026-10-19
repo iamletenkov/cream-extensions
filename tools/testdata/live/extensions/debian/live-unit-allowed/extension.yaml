@@ -1,0 +1,14 @@
+# Fixture of tools/test-live-test.sh: a unit fails at boot, but tests/live.env
+# allows it (LIVE_FAILED_IGNORE) — green, the unit printed as allowed.
+schema: cream/v1
+name: live-unit-allowed
+version: 1.0.0
+summary: фикстура L-раннера — юнит падает на загрузке, live.env разрешает
+cream: ">=1.0.0"
+platform: {family: deb, arch: [amd64, arm64]}
+targets: {build: exec, live: "yes"}
+hooks:
+  install: {}
+  remove: {}
+files:
+  - {src: files/live-unit-allowed.service, dst: /etc/systemd/system/live-unit-allowed.service, mode: "0644"}
