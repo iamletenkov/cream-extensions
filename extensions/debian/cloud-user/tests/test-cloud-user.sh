@@ -178,4 +178,30 @@ mkdir -p "$ROOT/home/nobody" "$ROOT/home/sys"
 run_lib; eq "нет обычной учётки с домом — код 1" 1 "$?"
 check "stderr объясняет" grep -q 'no regular account' "$ROOT/stderr"
 
+echo "== запасной путь: имя учётки проверяется, как у потребителей =="
+lib_root
+no_cloud_init
+printf 'Evil$(id):x:1000:1000::/home/x:/bin/bash\nb\033[31mad:x:1001:1001::/home/y:/bin/bash\nwith space:x:1002:1002::/home/z:/bin/bash\ncarol:x:1003:1003::/home/carol:/bin/bash\n' > "$FAKE/passwd"
+mkdir -p "$ROOT/home/Evil\$(id)" "$ROOT/home/"$'b\e[31mad' "$ROOT/home/with space" "$ROOT/home/with" "$ROOT/home/carol"
+run_lib; eq "кривые имена пропущены — код 0" 0 "$?"
+eq "кривые имена пропущены — carol" carol "$(stdout)"
+check "пропуск назван в stderr" grep -q 'not a valid user name' "$ROOT/stderr"
+check_not "в stderr нет ESC" grep -q $'\e' "$ROOT/stderr"
+lib_root
+no_cloud_init
+printf 'b\033[31mad:x:1001:1001::/home/y:/bin/bash\n' > "$FAKE/passwd"
+mkdir -p "$ROOT/home/"$'b\e[31mad'
+run_lib; eq "только кривое имя — код 1" 1 "$?"
+eq "только кривое имя — stdout пуст" "" "$(stdout)"
+check_not "только кривое имя — в stderr нет ESC" grep -q $'\e' "$ROOT/stderr"
+
+echo "== имя cloud-init с управляющими символами — stderr чистый =="
+lib_root
+printf '#cloud-config\nuser: "a\\e[31mlice"\n' > "$FAKE/userdata"
+printf 'carol:x:1001:1001::/home/carol:/bin/bash\n' > "$FAKE/passwd"
+mkdir -p "$ROOT/home/carol"
+run_lib; eq "ESC в имени cloud-init — запасная учётка" carol "$(stdout)"
+check "сказано в stderr" grep -q 'not a valid user name' "$ROOT/stderr"
+check_not "в stderr нет ESC" grep -q $'\e' "$ROOT/stderr"
+
 ht_done

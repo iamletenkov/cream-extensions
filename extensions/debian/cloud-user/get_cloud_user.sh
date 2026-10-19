@@ -15,6 +15,18 @@ set -euo pipefail
 ROOT="${CREAM_ROOT:-}"
 ROOT="${ROOT%/}"
 
+# The user name rule of the consumers (and of useradd by default): the name goes
+# into paths, gsettings and units, so anything else is not a user here.
+RE_USER='^[a-z_][a-z0-9_-]{0,31}$'
+
+# printable TEXT: TEXT cut to 64 characters, anything but [[:alnum:]_.+-] as
+# '?' — a name from passwd or userdata never reaches a terminal or the journal
+# with its control characters.
+printable() {
+    local t="${1:0:64}"
+    printf '%s' "${t//[^[:alnum:]_.+-]/?}"
+}
+
 # Функция для получения пользователя из cloud-init
 fallback_user() {
     # Первая обычная учётная запись с домашним каталогом.
@@ -24,8 +36,18 @@ fallback_user() {
     # Домашний каталог обязателен: всё, что настраивают расширения
     # (gsettings, ключи, автозапуск), живёт в нём, и учётка без него
     # настройке не поддаётся.
-    local candidate
-    for candidate in $(getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $1}'); do
+    #
+    # Имя проверяется тем же правилом, что у потребителей (RE_USER): учётка с
+    # именем вроде `x$(id)` или с управляющими символами пропускается с
+    # пометкой, а не уходит в пути и юниты.
+    local candidate uid rest
+    while IFS=: read -r candidate _ uid rest; do
+        [[ "$uid" =~ ^[0-9]+$ ]] || continue
+        (( uid >= 1000 && uid < 65534 )) || continue
+        if [[ ! "$candidate" =~ $RE_USER ]]; then
+            echo "Note: account '$(printable "$candidate")' (uid $uid) is not a valid user name — skipped" >&2
+            continue
+        fi
         if [[ -d "${ROOT}/home/${candidate}" ]]; then
             # Сказать вслух, что пошли запасным путём, и какую учётку выбрали.
             #
@@ -42,7 +64,7 @@ fallback_user() {
             echo "$candidate"
             return 0
         fi
-    done
+    done < <(getent passwd)
     echo "Error: no cloud-init user and no regular account with a home dir" >&2
     return 1
 }
@@ -115,11 +137,11 @@ get_cloud_user() {
         # примет useradd по умолчанию. `default` в `users` — ссылка на
         # default_user из cloud.cfg, а не имя; его, как и мусор, закрывает
         # запасной путь (первая обычная учётка с домом и есть default_user).
-        if [[ "$ci_user" =~ ^[a-z_][a-z0-9_-]{0,31}$ && "$ci_user" != default ]]; then
+        if [[ "$ci_user" =~ $RE_USER && "$ci_user" != default ]]; then
             echo "$ci_user"
             return 0
         fi
-        echo "Note: cloud-init user '${ci_user:0:64}' is not a valid user name" >&2
+        echo "Note: cloud-init user '$(printable "$ci_user")' is not a valid user name" >&2
         fallback_user
         return $?
     fi
