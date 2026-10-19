@@ -20,7 +20,7 @@
 # 2.0.0: камеры ушли из базового образа в расширение sensing-gmsl2-camera.
 schema: cream/v1
 name: nvidia-jetpack
-version: 3.0.0
+version: 3.0.1
 summary: Станция прошивки NVIDIA Jetson на amd64 — инструментарий L4T, NFS, binfmt aarch64, скрипты
 cream: ">=1.0.0"
 platform:
@@ -38,6 +38,8 @@ targets:
     добавляет udev-правило против USB autosuspend для устройств NVIDIA;
     сама прошивка платы не запускается — только оператором по README
 provides: [jetson-flash-station]
+depends:
+  - {name: apt-guard, version: ">=1.0.0 <2"}
 hooks:
   install: {timeout: 30m}
   remove: {timeout: 15m}

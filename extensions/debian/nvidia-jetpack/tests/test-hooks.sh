@@ -29,7 +29,9 @@ fresh() {
     CONF="$ROOT/etc/binfmt.d/qemu-aarch64.conf"
     STATE="$ROOT/var/lib/cream/ext/nvidia-jetpack/packages"
     ht_fake dpkg-query 'p="${*: -1}"; [[ -f "$FAKE/pkg-$p" ]] && printf installed; exit 0'
-    ht_fake apt-get 'if [[ " $* " == *" install "* ]]; then
+    ht_fake apt-get 'if [[ "$1" == -s ]]; then v=Remv; [[ "$2" == purge ]] && v=Purg
+    for a in "${@:3}"; do echo "$v $a [1.0]"; done; cat "$FAKE/sim-extra" 2>/dev/null; exit 0; fi
+if [[ " $* " == *" install "* ]]; then
   for a in "$@"; do case "$a" in -*|install|Dpkg::*) ;; *) : > "$FAKE/pkg-$a" ;; esac; done
   if [[ ! -f "$FAKE/no-emulator" && -f "$FAKE/pkg-qemu-user-static" ]]; then
     mkdir -p "'"$ROOT"'/usr/bin"; : > "'"$ROOT$EMU"'"; chmod +x "'"$ROOT$EMU"'"
@@ -49,7 +51,7 @@ live_systemd() { mkdir -p "$ROOT/run/systemd/system"; }
 echo "== манифест =="
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "мажор 3" 3.0.0 "$(mf 'm["version"]')"
+eq "мажор 3" 3.0.1 "$(mf 'm["version"]')"
 eq "cream >=1.0.0" ">=1.0.0" "$(mf 'm["cream"]')"
 eq "только amd64" "['amd64']" "$(mf 'm["platform"]["arch"]')"
 eq "build: exec" exec "$(mf 'm["targets"]["build"]')"
@@ -176,5 +178,17 @@ ht_hook install; eq "install в контейнере — 0" 0 "$?"
 : > "$FAKE/calls"
 ht_hook remove; eq "remove в контейнере — 0" 0 "$?"
 check_not "remove в контейнере binfmt хоста не трогает" ht_called 'systemd-binfmt'
+
+echo "== remove: симуляция снимает чужой пакет — отказ =="
+fresh
+live_systemd
+ht_hook install >/dev/null
+echo 'Remv binfmt-support [2.2.2-2]' > "$FAKE/sim-extra"
+: > "$FAKE/calls"
+ht_hook remove; eq "симуляция снимает чужой пакет — 1" 1 "$?"
+check "чужой пакет назван" grep -q 'binfmt-support' "$ROOT/out"
+check_not "ничего не снято" ht_called '^apt-get -q -y remove'
+check "binfmt-файл на месте" test -e "$CONF"
+check "запись пакетов осталась" test -s "$STATE"
 
 ht_done
