@@ -1615,12 +1615,14 @@ unit_main(){
 }
 # descends <pid> <main>: pid is main or its descendant within 8 generations
 # (PPid of /proc/<pid>/status; a HUP forks one generation per reload).
+# Status 2 — the chain ends at PID 1 first: an orphan (its parent exited).
 descends(){
     local p="$1" i ppid
     for i in 0 1 2 3 4 5 6 7 8; do
         [[ "$p" == "$2" ]] && return 0
         ppid="$(sed -n 's/^PPid:[[:space:]]*\([0-9][0-9]*\)$/\1/p' "$PROC/$p/status" 2>/dev/null)"
         [[ "$ppid" =~ ^[1-9][0-9]{0,9}$ ]] || return 1
+        [[ "$ppid" == 1 ]] && return 2
         p="$ppid"
     done
     return 1
@@ -1637,13 +1639,17 @@ unit_cgroup(){
     [[ "$cg" =~ ^/[A-Za-z0-9._@/-]{1,512}$ && "$cg" == */system.slice/teleport.service ]] || return 1
     printf '%s\n' "$cg"
 }
-# teleport_proc <pid> <main> <cgroup>: 0 — a live Teleport process of the
-# system unit: its cgroup line is exactly <cgroup> (v2 `0::…`, or the
+# teleport_proc <pid> <main> <cgroup> [orphan]: 0 — a live Teleport process of
+# the system unit: its cgroup line is exactly <cgroup> (v2 `0::…`, or the
 # name=systemd line of v1 — a user unit user@…/app.slice/teleport.service is
 # not ours), its executable is the binary the unit runs (" (deleted)" after an
-# update of the binary still counts), and it is the MainPID or descends from it.
+# update of the binary still counts), and it is the MainPID or descends from
+# it. With [orphan] (only for the process of the pid file) a chain that ends
+# at PID 1 counts too: when an intermediate child finished draining before the
+# old parent, the newest Teleport is reparented to PID 1 while the parent is
+# still the MainPID — the exact cgroup and the binary keep strangers out.
 teleport_proc(){
-    local pid="$1" main="$2" cg="$3" exe line ok=1
+    local pid="$1" main="$2" cg="$3" orphan="${4:-}" exe line ok=1 rc=0
     [[ "$pid" =~ ^[1-9][0-9]{0,9}$ && -d "$PROC/$pid" && -n "$cg" ]] || return 1
     while IFS= read -r line; do
         if [[ "$line" == "0::$cg" ]] || { [[ "$line" == *":name=systemd:$cg" ]] && [[ "${line%%:name=systemd:*}" =~ ^[0-9]+$ ]]; }; then
@@ -1654,13 +1660,14 @@ teleport_proc(){
     exe="$(readlink -- "$PROC/$pid/exe" 2>/dev/null)" || return 1
     exe="${exe% (deleted)}"
     [[ "$exe" == "$TELEPORT_BIN" ]] || return 1
-    descends "$pid" "$main"
+    descends "$pid" "$main" || rc=$?
+    (( rc == 0 )) || [[ "$rc" == 2 && -n "$orphan" ]]
 }
 # pidfile_pid <main> <cgroup>: the pid of the pid file when it is a Teleport process of the unit.
 pidfile_pid(){
     local pid=""
     [[ -f "$PID_FILE" && ! -L "$PID_FILE" ]] && pid="$(head -c 32 -- "$PID_FILE" 2>/dev/null | tr -d '[:space:]')"
-    teleport_proc "$pid" "$1" "$2" || return 1
+    teleport_proc "$pid" "$1" "$2" orphan || return 1
     printf '%s\n' "$pid"
 }
 # hup_target <main> <cgroup>: the process a HUP must reach — the pid file, else the MainPID.
@@ -1691,7 +1698,7 @@ hup_confirm(){
     done
     before="$(pidfile_pid "$main" "$cg" || true)"
     # The builtin kill: procps is not in minimal images. target is digits only.
-    if ! teleport_proc "$target" "$main" "$cg" || ! kill -HUP "$target" 2>/dev/null; then
+    if ! teleport_proc "$target" "$main" "$cg" orphan || ! kill -HUP "$target" 2>/dev/null; then
         HUP_TARGET="$target"; return 2
     fi
     HUP_TARGET="$target"
