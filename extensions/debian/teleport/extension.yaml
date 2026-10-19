@@ -1,8 +1,10 @@
 schema: cream/v1
 name: teleport
-version: 4.0.0
+version: 4.0.1
 summary: Узел Teleport — бинарь, регистрация (join), рендер teleport.yaml, приложения apps.d
 cream: ">=1.0.0"
+# 4.0.1: HUP агенту — `systemctl kill --kill-who=main`, а не /bin/kill (procps нет
+#        в минимальных образах; найдено гейтом Stvor на docker debian-12).
 # 4.0.0: перенос bisquite-teleport-agent 3.x под cream (спека stvor-agent §10):
 #        ручки — config.keys, CLI — действия, свой flock — блокировка cream,
 #        пути /etc/cream/teleport, /var/lib/cream/ext/teleport; метки
