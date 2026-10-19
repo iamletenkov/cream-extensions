@@ -5,7 +5,8 @@
 #   tools/live-test.sh [флаги] <расширение>
 #
 #   --distro D        debian-12 (умолчание; или DISTRO=…) | debian-13 | ubuntu-22.04 | ubuntu-24.04
-#   --deps "a b"      расширения, которые ставятся раньше, по порядку (с --accept-risk)
+#   --deps "a b"      расширения, которые ставятся раньше, по порядку (с --accept-risk
+#                     и --allow-skip: код 20 зависимости — запись skipped, не сбой)
 #   --accept-risk     расширение с targets.live: confirm
 #   --expect-skip     хук install обязан вернуть 20 (нет устройства/ядра/GPU, рулинг Р11):
 #                     установка с --allow-skip, в реестре status: skipped
@@ -270,12 +271,21 @@ creamj init system init || { tailerr init; abort "cream system init"; }
 creamj source source add live --path /live/cat --sync || { tailerr source; abort "cream source add"; }
 ok "cream $(jf init 'j["cream"]'), источник с $(( ${#dep_dirs[@]} + 1 )) расширениями"
 
+# Deps go on with --allow-skip: a dep whose install exits 20 (no kernel/GPU in
+# the container) stays in the registry as skipped, and that record is still a
+# provider of its capabilities (nvidia -> gpu-driver-nvidia). Told apart by the
+# status in cream's envelope, not by arithmetic.
 for d in "${dep_list[@]}"; do
-    if creamj "dep-$d" install --accept-risk "$d"; then
-        ok "зависимость $d установлена"
-    else
+    rc=0
+    creamj "dep-$d" install --accept-risk --allow-skip "$d" || rc=$?
+    if [[ "$rc" != 0 ]]; then
         tailerr "dep-$d"
-        abort "зависимость $d: cream install — код $?"
+        abort "зависимость $d: cream install — код $rc"
+    fi
+    if [[ "$(jf "dep-$d" 'j["result"]["status"]')" == skipped ]]; then
+        ok "зависимость $d пропущена (skipped)"
+    else
+        ok "зависимость $d установлена"
     fi
 done
 
