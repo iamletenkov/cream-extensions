@@ -50,9 +50,11 @@
 # decision. So a file dropped by an extension or anyone else does not open the
 # app to another env.
 #
-# Test switches (not domain keys, cream never sets them):
-#   TELEPORT_TEST_SYSTEMD=1|0       override the systemd detection
-#   TELEPORT_TEST_JOIN_TIMEOUT=N    the wait for the identity, s
+# No test switches in the environment: the tests substitute commands through
+# PATH (systemctl, journalctl, curl, sleep…) and the root through CREAM_ROOT —
+# "systemd runs" is the marker directory $CREAM_ROOT/run/systemd/system, as
+# sd_booted(3) checks it. Waits count their own sleeps, so a fake `sleep` makes
+# them instant; their bounds are constants, not knobs.
 set -uo pipefail
 
 ROOT="${CREAM_ROOT:-}"
@@ -75,7 +77,8 @@ OS_LOGINS_CMD="${EXT_DIR#"$ROOT"}/files/os-logins"
 BOUND_KEYPAIR_MIN=18.8.0
 TELEPORT_BIN="$ROOT/usr/local/bin/teleport"
 TELEPORT_DEFAULT_VERSION=18.10.0
-JOIN_TIMEOUT="${TELEPORT_TEST_JOIN_TIMEOUT:-120}"
+# The wait for the identity after the agent starts, s.
+JOIN_TIMEOUT=120
 
 # The knob values are validated by cream; render checks them again (a hand
 # edit may put anything into the file) with the same types — KEY_TYPE equals
@@ -130,13 +133,9 @@ warn(){ log "ВНИМАНИЕ: $*"; }
 die(){ log "ОШИБКА: $*"; exit 1; }
 
 need_root(){ [[ -n "$ROOT" || "$(id -u)" -eq 0 ]] || die "нужен root (sudo)"; }
-has_systemd(){
-    case "${TELEPORT_TEST_SYSTEMD:-}" in
-        1) return 0 ;;
-        0) return 1 ;;
-    esac
-    [[ -z "$ROOT" && -d /run/systemd/system ]]
-}
+# systemd is PID 1 (sd_booted): the marker under the root. A build root (an
+# image, a chroot) has an empty /run.
+has_systemd(){ [[ -d "$ROOT/run/systemd/system" ]]; }
 
 # ---------------------------------------------------------------------------
 # Ручки: читаются из файла домена, пишутся вложенным `cream set`.
@@ -262,6 +261,7 @@ read_decl(){
         warn "пропускаю $f: символическая ссылка"; return 1
     fi
     owner="$(stat -c %u "$f")"; mode="$(stat -c %a "$f")"
+    [[ "$mode" =~ ^[0-7]{3,4}$ ]] || { warn "пропускаю $f: права не прочитаны"; return 1; }
     if [[ -z "$ROOT" && "$owner" != 0 ]]; then
         warn "пропускаю $f: владелец не root"; return 1
     fi
@@ -517,14 +517,21 @@ write_secret(){
 # ---------------------------------------------------------------------------
 version_of_agent(){ "$TELEPORT_BIN" version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 | tr -d v; }
 
-# 0 — a is newer than b
+# Versions meet bash arithmetic, and (( )) evaluates a[$(cmd)] in its operand
+# — a command. So every version, even a local one, is X.Y.Z of at most 9
+# digits each before any arithmetic, and goes in as base 10 (18.09.0 is no
+# octal error).
+RE_SEMVER='^[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}$'
+
+# 0 — a is newer than b; 1 — not newer; 2 — one of them is not X.Y.Z.
 semver_gt(){
+    [[ "$1" =~ $RE_SEMVER && "$2" =~ $RE_SEMVER ]] || return 2
     local -a a b; local i
     IFS=. read -r -a a <<< "$1"
     IFS=. read -r -a b <<< "$2"
     for i in 0 1 2; do
-        (( ${a[i]:-0} > ${b[i]:-0} )) && return 0
-        (( ${a[i]:-0} < ${b[i]:-0} )) && return 1
+        (( 10#${a[i]} > 10#${b[i]} )) && return 0
+        (( 10#${a[i]} < 10#${b[i]} )) && return 1
     done
     return 1
 }
@@ -533,13 +540,16 @@ semver_gt(){
 # not reachable over verified TLS. Any failure here is "not yet": DNS, connect,
 # timeout, TLS (the clock of a fresh machine may still be wrong), an HTTP
 # error of a balancer in front of the proxy, an answer without server_version
-# (a captive portal, not a Teleport proxy) — code 100.
+# (a captive portal, not a Teleport proxy) — code 100; a server_version that
+# is not X.Y.Z[-pre][+build] — code 101. The answer comes from the network:
+# only the checked X.Y.Z leaves this function (see RE_SEMVER).
 probe_proxy(){
     local proxy="$1" body rc version
     body="$(curl -fsS --max-time 15 "https://$proxy/webapi/find" 2>/dev/null)" || { rc=$?; return "$rc"; }
     version="$(grep -oE '"server_version":"[^"]+"' <<< "$body" | head -1 | cut -d'"' -f4)"
     [[ -n "$version" ]] || return 100
-    printf '%s\n' "$version"
+    [[ "$version" =~ ^([0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9})([-+][A-Za-z0-9.+-]*)?$ ]] || return 101
+    printf '%s\n' "${BASH_REMATCH[1]}"
 }
 
 # What the curl code of probe_proxy means, for the journal and `status`.
@@ -553,6 +563,7 @@ net_reason(){
             echo "TLS не сошёлся — часы ещё не синхронизированы? (curl $1)" ;;
         52|55|56) echo "соединение оборвано (curl $1)" ;;
         100) echo "ответ не от прокси Teleport — нет server_version в /webapi/find" ;;
+        101) echo "прокси назвал версию не по форме X.Y.Z в /webapi/find — не прокси Teleport?" ;;
         *) echo "curl $1" ;;
     esac
 }
@@ -561,10 +572,13 @@ net_reason(){
 # Echo the reason and return 0 on a mismatch.
 version_mismatch(){
     local agent="$1" server="$2"
+    if [[ ! "$agent" =~ $RE_SEMVER || ! "$server" =~ $RE_SEMVER ]]; then
+        echo "версия агента или кластера не по форме X.Y.Z — сверить нельзя"; return 0
+    fi
     if semver_gt "$agent" "$server"; then
         echo "агент $agent новее кластера $server — Teleport такую связку не поддерживает"; return 0
     fi
-    if (( ${server%%.*} - ${agent%%.*} > 1 )); then
+    if (( 10#${server%%.*} - 10#${agent%%.*} > 1 )); then
         echo "агент $agent старше кластера $server больше чем на мажор"; return 0
     fi
     return 1
