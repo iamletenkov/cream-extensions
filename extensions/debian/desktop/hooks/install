@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# cream hook `install` of desktop: the commands the settings need — dconf
+# (`dconf update` of the system database) and xset (X DPMS off). Applies
+# nothing: configure does it at boot before the display manager, and cream runs
+# configure right after install on a working machine.
+set -euo pipefail
+
+log_warn(){ >&2 echo "[WARN] desktop: $*"; }
+log_error(){ >&2 echo "[ERROR] desktop: $*"; }
+
+apt_retry(){
+    local i
+    for i in 1 2 3; do
+        "$@" && return 0
+        log_warn "попытка $i: $* — не удалась, повтор через 10 с"
+        sleep 10
+    done
+    return 1
+}
+
+export DEBIAN_FRONTEND=noninteractive
+apt_retry apt-get update -q || { log_error "apt-get update не прошёл"; exit 1; }
+apt_retry apt-get install -y -q --no-install-recommends dconf-cli x11-xserver-utils \
+    || { log_error "dconf-cli и x11-xserver-utils не установились"; exit 1; }
+>&2 echo "[INFO] desktop: готово; ручки — sudo cream set desktop DESKTOP_AUTOLOGIN=1 … (cream show desktop)"

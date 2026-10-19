@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# cream hook `configure` of desktop: stage system, after cloud-init.service and
+# before the display manager (plan ruling R5) — every boot, after install on a
+# working machine and after `cream set desktop …` (no own apply hook: cream
+# restarts cream-configure@desktop, CREAM_REASON=apply).
+#
+# At boot (CREAM_REASON=boot) the display manager is not up yet: wait up to
+# 30 s for the cloud-init user, write the files, never restart anything. On a
+# working machine the display manager is restarted (no-block) when the
+# autologin changed and no graphical session is open.
+#
+# No display manager, no user: a warning and exit 0 (rule R11).
+set -euo pipefail
+
+mode=--now
+case "${CREAM_REASON:-boot}" in
+    boot) mode=--boot ;;
+esac
+exec "${CREAM_EXT_DIR:?run by cream}/files/desktop.sh" apply "$mode"
