@@ -1,92 +1,54 @@
 # gnome
 
-GNOME на Xorg (Wayland выключен), менеджер входа gdm3. Даёт X-сервер
-и сессию расширениям, которым они нужны, — `x11vnc`, `kiosk`.
+GNOME на Xorg (Wayland выключен), менеджер входа gdm3. Даёт X-сервер и сессию
+расширениям, которым они нужны, — `x11vnc`, `kiosk`, `selkies`. Автологин,
+автоблокировка и затемнение — ручки расширения [`desktop`](../desktop/README.md) (`depends`).
 
-> **С 4.0.0 — раскладка 2.** Каталог расширения в госте — `/opt/bisquite/gnome/`
-> (был `/opt/vmsetup/gnome/`); CLI `bisquite-desktop` ставится ссылкой
-> `/usr/local/sbin/bisquite-desktop` →
-> `/opt/bisquite/gnome/lib/bisquite-desktop` из общего `lib/` источника, а не
-> копией; прежний `/usr/local/lib/bisquite-desktop` установка удаляет.
-> Нужен bisquite с поддержкой `layout: 2`.
-
-> **С 4.1.0 — библиотека настроек.** Ручки — домен `desktop` библиотеки
-> `bisquite-conf` (схема `lib/knobs/desktop` источника): значения проверяет
-> схема, запись атомарная, повторная установка правок не стирает.
-> `bisquite-desktop set` — то же, что `sudo bisquite-conf set --apply desktop`,
-> а `bisquite-conf show desktop` показывает ключи с умолчаниями.
-
-**С 3.0.0 файл ручек — `/etc/bisquite/desktop/config`** (был
-`/etc/default/bisquite-desktop`). Прежний путь не читается; если файл
-по нему остался в базовом образе, установка его удаляет.
-
-**С 2.0.0 автологин, отключение автоблокировки и затемнения — ручки,
-по умолчанию выключены.** Раньше расширение включало всё это безусловно.
-Разбор ручек — [`docs/extensions.md`, «Ручки рабочего стола»](../../../docs/extensions.md#ручки-рабочего-стола).
+> **С 5.0.0 — формат cream/v1** (план 2026-10-19, Task 13). Каталог в госте —
+> `/opt/cream/ext/gnome/`; ручки — домен `desktop` (`/etc/cream/desktop/config`),
+> применяет их `cream-configure@desktop` до gdm. Взаимоисключение с `xfce4`/`lxde` —
+> по способности `desktop-session`, а не перечнем имён. Таблица переименований — ниже.
 
 ## Манифест
 
 | Поле | Значение |
 |---|---|
-| `arch` | `amd64`, `arm64` |
-| `phase` | `build` (`install.sh`), `firstboot` (`bisquite-desktop.service` на каждой загрузке) |
+| `version` | `5.0.0`, `cream: ">=1.0.0"` |
+| `platform` | `deb`, `amd64`/`arm64`, Debian и Ubuntu |
+| `targets` | `build: exec`, `live: confirm` (на живой машине — `--accept-risk`) |
 | `provides` | `x11-server`, `display-manager`, `desktop-session` |
-| `requires` | — |
-| `conflicts` | `xfce4`, `lxde` |
+| `depends` | `desktop >=1.0.0 <2` |
+| `conflicts` | `capabilities: [desktop-session]` — любой другой рабочий стол |
+| хуки | `install`, `remove` (без `configure`: ручки применяет `desktop`) |
+| `files` | нет — см. «Какой файл читает gdm3» |
 
 ## Что делает
 
-**Сборка** (`install.sh`):
+**`install`**: ставит `task-gnome-desktop`, `gdm3`, `gnome-shell`, `gnome-session`,
+`xorg`, `xinput`, `x11-xserver-utils`, `dconf-cli`, `usbutils`, `dbus-x11`; пробует
+нативный `chromium` (только его, см. ниже); выключает Wayland в конфиге gdm3; включает
+gdm и `graphical.target`. На живой машине, если менеджер входа или цель загрузки
+поменялись, — код 10: экран входа появится после перезагрузки. На сборке — 0.
+Другой уже включённый менеджер входа (`display-manager.service` → не gdm) не
+перехватывается — предупреждение.
 
-- ставит `task-gnome-desktop`, `gdm3`, `gnome-shell`, `gnome-session`, `xorg`,
-  `xinput`, `dconf-cli`, `usbutils`, `dbus-x11`, `x11-xserver-utils`;
-- пробует нативный `chromium` — только его, см. ниже;
-- пишет конфигурацию gdm3 из `daemon.conf`: `WaylandEnable=false`,
-  `AutomaticLoginEnable=false`;
-- ставит `bisquite-desktop` (CLI, `/etc/bisquite/desktop/config`,
-  `bisquite-desktop.service`) и записывает умолчания ручек из параметров;
-- включает gdm3 и `graphical.target`.
-
-**Каждая загрузка** (`bisquite-desktop.service`, до gdm3): вносит пользователя
-cloud-init в группы видеоядра и применяет ручки.
-
-## Параметры
-
-| Переменная | Умолчание | Что делает |
-|---|---|---|
-| `DESKTOP_AUTOLOGIN` | `0` | `1` — вход без пароля |
-| `DESKTOP_AUTOLOGIN_USER` | пусто | пусто — пользователь cloud-init |
-| `DESKTOP_DISABLE_SCREEN_LOCK` | `0` | `1` — без автоблокировки; вручную заблокировать можно |
-| `DESKTOP_DISABLE_SCREEN_BLANK` | `0` | `1` — без затемнения, гашения, DPMS и сна |
-
-Параметр задаёт умолчание образа. На устройстве то же меняется командой,
-она же применяет:
-
-```bash
-sudo bisquite-desktop set DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_LOCK=1 DESKTOP_DISABLE_SCREEN_BLANK=1
-```
-
-## Подключение в VMFILE
-
-Рабочий стол, который всегда на экране:
-
-```vmfile
-EXTENSION gnome
-FIRSTBOOT_COMMAND "bisquite-desktop set DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_LOCK=1 DESKTOP_DISABLE_SCREEN_BLANK=1"
-```
-
-`FIRSTBOOT_COMMAND` исполняется до gdm3, и ручки применяются уже на первой
-загрузке. То же в compose — строкой в `firstboot_commands`. Ставите поверх
-`x11vnc` или `kiosk` — рабочий стол идёт **первым**, и без
-`DESKTOP_AUTOLOGIN=1` им не к чему подключаться: сессии пользователя нет.
+**`remove`**: возвращает цель загрузки (что было до `install`; неизвестно —
+`multi-user.target`) и выключает gdm, если до `install` менеджером входа был не он.
+**Пакеты остаются** (`apt-get remove` — вручную), `WaylandEnable=false` в конфиге gdm3
+тоже. На живой машине при смене цели — код 10.
 
 ## Какой файл читает gdm3
 
-Решено при сборке **пакета**, дистрибутивы расходятся (замер 2026-09-03
-распаковкой): Debian 13 — `/etc/gdm3/daemon.conf`, Ubuntu 22.04/24.04 —
-`/etc/gdm3/custom.conf`. Запись в другой файл не ошибка и предупреждения
-не даёт — gdm его просто не читает. `install.sh` пишет тот, что поставил
-пакет, а если нет ни одного — оба; `bisquite-desktop` правит все, какие есть.
+Решено при сборке **пакета**, дистрибутивы расходятся (замер 2026-09-03 распаковкой,
+повторён 2026-10-19): Debian — `/etc/gdm3/daemon.conf`, Ubuntu 22.04/24.04 —
+`/etc/gdm3/custom.conf`. Запись в другой файл не ошибка и предупреждения не даёт — gdm
+его просто не читает. `install` ставит `WaylandEnable=false` сразу после заголовка
+`[daemon]` в каждом из двух, какой есть, и больше ничего в них не меняет (повтор файл не
+переписывает, по ссылке не пишет). Нет ни одного обычным файлом — отказ.
+
+Не `files` cream, как у `xfce4`/`lxde`: оба файла — conffile пакета `gdm3`, и
+раскладка поверх них дала бы 67 `conflict.file_unowned` на любой машине, где gdm3 уже
+стоит, а drop-in каталога у gdm нет. Автологин в те же файлы пишет `desktop`.
 
 ## Wayland выключен, и это несущая связь
 
@@ -95,26 +57,66 @@ FIRSTBOOT_COMMAND "bisquite-desktop set DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCRE
 ## Браузер — только нативный
 
 В Debian `chromium` — обычный deb. В Ubuntu пакета нет, а `chromium-browser` —
-переходник на snap: он тянет `snapd`, а сам браузер внутри virt-customize
-не ставится (замер 2026-09-12 на AGX Orin). Поэтому на Ubuntu браузера нет;
-нужен — `epiphany-browser` или `falkon` своим `INSTALL`.
+переходник на snap: он тянет `snapd`, а сам браузер в госте сборки не ставится (замер
+2026-09-12 на AGX Orin). Поэтому на Ubuntu браузера нет; нужен — `epiphany-browser`
+или `falkon` отдельным расширением.
 
-## Проверено
+## Подключение
 
-AGX Orin, Ubuntu 22.04 / L4T 36.4.3, 2026-09-14: ручки `0` — экран входа,
-`bisquite-desktop.service` стартует перед gdm3, циклов упорядочения нет;
-`set` в `1` на лету — сессия автологина, ключи dconf `false` и заблокированы,
-`xset q` — `DPMS is Disabled`, x11vnc поднимается.
+```vmfile
+EXTENSION desktop DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_LOCK=1 DESKTOP_DISABLE_SCREEN_BLANK=1
+EXTENSION gnome
+```
+
+На работающей машине:
+
+```bash
+sudo cream install --accept-risk gnome          # desktop и cloud-user — по depends
+sudo cream set desktop DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_LOCK=1 DESKTOP_DISABLE_SCREEN_BLANK=1
+sudo reboot                                     # код 10 install: экран входа — после перезагрузки
+```
+
+Поверх `x11vnc` или `kiosk` без `DESKTOP_AUTOLOGIN=1` им не к чему подключаться:
+сессии пользователя нет.
+
+## Переименования (layout 2 → cream/v1)
+
+<!-- check-names: off -->
+| Было (4.x) | Стало (5.0.0) |
+|---|---|
+| `/opt/bisquite/gnome/install.sh` | `/opt/cream/ext/gnome/hooks/install` |
+| `bisquite-desktop set KEY=…` | `cream set desktop KEY=…` |
+| `bisquite-desktop status` | `cream run desktop status` |
+| `bisquite-desktop.service` | `cream-configure@desktop.service` |
+| `/etc/bisquite/desktop/config` | `/etc/cream/desktop/config` |
+| `daemon.conf` расширения поверх конфига gdm3 | ключ `WaylandEnable=false` в конфиге пакета |
+| `conflicts: [xfce4, lxde]` | `conflicts.capabilities: [desktop-session]` |
+<!-- check-names: on -->
+
+## Проверки
+
+- **H** — `tests/test-gnome.sh`: манифест, `install` (пакеты, `WaylandEnable` в
+  `daemon.conf`/`custom.conf`/обоих, секции нет, ключа нет, ключ чужой секции, ссылка не
+  разыменовывается, нет конфига — отказ, повтор не переписывает файл, код 10 только на
+  живой машине), `remove` (возврат цели и менеджера входа, испорченное состояние не
+  исполняется).
+- **L** — в ночном прогоне (`tests/live.env`: deps `cloud-user desktop`, debian-12,
+  2 ГБ), в PR — только `xfce4` (план, Task 13). gdm в контейнере не стартует (нет VT и
+  X) — его упавший юнит раннер пока не умеет пропускать.
+
+## Проверено (layout 2)
+
+AGX Orin, Ubuntu 22.04 / L4T 36.4.3, 2026-09-14: ручки `0` — экран входа, служба ручек
+стартует перед gdm3, циклов упорядочения нет; автологин на лету — сессия, ключи dconf
+заблокированы, `xset q` — `DPMS is Disabled`, x11vnc поднимается. В формате cream/v1
+на железе ещё не собирался.
 
 ## Диагностика
 
 ```bash
-bisquite-desktop status
-journalctl -b -u bisquite-desktop
+cream show desktop; cream run desktop status
 grep -E 'AutomaticLogin|WaylandEnable' /etc/gdm3/custom.conf /etc/gdm3/daemon.conf 2>/dev/null
+systemctl get-default; readlink /etc/systemd/system/display-manager.service
+journalctl -b -u gdm -u cream-configure@desktop
 journalctl -b | grep -E 'Failed to initialize the NVIDIA|Session never registered'
 ```
-
-## Лицензия
-
-Лицензия репозитория.
