@@ -1,0 +1,4 @@
+#!/bin/sh
+# No device — not applicable here (code 20), as a hardware install would say.
+[ -e "$CREAM_ROOT/dev/demo0" ] || exit 20
+echo "reason=${CREAM_REASON:-}" > "$CREAM_STATE_DIR/configure"

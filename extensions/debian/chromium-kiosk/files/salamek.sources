@@ -1,0 +1,9 @@
+# chromium-kiosk (cream): the repository of the chromium-kiosk package
+# (repository.salamek.cz, suite `all`), signed by the key laid out next to it —
+# fingerprint 8177FADDC92D9497E8DA12377FEA00A604652192, carried in the
+# extension tree instead of being downloaded at install time.
+Types: deb
+URIs: https://repository.salamek.cz/deb/pub
+Suites: all
+Components: main
+Signed-By: /etc/apt/keyrings/chromium-kiosk-salamek.asc

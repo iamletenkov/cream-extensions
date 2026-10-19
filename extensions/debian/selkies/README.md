@@ -1,261 +1,209 @@
 # selkies
 
-X-сессия, которая на мониторе, — в браузере. [Selkies](https://github.com/selkies-project/selkies)
-2.0 подключается к существующему дисплею `:0`, кодирует экран в H.264 и отдаёт
-картинку, звук, ввод, буфер обмена и файлы через **один WebSocket-порт**.
-Поэтому его можно опубликовать веб-приложением Teleport или ssh-туннелем:
-WebRTC, UDP и TURN не нужны.
+X-сессия, которая на мониторе, — в браузере, через один WebSocket-порт
+([Selkies](https://github.com/selkies-project/selkies) 2.0.0, AppImage). Формат
+cream/v1 (план 2026-10-19, Task 17).
 
-> **С 3.0.0 — раскладка 2.** Каталог расширения в госте — `/opt/bisquite/selkies/`
-> (был `/opt/vmsetup/selkies/`); `ExecStart` юнитов `selkies@` и `configure-selkies` смотрят туда же,
-> `lib/get_cloud_user.sh` — ссылкой на общий код источника, а не копией.
-> Нужен bisquite с поддержкой `layout: 2`.
-
-> **С 4.0.0 — библиотека настроек.** `/etc/bisquite/selkies/config` — домен
-> `selkies` библиотеки `bisquite-conf` (схема `knobs`; `SELKIES_*` открыт
-> шаблоном, явные ключи проверяются своим типом). Установка файл не
-> переписывает; правка на устройстве — `bisquite-conf set selkies …`, её хук
-> обновляет объявление для Teleport и перезапускает `selkies@*`.
-> `BISQUITE_SELKIES_*`, кроме `BISQUITE_SELKIES_ALLOW_NO_AUTH`, больше не
-> принимаются.
-
-По умолчанию слушает `127.0.0.1:8080` без пароля: снаружи — только через того,
-кто проксирует.
+**Без пароля не стартует.** Пока не задан `SELKIES_BASIC_AUTH_PASSWORD` или явно
+не разрешено `SELKIES_ALLOW_NO_AUTH=1`, служба не запускается ни на каком адресе,
+включая петлю: петля не защищает рабочий стол, буфер обмена и файлы пользователя
+от других учёток и служб той же машины. По умолчанию слушает `127.0.0.1:8080`;
+снаружи — через Teleport или ssh-туннель.
 
 ## Манифест
 
 | Поле | Значение |
 |---|---|
-| `phase` | `build` (AppImage, юниты, настройки), `firstboot` (`selkies@<пользователь>`) |
-| `arch` | `amd64`, `arm64` |
-| `provides` | `web-remote-desktop` |
-| `requires` | `x11-server`, `display-manager` |
-| `conflicts` | пусто — с `x11vnc` работает параллельно, проверено |
+| `version` | `6.0.0`, `cream: ">=1.1.0"` (стадия `graphical`) |
+| `platform.arch` | `amd64`, `arm64` (AppImage — x86_64, aarch64) |
+| `targets` | `build: exec`, `live: yes` |
+| `provides` / `requires` | `web-remote-desktop` / `x11-server`, `display-manager` |
+| `depends` | `cloud-user >=1.0.0 <2` — пользователь сессии |
+| хуки | `install`, `configure` (стадия `graphical`), `apply` (свой), `remove` |
+| `files` | `selkies@.service` → `/etc/systemd/system/selkies@.service` |
 
-## Подключение в VMFILE
+С `x11vnc` работает параллельно (конфликта нет).
 
-```vmfile
-EXTENSION gnome
-EXTENSION selkies
-FIRSTBOOT_COMMAND "bisquite-desktop set DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_LOCK=1 DESKTOP_DISABLE_SCREEN_BLANK=1"
-```
+## Что делает
 
-**Без `DESKTOP_AUTOLOGIN=1` показывать нечего до входа человека:** Selkies
-подключается к сессии пользователя, а не к экрану входа. Служба в это время
-ждёт и пишет об этом в журнал одну строку.
+- **`install`** — AppImage Selkies по закреплённой версии и sha256 на архитектуру,
+  распаковка в `/opt/selkies/2.0.0` (**+1,7 ГБ**, без FUSE), ссылка
+  `/opt/selkies/current`; `x11-utils`, `xauth` для обёртки. Службу не запускает,
+  настроек не пишет. Повтор при распакованном дереве сеть не трогает.
+- **`configure`** — на каждой загрузке (стадия `graphical`, после менеджера входа),
+  после `install` на живой машине:
+  1. проверка аутентификации (ниже); нет — объявление для Teleport снимается,
+     запущенные `selkies@*` гасятся (`--no-block`), предупреждение, код 0;
+  2. объявление `/etc/cream/teleport/apps.d/selkies.conf`;
+  3. менеджер входа не запущен — предупреждение, код 0 (рулинг Р11);
+  4. пользователь cloud-init (библиотека `cloud-user`; на загрузке ждёт до 60 с);
+     нет, root или имя не годится для юнита — предупреждение, код 0;
+  5. экземпляры других пользователей гасятся, `systemctl start --no-block
+     selkies@<пользователь>` (после `install` — `restart`). Экземпляр **не
+     включается** (`enable`): его каждый раз запускает configure, проверив пароль.
+- **`apply`** — после `cream set selkies …`: то же без ожидания пользователя,
+  `restart --no-block` (или останов, если аутентификации больше нет);
+  предупреждения видны в терминале `cream set`.
+- **`remove`** — останавливает `selkies@*`, снимает объявление, удаляет
+  `/opt/selkies` (по ссылке — нет). Юнит удаляет cream (`files`).
+- **`files/run-selkies.sh`** — обёртка юнита (от имени пользователя, `User=%i`):
+  ещё раз проверяет аутентификацию (отказ — код 78, `RestartPreventExitStatus=78`,
+  без цикла перезапусков), ждёт X-сессию, запускает бинарь мимо `AppRun` (иначе
+  без дисплея поднялся бы Xvfb с пустым экраном) и сторожит пропажу сессии.
 
-Любая настройка Selkies — параметром расширения, родным именем переменной:
+## Аутентификация и секреты
 
-```vmfile
-EXTENSION selkies SELKIES_PORT=8090 SELKIES_FRAMERATE=60,8-60 SELKIES_FILE_TRANSFERS=download
-```
+| Пароль | `SELKIES_ALLOW_NO_AUTH` | Что будет |
+|---|---|---|
+| задан | любое | basic auth включён обёрткой (`SELKIES_ENABLE_BASIC_AUTH=true` поверх настроек) |
+| нет | `0` (умолчание) | служба не стартует; предупреждение в каждом configure/apply и в журнале юнита |
+| нет | `1` | стартует **без аутентификации**; предупреждение при каждом configure, apply и старте |
 
-## Что внутри
+- Пароль просмотра (`SELKIES_BASIC_AUTH_VIEWONLY_PASSWORD`) без основного
+  аутентификацией не считается.
+- Адрес не петли с паролем, но без `SELKIES_ENABLE_HTTPS=true` — предупреждение:
+  пароль basic auth идёт по сети открытым текстом.
+- Три секрета — `secret: file` в `/etc/cream/selkies/secrets` (0600, root; пишет
+  cream). Юнит читает файл `EnvironmentFile=-…` (systemd, от root); обёртка
+  убирает секреты из своего окружения и передаёт их только в окружение самого
+  Selkies — у `loginctl`, `xdpyinfo`, `pactl` их нет; в argv и журнал они не
+  попадают. Хуки секреты не читают: проверяют только, что строка ключа непуста.
+- Пароль — 8–128 знаков `A-Za-z0-9` и `!#%&()*+,./:;<=>?@^_{|}~[]-`; токен —
+  16–256 знаков `A-Za-z0-9._~+/=-`. Остальные ключи тоже без переводов строк,
+  кавычек, `$`, обратной косой и пробелов: значения уходят в `EnvironmentFile` и в
+  объявление. Шаблон `SELKIES_*` — для несекретных переменных Selkies; секреты —
+  только три ключа выше.
+- Пароль задают на машине, а не в VMFILE (строка VMFILE остаётся в образе):
 
-- **AppImage** Selkies 2.0.0 с GitHub, sha256 закреплён на архитектуру,
-  распакован на сборке в `/opt/selkies/2.0.0` (**+1.7 ГБ**, 6 с;
-  `/opt/selkies/current` — ссылка). Пакеты Selkies собраны под Ubuntu 26.04
-  и Debian trixie; AppImage несёт своё окружение и на Ubuntu 22.04
-  (Jetson L4T 36.4) работает. Распакован, чтобы не зависеть от FUSE.
-- **`/etc/bisquite/selkies/config`** (0600) — переменные `SELKIES_*`, читает юнит.
-  Пишет библиотека `bisquite-conf` по схеме `knobs`: создаётся один раз,
-  повторная установка не стирает правки; параметры VMFILE — поверх, через
-  проверку. До 2.0.0 файл лежал в `/etc/default/bisquite-selkies`; старый путь
-  не читается, `install.sh` его удаляет.
-- **`selkies@.service`** + **`run-selkies.sh`** — запуск от пользователя сессии.
-- **`configure-selkies.service`** — на первой загрузке включает
-  `selkies@<пользователь cloud-init>`.
+  ```bash
+  echo '<пароль>' | sudo cream set selkies SELKIES_BASIC_AUTH_PASSWORD=-
+  ```
 
-Первой загрузке сеть не нужна: скачивание — только на сборке.
+  Несколько секретов разом — `--params-file` (0600, root).
+- Объявление для Teleport пишется атомарно (временный файл в `apps.d`, `rename`):
+  ссылка на месте файла заменяется, а не разыменовывается; если ссылка —
+  `/etc/cream`, `/etc/cream/teleport` или `apps.d`, объявление не пишется
+  (предупреждение). От root в домашний каталог расширение не пишет: `~/Downloads`
+  и пару TLS создаёт обёртка от имени пользователя (`UMask=0077`, каталог TLS — 0700
+  сразу).
+- **Чужие страницы.** WebSocket Selkies принимает только Origin своей страницы и
+  клиентов без Origin (`Origin: http://evil.example` → `403`). Локальный
+  **процесс** (не браузер) к петле подключится — отсюда обязательный пароль.
 
-## Умолчания
+## Ручки (`/etc/cream/selkies/config`)
 
-| Переменная | Умолчание | Почему |
+Имена — родные переменные Selkies (`/opt/selkies/current/usr/conda/bin/selkies --help`):
+юнит читает файл как `EnvironmentFile`. Объявлены умолчания и то, что стоит
+проверять; любая другая `SELKIES_*` — шаблоном (`cream set selkies SELKIES_VIDEO_CRF=25`).
+
+| Ключ | Умолчание | Почему |
 |---|---|---|
 | `SELKIES_ADDR` | `127.0.0.1` | снаружи — через Teleport или ssh |
 | `SELKIES_PORT` | `8080` | |
-| `SELKIES_ENABLE_BASIC_AUTH` | `false` | на петле аутентификацию делает прокси; наружу без пароля обёртка не запустится |
-| `SELKIES_ENABLE_HTTPS` | `false` | TLS завершает прокси; открывая наружу — `true` (см. «Открыть в сеть») |
+| `SELKIES_ALLOW_NO_AUTH` | `0` | ручка расширения, не Selkies (Р8) |
+| `SELKIES_ENABLE_HTTPS` | `false` | TLS завершает прокси; наружу — `true` |
 | `SELKIES_ENABLE_RESIZE` | `false` | **иначе Selkies меняет разрешение монитора** под окно браузера |
 | `SELKIES_ENCODER` | `h264enc` | NVENC/VA-API, если есть, иначе x264 |
-| `SELKIES_FRAMERATE` | `30,8-60` | 30 при старте, пользователь может поднять до 60 |
-| `SELKIES_AUDIO_ENABLED` | `true` | звук сессии; обёртка ждёт сокет PulseAudio пользователя до 30 с |
-| `SELKIES_AUDIO_DEVICE_NAME` | monitor sink'а по умолчанию | обёртка подставляет `<sink по умолчанию>.monitor`: собственное умолчание Selkies `output.monitor` — пустой sink для контейнера, в него на роботе никто не играет |
-| `SELKIES_ENABLE_CLIPBOARD` | `true` | обе стороны; `in`/`out`/`false` — по направлениям |
-| `SELKIES_FILE_TRANSFERS` | `upload,download` | в `~/Downloads` пользователя (`SELKIES_FILE_MANAGER_PATH`) |
-| `SELKIES_MICROPHONE_ENABLED`, `SELKIES_WEBCAM_ENABLED`, `SELKIES_GAMEPAD_ENABLED` | `false` | роботу не нужны |
-| `SELKIES_COMMAND_ENABLED` | `false` | API выполнения команд |
-| `SELKIES_ENABLE_SHARING`, `SELKIES_SECOND_SCREEN` | `false` | ссылки для просмотра, второй монитор |
+| `SELKIES_FRAMERATE` | `30,8-60` | старт, мин-макс |
+| `SELKIES_AUDIO_ENABLED` | `true` | обёртка ждёт сокет PulseAudio пользователя до 30 с и захватывает monitor sink'а по умолчанию |
+| `SELKIES_ENABLE_CLIPBOARD` | `true` | `in`/`out`/`false` — по направлениям |
+| `SELKIES_FILE_TRANSFERS` | `upload,download` | в `~/Downloads` пользователя; `none` — выключить |
+| `SELKIES_MICROPHONE_ENABLED`, `SELKIES_WEBCAM_ENABLED`, `SELKIES_GAMEPAD_ENABLED` | `false` | машине не нужны |
+| `SELKIES_COMMAND_ENABLED`, `SELKIES_ENABLE_SHARING`, `SELKIES_SECOND_SCREEN` | `false` | API команд, ссылки для просмотра, второй монитор |
 | `SELKIES_MODE` | `websockets` | WebRTC через веб-приложение Teleport не проходит |
-| `BISQUITE_SELKIES_ALLOW_NO_AUTH` | `false` | ручка обёртки, не Selkies: `true` разрешает адрес не петли без пароля |
+| `SELKIES_DISPLAY` | пусто (`:0`) | ключ обёртки |
+| `SELKIES_HTTPS_CERT`, `SELKIES_HTTPS_KEY` | пусто | пара выпускается на машине в `~/.local/state/selkies/` пользователя |
 
-## Что ещё умеет Selkies
+## Подключение
 
-Всё — родными переменными (полный список: `/opt/selkies/current/usr/conda/bin/selkies --help`).
-
-| Возможность | Переменные |
-|---|---|
-| только просмотр по второму паролю | `SELKIES_ENABLE_BASIC_AUTH=true`, `SELKIES_BASIC_AUTH_PASSWORD`, `SELKIES_BASIC_AUTH_VIEWONLY_PASSWORD` |
-| ссылки для просмотра и совместная работа | `SELKIES_ENABLE_SHARING`, `SELKIES_ENABLE_SHARED`, `SELKIES_ENABLE_COLLAB`, `SELKIES_MASTER_TOKEN` |
-| качество и поток | `SELKIES_VIDEO_CRF`, `SELKIES_VIDEO_BITRATE`, `SELKIES_RATE_CONTROL_MODE` (crf/cbr), `SELKIES_VIDEO_FULLCOLOR` (4:4:4), `SELKIES_USE_PAINT_OVER_QUALITY` |
-| кодер | `SELKIES_ENCODER=h264enc`, `h264enc-striped`, `jpeg` |
-| ограничение скорости передачи файлов | `SELKIES_FILE_TRANSFER_LIMIT_MBPS` |
-| микрофон и веб-камера из браузера на робота | `SELKIES_MICROPHONE_ENABLED`, `SELKIES_WEBCAM_ENABLED` (+ v4l2loopback) |
-| водяной знак на картинке | `SELKIES_WATERMARK_PATH`, `SELKIES_WATERMARK_LOCATION` |
-| команда при подключении/отключении | `SELKIES_RUN_AFTER_CONNECT`, `SELKIES_RUN_AFTER_DISCONNECT` |
-| запись потока H.264 в сокет | `SELKIES_RECORDING_SOCKET` |
-| адрес за прокси с путём | `SELKIES_SUBFOLDER` |
-| разрешённые Origin | `SELKIES_ALLOWED_ORIGINS` |
-| что показывать в боковой панели | `SELKIES_UI_SIDEBAR_SHOW_*`, `SELKIES_UI_TITLE` |
-
-**SFTP у Selkies нет** — только передача файлов через браузер. Для SFTP — ssh
-робота (в Teleport это ресурс сервера, а не приложения).
-
-## Безопасность
-
-- **Чужие страницы.** WebSocket Selkies принимает только тот же Origin, что у
-  страницы, плюс клиентов без Origin. Проверено: `Origin: http://evil.example`
-  → `403`. То есть страница, открытая в браузере на самом роботе, к
-  `127.0.0.1:8080` не подключится. Локальный **процесс** (не браузер) —
-  подключится, как и к x11vnc на петле.
-- **За Teleport.** Если Teleport передаёт Selkies свой `Host`, а браузер — свой
-  `Origin`, соединение получит `403` и в журнале будет
-  `Rejected WebSocket upgrade from disallowed Origin`. Тогда:
-  `SELKIES_ALLOWED_ORIGINS=https://<приложение>.<teleport>`.
-- **Наружу — с паролем или явным решением.** `SELKIES_ADDR` не на петле без
-  `SELKIES_ENABLE_BASIC_AUTH=true` — обёртка отказывается стартовать, если не
-  задано `BISQUITE_SELKIES_ALLOW_NO_AUTH=true`. С ним стартует и пишет
-  в журнал предупреждение: рабочий стол, буфер обмена, файлы и API команд
-  получает любой, кто достаёт до робота по сети.
-- **Пароль не в VMFILE.** Строка VMFILE хранится в образе и уезжает в реестр.
-  Задавайте пароль на устройстве, например командой первой загрузки манифеста
-  записи:
-
-  ```yaml
-  firstboot-commands:
-    - >-
-      echo '<пароль>'
-      | bisquite-conf set selkies SELKIES_ENABLE_BASIC_AUTH=true SELKIES_BASIC_AUTH_PASSWORD=-
-  ```
-
-  Файл `0600`, читает его systemd. `set` во время загрузки только пишет —
-  Selkies прочтёт файл при своём старте; на работающей машине хук
-  перезапускает `selkies@*` сам.
-- **Файлы и буфер обмена** включены: тот, кто получил доступ к приложению,
-  может читать и писать `~/Downloads` и буфер обмена сессии. Не нужно —
-  `SELKIES_FILE_TRANSFERS=none`, `SELKIES_ENABLE_CLIPBOARD=out`.
-
-## Открыть в сеть
-
-Профиль стенда: все функции, без пароля, на всех интерфейсах.
-
-```
-EXTENSION selkies SELKIES_ADDR=0.0.0.0 SELKIES_ENABLE_HTTPS=true \
-    BISQUITE_SELKIES_ALLOW_NO_AUTH=true …
+```vmfile
+EXTENSION desktop DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_LOCK=1 DESKTOP_DISABLE_SCREEN_BLANK=1
+EXTENSION xfce4
+EXTENSION selkies SELKIES_PORT=8090 SELKIES_FILE_TRANSFERS=download
 ```
 
-**HTTPS обязателен для «всех функций».** Браузер даёт буфер обмена,
-микрофон, камеру и геймпады только защищённому контексту; `http://<адрес>`
-им не является (исключение — `localhost`, то есть туннель).
+Пароль — на машине (см. выше). **Без `DESKTOP_AUTOLOGIN=1`** показывать нечего до
+входа человека: обёртка ждёт сессию и пишет об этом одну строку в журнал.
 
-**Сертификат выпускается на устройстве.** Без `SELKIES_HTTPS_CERT` обёртка
-направляет путь в `~/.local/state/selkies/selkies.{pem,key}` пользователя
-сессии: файла там нет, и Selkies при первом старте создаёт самоподписанную
-пару (SAN: `localhost`, имя хоста, `127.0.0.1`, `::1`; срок 10 лет) и дальше
-её переиспользует. Путь по умолчанию самого Selkies —
-`/etc/ssl/certs/ssl-cert-snakeoil.pem`; на Ubuntu сертификат там есть, а ключ
-пользователю не читается, и Selkies падает с `[SSL] PEM lib` вместо генерации
-(замер на AGX Orin 2026-09-14). Браузер один раз попросит исключение для
-сертификата; пара не меняется между перезапусками, так что исключение
-держится. В образ ключ не попадает.
+На работающей машине:
 
-С манифеста записи то же — одной командой (опечатка в ключе или значении —
-ненулевой код и строка в `cloud-init-output.log`, а не молчаливый пропуск,
-как у прежнего `sed -i`):
-
-```yaml
-firstboot-commands:
-  - >-
-    bisquite-conf set selkies
-    SELKIES_ADDR=0.0.0.0
-    SELKIES_ENABLE_HTTPS=true
-    BISQUITE_SELKIES_ALLOW_NO_AUTH=true
+```bash
+sudo cream install selkies
+echo '<пароль>' | sudo cream set selkies SELKIES_BASIC_AUTH_PASSWORD=-
+sudo cream set selkies SELKIES_ADDR=0.0.0.0 SELKIES_ENABLE_HTTPS=true   # открыть в сеть
 ```
+
+**HTTPS обязателен для «всех функций»** в сети: буфер обмена, микрофон, камеру и
+геймпады браузер даёт только защищённому контексту (`localhost` туннеля — тоже).
+Без `SELKIES_HTTPS_CERT` Selkies при первом старте выпускает самоподписанную пару
+в состоянии пользователя и переиспользует её (путь по умолчанию самого Selkies,
+`ssl-cert-snakeoil`, на Ubuntu даёт `[SSL] PEM lib`).
 
 ## Веб-приложение Teleport
 
-С 2.1.0 `install.sh` кладёт объявление для Teleport, с 5.0.0 — для
-расширения `teleport` формата cream: `/etc/cream/teleport/apps.d/selkies.conf`
-(до 5.0.0 — `/etc/bisquite/teleport/apps.d/` прежнего `teleport-agent`)
-с `NAME=selkies` и `URI=<http|https>://127.0.0.1:<SELKIES_PORT>` (схема — по
-`SELKIES_ENABLE_HTTPS`). С 4.0.3 там же `ICON=desktop` — иконка в веб-морде
-прокси; её понимает расширение `teleport` (и `teleport-agent` с 2.2.0). С ним Selkies публикуется как
-`https://selkies.<нода>.<хост прокси>`; кому видно — метка `env` ноды и
-`tpApps: selkies` пользователя. Не публиковать —
-`cream set teleport TELEPORT_APPS_DISABLE=selkies`.
+`configure` и `apply` кладут `/etc/cream/teleport/apps.d/selkies.conf` в формате
+расширения `teleport` (`files/teleport.sh`, `read_decl`):
 
-WebSocket через Teleport проходит, потому что расширение `teleport` переписывает
-приложению на петле `Host` на публичный адрес, и Origin браузера с ним
-совпадает. Без этого (или за другим прокси, который передаёт `Host` петли)
-Selkies отвечает `403` и пишет `Rejected WebSocket upgrade from disallowed
-Origin` — тогда `SELKIES_ALLOWED_ORIGINS=https://<публичный адрес>`.
+```
+NAME=selkies
+URI=http://127.0.0.1:8080      # https — при SELKIES_ENABLE_HTTPS=true; ::1 — [::1]
+ICON=desktop
+```
 
-## Жизненный цикл службы
+Объявление есть, только когда служба может работать (аутентификация есть) и
+слушает петлю (`127.0.0.1`, `localhost`, `0.0.0.0`, `::1`); `remove` его снимает.
+Кому видно — метка `env` ноды и роли кластера; не публиковать —
+`cream set teleport TELEPORT_APPS_DISABLE=selkies`. Если прокси передаёт Selkies
+`Host` петли, а браузер — свой Origin, будет `403` и
+`Rejected WebSocket upgrade from disallowed Origin` — тогда
+`SELKIES_ALLOWED_ORIGINS=https://<публичный адрес>`.
 
-- **Нет сессии** — обёртка ждёт (`жду X-сессию 'robot' на :0`), Selkies не запущен.
-- **Сессия пропала** (выход пользователя): Selkies сам не завершается —
-  замер: процесс жив, в журнале только `X11 clipboard monitor thread exited`.
-  Обёртка проверяет дисплей раз в 10 с, при двух неудачах гасит Selkies и
-  выходит; юнит перезапускает, обёртка ждёт новую сессию. Проверено: выход →
-  перезапуск через ~15 с → новый вход → Selkies снова отдаёт экран.
-- **Перезапуск gdm** — служба останавливается вместе с ним (`Requires=`) и
-  поднимается снова.
-- **Мимо `AppRun`.** Штатный вход AppImage при отсутствии дисплея запускает
-  Xvfb и стримил бы пустой экран, а при отсутствии звука — свой PulseAudio.
-  Обёртка ставит те же переменные и зовёт бинарь сама.
+## Проверки
 
-## Проверено (Jetson AGX Orin, L4T 36.4.3, 2026-09-14)
+- **V** — `make cream-validate`.
+- **H** — `tests/test-selkies.sh`: манифест и типы ключей (без `\n`, кавычек, `$`),
+  юнит, `install` (распакованное дерево — без сети, повтор без изменений; чужой
+  sha256 — отказ, ничего не распаковано), `configure` (fail-closed без пароля и с
+  одним паролем просмотра, `SELKIES_ALLOW_NO_AUTH=1` с предупреждением, адреса не
+  петли, проверка значений, объявление не по ссылкам, без менеджера входа и без
+  пользователя — 0, root не запускается, чужие экземпляры гасятся, только
+  `--no-block`), `apply`, `remove`, обёртка (отказ 78, basic auth принудительно,
+  секреты только у Selkies, каталог TLS 0700).
+- **L** — `make test-live EXT=selkies` (`tests/live.env`: deps `cloud-user desktop
+  xfce4`, пароль — случайный секрет, debian-12): установка AppImage, повтор,
+  `--reinstall` без изменений, аудит секретов, загрузка, `remove`. lightdm в
+  контейнере падает — configure предупреждает «менеджер входа не запущен» и выходит
+  0; сама служба Selkies в L не стартует.
 
-`install.sh` на живой плате (скачивание 43 с, распаковка 1.7 ГБ), служба
-поднята `configure.sh`, x11vnc рядом работает, разрешение монитора не
-изменилось. Браузер через ssh-туннель, экран 3840×1080:
+## Проверено ранее (5.x, Jetson AGX Orin, L4T 36.4.3, 2026-09-14)
 
-| Сцена | Цель | fps | Поток | CPU Selkies (из 1200%) |
-|---|---|---|---|---|
-| статичный стол | 30 | 30 | 0.03–0.09 Мбит/с | ~225% |
-| движение 1080p | 30 | 30 | ~1.0 Мбит/с | ~146% |
-| живая камера 1080p | 60 | 41–56 | ~1.8 Мбит/с | ~220% |
+Скачивание 43 с, распаковка 1,7 ГБ; экран 3840×1080 через ssh-туннель: статичный
+стол 30 fps / ~0,05 Мбит/с, движение 1080p 30 fps / ~1 Мбит/с, камера 1080p
+41–56 fps / ~1,8 Мбит/с (CPU Selkies 150–225% из 1200%). Через Teleport —
+WebSocket `101`, картинка и звук. Выход пользователя: Selkies сам не завершается,
+сторож обёртки гасит его, юнит перезапускает, новая сессия подхватывается (~15 с).
 
-Мышь из браузера доходит в X с точным пересчётом координат. Кодер
-программный: аппаратный кодер Jetson (nvv4l2) Selkies не поддерживает.
+## Не проверено
 
-Открытый профиль (`SELKIES_ADDR=0.0.0.0`, `SELKIES_ENABLE_HTTPS=true`,
-  `BISQUITE_SELKIES_ALLOW_NO_AUTH=true`): обёртка стартует с предупреждением,
-  Selkies выпустил пару в `~/.local/state/selkies/`, страница отвечает `200`
-  по `https://<адрес робота>` с другой машины. Без ручки — отказ старта.
-
-Через Teleport (tp2, 2026-09-14): WebSocket `101`, картинка и звук в браузере;
-звук робота (`paplay` в сессии) слышен в Selkies после захвата monitor
-sink'а по умолчанию.
-
-**Не проверено:** amd64 AppImage на Ubuntu 22.04; клавиатура и буфер обмена
-отдельно; микрофон и камера клиента.
+Формат cream/v1 на железе и с настоящим менеджером входа (P): старт службы,
+basic auth из `secrets`, объявление в Teleport. amd64 AppImage на Ubuntu 22.04;
+клавиатура и буфер обмена отдельно; микрофон и камера клиента.
 
 ## Известное
 
-- **Шум в журнале на Jetson** при подключённом клиенте:
-  `WARNING:NvidiaGPUMonitor:Invalid process ID: [N/A]` раз в 2 с — встроенный
-  сбор статистики GPU спрашивает `nvidia-smi`, а на Jetson он заглушка. На
-  работу не влияет.
-- **Браузер с запретом автовоспроизведения** не начнёт поток, пока по
-  странице не кликнут (у Selkies есть кнопка запуска).
-- Релиз-кандидат: обновление — правкой `SELKIES_VERSION` и sha256 в `install.sh`.
+- Шум в журнале на Jetson: `WARNING:NvidiaGPUMonitor:Invalid process ID: [N/A]` раз
+  в 2 с (`nvidia-smi` там заглушка) — на работу не влияет.
+- Браузер с запретом автовоспроизведения не начнёт поток до клика.
+- Обновление Selkies — `SELKIES_VERSION` и sha256 в `hooks/install`.
+- Секреты видит процесс Selkies (его окружение читают root и сам пользователь
+  сессии) — это и есть потребитель пароля.
 
 ## Диагностика
 
 ```bash
-systemctl status selkies@robot
-journalctl -u selkies@robot -b | grep -E 'selkies:|running on|Origin|ERROR'
-sudo bisquite-conf show selkies
+systemctl status selkies@<пользователь>
+journalctl -u cream-configure@selkies -b
+journalctl -u selkies@<пользователь> -b | grep -E 'selkies:|running on|Origin|ERROR'
+sudo cream show selkies
 ss -ltnp | grep 8080
 ```

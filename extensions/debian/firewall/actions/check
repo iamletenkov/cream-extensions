@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# cream run firewall check: check the rules files of the backend apply would
+# use (nft -c / iptables-legacy-restore --test), apply nothing.
+# 0 — correct; 3 — a *.rules/*.rules6 line breaks the format; 1 — rejected.
+set -euo pipefail
+exec "${CREAM_EXT_DIR:-$(dirname "$0")/..}/firewall.sh" check

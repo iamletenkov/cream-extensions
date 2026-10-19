@@ -1,0 +1,5 @@
+#!/bin/sh
+# Wrong by ruling Р11: configure without a device must warn and exit 0. At
+# install it passes (the device "is there"), at boot it says 20.
+[ "${CREAM_REASON:-}" = boot ] || exit 0
+[ -e /dev/live-configure0 ] || exit 20

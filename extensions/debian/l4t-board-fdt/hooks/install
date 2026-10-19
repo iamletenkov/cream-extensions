@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+# cream hook `install` of l4t-board-fdt: chooses the device tree of one Jetson
+# board — writes the `FDT` line into the `kvm` entry of extlinux.conf that
+# l4t-kernel-kvm made. Paths of the machine go under $CREAM_ROOT (hooktest).
+#
+# WHY A SEPARATE EXTENSION. The L4T kernel with KVM takes over two hours to
+# build and does not depend on the board; only the tree does. l4t-kernel-kvm
+# puts ALL patched trees into /boot as <name>-kvm.dtb and writes no FDT; this
+# layer picks one in seconds on top of the ready base.
+#
+# WHY REFUSE INSTEAD OF GUESSING. A silently written path to a missing tree is
+# an unbootable board, and a board without a monitor is fixed only over the
+# serial console or by reflashing QSPI.
+#
+# Codes: 0 — the FDT line was already this one (nothing written); 10 — written,
+# applies on reboot; 20 — no extlinux.conf, not an L4T image (ruling R11);
+# 1 — refusal (no board, no `LABEL kvm`, no such tree, a symlink in place of
+# extlinux.conf).
+#
+# Backup: extlinux.conf.cream-orig is taken ONCE, before the first change made
+# by cream (here or by l4t-kernel-kvm), and never overwritten (spec cream §6.3):
+# on a board without a monitor that file is the whole rollback there is. It is
+# created by link(2) of a finished temporary file, which fails when the name
+# exists — a symlink there is never followed. extlinux.conf itself is written
+# through a temporary file and rename, never through a symlink.
+set -euo pipefail
+
+RED='\033[0;31m'; GREEN='\033[0;32m'; NC='\033[0m'
+log_info(){ >&2 echo -e "${GREEN}[INFO]${NC} l4t-board-fdt: $*"; }
+log_error(){ >&2 echo -e "${RED}[ERROR]${NC} l4t-board-fdt: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+EXTLINUX="$R/boot/extlinux/extlinux.conf"
+BOARD="${L4T_BOARD:-}"
+
+if [[ -z "$BOARD" ]]; then
+    log_error "не задан L4T_BOARD — имя дерева устройств для этой платы"
+    log_error "узнать своё на целевой плате:"
+    log_error "  cat /proc/device-tree/compatible"
+    log_error "например nvidia,p3449-0000-a02+p3448-0000-a02 означает"
+    log_error "  L4T_BOARD=tegra210-p3448-0000-p3449-0000-a02"
+    exit 1
+fi
+# The same rule as the key type in the manifest: a file name in /boot, no path.
+# Repeated here because the value becomes a path and a line of the boot loader.
+if [[ ! "$BOARD" =~ ^[a-z0-9][a-z0-9._-]{0,127}$ ]]; then
+    log_error "L4T_BOARD=$(printf '%q' "$BOARD"): ожидается имя дерева без пути — [a-z0-9._-]"
+    exit 1
+fi
+
+# The `-kvm` suffix is added here, not by the author of the VMFILE: the VMFILE
+# names the BOARD, the layout of /boot is ours.
+FDT="/boot/${BOARD%.dtb}-kvm.dtb"
+
+# ORDER MATTERS. "Was the base built with l4t-kernel-kvm" is answered by the
+# `LABEL kvm` entry, not by a mask of file names in /boot — so it goes first,
+# and the hint about l4t-kernel-kvm is printed only when it is a fact.
+if [[ -L "$EXTLINUX" ]]; then
+    log_error "/boot/extlinux/extlinux.conf — символическая ссылка; через ссылку не пишу"
+    exit 1
+fi
+if [[ ! -f "$EXTLINUX" ]]; then
+    log_error "нет /boot/extlinux/extlinux.conf — это не L4T-образ"
+    exit 20
+fi
+if ! grep -qE '^[[:space:]]*LABEL kvm[[:space:]]*$' "$EXTLINUX"; then
+    log_error "в /boot/extlinux/extlinux.conf нет записи 'LABEL kvm'"
+    log_error "базовый образ собран без l4t-kernel-kvm — выбирать нечего"
+    exit 1
+fi
+
+if [[ ! -f "$R$FDT" ]]; then
+    log_error "дерево $FDT в образе не найдено"
+    # The mask is by the `-kvm` suffix that l4t-kernel-kvm puts, NOT by the
+    # SoC family: the suffix is ours and known, the family is not.
+    mapfile -t available < <(find "$R/boot" -maxdepth 1 -name '*-kvm.dtb' -printf '%f\n' 2>/dev/null \
+                             | sed 's/-kvm\.dtb$//' | sort)
+    if (( ${#available[@]} )); then
+        log_error "в этом образе есть:"
+        printf '  %s\n' "${available[@]}" >&2
+        log_error "L4T_BOARD должен совпадать с одним из имён выше"
+    else
+        log_error "деревьев с суффиксом -kvm в /boot нет ни одного,"
+        log_error "хотя запись 'LABEL kvm' есть — значит ядро kvm в образе стоит,"
+        log_error "а деревья из /boot удалены или переименованы"
+    fi
+    exit 1
+fi
+
+# One parse, the file read as data. Idempotent: the first old FDT of the kvm
+# entry is replaced, the extra ones are dropped (otherwise the loader would take
+# the first, someone else's). The entry ends at the next `LABEL ` or at the end
+# of the file; `MENU LABEL kvm kernel` is not the start of an entry (exact
+# comparison). Prints `changed` or `unchanged`; writes only on a change.
+if ! result="$(python3 - "$EXTLINUX" "$FDT" <<'PYEOF'
+import os, sys, tempfile
+
+path, fdt = sys.argv[1], sys.argv[2]
+backup = path + ".cream-orig"
+ENC = {"encoding": "utf-8", "errors": "surrogateescape"}
+
+fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+with os.fdopen(fd, "r", **ENC) as f:
+    st = os.fstat(f.fileno())
+    text = f.read()
+lines = text.splitlines()
+out, in_kvm, written = [], False, False
+
+
+def emit_fdt():
+    global written
+    out.append(f"      FDT {fdt}")
+    written = True
+
+
+for line in lines:
+    stripped = line.strip()
+    if stripped == "LABEL kvm":
+        in_kvm, written = True, False
+        out.append(line)
+        continue
+    if in_kvm and stripped.startswith("LABEL "):
+        if not written:
+            emit_fdt()
+        in_kvm = False
+        out.append(line)
+        continue
+    if in_kvm and stripped.startswith("FDT "):
+        if not written:
+            emit_fdt()
+        continue
+    out.append(line)
+
+if in_kvm and not written:
+    emit_fdt()
+if not written:
+    sys.exit(1)
+
+new = "\n".join(out) + "\n"
+if new == text:
+    print("unchanged")
+    sys.exit(0)
+
+
+def temp_with(content):
+    """A finished file next to `path` with its mode and owner; returns the name."""
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".extlinux.conf.")
+    try:
+        with os.fdopen(fd, "w", **ENC) as f:
+            f.write(content)
+        os.chmod(tmp, st.st_mode & 0o7777)
+        try:
+            os.chown(tmp, st.st_uid, st.st_gid)
+        except PermissionError:
+            pass
+    except BaseException:
+        os.unlink(tmp)
+        raise
+    return tmp
+
+
+# Backup once: link(2) never replaces an existing name, a symlink included.
+tmp = temp_with(text)
+try:
+    os.link(tmp, backup)
+    sys.stderr.write("l4t-board-fdt: исходный файл сохранён как extlinux.conf.cream-orig\n")
+except FileExistsError:
+    pass
+finally:
+    os.unlink(tmp)
+
+tmp = temp_with(new)
+try:
+    os.replace(tmp, path)
+except BaseException:
+    os.unlink(tmp)
+    raise
+print("changed")
+PYEOF
+)"; then
+    log_error "не удалось записать FDT; /boot/extlinux/extlinux.conf не изменён"
+    exit 1
+fi
+
+if [[ "$result" == unchanged ]]; then
+    log_info "плата $BOARD уже выбрана (FDT $FDT) — файл не менялся"
+    exit 0
+fi
+log_info "плата: $BOARD"
+log_info "дерево устройств записи kvm: $FDT; применится после перезагрузки"
+log_info "откат — /boot/extlinux/extlinux.conf.cream-orig (файл до первой правки cream)"
+exit 10

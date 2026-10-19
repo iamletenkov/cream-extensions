@@ -1,8 +1,10 @@
-Каталог правил расширения firewall. Читается один набор — по бэкенду службы
-(bisquite-firewall show печатает, какой выбран):
+Каталог правил расширения firewall. Читается один набор — по бэкенду
+(sudo cream run firewall status печатает, какой выбран):
   nftables — файлы *.nft, по алфавиту, одна транзакция nft;
   iptables — файлы *.rules (IPv4) и *.rules6 (IPv6), по алфавиту, одна
              транзакция iptables-legacy-restore на семейство, только для
-             цепочки BISQUITE-INPUT.
+             цепочки CREAM-INPUT.
+SSH закрыт; порты SSH открывает настройка FIREWALL_SSH_PORTS (умолчание пусто).
 Файлы с другим расширением не читаются. Примеры — в
-/opt/bisquite/firewall/README.md. Применить: sudo systemctl restart bisquite-firewall
+/opt/cream/ext/firewall/README.md. Проверить: sudo cream run firewall check;
+применить: sudo cream run firewall reload

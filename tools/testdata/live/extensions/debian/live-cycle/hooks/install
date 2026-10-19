@@ -1,0 +1,5 @@
+#!/bin/sh
+# Two units ordered before each other: an ordering cycle at boot.
+set -eu
+systemctl daemon-reload
+systemctl enable live-cycle-a.service live-cycle-b.service

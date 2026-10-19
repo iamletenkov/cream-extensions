@@ -1,79 +1,90 @@
 # lxde
 
-LXDE с менеджером входа lightdm. Даёт X-сервер и сессию расширениям, которым
-они нужны, — `x11vnc`, `kiosk`.
+LXDE с менеджером входа lightdm. Даёт X-сервер и сессию расширениям, которым они
+нужны, — `x11vnc`, `kiosk`, `selkies`. Автологин, автоблокировка и затемнение — ручки
+расширения [`desktop`](../desktop/README.md) (`depends`).
 
-> **С 4.0.0 — раскладка 2.** Каталог расширения в госте — `/opt/bisquite/lxde/`
-> (был `/opt/vmsetup/lxde/`); CLI `bisquite-desktop` ставится ссылкой
-> `/usr/local/sbin/bisquite-desktop` →
-> `/opt/bisquite/lxde/lib/bisquite-desktop` из общего `lib/` источника, а не
-> копией; прежний `/usr/local/lib/bisquite-desktop` установка удаляет.
-> Нужен bisquite с поддержкой `layout: 2`.
-
-> **С 4.1.0 — библиотека настроек.** Ручки — домен `desktop` библиотеки
-> `bisquite-conf` (схема `lib/knobs/desktop` источника): значения проверяет
-> схема, запись атомарная, повторная установка правок не стирает.
-> `bisquite-desktop set` — то же, что `sudo bisquite-conf set --apply desktop`,
-> а `bisquite-conf show desktop` показывает ключи с умолчаниями.
-
-**С 3.0.0 файл ручек — `/etc/bisquite/desktop/config`** (был
-`/etc/default/bisquite-desktop`). Прежний путь не читается; если файл
-по нему остался в базовом образе, установка его удаляет.
-
-**С 2.0.0 автологин, отключение автоблокировки и затемнения — ручки,
-по умолчанию выключены.** Раньше расширение включало всё это безусловно.
-Разбор ручек — [`docs/extensions.md`, «Ручки рабочего стола»](../../../docs/extensions.md#ручки-рабочего-стола).
+> **С 5.0.0 — формат cream/v1** (план 2026-10-19, Task 13). Каталог в госте —
+> `/opt/cream/ext/lxde/`; ручки — домен `desktop` (`/etc/cream/desktop/config`),
+> применяет их `cream-configure@desktop` до менеджера входа. Взаимоисключение с
+> `gnome`/`xfce4` — по способности `desktop-session`, а не перечнем имён.
 
 ## Манифест
 
 | Поле | Значение |
 |---|---|
-| `arch` | `amd64`, `arm64` |
-| `phase` | `build` (`install.sh`), `firstboot` (`bisquite-desktop.service` на каждой загрузке) |
+| `version` | `5.0.0`, `cream: ">=1.0.0"` |
+| `platform` | `deb`, `amd64`/`arm64`, Debian и Ubuntu |
+| `targets` | `build: exec`, `live: confirm` (на живой машине — `--accept-risk`) |
 | `provides` | `x11-server`, `display-manager`, `desktop-session` |
-| `requires` | — |
-| `conflicts` | `gnome`, `xfce4` |
+| `depends` | `desktop >=1.0.0 <2` |
+| `conflicts` | `capabilities: [desktop-session]` — любой другой рабочий стол |
+| хуки | `install`, `remove` (без `configure`: ручки применяет `desktop`) |
+| `files` | `files/60-lxde.conf` → `/etc/xdg/lightdm/lightdm.conf.d/60-lxde.conf` |
 
 ## Что делает
 
-**Сборка** (`install.sh`): ставит `lxde`, `lightdm`, `lightdm-gtk-greeter`,
-`xorg`, `xinput`, `x11-xserver-utils`, `dconf-cli`; пробует браузер
-(`firefox-esr`/`firefox`, необязательно); пишет `/etc/lightdm/lightdm.conf`
-из шаблона (сессия и приветствие, без автологина); ставит `bisquite-desktop`;
-включает lightdm и `graphical.target`.
+**`install`**: ставит `lxde`, `lightdm`, `lightdm-gtk-greeter`, `xorg`,
+`xinput`, `x11-xserver-utils`, `dconf-cli`, `usbutils`, `dbus-x11`; пробует браузер
+`firefox-esr` (необязательно); включает `lightdm.service` и `graphical.target`. На живой
+машине, если менеджер входа или цель загрузки поменялись, — код 10: экран входа
+появится после перезагрузки. На сборке — 0.
 
-**Каждая загрузка** (`bisquite-desktop.service`, до lightdm): группы
-пользователя cloud-init и ручки — `autologin-user` в lightdm, xfconf
-`xfce4-power-manager` и `xfce4-screensaver`, lxsession `screensaver=disabled`,
-X DPMS через `Xsession.d`, `xserver-command=X -s 0 -dpms` для экрана входа.
+**Сессия и приветствие** (`user-session=LXDE`, `greeter-session=lightdm-gtk-greeter`)
+раскладывает cream полем `files` — drop-in'ом в `/etc/xdg/lightdm/lightdm.conf.d/`,
+который lightdm читает после `/usr/share/lightdm/lightdm.conf.d/` и до
+`/etc/lightdm/lightdm.conf` (проверено `lightdm --show-config`, Debian 12 и Ubuntu 24.04).
+Не `/etc/lightdm/lightdm.conf`: на Debian это conffile пакета (dpkg спросил бы, чей
+файл оставить), а cream отказал бы с 67 `conflict.file_unowned` на машине, где lightdm
+уже стоит. Автологин и `xserver-command` пишет `desktop` в `/etc/lightdm/lightdm.conf`;
+Ubuntu такого файла не ставит — `install` создаёт пустой `[Seat:*]`, если файла нет
+(по ссылке не пишет).
 
-## Параметры
+**`remove`**: возвращает цель загрузки (что было до `install`; неизвестно —
+`multi-user.target`) и выключает lightdm, если до `install` менеджером входа был не он;
+снимает `/etc/lightdm/lightdm.conf`, если его создал `install`. Drop-in снимает cream.
+**Пакеты остаются** (`apt-get remove` — вручную): на них могут опираться другие
+программы. На живой машине при смене цели — код 10.
 
-Те же четыре, что у `gnome`: `DESKTOP_AUTOLOGIN`, `DESKTOP_AUTOLOGIN_USER`,
-`DESKTOP_DISABLE_SCREEN_LOCK`, `DESKTOP_DISABLE_SCREEN_BLANK` — все `0`
-по умолчанию. На устройстве:
+Браузер — только нативный `firefox-esr` (Debian). В Ubuntu `firefox` — переходник на
+snap: он тянет `snapd`, а сам браузер в госте сборки не ставится (тот же замер, что у
+`chromium-browser` в [`gnome`](../gnome/README.md)), поэтому в 5.0.0 его больше не пробуем.
 
-```bash
-sudo bisquite-desktop set DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_LOCK=1 DESKTOP_DISABLE_SCREEN_BLANK=1
-```
-
-## Подключение в VMFILE
+## Подключение
 
 ```vmfile
+EXTENSION desktop DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_LOCK=1 DESKTOP_DISABLE_SCREEN_BLANK=1
 EXTENSION lxde
-FIRSTBOOT_COMMAND "bisquite-desktop set DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_LOCK=1 DESKTOP_DISABLE_SCREEN_BLANK=1"
 ```
+
+На работающей машине:
+
+```bash
+sudo cream install --accept-risk lxde           # desktop и cloud-user — по depends
+sudo cream set desktop DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_LOCK=1 DESKTOP_DISABLE_SCREEN_BLANK=1
+sudo reboot                                     # код 10 install: экран входа — после перезагрузки
+```
+
+## Проверки
+
+- **H** — `tests/test-lxde.sh`: манифест, `install` (пакеты, drop-in, `lightdm.conf` для
+  Ubuntu, ссылка не разыменовывается, чужой менеджер входа не перехватывается, код 10
+  только на живой машине, повтор ничего не меняет), `remove` (возврат цели и менеджера
+  входа, испорченное состояние не исполняется).
+- **L** — в ночном прогоне (`tests/live.env`: deps `cloud-user desktop`, debian-12), в PR —
+  только `xfce4` (план, Task 13): тот же код, другой набор пакетов. lightdm в контейнере
+  не стартует (нет VT и X) — его упавший юнит раннер пока не умеет пропускать.
 
 ## Не проверено
 
-С новым механизмом lxde на железе не собирался и не загружался: проверен
-`gnome` на Jetson AGX Orin (2026-09-14). Общий код тот же, но ключи lightdm,
-xfconf и lxsession подтверждены только разбором.
+На железе lxde в формате cream/v1 не собирался: ключи lightdm и xfconf `desktop`
+подтверждены разбором и H, экран входа — нет.
 
 ## Диагностика
 
 ```bash
-bisquite-desktop status
-journalctl -b -u bisquite-desktop
-grep -E 'autologin-user|xserver-command|user-session' /etc/lightdm/lightdm.conf
+cream show desktop; cream run desktop status
+lightdm --show-config
+systemctl get-default; readlink /etc/systemd/system/display-manager.service
+journalctl -b -u lightdm -u cream-configure@desktop
 ```

@@ -9,16 +9,13 @@ name: CI and Release
 # (`cream source add --archive … --sha256 …`). Версия каталога в
 # cream-catalog.yaml поднимается тем же release-please. Теги руками не ставят.
 #
-# Job проверок гоняет tools/check.sh — валидацию
-# манифестов extension.yaml (сверки копий lib/ больше нет: копий нет, lib/
-# доставляет в гостя сама сборка) и `cream validate` по расширениям cream/v1
+# Job проверок гоняет tools/check.sh — `cream validate --catalog .` по корню
 # (tools/cream-validate.sh: cream по пину tools/cream-pin.env в контейнере
-# debian:12; пока пин пуст — пропуск со строкой).
+# debian:12), гейт имён, линт хуков, тесты инструментов и расширений.
 #
 # Почему это вообще заведено: проверки существовали только как ручные
-# скрипты. Ровно так и разошлись восемь копий get_cloud_user.sh — расхождение
-# ничем не ловилось на пути в репозиторий. Проверка, которую надо не забыть
-# запустить, — это не проверка.
+# скрипты, и расхождения ничем не ловились на пути в репозиторий. Проверка,
+# которую надо не забыть запустить, — это не проверка.
 #
 # Почему ubuntu-latest, а не [self-hosted, linux, x64], как в основном
 # репозитории: там раннер нужен ради docker, Nuitka и деба, здесь — только bash
@@ -29,11 +26,11 @@ name: CI and Release
 # Ветки проверяются на pull_request (результат слияния с main), push — только
 # main: там релиз. push во все ветки вместе с pull_request гонял CI дважды на
 # каждый коммит PR. Ветку без PR — черновым PR или вручную (workflow_dispatch).
-# Пилот cream (спека cream §16 шаг 2) живёт в ветке feature/cream-v1-pilot до
-# перевода всего каталога: PR в неё проверяются тем же check.sh.
+# Ветки feature/cream-v1-* (интеграционная feature/cream-v1-migration плана
+# 2026-10-19) проверяются тем же check.sh. Живые прогоны — live.yml.
 on:
   pull_request:
-    branches: [main, feature/cream-v1-pilot]
+    branches: [main, "feature/cream-v1-*"]
   push:
     branches: [main]
   workflow_dispatch:
@@ -65,9 +62,8 @@ jobs:
           dir /repo --config /repo/.gitleaks.toml --redact --no-banner -v
 
       # PyYAML на образе раннера присутствует, но это деталь образа, а не
-      # контракт: ставим явно, чтобы обновление образа не выключило половину
-      # проверки молча (validate-extensions.py на отсутствие yaml отвечает
-      # кодом 2 и внятным сообщением, но проверять он в этом случае перестаёт).
+      # контракт: ставим явно, чтобы обновление образа не выключило молча
+      # проверки, читающие манифесты (lint-hooks.sh, hooktest.sh, тесты).
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
@@ -189,6 +185,7 @@ jobs:
           gh release upload "$TAG" "$asset" dist/SHA256SUMS --clobber -R "$GITHUB_REPOSITORY"
           echo "К релизу $TAG приложены $(basename "$asset") и SHA256SUMS"
 
+  # check-names: off — BISQUITE_* ниже — имена секрета и переменной GitHub, не ключи
   # Релиз сам поднимает расширения в bisquite: запускает там
   # extensions-bump.yml, который ставит указатель подмодуля и версию
   # в примерах на этот тег и открывает PR.
@@ -238,3 +235,4 @@ jobs:
           fi
           gh workflow run extensions-bump.yml -R "$TARGET_REPO" --ref main -f tag="$TAG"
           echo "Запущен extensions-bump.yml в $TARGET_REPO для $TAG"
+  # check-names: on

@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# cream hook `configure` of pixelflux-v4l2m2m: stage graphical, every boot and
+# after install/upgrade (was verify-pixelflux-v4l2m2m.service).
+#
+# The only authority is the probe of the backend itself: it walks /dev/video*,
+# wants an M2M node with H.264 on the capture queue and packed 32-bit colour on
+# the output one. Not the session log: "Encoder: …" appears only with a client
+# and once lied. No encoder, no selkies, a stale stamp — a warning and exit 0
+# (plan ruling R11). The module's answer is checked against a pattern before it
+# is printed.
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] pixelflux-v4l2m2m: $*"; }
+log_warn(){ >&2 echo "[WARN] pixelflux-v4l2m2m: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:-$R/var/lib/cream/ext/pixelflux-v4l2m2m}"
+REINSTALL="sudo cream install --reinstall pixelflux-v4l2m2m"
+
+PREFIX="$(readlink -f "$R/opt/selkies/current" 2>/dev/null || true)"
+SELKIES_PY="$PREFIX/usr/conda/bin/python"
+if [[ -z "$PREFIX" || ! -x "$SELKIES_PY" ]]; then
+    log_warn "нет /opt/selkies/current/usr/conda/bin/python — selkies не установлен, проверять нечего"
+    exit 0
+fi
+if [[ ! -f "$STATE/stamp" ]] || [[ "$(cat -- "$STATE/stamp")" != "prefix=${PREFIX#"$R"}" ]]; then
+    log_warn "отпечаток не совпал с ${PREFIX#"$R"}: AppImage сменился без переустановки — бэкенд не проверен;"
+    log_warn "  $REINSTALL (или cream install pixelflux-v4l2m2m, если не ставилось)"
+    exit 0
+fi
+
+raw="$("$SELKIES_PY" -c \
+    'import pixelflux; print("BACKEND=" + str(pixelflux.hardware_encoders(0).get("h264", "none")))' 2>/dev/null || true)"
+backend="${raw##*BACKEND=}"
+[[ "$backend" =~ ^[a-z0-9_-]{1,32}$ ]] || backend="неизвестно"
+if [[ "$backend" == v4l2m2m ]]; then
+    log_info "бэкенд объявлен: h264 → v4l2m2m — аппаратное кодирование доступно сессии"
+    exit 0
+fi
+
+nodes=""
+for n in "$R"/dev/video*; do
+    [[ -c "$n" && "${n##*/}" =~ ^video[0-9]{1,3}$ ]] && nodes+=" /dev/${n##*/}"
+done
+log_warn "pixelflux не объявляет v4l2m2m для H.264 (ответ: $backend) — кодирование пойдёт процессором"
+if [[ -z "$nodes" ]]; then
+    log_warn "  узлов /dev/video* нет: кодера на этой машине нет (Pi 5 — в кремнии), расширение здесь лишнее"
+else
+    log_warn "  узлы:$nodes — ни один не подошёл (нужен M2M с H264 на приёмной очереди): v4l2-ctl -d <узел> --all"
+fi
+exit 0

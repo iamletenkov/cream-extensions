@@ -1,10 +1,29 @@
+# l4t-boot-verify — marks every boot of a Jetson (L4T) successful with
+# `nvbootctrl verify`. Without it an AGX Orin stops booting after three boots:
+# UEFI spends a rootfs retry on every unmarked boot (README).
+#
+# install — masks the vendor nv-l4t-bootloader-config.service (what stood
+#           there is recorded once in /var/lib/cream/ext/l4t-boot-verify) and
+#           enables l4t-boot-verify.service; not L4T — code 20 (ruling R11).
+# remove  — disables ours and puts the vendor unit back from the record.
+# files   — l4t-boot-verify.service.
+# No configure: the unit itself runs on every boot.
+#
+# 2.0.0: cream/v1; the unit is l4t-boot-verify.service (`files`); the vendor
+#        unit is kept in the state and returned by remove.
+schema: cream/v1
 name: l4t-boot-verify
-version: 1.1.0
-layout: 2
-family: deb
-# Только L4T: nvbootctrl и переменные UEFI RootfsRetryCount* есть только на Jetson.
-arch: [arm64]
-phase: build
+version: 2.0.0
+summary: Отметка каждой загрузки Jetson (L4T) успешной — nvbootctrl verify вместо вендорской службы
+cream: ">=1.0.0"
+platform:
+  family: deb
+  # nvbootctrl and the RootfsRetryCount* UEFI variables exist only on Jetson.
+  arch: [arm64]
+targets: {build: exec, live: "yes"}
 provides: [l4t-boot-verify]
-requires: []
-conflicts: []
+hooks:
+  install: {timeout: 2m}
+  remove: {timeout: 2m}
+files:
+  - {src: files/l4t-boot-verify.service, dst: /etc/systemd/system/l4t-boot-verify.service, mode: "0644"}

@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+mkdir -p "$CREAM_STATE_DIR"
+printf 'color=%s\n' "$LIVE_OK_COLOR" > "$CREAM_STATE_DIR/configured"

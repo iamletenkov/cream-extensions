@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# cream hook `install` of btop: the resource monitor (CPU, memory, disks,
+# network, processes) as the apt package from universe/multiverse, and where
+# there is none (focal, bullseye) — the static musl build of the upstream
+# release, pinned by sha256.
+#
+# Who put btop on is recorded in $CREAM_STATE_DIR/method so that `remove`
+# takes away only its own: `apt` (the package was installed here), `static`
+# (/usr/local/bin/btop), `preexisting` (the package was there before cream —
+# left alone). A repeated install keeps the first answer.
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] btop: $*"; }
+log_warn(){ >&2 echo "[WARN] btop: $*"; }
+log_error(){ >&2 echo "[ERROR] btop: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}/method"
+
+apt_retry(){
+    local max=5 n=1 d
+    while true; do
+        if "$@"; then return 0; fi
+        if (( n >= max )); then return 1; fi
+        d=$(( n * 2 )); log_warn "команда не отработала, повтор через ${d}s ($n/$max)"
+        sleep "$d"; n=$(( n + 1 ))
+    done
+}
+
+# remember <method>: the first install wins; a repeat (--reinstall) keeps it.
+remember(){
+    [[ -s "$STATE" ]] && return 0
+    install -d -m 0755 "$(dirname "$STATE")"
+    printf '%s\n' "$1" > "$STATE"
+}
+
+export DEBIAN_FRONTEND=noninteractive
+APT_OPTS=(-q -y -o Dpkg::Options::=--force-confnew)
+
+log_info "apt-get update"
+apt_retry apt-get update -q || exit 1
+
+# NO PACKAGE IN THE REPOSITORY — THE STATIC RELEASE BINARY.
+#
+# focal (Ubuntu 20.04, the Q-engineering image of Jetson Nano) and bullseye
+# have no btop package. Instead of a refusal — the musl build of the upstream
+# release: it is static and does not depend on the image's glibc. The content
+# is checked against the pinned sha256; another architecture is a refusal,
+# not a guess. The apt candidate goes to a variable, not `apt-cache … | grep -q`:
+# pipefail and SIGPIPE.
+BTOP_RELEASE=v1.4.4
+declare -A BTOP_SHA256=(
+    [aarch64]=e8845d3f69f6a32d00258a1f79c093970666ece3d05a430c7b24a16c56577bf5
+    [x86_64]=fec7d1b59c671290a0f80d5a32617ea6d60412485fc04318fd194b9550ff6b49
+)
+
+install_static(){
+    local machine sum work
+    machine="$(uname -m)"
+    sum="${BTOP_SHA256[$machine]:-}"
+    if [[ -z "$sum" ]]; then
+        log_error "нет пакета btop в apt и нет закреплённой сборки релиза под $machine"
+        return 1
+    fi
+    work="$(mktemp -d "${TMPDIR:-/var/tmp}/btop.XXXXXX")"
+    # shellcheck disable=SC2064 # expand now: the variable is local
+    trap "rm -rf '$work'" RETURN
+    apt_retry curl -fsSL --max-time 300 -o "$work/btop.tbz" \
+        "https://github.com/aristocratos/btop/releases/download/$BTOP_RELEASE/btop-$machine-linux-musl.tbz" || return 1
+    echo "$sum  $work/btop.tbz" | sha256sum -c --quiet - || {
+        log_error "контрольная сумма btop $BTOP_RELEASE ($machine) не совпала"
+        return 1
+    }
+    tar -xjf "$work/btop.tbz" -C "$work" || return 1
+    install -d -m 0755 "$R/usr/local/bin" || return 1
+    install -m 0755 "$work/btop/bin/btop" "$R/usr/local/bin/btop" || return 1
+    "$R/usr/local/bin/btop" --version >/dev/null || { log_error "/usr/local/bin/btop не запускается"; return 1; }
+    log_info "готово: btop $BTOP_RELEASE (статическая сборка musl) в /usr/local/bin"
+}
+
+CANDIDATE="$(apt-cache policy btop 2>/dev/null | awk '/Candidate:/{print $2}')"
+if [[ -z "$CANDIDATE" || "$CANDIDATE" == "(none)" ]]; then
+    log_warn "в репозиториях образа пакета btop нет — ставлю сборку релиза $BTOP_RELEASE"
+    install_static || exit 1
+    remember static
+    exit 0
+fi
+
+if [[ "$(dpkg-query -W -f='${db:Status-Status}' btop 2>/dev/null || true)" == installed ]]; then
+    remember preexisting
+fi
+
+log_info "ставлю btop"
+apt_retry apt-get install "${APT_OPTS[@]}" btop || {
+    log_error "btop не установился"
+    exit 1
+}
+remember apt
+
+log_info "готово: $(dpkg-query -W -f='${Version}' btop 2>/dev/null || echo '?')"

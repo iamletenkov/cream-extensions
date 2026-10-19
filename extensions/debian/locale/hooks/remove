@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# cream hook `remove` of locale: takes away the GNOME input-sources defaults
+# (dconf keyfiles 40-locale) and rebuilds the dconf database. On purpose NOT
+# undone: /etc/default/locale, /etc/default/keyboard, the Xorg InputClass and
+# the compiled locale — a machine without a locale and a keymap is worse than
+# one with the last chosen; the packages are part of any Debian/Ubuntu base.
+# A repeat finds nothing and exits 0.
+set -euo pipefail
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+
+removed=0
+for f in "$R/etc/dconf/db/local.d/40-locale" "$R/etc/dconf/db/gdm.d/40-locale"; do
+    if [[ -e "$f" ]]; then
+        rm -f -- "$f"
+        removed=1
+    fi
+done
+if (( removed )) && command -v dconf >/dev/null 2>&1; then
+    dconf update || { >&2 echo "[ERROR] locale: dconf update не прошёл"; exit 1; }
+fi
+>&2 echo "[INFO] locale: умолчания GNOME сняты; локаль и раскладки оставлены (README, «Удаление»)"

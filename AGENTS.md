@@ -1,12 +1,12 @@
 # cream-extensions — регламент для агентов и людей
 
-**cream-extensions** (бывший bisquite-extensions) — каталог расширений провизии: каталог `extensions/<семейство>/<имя>/` с манифестом `extension.yaml`, `install.sh` (фаза build) и при нужде `configure.sh` (донастройка на машине). Общий код — `lib/` (библиотека настроек `bisquite-conf`, схемы `knobs/`). Конвенция целиком — [docs/extensions.md](docs/extensions.md). Лицензия PolyForm Noncommercial (не менять без решения владельца).
+**cream-extensions** (бывший bisquite-extensions) — каталог расширений провизии формата **cream/v1**: `extensions/<семейство>/<имя>/` с манифестом `extension.yaml` (`schema: cream/v1`), хуками `hooks/` (`install`, `configure`, `apply`, `remove`, …), действиями `actions/` и файлами `files/`; ставит и настраивает их cream. Общий код — библиотеки `kind: library` (`cloud-user`, `l4t`). Конвенция целиком — [docs/extensions.md](docs/extensions.md). Лицензия PolyForm Noncommercial (не менять без решения владельца).
 
 Состояние работ — [docs/STATUS.md](docs/STATUS.md).
 
 ## Место в экосистеме
 - **bisquite** — собирает образы ВМ, подключает расширения инструкцией `EXTENSION` и поднимает их версию после релиза этого репозитория.
-- **cream** — новый исполнитель расширений (Go): формат `extension.yaml`, жизненный цикл и `cream set/show` переезжают под него по спеке cream. До неё действует текущий формат; имена `bisquite-*`, пути `/opt/bisquite`, `/etc/bisquite` не меняются.
+- **cream** — новый исполнитель расширений (Go): формат `extension.yaml` (cream/v1), жизненный цикл, `cream set/show`, действия. Пин версии для проверок — `tools/cream-pin.env`. Прежних имён bisquite (пути, ключи, юниты, таблицы nft) в репозитории нет — гейт `tools/check-names.sh`, кроме истории.
 - **stvor-agent** — агент портала Stvor на машине; ставится обёрткой `stvor-agent` (`cream/v1`) по пину версии и sha256 на архитектуру.
 - **Stvor** — приватный портал (identity & access hub).
 
@@ -15,20 +15,19 @@
 
 ## Карта репозитория
 ```
-extensions/debian/   — расширения для Debian/Ubuntu (install.sh, configure.sh, extension.yaml)
-extensions/openwrt/  — конфиги OpenWrt (не расширения, см. docs/)
-lib/                 — общий код, доставляется в гостя сборкой (/opt/bisquite/<имя>/lib)
-tools/               — check.sh (валидация + тесты), lint.sh, new-extension.sh, agent-bump.sh, test-*.sh
+extensions/debian/   — расширения для Debian/Ubuntu: cream/v1 (extension.yaml, hooks/, actions/, files/, tests/)
+cream-catalog.yaml   — корень каталога cream (roots, version — ведёт release-please)
+tools/               — check.sh (cream validate + тесты), cream-validate.sh, check-names.sh, lint-hooks.sh, hooktest.sh (H), live-test.sh (L), lint.sh, new-extension.sh, catalog-snapshot.sh, cream-pin.env, agent-bump.sh
 docs/                — README.md (индекс), STATUS.md, extensions.md, adr/, specs/, plans/, research/
 .claude/             — агенты, skills, правила, хуки Claude Code
 .github/             — CI (check.sh, shellcheck), release-please, подъём пина агента
-Makefile             — публичный API (`make help`): lint, test, check, ci
+Makefile             — публичный API (`make help`): lint, test, check, ci, cream-validate, snapshot
 ```
 
 ## Как работать
-1. **Классифицируй задачу** вслух: *тривиальная* → правка → `make lint` → коммит; *bounded* (одно расширение, 1–3 файла) → короткий дизайн → тест первым → reviewer → PR; *архитектурная* (формат манифеста, `lib/`, новые способности, контракт с bisquite/cream) → спека → skeptic → план с `## Progress Tracker` → TDD → reviewer → PR. Сомневаешься — путь тяжелее.
+1. **Классифицируй задачу** вслух: *тривиальная* → правка → `make lint` → коммит; *bounded* (одно расширение, 1–3 файла) → короткий дизайн → тест первым → reviewer → PR; *архитектурная* (формат манифеста, библиотеки, новые способности, контракт с bisquite/cream) → спека → skeptic → план с `## Progress Tracker` → TDD → reviewer → PR. Сомневаешься — путь тяжелее.
 2. Новое расширение — только через `tools/new-extension.sh` (skill `/new-extension`), не копированием соседа.
-3. **TDD:** тест на поведение (`tools/test-*.sh` на подменённом корне) пишется до правки.
+3. **TDD:** тест на поведение (`extensions/<семейство>/<имя>/tests/test-*.sh` на подменённом корне, обвязка `tools/hooktest.sh`; `check.sh` находит его сам) пишется до правки; живой прогон — `make test-live EXT=<имя>` (по одному на хосте).
 4. Хост общий и нагруженный: один `make ci` за раз.
 
 ## Definition of Done

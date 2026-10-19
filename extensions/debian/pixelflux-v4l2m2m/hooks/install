@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# cream hook `install` of pixelflux-v4l2m2m (header of extension.yaml for the why).
+#
+# Exit 20 — not arm64, or on a live machine pixelflux names no v4l2m2m encoder
+# for H.264 (ruling R11). In the build (CREAM_PHASE=build) the devices are not
+# passed into the appliance: only the module is checked, the hardware is
+# configure's at boot. Writes only the stamp in its state directory (temporary
+# file and rename, never through a symlink); nothing in the selkies tree.
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] pixelflux-v4l2m2m: $*"; }
+log_error(){ >&2 echo "[ERROR] pixelflux-v4l2m2m: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:-$R/var/lib/cream/ext/pixelflux-v4l2m2m}"
+
+arch="$(dpkg --print-architecture)"
+[[ "$arch" == arm64 ]] || { log_info "архитектура $arch: M2M-платы парка (Pi 3/4/CM4) — arm64; неприменимо"; exit 20; }
+
+PREFIX="$(readlink -f "$R/opt/selkies/current" 2>/dev/null || true)"
+SELKIES_PY="$PREFIX/usr/conda/bin/python"
+if [[ -z "$PREFIX" || ! -x "$SELKIES_PY" ]]; then
+    log_error "нет /opt/selkies/current/usr/conda/bin/python — сначала cream install selkies"
+    exit 1
+fi
+
+MODULE_SO="$("$SELKIES_PY" -c 'import pixelflux; print(pixelflux.__file__)' 2>/dev/null || true)"
+[[ -f "$MODULE_SO" ]] || { log_error "модуль pixelflux в AppImage не найден"; exit 1; }
+# grep -a reads the binary itself: `strings | grep -q` fails under pipefail on a match.
+grep -qa "V4L2 M2M encoder on" "$MODULE_SO" \
+    || { log_error "в pixelflux AppImage нет бэкенда v4l2m2m — Selkies собран без него"; exit 1; }
+log_info "базовый pixelflux несёт бэкенд v4l2m2m"
+
+if [[ "${CREAM_PHASE:-live}" == live ]]; then
+    raw="$("$SELKIES_PY" -c \
+        'import pixelflux; print("BACKEND=" + str(pixelflux.hardware_encoders(0).get("h264", "none")))' 2>/dev/null || true)"
+    backend="${raw##*BACKEND=}"
+    [[ "$backend" =~ ^[a-z0-9_-]{1,32}$ ]] || backend="неизвестно"
+    if [[ "$backend" != v4l2m2m ]]; then
+        log_info "pixelflux не находит M2M-кодера H.264 (ответ: $backend) — на этой машине неприменимо"
+        exit 20
+    fi
+    log_info "кодер V4L2 M2M найден"
+fi
+
+[[ ! -L "$STATE" ]] || { log_error "${STATE#"$R"} — символическая ссылка, не пишу через неё"; exit 1; }
+[[ -d "$STATE" ]] || install -d -m 0755 -- "$STATE"
+want="prefix=${PREFIX#"$R"}"
+if [[ ! -f "$STATE/stamp" || -L "$STATE/stamp" || "$(cat -- "$STATE/stamp")" != "$want" ]]; then
+    tmp="$(mktemp "$STATE/.stamp.XXXXXX")"
+    printf '%s\n' "$want" > "$tmp" && chmod 0644 "$tmp" && mv -f -T -- "$tmp" "$STATE/stamp"
+fi
+log_info "готово; бэкенд на железе проверит configure (cream-configure@pixelflux-v4l2m2m)"

@@ -1,6 +1,7 @@
 # Станция прошивки Jetson
 
-Эти скрипты установлены в `/opt/nvidia-jetpack/`. **Автоматически не
+Эти скрипты лежат в `/opt/cream/ext/nvidia-jetpack/scripts/` (дерево расширения
+раскладывает cream). **Автоматически не
 запускается ничего** — прошивка необратима для платы, начинать её должен
 человек.
 
@@ -19,8 +20,8 @@ XML разметки, конфиг QSPI, цель `flash.sh`, SKU и ревиз�
 `profile.sh`:
 
 ```bash
-. /opt/nvidia-jetpack/profile.sh && load_profile agx-xavier 35.6.5
-sudo -E /opt/nvidia-jetpack/09-build-jetson-base.sh
+. /opt/cream/ext/nvidia-jetpack/scripts/profile.sh && load_profile agx-xavier 35.6.5
+sudo -E /opt/cream/ext/nvidia-jetpack/scripts/09-build-jetson-base.sh
 ```
 
 `load_profile <плата> <релиз>` подключает файлы по очереди — **позднее
@@ -184,7 +185,7 @@ R32.7.4 из официального BSP, а система — образ Q-en
 `. profile.sh && load_profile <плата> <релиз>`.
 
 ```bash
-cd /opt/nvidia-jetpack
+cd /opt/cream/ext/nvidia-jetpack/scripts
 
 # каталог должен быть доступен на запись текущему пользователю;
 # если его нет, 01 напечатает ровно эту команду и остановится
@@ -339,7 +340,7 @@ eMMC не будет никогда. Входить в систему на eMMC 
 следствие формата пакета, а не как запасная система.
 
 ```bash
-sudo /opt/nvidia-jetpack/08-build-base-image.sh
+sudo /opt/cream/ext/nvidia-jetpack/scripts/08-build-base-image.sh
 # -> $OUT_QCOW2 (по умолчанию $OUT_DIR/system.qcow2)
 ```
 

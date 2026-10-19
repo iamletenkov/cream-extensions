@@ -1,0 +1,27 @@
+# Clean fixture of tools/lint-hooks.sh: every rule is met. tools/test-lint-hooks.sh
+# copies it and breaks one rule per copy.
+schema: cream/v1
+name: ok
+version: 1.0.0
+summary: Фикстура линта хуков
+cream: ">=1.1.1"
+platform:
+  family: deb
+  arch: [amd64, arm64]
+targets: {build: exec, live: "yes"}
+hooks:
+  install: {timeout: 5m}
+  configure: {stage: cloud-user}
+  apply: {}
+  remove: {}
+config:
+  keys:
+    OK_PORT: {type: int, default: "8080"}
+    OK_TOKEN: {type: str, default: "", empty: true, secret: file}
+actions:
+  show:
+    summary: "показать настройки"
+    lock: none
+  rotate:
+    summary: "новый токен"
+    lock: exclusive

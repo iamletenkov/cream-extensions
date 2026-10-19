@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+systemctl disable live-ok.service || true
+rm -r -f -- /etc/live-ok

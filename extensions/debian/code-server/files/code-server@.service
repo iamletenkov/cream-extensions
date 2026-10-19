@@ -1,0 +1,20 @@
+# code-server for user %i. Started by the configure hook of the extension
+# (cream-configure@code-server, stage cloud-user), never enabled on its own:
+# configure is the gate that writes the user's config.yaml and checks the
+# authentication first. Overrides the code-server@.service of the package.
+[Unit]
+Description=code-server for user %i
+After=network.target
+
+[Service]
+Type=exec
+User=%i
+# Only the non-secret domain (CODE_SERVER_ALLOW_NO_AUTH for the wrapper); the
+# password lives in the user's config.yaml (0600), never in an environment.
+EnvironmentFile=-/etc/cream/code-server/config
+# The wrapper refuses a config without authentication (unless allowed) with 78.
+ExecStart=/bin/bash /opt/cream/ext/code-server/files/code-server.sh start
+Restart=on-failure
+RestartSec=5
+# 78 (EX_CONFIG) — refused to start without authentication: no restart loop.
+RestartPreventExitStatus=78

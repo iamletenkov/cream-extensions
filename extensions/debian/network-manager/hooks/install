@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# cream hook `install` of network-manager: make sure the machine carries
+# NetworkManager, so that a Wi-Fi interface declared in a device manifest
+# actually comes up. Paths of the machine go under $CREAM_ROOT (hooktest).
+#
+# What this install put on is recorded in $CREAM_STATE_DIR/installed (a package
+# per line) so that `remove` takes away only its own; a repeat keeps the record.
+# Debian and Ubuntu only: platform.os of the manifest, cream refuses elsewhere.
+#
+# ЗАЧЕМ ЭТО РАСШИРЕНИЕ ВООБЩЕ. `bs device write` при наличии секции `wifi`
+# генерирует network-config с `renderer: NetworkManager` — systemd-networkd
+# Wi-Fi не поддерживает (docs/guides/device.md, «WiFi интерфейсы»). Если
+# NetworkManager в образе нет, cloud-init разложить профиль некуда, и
+# устройство приходит БЕЗ СЕТИ молча: карта записалась, система загрузилась,
+# ошибки нет нигде.
+#
+# ОСНОВНОЙ СЛУЧАЙ — «уже стоит», и он не считается лишней работой. Замерено
+# в собранном образе Raspberry Pi OS (2026-09-03): network-manager,
+# wpasupplicant и firmware-brcm80211 стоят, юнит включён. Расширение обязано
+# сказать об этом и не тронуть ничего — иначе `apt-get install` переставил бы
+# пакеты и в лучшем случае потратил время, а в худшем подтянул за собой
+# обновления, которых автор образа не просил.
+#
+# ПРОШИВКУ Wi-Fi РАСШИРЕНИЕ НЕ СТАВИТ, и это решение, а не пропуск. Разбор
+# в README, раздел «Прошивку не ставим»; коротко — выбор пакета прошивки
+# требует сразу двух осей (какое железо И какой дистрибутив), а объявленная
+# таблица в этом проекте отвергнута. Вместо установки — громкое
+# предупреждение, если в образе не нашлось никакой прошивки вовсе.
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] network-manager: $*"; }
+log_warn(){ >&2 echo "[WARN] network-manager: $*"; }
+log_error(){ >&2 echo "[ERROR] network-manager: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}/installed"
+
+# Тот же повтор, что у расширения docker: индекс apt на сборочной машине
+# отваливается достаточно часто, чтобы это стоило одной функции.
+apt_retry(){
+    local max=5 n=1 d
+    while true; do
+        if "$@"; then return 0; fi
+        if (( n >= max )); then return 1; fi
+        d=$(( n * 2 )); log_warn "apt не отработал, повтор через ${d}s ($n/$max)"
+        sleep "$d"; n=$(( n + 1 ))
+    done
+}
+
+export DEBIAN_FRONTEND=noninteractive
+APT_OPTS=(-q -y -o Dpkg::Options::=--force-confnew)
+
+pkg_installed(){ dpkg-query -W -f='${db:Status-Status}\n' "$1" 2>/dev/null | grep -qx installed; }
+
+# `systemctl is-enabled` inside the build chroot need not answer — systemd is
+# not running there. Look at what `systemctl enable` physically creates: the
+# link in multi-user.target.wants and the dbus alias Debian enables it with.
+unit_enabled(){
+    [[ -L "$R/etc/systemd/system/multi-user.target.wants/NetworkManager.service" ]] \
+        || [[ -L "$R/etc/systemd/system/dbus-org.freedesktop.NetworkManager.service" ]]
+}
+
+# remember <pkg...>: the packages this install put on; the first record wins.
+remember(){
+    [[ -s "$STATE" ]] && return 0
+    install -d -m 0755 "$(dirname "$STATE")"
+    printf '%s\n' "$@" > "$STATE"
+}
+
+# --- что уже есть ------------------------------------------------------------
+# wpasupplicant объявлен ЯВНО, а не оставлен на Recommends пакета
+# network-manager: образы собирают и с --no-install-recommends, и тогда
+# ассоциация с точкой доступа отваливается уже на устройстве. Та же правка
+# и по той же причине сделана у x11vnc (xauth, x11-utils).
+missing=()
+for pkg in network-manager wpasupplicant; do
+    if pkg_installed "$pkg"; then
+        log_info "$pkg уже установлен ($(dpkg-query -W -f='${Version}' "$pkg" 2>/dev/null))"
+    else
+        missing+=("$pkg")
+    fi
+done
+
+if (( ${#missing[@]} == 0 )) && unit_enabled; then
+    log_info "NetworkManager уже установлен и включён — не трогаю ничего"
+else
+    if (( ${#missing[@]} > 0 )); then
+        log_info "ставлю: ${missing[*]}"
+        apt_retry apt-get "${APT_OPTS[@]}" update
+        # Гейт вместо таблицы поддерживаемых сюит: спрашиваем у самого
+        # репозитория, есть ли пакет. Заодно ловит молча не отработавший
+        # apt-get update.
+        for pkg in "${missing[@]}"; do
+            candidate="$(apt-cache policy "$pkg" 2>/dev/null | awk '/Candidate:/{print $2}')"
+            if [[ -z "$candidate" || "$candidate" == "(none)" ]]; then
+                log_error "в репозиториях образа нет пакета $pkg"
+                log_error "проверьте /etc/apt/sources.list — на урезанных образах"
+                log_error "компонент, где он лежит, бывает не подключён"
+                exit 1
+            fi
+        done
+        apt_retry apt-get "${APT_OPTS[@]}" install "${missing[@]}"
+        remember "${missing[@]}"
+        log_info "установлено: ${missing[*]}"
+    fi
+
+    # Юнит включает сама упаковка (postinst через deb-systemd-helper), даже
+    # при снятом policy-rc.d — то же наблюдение, что записано у docker.
+    # Строка оставлена страховкой на случай упаковки, которая этого не делает,
+    # и потому отказом не считается.
+    systemctl enable NetworkManager.service 2>/dev/null || true
+    if unit_enabled; then
+        log_info "NetworkManager.service включён"
+    else
+        log_error "NetworkManager.service не включён — на устройстве сети не будет"
+        log_error "проверьте вручную: ls -l /etc/systemd/system/multi-user.target.wants/"
+        exit 1
+    fi
+fi
+
+# --- кто ещё претендует на управление сетью ----------------------------------
+# Не выключаем, а говорим вслух. Выключить systemd-networkd значило бы
+# переписать сетевой стек чужого образа за его автора; а промолчать — оставить
+# двух хозяев у одного интерфейса. cloud-init при наличии wifi в манифесте
+# кладёт профили NetworkManager, и Ethernet, поднятый networkd, будет
+# настроен по-старому.
+if [[ -L "$R/etc/systemd/system/multi-user.target.wants/systemd-networkd.service" \
+   || -L "$R/etc/systemd/system/dbus-org.freedesktop.network1.service" ]]; then
+    log_warn "в образе включён и systemd-networkd — два менеджера на одних интерфейсах"
+    log_warn "расширение его НЕ выключает: это сетевой стек вашего образа"
+fi
+
+# --- прошивка Wi-Fi ----------------------------------------------------------
+# Ищем признаки, а не пакеты: на Ubuntu всё лежит в монолитном linux-firmware,
+# на Debian — в отдельных firmware-*, а в pi-gen прошивка вообще может приехать
+# файлами. Смотрим на то, что общее для всех трёх, — на /lib/firmware.
+firmware_found=""
+for probe in "$R"/lib/firmware/brcm "$R"/lib/firmware/iwlwifi-*.ucode "$R"/lib/firmware/rtlwifi \
+             "$R"/lib/firmware/mediatek "$R"/lib/firmware/ath10k "$R"/lib/firmware/ath11k; do
+    if [[ -e "$probe" ]]; then
+        firmware_found="${firmware_found} $(basename "$probe")"
+    fi
+done
+
+if [[ -n "$firmware_found" ]]; then
+    log_info "прошивка Wi-Fi в образе есть:${firmware_found}"
+else
+    log_warn "в /lib/firmware не нашлось прошивки Wi-Fi ни для одного известного чипа"
+    log_warn "расширение её НЕ ставит намеренно — см. README, «Прошивку не ставим»"
+    log_warn "нужна конкретная — добавьте слоем INSTALL до этого расширения:"
+    log_warn "  Debian: firmware-brcm80211 или firmware-iwlwifi (компонент non-free-firmware)"
+    log_warn "  Ubuntu: linux-firmware (отдельных firmware-* пакетов там нет)"
+fi
+
+log_info "расширение network-manager отработало"

@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# `cream validate` over the cream/v1 extensions of this catalog.
+# `cream validate` of this catalog.
 #
-#   tools/cream-validate.sh            every extensions/<family>/<name>/ whose
-#                                      extension.yaml says `schema: cream/v1`
-#   tools/cream-validate.sh DIR...     the given extension directories
-#
-# The catalog is transitional (cream spec §16 step 2): layout 2 and cream/v1
-# live side by side, and `cream validate --catalog .` would reject the layout 2
-# manifests. So the cream/v1 extensions are copied into a temporary catalog
-# (its own cream-catalog.yaml, roots: [extensions]) and validated as a catalog:
-# duplicate names and cross-extension unit/action checks work as on the real one.
+#   tools/cream-validate.sh            `cream validate --catalog .` over the
+#                                      repository root, as it is: every
+#                                      extension under the roots of
+#                                      cream-catalog.yaml, the graph, duplicate
+#                                      names, cross-extension unit/action checks
+#   tools/cream-validate.sh DIR...     the given extension directories, copied
+#                                      into a temporary catalog (its own
+#                                      cream-catalog.yaml, roots: [extensions])
+#                                      and validated as a catalog
 #
 # cream comes from the pin tools/cream-pin.env (version + sha256 of
 # cream_<v>_amd64.deb), checked before use; it runs inside debian:12 with no
 # network. CREAM_DEB=<local .deb> overrides the pin for local runs (the pin is
 # NOT checked then — a warning says so). Empty pin and no CREAM_DEB: the check
-# is skipped with a fixed line and exit 0 (cream 1.0.0 is not released yet).
+# is skipped with a fixed line and exit 0 (no cream release pinned).
 #
 # Exit: 0 — valid or skipped; cream's code when invalid (65 — bad manifest,
 # see cream docs/cli.md); 2 — setup failure (pin, download, docker).
@@ -37,23 +37,14 @@ pin() {
     printf '%s' "${line#*=}"
 }
 
-# cream/v1 directories: arguments or discovery under extensions/.
+# Extension directories (arguments) or the root.
 dirs=()
-if (( $# )); then
-    for d in "$@"; do
-        [[ -f "$d/extension.yaml" ]] || die "$d: нет extension.yaml"
-        dirs+=("$(cd "$d" && pwd)")
-    done
-else
-    while IFS= read -r m; do
-        if grep -Eq "^schema:[[:space:]]*[\"']?cream/v1[\"']?[[:space:]]*(#.*)?$" "$m"; then
-            dirs+=("$(dirname "$m")")
-        fi
-    done < <(find "$REPO/extensions" -mindepth 3 -maxdepth 3 -name extension.yaml | sort)
-fi
-if (( ${#dirs[@]} == 0 )); then
-    echo "cream/v1: расширений нет, проверять нечего"
-    exit 0
+for d in "$@"; do
+    [[ -f "$d/extension.yaml" ]] || die "$d: нет extension.yaml"
+    dirs+=("$(cd "$d" && pwd)")
+done
+if (( $# == 0 )); then
+    [[ -f "$REPO/cream-catalog.yaml" ]] || die "$REPO: нет cream-catalog.yaml в корне"
 fi
 
 # The .deb: CREAM_DEB or the pin.
@@ -89,19 +80,29 @@ fi
 
 command -v docker >/dev/null 2>&1 || die "нужен docker"
 
-# Mount every extension read-only under /src/<i>; the container copies them
-# into /cat/extensions/<basename> (cp -a keeps the executable bits) and runs
-# `cream validate --catalog /cat`.
-mounts=(-v "$deb:/cream.deb:ro")
-names=()
-for i in "${!dirs[@]}"; do
-    mounts+=(-v "${dirs[$i]}:/src/$i:ro")
-    names+=("$(basename "${dirs[$i]}")")
-done
-echo "cream validate: ${names[*]}"
-
-# shellcheck disable=SC2016  # expanded inside the container
-inner='set -eu
+if (( ${#dirs[@]} == 0 )); then
+    # The root: mounted read-only as /cat, validated as it lies.
+    mounts=(-v "$deb:/cream.deb:ro" -v "$REPO:/cat:ro")
+    names=()
+    echo "cream validate --catalog . ($REPO)"
+    # shellcheck disable=SC2016  # expanded inside the container
+    inner='set -eu
+dpkg-deb -x /cream.deb /tmp/cream
+/tmp/cream/usr/bin/cream --version
+exec /tmp/cream/usr/bin/cream validate --catalog /cat'
+else
+    # Mount every extension read-only under /src/<i>; the container copies them
+    # into /tmp/cat/extensions/<basename> (cp -a keeps the executable bits) and
+    # runs `cream validate --catalog /tmp/cat`.
+    mounts=(-v "$deb:/cream.deb:ro")
+    names=()
+    for i in "${!dirs[@]}"; do
+        mounts+=(-v "${dirs[$i]}:/src/$i:ro")
+        names+=("$(basename "${dirs[$i]}")")
+    done
+    echo "cream validate: ${names[*]}"
+    # shellcheck disable=SC2016  # expanded inside the container
+    inner='set -eu
 dpkg-deb -x /cream.deb /tmp/cream
 mkdir -p /tmp/cat/extensions
 printf "schema: cream/v1\nname: cream-extensions-check\nversion: 0.0.0\nroots: [extensions]\n" \
@@ -117,6 +118,7 @@ for name in "$@"; do
 done
 /tmp/cream/usr/bin/cream --version
 exec /tmp/cream/usr/bin/cream validate --catalog /tmp/cat'
+fi
 
 rc=0
 docker run --rm --network none -u "$(id -u):$(id -g)" "${mounts[@]}" \

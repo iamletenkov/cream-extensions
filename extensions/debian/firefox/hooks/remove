@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# cream hook `remove` of firefox: purges the packages `install` put on (the
+# record in $CREAM_STATE_DIR/packages; a Firefox that was there before cream
+# stays), then takes away the Mozilla source, its pin and the key, and
+# refreshes the apt lists. A repeat finds nothing and exits 0.
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] firefox: $*"; }
+log_error(){ >&2 echo "[ERROR] firefox: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}/packages"
+
+export DEBIAN_FRONTEND=noninteractive
+ours=()
+if [[ -f "$STATE" ]]; then
+    mapfile -t ours < <(sed '/^$/d' "$STATE")
+fi
+if (( ${#ours[@]} )); then
+    apt-get purge -q -y "${ours[@]}" || { log_error "apt-get purge ${ours[*]} не прошёл"; exit 1; }
+    log_info "удалены: ${ours[*]}"
+else
+    log_info "своих пакетов нет — Firefox не трогаю"
+fi
+
+had_source=""
+[[ -e "$R/etc/apt/sources.list.d/mozilla.list" ]] && had_source=1
+rm -f -- "$R/etc/apt/sources.list.d/mozilla.list" "$R/etc/apt/preferences.d/mozilla" \
+    "$R/etc/apt/keyrings/packages.mozilla.org.asc"
+# Lists of the removed source stay until the next update; refresh now.
+if [[ -n "$had_source" ]]; then
+    apt-get update -q || log_error "apt-get update после снятия источника не прошёл (не критично)"
+fi
+rm -f -- "$STATE"

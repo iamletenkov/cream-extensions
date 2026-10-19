@@ -1,0 +1,201 @@
+#!/usr/bin/env bash
+# cream hook `install` of nvidia-jetpack: turns an amd64 Ubuntu/Debian machine
+# into a flashing station for NVIDIA Jetson boards — the L4T flashing toolchain,
+# an enabled NFS server and the aarch64 binfmt handler. Paths of the machine go
+# under $CREAM_ROOT (hooktest).
+#
+# The udev rule against USB autosuspend is a `files` entry of the manifest
+# (cream lays it out before this hook and takes it away on remove). The station
+# scripts are not copied anywhere: they live in the extension tree,
+# /opt/cream/ext/nvidia-jetpack/scripts/, and find each other relative to
+# themselves. Nothing runs automatically — flashing is irreversible for the
+# board, the operator starts it by hand (README).
+#
+# Packages this hook put on are recorded in $CREAM_STATE_DIR/packages (one per
+# line, the first record wins) so that `remove` takes away only its own.
+set -euo pipefail
+
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+log_info(){ >&2 echo -e "${GREEN}[INFO]${NC} nvidia-jetpack: $*"; }
+log_warn(){ >&2 echo -e "${YELLOW}[WARN]${NC} nvidia-jetpack: $*"; }
+log_error(){ >&2 echo -e "${RED}[ERROR]${NC} nvidia-jetpack: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+EXT_DIR="${CREAM_EXT_DIR:?run by cream}"
+STATE="${CREAM_STATE_DIR:?run by cream}/packages"
+# Where the operator finds the station scripts on the machine (without $R).
+STATION_DIR="/opt/cream/ext/nvidia-jetpack/scripts"
+
+apt_retry(){
+    local max=5 n=1 d
+    while true; do
+        if "$@"; then return 0; fi
+        if (( n >= max )); then return 1; fi
+        d=$(( n * 2 )); log_warn "apt не отработал, повтор через ${d}s ($n/$max)"
+        sleep "$d"; n=$(( n + 1 ))
+    done
+}
+
+export DEBIAN_FRONTEND=noninteractive
+APT_OPTS=(-q -y -o Dpkg::Options::=--force-confnew)
+
+is_installed(){ [[ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null || true)" == installed ]]; }
+
+# Пакеты инструментария L4T.
+#
+# Список выведен эмпирически, а не угадан: это все аргументы `command -v`
+# из tools/kernel_flash/*.sh, tools/*.sh и flash.sh плюс то, что зовёт
+# tegraflash.py через run_cpp_tool(). Каждая недостающая утилита стоила
+# отдельного отказа посреди заливки — см. docs/specs 2026-09-10.
+L4T_PACKAGES=(
+    zstd                # распаковка BSP и образов
+    cpp                 # препроцессор DTS, зовётся из tegraflash.py
+    device-tree-compiler
+    xmlstarlet          # разбор XML-конфигураций разделов
+    libxml2-utils       # xmllint там же
+    sshpass             # заливка rootfs по SSH без интерактивного пароля
+    openssh-client
+    abootimg            # разбор boot.img
+    uuid-runtime        # uuidgen для идентификаторов разделов
+    lz4
+    cpio
+    gdisk               # sgdisk по GPT целевого носителя
+    parted
+    binutils            # objcopy/strip в сборке recovery-образа
+    qemu-user-static    # выполнение arm64-бинарей при кастомизации rootfs
+    nfs-kernel-server   # l4t_initrd_flash.sh раздаёт rootfs по NFS
+    python3-yaml
+    bzip2
+    wget
+    curl
+    v4l-utils           # проверка камер после прошивки
+)
+
+# Шаг 0: скрипты станции на месте.
+#
+# Станция без скриптов прошить ничего не может, а узнать об этом на живой
+# машине хуже, чем на сборке, — поэтому отказ до apt, а не после.
+check_station_scripts() {
+    local source_dir="$EXT_DIR/scripts" n
+    if [[ ! -d "$source_dir" ]]; then
+        log_error "нет каталога $source_dir — расширение неполное: скрипты станции и есть его смысл"
+        exit 1
+    fi
+    n="$(find "$source_dir" -maxdepth 1 -type f \( -name '*.sh' -o -name '*.py' \) | wc -l)"
+    if [[ "$n" == 0 ]]; then
+        log_error "в $source_dir нет ни одного *.sh или *.py — ставить станцию не из чего"
+        exit 1
+    fi
+    [[ -f "$source_dir/README.md" ]] \
+        || log_warn "нет $source_dir/README.md — порядок прошивки на станции не описан"
+}
+
+# Шаг 1: пакеты — только недостающие; поставленное записывается для remove.
+install_packages() {
+    local missing=() pkg
+    for pkg in "${L4T_PACKAGES[@]}"; do
+        is_installed "$pkg" || missing+=("$pkg")
+    done
+    if (( ${#missing[@]} == 0 )); then
+        log_info "инструментарий L4T уже установлен (${#L4T_PACKAGES[@]} пакетов) — apt не трогаю"
+        return 0
+    fi
+    log_info "ставлю инструментарий L4T: ${missing[*]}"
+    apt_retry apt-get "${APT_OPTS[@]}" update
+    apt_retry apt-get "${APT_OPTS[@]}" install --no-install-recommends "${missing[@]}"
+    if [[ ! -s "$STATE" ]]; then
+        install -d -m 0755 "$(dirname "$STATE")"
+        printf '%s\n' "${missing[@]}" > "$STATE"
+    fi
+    log_info "инструментарий L4T установлен"
+}
+
+# Шаг 2: NFS-сервер
+#
+# Именно enable, а не start: образ собирается в libguestfs-приложении, где
+# systemd не работает вовсе, и start отказал бы всегда. enable — это offline
+# расстановка симлинков, её достаточно: на живой системе сервис поднимется
+# сам и приведёт за собой nfsdcld и rpc_pipefs, из-за отсутствия которых
+# заливка из chroot ломалась пять раз подряд.
+enable_nfs_server() {
+    if ! command -v systemctl >/dev/null 2>&1; then
+        log_warn "systemctl не найден — включите nfs-server вручную на первой загрузке"
+        return 0
+    fi
+    if systemctl enable nfs-server; then
+        log_info "nfs-server включён (поднимется на загрузке)"
+    else
+        # Не отказ: сборка на этом шаге не портится, а оператор узнаёт,
+        # что именно нужно доделать.
+        log_warn "nfs-server не включился — на станции: systemctl enable --now nfs-server"
+    fi
+}
+
+# Шаг 3: регистрация binfmt для aarch64
+#
+# Пакет qemu-user-static кладёт /usr/bin/qemu-aarch64-static, но САМ ПО СЕБЕ
+# НЕ ОБЪЯВЛЯЕТ обработчик ядру. На Ubuntu регистрацию делает postinst, и
+# только если установлен binfmt-support, — а внутри virt-customize это
+# ненадёжно вдвойне: там нет работающего systemd, и результат регистрации
+# может не дожить до образа.
+#
+# Замер 2026-09-11 на собранной станции: бинарь на месте, в
+# /usr/lib/binfmt.d/ лежит только python3.10.conf, в /proc/sys/fs/binfmt_misc/
+# тоже. То есть эмулятор есть, а выполнить arm64-бинарь нельзя — и
+# 04-customize-rootfs.sh, который правит rootfs платы изнутри, отказал бы
+# на станции, где всё остальное в порядке.
+#
+# Поэтому файл кладётся явно: systemd-binfmt читает /etc/binfmt.d на каждой
+# загрузке, и регистрация не зависит ни от postinst, ни от наличия
+# update-binfmts. Флаг F открывает интерпретатор в момент регистрации —
+# без него qemu пришлось бы копировать внутрь каждого chroot.
+#
+# На живой машине с работающим systemd файл применяется сразу:
+# `systemctl --no-block restart systemd-binfmt` — и только когда файл
+# изменился (перезапуск снимает и заново ставит ВСЕ обработчики). В
+# контейнере binfmt_misc — общий с хостом, и его не трогаем вовсе: файл
+# лежит, применит загрузка настоящей машины.
+install_binfmt_aarch64() {
+    local conf="$R/etc/binfmt.d/qemu-aarch64.conf" emulator="$R/usr/bin/qemu-aarch64-static"
+    local tmpl="$EXT_DIR/files/qemu-aarch64.conf" tmp
+
+    if [[ ! -x "$emulator" ]]; then
+        # Не отказ: образ собирается, а оператор узнаёт, чего не хватает.
+        # Но сказать надо громко — без эмулятора шаг 04 не сработает.
+        log_warn "нет /usr/bin/qemu-aarch64-static — шаг 04 (кастомизация rootfs) не сработает; поставьте qemu-user-static"
+        return 0
+    fi
+
+    if [[ -f "$conf" && ! -L "$conf" ]] && cmp -s -- "$tmpl" "$conf"; then
+        log_info "binfmt aarch64 уже зарегистрирован файлом /etc/binfmt.d/qemu-aarch64.conf"
+        return 0
+    fi
+
+    # Through a temporary file and rename: a symlink in place of the file is
+    # replaced, never followed.
+    install -d -m 0755 "$R/etc/binfmt.d"
+    tmp="$(mktemp "$R/etc/binfmt.d/.qemu-aarch64.conf.XXXXXX")"
+    cat -- "$tmpl" > "$tmp"
+    chmod 0644 "$tmp"
+    mv -f -T -- "$tmp" "$conf"
+    log_info "binfmt aarch64: записан /etc/binfmt.d/qemu-aarch64.conf"
+
+    if [[ "${CREAM_PHASE:-}" != live || ! -d "$R/run/systemd/system" ]]; then
+        log_info "  systemd не запущен — регистрацию применит systemd-binfmt на загрузке"
+        return 0
+    fi
+    if ! command -v systemd-detect-virt >/dev/null 2>&1 || systemd-detect-virt --container --quiet; then
+        log_warn "  контейнер (или не определить): binfmt_misc общий с хостом — systemd-binfmt не перезапускаю"
+        return 0
+    fi
+    systemctl --no-block restart systemd-binfmt.service
+    log_info "  systemd-binfmt перезапущен; проверка: ls /proc/sys/fs/binfmt_misc/ | grep qemu-aarch64"
+}
+
+check_station_scripts
+install_packages
+enable_nfs_server
+install_binfmt_aarch64
+
+log_info "станция прошивки готова; скрипты — $STATION_DIR, автоматически ничего не запускается"
+log_info "порядок прошивки — $STATION_DIR/README.md"

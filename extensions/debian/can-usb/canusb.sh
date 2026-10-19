@@ -1,11 +1,11 @@
 # shellcheck shell=bash
-# Functions of the can-usb extension. Sourced by install.sh, never executed:
+# Functions of the can-usb extension. Sourced by hooks/install, never executed:
 #
-#   source "$SCRIPT_DIR/canusb.sh"
+#   source "$CREAM_EXT_DIR/canusb.sh"
 #
-# The pinned values (release, kernel, URL, sums) live in install.sh and come
-# in as arguments, so that tools/test-can-usb.sh can feed fixtures.
-# CANUSB_ROOT is a test root, empty in the guest. The caller's
+# The pinned values (release, kernel, URL, sums) live in hooks/install and come
+# in as arguments, so that tests/test-can-usb.sh can feed fixtures.
+# CANUSB_ROOT is the root the hook works on (CREAM_ROOT; empty on the machine). The caller's
 # log_info/log_warn/log_error are used when defined.
 
 CANUSB_ROOT="${CANUSB_ROOT:-}"
@@ -216,13 +216,22 @@ canusb_build(){
 }
 
 # Install the built modules into MODDIR of KV (stripped of debug info) and run
-# depmod for that kernel. A module that depmod cannot resolve is a refusal.
+# depmod for that kernel. Each file goes through a temporary file in MODDIR
+# and a rename; an identical module is left alone. A module that depmod cannot
+# resolve is a refusal.
 canusb_install(){
-    local kv="$1" dir="$2" moddir="$3" m deps
+    local kv="$1" dir="$2" moddir="$3" m deps tmp
     install -d "$CANUSB_ROOT$moddir" || return 1
     for m in "${CANUSB_MODULES[@]}"; do
-        install -m 0644 "$dir/$m.ko" "$CANUSB_ROOT$moddir/$m.ko" || return 1
-        strip --strip-debug "$CANUSB_ROOT$moddir/$m.ko" || return 1
+        tmp="$(mktemp "$CANUSB_ROOT$moddir/.$m.XXXXXX")" || return 1
+        if ! cp -- "$dir/$m.ko" "$tmp" || ! strip --strip-debug "$tmp" || ! chmod 0644 "$tmp"; then
+            rm -f -- "$tmp"; return 1
+        fi
+        if [[ -f "$CANUSB_ROOT$moddir/$m.ko" ]] && cmp -s -- "$tmp" "$CANUSB_ROOT$moddir/$m.ko"; then
+            rm -f -- "$tmp"
+        else
+            mv -f -T -- "$tmp" "$CANUSB_ROOT$moddir/$m.ko" || return 1
+        fi
     done
     if [[ -n "$CANUSB_ROOT" ]]; then
         depmod -b "$CANUSB_ROOT" "$kv" || { _cu_error "depmod $kv не отработал"; return 1; }

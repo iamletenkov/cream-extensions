@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # The stvor-agent package: which one, where from, how it goes on and off.
 # Sourced by the hooks (hooks/install, upgrade, remove, apply); the pure
-# functions are called by tools/test-stvor-agent.sh. The agent lives in its own
+# functions are called by tests/test-stvor-agent.sh. The agent lives in its own
 # repository and ships as stvor-agent_<version>_<arch>.deb:
 # https://github.com/iamletenkov/stvor-agent
 #
@@ -136,23 +136,13 @@ sa_hook_install(){
     deb="$(sa_fetch "$work" "$arch")" || exit 1
     sa_run dpkg -i "$deb" || sa_die "dpkg -i $(basename "$deb") не прошёл"
     sa_log "установлен $(basename "$deb")${have:+ (было $have)}"
-    sa_reload_labels
     sa_log "включение: printf '%s' '<токен>' | sudo stvor-agent enable 'URL=https://<портал>/robot-api/v1/labels'"
 }
 
 # The drop-in of the stvor_agent label is laid by cream before the install
-# hook (spec cream §6.5): the render teleport-apps.path ran then skipped the
-# command, the binary was not there yet. Now it is: render + reload (HUP, no
-# restart) through teleport-apps.service, without waiting (cream convention).
-# Its ConditionPathExists=/etc/teleport.yaml makes it a no-op before join.
-sa_reload_labels(){
-    if [[ "${CREAM_PHASE:-live}" == build || ! -d "${CREAM_ROOT%/}/run/systemd/system" ]]; then
-        return 0
-    fi
-    sa_run systemctl --no-block start teleport-apps.service \
-        || sa_log "ВНИМАНИЕ: teleport-apps.service не запущен — метка stvor_agent появится при следующем render teleport"
-    return 0
-}
+# hook (spec cream §6.5). teleport >= 4.0.2 keeps a command that does not exist
+# yet in its config, and its reload-apps (teleport-apps.path) is the one
+# serialized point that applies the change — nothing to trigger from here.
 
 # hooks/remove: the agent forgets its token and stops, then the package goes.
 sa_hook_remove(){

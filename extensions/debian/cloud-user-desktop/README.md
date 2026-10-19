@@ -2,43 +2,44 @@
 
 Для **вендорского** рабочего стола — такого, который пришёл в базовом образе,
 а не расширением `gnome`/`xfce4`/`lxde` (Jetson Nano от Q-engineering,
-Raspberry Pi OS): убирает вендорскую учётку и ставит ручки рабочего стола
-`bisquite-desktop`, чтобы автологин и группы достались пользователю cloud-init.
+Raspberry Pi OS): убирает вендорскую учётку и приводит ручки рабочего стола
+(расширение `desktop`), чтобы автологин и группы достались пользователю cloud-init.
 
-> **С 4.0.0 — раскладка 2.** Каталог расширения в госте — `/opt/bisquite/cloud-user-desktop/`
-> (был `/opt/vmsetup/cloud-user-desktop/`); CLI `bisquite-desktop` ставится ссылкой
-> `/usr/local/sbin/bisquite-desktop` →
-> `/opt/bisquite/cloud-user-desktop/lib/bisquite-desktop` из общего `lib/` источника, а не
-> копией; прежний `/usr/local/lib/bisquite-desktop` установка удаляет.
-> Нужен bisquite с поддержкой `layout: 2`.
+> **5.0.0 — cream/v1.** Хуки `install` и `remove`; своей службы нет. Ручки
+> рабочего стола — расширение `desktop` (`depends`), а не копия общего кода:
+> его `configure` на каждой загрузке до менеджера входа вносит пользователя
+> cloud-init в группы сеанса и пишет автологин. Удаление учётки строже прежнего:
+> только обычная учётка (uid ≥ 1000), имя проверяется по форме, а учётка,
+> пережившая `userdel`, — **отказ** хука, а не предупреждение.
 
-> **С 4.1.0 — библиотека настроек.** Ручки — домен `desktop` библиотеки
-> `bisquite-conf` (схема `lib/knobs/desktop` источника): значения проверяет
-> схема, запись атомарная, повторная установка правок не стирает.
-> `bisquite-desktop set` — то же, что `sudo bisquite-conf set --apply desktop`,
-> а `bisquite-conf show desktop` показывает ключи с умолчаниями.
-
-**С 3.0.0 файл ручек — `/etc/bisquite/desktop/config`** (был
-`/etc/default/bisquite-desktop`). Прежний путь не читается; если файл
-по нему остался в базовом образе, установка его удаляет.
-
-**С 2.0.0 автологин по умолчанию выключен**, а своей службы первой загрузки
-у расширения нет: группы и автологин делает общая `bisquite-desktop.service`
-до менеджера входа. Разбор ручек —
-[`docs/extensions.md`, «Ручки рабочего стола»](../../../docs/extensions.md#ручки-рабочего-стола).
-
-С расширением `gnome`/`xfce4`/`lxde` это расширение не нужно: они ставят
-те же ручки сами.
+С расширением `gnome`/`xfce4`/`lxde` это расширение не нужно: они тянут `desktop` сами.
 
 ## Манифест
 
 | Поле | Значение |
 |---|---|
-| `phase` | `build`, `firstboot` (`bisquite-desktop.service`) |
-| `arch` | `amd64`, `arm64` |
+| `platform.arch` | `amd64`, `arm64` |
+| `targets` | `build: exec`, `live: yes` |
 | `provides` | `cloud-user-desktop` |
-| `requires` | пусто — ручки правят конфиг того менеджера входа, который найдут |
-| `conflicts` | пусто |
+| `depends` | `desktop` (ручки), `cloud-user` (библиотека: пользователь cloud-init) |
+| хуки | `install`, `remove` |
+
+## Подключение
+
+```vmfile
+EXTENSION cloud-user-desktop CLOUD_USER_DESKTOP_REMOVE=jetson
+```
+
+На живой машине — `sudo cream install cloud-user-desktop CLOUD_USER_DESKTOP_REMOVE=jetson`;
+ручки — `sudo cream set desktop DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_LOCK=1
+DESKTOP_DISABLE_SCREEN_BLANK=1` (`cream show desktop`).
+
+## Параметры
+
+| Ключ | Умолчание | Что делает |
+|---|---|---|
+| `CLOUD_USER_DESKTOP_REMOVE` (`scope: install`) | пусто | вендорская учётка, которую удалить вместе с домашним каталогом; только `[a-z_][a-z0-9_-]*` и uid ≥ 1000 |
+| `DESKTOP_*` | см. `desktop` | ручки рабочего стола — домен расширения `desktop` |
 
 ## Зачем
 
@@ -51,29 +52,15 @@ Raspberry Pi OS): убирает вендорскую учётку и стави
 
 ## Что делает
 
-**Сборка:**
-
-- удаляет вендорскую учётку вместе с домашним каталогом, если задано её имя.
-  **На сборке, а не на первой загрузке**: иначе образ до первой загрузки возит
-  пользователя с известным паролем;
-- ставит `bisquite-desktop`. Вендорский автологин на удалённую учётку гасится
-  первым же применением ручек.
-
-**Каждая загрузка** (`bisquite-desktop.service`, до менеджера входа): вносит
-пользователя cloud-init в `video render audio pulse input dialout plugdev`
-и применяет ручки.
-
-## Параметры
-
-| Переменная | Умолчание | Что делает |
-|---|---|---|
-| `CLOUD_USER_DESKTOP_REMOVE` | пусто | имя вендорской учётки, которую удалить на сборке |
-| `DESKTOP_AUTOLOGIN` и остальные `DESKTOP_*` | `0` | ручки, как у `gnome` |
-
-```vmfile
-EXTENSION cloud-user-desktop CLOUD_USER_DESKTOP_REMOVE=jetson
-FIRSTBOOT_COMMAND "bisquite-desktop set DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_LOCK=1 DESKTOP_DISABLE_SCREEN_BLANK=1"
-```
+- **`install`** удаляет вендорскую учётку вместе с домашним каталогом, если задано
+  её имя. **На сборке, а не на первой загрузке**: иначе образ до первой загрузки
+  возит пользователя с известным паролем. Учётки нет — 0 (повтор ничего не делает);
+  root и системные учётки (uid < 1000) — отказ; `userdel -r` отказал — повтор без
+  домашнего каталога; учётка осталась (занята процессом или сессией) — отказ.
+- **Вендорский автологин** на удалённую учётку гасит `configure` расширения
+  `desktop` первым же запуском (по умолчанию `DESKTOP_AUTOLOGIN=0`), до менеджера входа.
+- **`remove`** ничего не возвращает: удалённая учётка не восстанавливается (смысл
+  был в её пароле), ручки принадлежат `desktop`.
 
 ## Цена, названная прямо
 
@@ -86,15 +73,16 @@ FIRSTBOOT_COMMAND "bisquite-desktop set DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCRE
 
 Xorg сессии автологина запускается от имени пользователя, и без `video` он
 не открывает GPU: `NVIDIA(GPU-0): Failed to initialize the NVIDIA graphics
-device!`, `gdm3: GdmDisplay: Session never registered, failing`. Экран входа
-при этом жив — сам gdm в `video` состоит, — и это сбивает с толку.
+device!`, `gdm3: GdmDisplay: Session never registered, failing`. Прежде группы
+вносила служба этого расширения после `cloud-final`, то есть после старта
+менеджера входа; на первой загрузке AGX Orin 2026-09-14 это проиграло (52 падения
+Xorg). Теперь это `configure` расширения `desktop` — стадия `system` до менеджера входа.
 
-Прежде группы вносила служба этого расширения после `cloud-final`, то есть
-после старта менеджера входа, и надеялась на перезапуск. На первой загрузке
-AGX Orin 2026-09-14 это проиграло: 52 падения Xorg и экран входа. Теперь
-группы вносятся до менеджера, и гонки нет.
+## Проверки
 
-## Не проверено
-
-На Jetson Nano с новым механизмом не собиралось и не загружалось — платы
-на стенде нет.
+- **V** — `make cream-validate`, `tools/lint-hooks.sh`, `tools/check-names.sh`.
+- **H** — `tests/test-cloud-user-desktop.sh`: удаление по имени, повтор, запасной
+  `userdel` без `-r`, отказ на занятой, системной учётке и на имени чужой формы.
+- **L** — `make test-live EXT=cloud-user-desktop` поверх `xfce4` (`tests/live.env`):
+  вендорской учётки в контейнере нет, проверяются установка, повтор, загрузка и `remove`.
+- **P** — на Jetson Nano с вендорским образом не собиралось: платы на стенде нет.

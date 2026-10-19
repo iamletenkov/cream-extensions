@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# cream run firewall status: the backend applied and the one apply would pick
+# now, the settings, our table/chains as loaded in the kernel. Reads only.
+set -euo pipefail
+exec "${CREAM_EXT_DIR:-$(dirname "$0")/..}/firewall.sh" show

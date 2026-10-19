@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+# cream hook `install` of jetson-stats: jtop — the monitor of NVIDIA Jetson
+# (CPU, GPU, memory, power, temperatures, fan) — and its system service
+# jtop.service. Paths of the machine go under $CREAM_ROOT (hooktest).
+#
+# WHY pip, NOT apt. jetson-stats exists only on PyPI; upstream documents one
+# way: `sudo pip3 install -U jetson-stats`. Here pip runs as root into the
+# system prefix with constraints.txt (pinned versions), HOME in a temporary
+# directory, no pip configuration (PIP_CONFIG_FILE=/dev/null), no --user and no
+# user site: nothing lands in root's home. What pip put on is recorded in
+# $CREAM_STATE_DIR/pip for `remove`.
+#
+# WHY THE SERVICE IS INSTALLED SEPARATELY. jtop is a client of a daemon behind
+# /run/jtop.sock. Up to 4.3.2 (sdist only) setup.py installed jtop.service
+# itself; since 7.2.0 PyPI has a wheel, pip prefers it, and a wheel never runs
+# build_py — no unit. So the fact (is there a unit file) is checked, not the
+# version: the unit of pip, then `jtop --install-service`, then the template of
+# the package data, then a unit written here (taken from a working Jetson Nano,
+# jtop 7.2.1, 2026-09-03). A unit we wrote is recorded for remove.
+#
+# Not a Jetson (no /etc/nv_tegra_release) — code 20 (ruling R11).
+set -euo pipefail
+
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+log_info(){ >&2 echo -e "${GREEN}[INFO]${NC} jetson-stats: $*"; }
+log_warn(){ >&2 echo -e "${YELLOW}[WARN]${NC} jetson-stats: $*"; }
+log_error(){ >&2 echo -e "${RED}[ERROR]${NC} jetson-stats: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+EXT_DIR="${CREAM_EXT_DIR:?run by cream}"
+STATE_DIR="${CREAM_STATE_DIR:?run by cream}"
+UNIT="$R/etc/systemd/system/jtop.service"
+VERSION="${JETSON_STATS_VERSION:-}"
+
+if [[ ! -f "$R/etc/nv_tegra_release" ]]; then
+    log_error "нет /etc/nv_tegra_release — это не NVIDIA Jetson (L4T): jtop здесь бесполезен"
+    exit 20
+fi
+if [[ -n "$VERSION" && ! "$VERSION" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){1,3}$ ]]; then
+    log_error "JETSON_STATS_VERSION=$(printf '%q' "$VERSION"): ожидали версию X.Y[.Z]"
+    exit 1
+fi
+log_info "L4T: $(head -n 1 "$R/etc/nv_tegra_release" | cat -v)"
+
+# record FILE NAME…: append names to a state file once (the first record wins).
+record(){
+    local f="$STATE_DIR/$1"; shift
+    (( $# )) || return 0
+    [[ -s "$f" ]] && return 0
+    install -d -m 0755 "$STATE_DIR"
+    printf '%s\n' "$@" > "$f"
+}
+is_installed(){ [[ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null || true)" == installed ]]; }
+
+# --- apt: pip itself ----------------------------------------------------------
+missing=()
+for p in python3-pip python3-setuptools; do is_installed "$p" || missing+=("$p"); done
+if (( ${#missing[@]} )); then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get -q -y update || { log_error "apt-get update не прошёл"; exit 1; }
+    apt-get -q -y install --no-install-recommends "${missing[@]}" || { log_error "apt: ${missing[*]} не встали"; exit 1; }
+    record packages "${missing[@]}"
+fi
+
+# --- pip ----------------------------------------------------------------------
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/jetson-stats.XXXXXX")"
+trap 'rm -r -f -- "$WORK"' EXIT
+mkdir -m 0700 "$WORK/home"
+PIP_ENV=(env HOME="$WORK/home" PIP_CONFIG_FILE=/dev/null PIP_NO_CACHE_DIR=1 PIP_USER=0
+    PIP_DISABLE_PIP_VERSION_CHECK=1 PYTHONNOUSERSITE=1)
+constraints="$EXT_DIR/constraints.txt"
+spec=jetson-stats
+if [[ -n "$VERSION" ]]; then
+    # The version of the key wins over the pin: the pin lines of jetson-stats go.
+    grep -v '^jetson-stats==' "$EXT_DIR/constraints.txt" > "$WORK/constraints.txt"
+    constraints="$WORK/constraints.txt"
+    spec="jetson-stats==$VERSION"
+fi
+pip_flags=()
+# PEP 668: the system interpreter of Ubuntu 24.04+ is "externally managed".
+if compgen -G "$R/usr/lib/python3*/EXTERNALLY-MANAGED" >/dev/null; then
+    pip_flags+=(--break-system-packages)
+fi
+pip_names(){ "${PIP_ENV[@]}" python3 -m pip list --format=freeze 2>/dev/null | sed -n 's/==.*//p' | sort -u; }
+
+pip_names > "$WORK/before"
+ok=""
+for attempt in 1 2 3; do
+    if "${PIP_ENV[@]}" python3 -m pip install --no-cache-dir --constraint "$constraints" \
+            "${pip_flags[@]+"${pip_flags[@]}"}" "$spec"; then
+        ok=1; break
+    fi
+    log_warn "pip не отработал (попытка $attempt/3)"
+    sleep $(( attempt * 2 ))
+done
+pip_names > "$WORK/after"
+mapfile -t added < <(comm -13 "$WORK/before" "$WORK/after")
+record pip "${added[@]}"
+[[ -n "$ok" ]] || { log_error "pip не поставил $spec"; exit 1; }
+
+# --- jtop.service -------------------------------------------------------------
+if [[ ! -f "$UNIT" ]]; then
+    log_info "юнита нет (установка из колеса) — зову jtop --install-service"
+    "${PIP_ENV[@]}" jtop --install-service || log_warn "jtop --install-service отработал с ошибкой"
+fi
+put_unit(){
+    local tmp
+    install -d -m 0755 "${UNIT%/*}"
+    tmp="$(mktemp "${UNIT%/*}/.jtop.service.XXXXXX")"
+    cat > "$tmp"
+    chmod 0644 "$tmp"
+    mv -f -T -- "$tmp" "$UNIT"
+    : > "$STATE_DIR/unit-ours"
+}
+if [[ ! -f "$UNIT" ]]; then
+    for candidate in "$R/usr/local/share/jetson_stats/jtop.service" "$R/usr/share/jetson_stats/jtop.service"; do
+        if [[ -f "$candidate" && ! -L "$candidate" ]]; then
+            put_unit < "$candidate"
+            log_warn "юнит скопирован из ${candidate#"$R"}"
+            break
+        fi
+    done
+fi
+if [[ ! -f "$UNIT" ]]; then
+    jtop_bin="$(command -v jtop || true)"
+    if [[ ! "$jtop_bin" =~ ^/[A-Za-z0-9/._-]+$ ]]; then
+        log_error "jtop не найден в PATH после установки — юнит писать не на что"
+        exit 1
+    fi
+    put_unit <<UNITEOF
+[Unit]
+Description=Jetson Stats (jtop service)
+After=network.target
+
+[Service]
+Environment="JTOP_SERVICE=True"
+ExecStart=${jtop_bin} --force
+Restart=on-failure
+RestartSec=10s
+TimeoutStartSec=30s
+TimeoutStopSec=30s
+
+[Install]
+WantedBy=multi-user.target
+UNITEOF
+    log_warn "юнит написан расширением: колесо пакета его не несёт"
+fi
+
+# The socket /run/jtop.sock is 0660 root:jtop; the service refuses to start
+# without the group ("Group jtop does not exist!").
+if ! getent group jtop >/dev/null 2>&1; then
+    groupadd jtop
+    log_info "группа jtop заведена"
+fi
+systemctl enable jtop.service
+log_info "jtop установлен, jtop.service включён; пользователя внесёт в группу configure"

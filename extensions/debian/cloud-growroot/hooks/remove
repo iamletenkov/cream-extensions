@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# cream hook `remove` of cloud-growroot: takes out of cloud_init_modules exactly
+# the modules this extension's install inserted ($CREAM_STATE_DIR/inserted) and
+# drops the backup cloud.cfg.before-growroot. Modules that were listed before
+# cream (stock Ubuntu) stay. Not the backup copied back: edits made to
+# cloud.cfg after the install would be lost with it.
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] cloud-growroot: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+CFG="$R/etc/cloud/cloud.cfg"
+STATE="${CREAM_STATE_DIR:?run by cream}/inserted"
+
+if [[ ! -s "$STATE" ]]; then
+    log_info "модули вписывало не это расширение — cloud.cfg не трогаю"
+    rm -f -- "$STATE"
+    exit 0
+fi
+
+if [[ -f "$CFG" ]]; then
+    awk -v drop="$(tr '\n' ' ' < "$STATE")" '
+      BEGIN { n = split(drop, d, " "); for (i = 1; i <= n; i++) gone[d[i]] = 1 }
+      /^cloud_init_modules:/ { in_list = 1 }
+      in_list && /^[^ \t-]/ && !/^cloud_init_modules:/ { in_list = 0 }
+      in_list && /^[ \t]*-[ \t]*[a-z_-]+[ \t]*$/ {
+          item = $0; sub(/^[ \t]*-[ \t]*/, "", item); sub(/[ \t]*$/, "", item)
+          if (item in gone) next
+      }
+      { print }
+    ' "$CFG" > "$CFG.new"
+    mv "$CFG.new" "$CFG"
+    log_info "из cloud_init_modules сняты: $(tr '\n' ' ' < "$STATE")"
+fi
+rm -f -- "$CFG.before-growroot" "$STATE"

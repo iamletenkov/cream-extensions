@@ -1,26 +1,48 @@
-name: docker
-version: 3.0.0
-layout: 2
-family: deb
-# Репозиторий Docker публикует binary-amd64 и binary-arm64 для всех целевых
-# сюит. binary-armhf там тоже есть, но проект его не собирает.
-arch: [amd64, arm64]
-# build     — install.sh прописывает apt-репозиторий Docker и ставит пять
-#             пакетов; на Jetson подключает среду выполнения NVIDIA;
-# firstboot — configure-docker.service добавляет пользователя cloud-init
-#             в группу docker (имя пользователя при сборке неизвестно),
-#             на Raspberry Pi правит cmdline.txt и, на Jetson, перезапускает
-#             демон под NVIDIA.
+# docker — Docker CE from Docker's own apt repository (download.docker.com).
+# One path, not two: get.docker.com installs from the same repository (README,
+# "Почему один путь, а не два"); the five package names are the same on every
+# Debian/Ubuntu target, the branches are hardware traits (Pi, Jetson).
 #
-# Правка cmdline.txt стоит в firstboot, а не в build, и это замер, а не вкус:
-# внутри virt-customize каталог /boot/firmware ПУСТ (2026-09-03, сборка
-# raspios-trixie), поэтому в фазе сборки файл не находился никогда и ветка
-# «не Raspberry Pi» выбиралась молча. Разбор — install.sh:152-160 и
-# README.md, раздел «Почему правка cmdline.txt в фазе первой загрузки».
-phase: [build, firstboot]
+# install   — removes the competing packages (docker.io & co.), adds the
+#             repository (deb822) and installs the five packages; on Jetson the
+#             NVIDIA runtime (nvidia-container-toolkit + nvidia-ctk).
+# configure — every boot, stage system after docker.service: the cloud-init
+#             user joins group docker (the name is unknown at build time), on a
+#             Raspberry Pi cgroup_enable=memory in cmdline.txt (code 10 — the
+#             FAT partition is not mounted inside virt-customize), on Jetson a
+#             restart of dockerd when daemon.json changed.
+# files     — the iptables-raw check before each dockerd start and its drop-in.
+schema: cream/v1
+name: docker
+version: 4.0.0
+summary: Docker CE из официального apt-репозитория Docker (download.docker.com)
+cream: ">=1.0.0"
+platform:
+  family: deb
+  # The repository publishes binary-amd64 and binary-arm64 for every target
+  # suite; binary-armhf exists too, but the project does not build it.
+  arch: [amd64, arm64]
+  os: [{id: debian}, {id: ubuntu}]
+targets:
+  build: exec
+  live: confirm
+  live_note: >-
+    снимает конкурирующие пакеты, если стоят: docker.io, docker-cli, docker-compose,
+    docker-compose-v2, docker-doc, docker-buildx, podman-docker, containerd, runc —
+    их контейнеры останавливаются, обратно remove их не ставит; пользователь cloud-init
+    получает группу docker (равносильно root); на Raspberry Pi правит cmdline.txt
+    (нужна перезагрузка); на Jetson перезапускает dockerd под среду выполнения NVIDIA
 provides: [container-runtime]
-requires: []
-# Слито с бывшим docker-ce (2026-09-03): противопоставление «скрипт против
-# репозитория» оказалось мнимым — get.docker.com ставит из того же
-# download.docker.com. Конфликтовать больше не с кем.
-conflicts: []
+depends:
+  - {name: cloud-user, version: ">=1.0.0 <2"}
+hooks:
+  install: {timeout: 30m}
+  # After docker.service: the group exists (postinst) and a restart for the
+  # NVIDIA runtime sees the daemon. No After=cloud-final: stage system is wanted
+  # by multi-user.target, and cloud-final is After=multi-user — a cycle (README).
+  configure: {stage: system, after: [docker.service], timeout: 5m}
+  remove: {timeout: 15m}
+files:
+  - {src: files/docker-iptables-raw-check, dst: /usr/local/libexec/docker-iptables-raw-check, mode: "0755"}
+  - {src: files/10-docker-iptables-raw.conf,
+     dst: /etc/systemd/system/docker.service.d/10-docker-iptables-raw.conf, mode: "0644"}

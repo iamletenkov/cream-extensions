@@ -3,15 +3,21 @@
 OpenCV 4.8.0 для Jetson из репозитория NVIDIA: `cv2` с бэкендом
 GStreamer, FFmpeg и V4L2. **Без CUDA.**
 
-> **С 1.1.0 — раскладка 2.** Манифест объявляет `layout: 2`: каталог расширения
-> в госте — `/opt/bisquite/l4t-opencv/` (был `/opt/vmsetup/l4t-opencv/`). Путей гостя
-> расширение не прибивает, поэтому версия минорная; нужен bisquite
-> с поддержкой `layout: 2`.
+```
+EXTENSION l4t-opencv          # образ bisquite (основной путь)
+sudo cream install l4t-opencv # живая плата Jetson; библиотеку l4t cream ставит по depends
+sudo cream remove l4t-opencv
+```
+
+> **2.0.0 — cream/v1.** `install.sh` стал хуком `hooks/install`, появился хук `remove`;
+> `live: yes`. Каталог в госте — `/opt/cream/ext/l4t-opencv/`. Общий код L4T — библиотека [`l4t`](../l4t/README.md) (`depends: l4t >=1.0.0 <2`) вместо общего L4T-файла из `lib/` layout 2.
+> Нет `/etc/nv_tegra_release` (не Jetson) — код **20** до apt (рулинг Р11), а не
+> отказ 1. Настроек нет.
 
 ## Ветка R32 (Jetson Nano, JetPack 4.6) — с 1.2.0
 
 Ветка выбирается по первой строке `/etc/nv_tegra_release` (`# R32 …`),
-разбор общий — `lib/l4t` источника. Поведение на r36 не меняется.
+разбор общий — `l4t_major` библиотеки `l4t` (файл читается как данные).
 
 В образе Q-engineering OpenCV 4.8.0 уже собран — **с CUDA 10.2** и GStreamer
 1.16.3. Ничего не ставится; проверяется `import cv2` и строки
@@ -30,17 +36,18 @@ instruction` (замер на Nano: rc=132). Вендорский образ э�
 импорт без переменной, на сборке не проверить: appliance видит CPU машины
 сборки (на AGX — Cortex-A78AE).
 
-Проверено на живом Nano (L4T R32.6.1, 2026-09-15) прогоном `install.sh` на работающей системе.
+Проверено на живом Nano (L4T R32.6.1, 2026-09-15) прогоном установки (1.2.0) на работающей системе.
 
 ## Манифест
 
 | Поле | Значение |
 |---|---|
-| `phase` | `build` |
-| `arch` | `arm64` |
+| `targets` | `build: exec`, `live: yes` |
+| `platform.arch` | `arm64` |
 | `provides` | `opencv` |
-| `requires` | пусто (аппаратный путь с камер даёт `l4t-gstreamer`, но импорту он не нужен) |
-| `conflicts` | пусто |
+| `depends` | `l4t >=1.0.0 <2` (библиотека) |
+| `requires` | нет (аппаратный путь с камер даёт `l4t-gstreamer`, но импорту он не нужен) |
+| `hooks` | `install` (30 мин), `remove` |
 
 ## Что ставится
 
@@ -88,3 +95,38 @@ PyTorch. Если нужны именно GPU-операции над изобр
 `libopencv-dev` от NVIDIA поставить нельзя: он объявлен `Conflicts`
 с убунтовским, и apt снёс бы вместе с ним `libgstreamer-plugins-bad1.0-dev`
 (симуляция удаляла 19 пакетов `-dev`).
+
+## Что снимает `remove`
+
+`install` записывает в `/var/lib/cream/ext/l4t-opencv/packages` только пакеты,
+которых до него не было; повтор (`--reinstall`) запись не меняет. `remove` сначала
+спрашивает apt в режиме симуляции: если вместе со своими пакетами apt снял бы и
+чужие, хук отказывает и ничего не меняет — снимите руками или
+`cream remove --forget l4t-opencv`. Иначе — `apt-get remove` своих пакетов.
+
+На R32 (отметка `openblas`) снимается drop-in `/etc/systemd/system.conf.d/l4t-opencv.conf`,
+а строка `OPENBLAS_CORETYPE=ARMV8` в `/etc/environment` — только если её больше не
+несёт ни один drop-in (`l4t-pytorch`); символическая ссылка на месте
+`/etc/environment` не трогается.
+
+## Коды выхода `install`
+
+| Код | Когда |
+|---|---|
+| 0 | поставлено (R36) или `cv2` образа на месте (R32) |
+| 1 | нет библиотеки `l4t`, apt не прошёл, `import cv2` не прошёл, `cv2` без GStreamer; R32 — без CUDA или импорт с окружением из файлов не прошёл |
+| 20 | нет `/etc/nv_tegra_release` — не Jetson, ставить неоткуда (до apt) |
+
+## Проверки
+
+- **V** — `make cream-validate`, `tools/check-names.sh`.
+- **H** — `tests/test-l4t-opencv.sh`: код 20 без L4T, отказ без библиотеки, R36
+  (пакеты, повтор, отказы импорта и GStreamer), R32 (закрепление и проверка с
+  окружением из файлов — заглушка `cv2` через `PYTHONPATH` из файлов корня; без CUDA;
+  без `cv2`), `remove` (чужой пакет, повтор, отказ при чужих зависимых, снятие
+  OPENBLAS при `l4t-pytorch` и при ссылке).
+- **P — ожидает.** Платы Jetson в CI нет: установка на живой плате (R36 — AGX Orin, R32 — Nano) через
+  `cream install` или сборка образа через bisquite проверяются вручную после плана
+  bisquite (Task 23 плана 2026-10-19 cream-v1-migration).
+- **L** — не нужен: в контейнере нет `/etc/nv_tegra_release`, ответ — код 20, его
+  проверяет H.

@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# cream hook `remove` of l4t-tensorflow: takes away what `install` recorded in
+# $CREAM_STATE_DIR —
+#   pip         pip distributions it put into /usr/local; one another still
+#               needs (numpy and scipy of l4t-pytorch) stays (pip-owned.py);
+#   packages    apt packages it put on; cuDNN and python3-pip stay while
+#               torch is installed in /usr/local.
+# apt is asked first in simulation: when it would take away anything besides
+# our packages the hook refuses before changing anything. Things there before
+# cream stay. A repeat finds nothing and exits 0.
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] l4t-tensorflow: $*"; }
+log_error(){ >&2 echo "[ERROR] l4t-tensorflow: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}"
+EXT_DIR="${CREAM_EXT_DIR:?run by cream}"
+SHARED=(libcudnn9-cuda-12 python3-pip)   # also what l4t-pytorch runs on
+OTHER=torch
+
+export DEBIAN_FRONTEND=noninteractive
+
+lines(){ if [[ -f "$1" && ! -L "$1" ]]; then sed '/^$/d' "$1"; fi; }
+
+# --- apt: what goes, checked before anything changes ---------------------------
+ours=()
+mapfile -t recorded < <(lines "$STATE/packages")
+other_here=""
+if (( ${#recorded[@]} )) && python3 "$EXT_DIR/pip-owned.py" has "$OTHER"; then
+    other_here=1
+fi
+for p in "${recorded[@]}"; do
+    keep=""
+    if [[ -n "$other_here" ]]; then
+        for s in "${SHARED[@]}"; do [[ "$p" == "$s" ]] && keep=1; done
+    fi
+    if [[ -n "$keep" ]]; then
+        log_info "$p нужен $OTHER — остаётся"
+    else
+        ours+=("$p")
+    fi
+done
+if (( ${#ours[@]} )); then
+    sim="$(apt-get -s remove "${ours[@]}")" || { log_error "apt-get -s remove ${ours[*]} не прошёл"; exit 1; }
+    extra=()
+    while read -r verb pkg _; do
+        [[ "$verb" == Remv ]] || continue
+        mine=""
+        for p in "${ours[@]}"; do [[ "$p" == "$pkg" ]] && mine=1; done
+        [[ -n "$mine" ]] || extra+=("$pkg")
+    done <<< "$sim"
+    if (( ${#extra[@]} )); then
+        log_error "вместе с ${ours[*]} apt снял бы и чужие пакеты: ${extra[*]}"
+        log_error "сними руками или забудь запись: cream remove --forget l4t-tensorflow"
+        exit 1
+    fi
+fi
+
+# --- pip ------------------------------------------------------------------------
+if [[ -s "$STATE/pip" && ! -L "$STATE/pip" ]]; then
+    mapfile -t go < <(python3 "$EXT_DIR/pip-owned.py" removable "$STATE/pip")
+    if (( ${#go[@]} )); then
+        install -d -m 0755 "$R/var/tmp"
+        home="$(mktemp -d "$R/var/tmp/l4t-tensorflow.XXXXXX")"
+        # shellcheck disable=SC2064  # expand now: the path is fixed
+        trap "rm -r -f -- '$home'" EXIT
+        env HOME="$home" PIP_CONFIG_FILE=/dev/null PIP_NO_CACHE_DIR=1 PIP_USER=0 \
+            PIP_DISABLE_PIP_VERSION_CHECK=1 PYTHONNOUSERSITE=1 \
+            python3 -m pip uninstall -y "${go[@]}" || { log_error "pip uninstall ${go[*]} не прошёл"; exit 1; }
+        log_info "pip: удалены ${go[*]}"
+    fi
+fi
+rm -f -- "$STATE/pip"
+
+# --- apt ------------------------------------------------------------------------
+if (( ${#ours[@]} )); then
+    apt-get -q -y remove "${ours[@]}" || { log_error "apt-get remove ${ours[*]} не прошёл"; exit 1; }
+    log_info "apt: удалены ${ours[*]}"
+fi
+rm -f -- "$STATE/packages"

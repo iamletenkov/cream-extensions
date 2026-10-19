@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# cream hook `remove` of btop: takes away what `install` put on, by the record
+# in $CREAM_STATE_DIR/method — the apt package it installed, or the static
+# /usr/local/bin/btop. A package that was there before cream stays. Without a
+# record there is nothing of ours: 0.
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] btop: $*"; }
+log_error(){ >&2 echo "[ERROR] btop: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}/method"
+method="$(cat "$STATE" 2>/dev/null || true)"
+
+case "$method" in
+    apt)
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get remove -q -y btop || { log_error "apt-get remove btop не прошёл"; exit 1; }
+        log_info "пакет btop удалён"
+        ;;
+    static)
+        rm -f -- "$R/usr/local/bin/btop"
+        log_info "/usr/local/bin/btop удалён"
+        ;;
+    preexisting)
+        log_info "пакет btop стоял до cream — оставлен"
+        ;;
+    *)
+        log_info "записи об установке нет — удалять нечего"
+        ;;
+esac
+rm -f -- "$STATE"

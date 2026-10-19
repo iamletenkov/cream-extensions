@@ -13,15 +13,30 @@
 `CONFIG_CAN_PEAK_USB` и `CONFIG_CAN_SLCAN` не заданы, и ни один пакет
 их не приносит. Это расширение собирает три модуля при сборке образа.
 
+> **2.0.0 — cream/v1.** `install.sh` стал хуком `hooks/install`, появился хук
+> `remove`; `live: confirm` (живая плата — с подтверждением). Каталог в госте —
+> `/opt/cream/ext/can-usb/` (`canusb.sh`, `Kbuild` — в дереве расширения). Нет
+> `/etc/nv_tegra_release` — код **20** (рулинг Р11); модули поставлены или изменились —
+> **10** (перезагрузка), повтор без изменений — 0. Сборка — во временном каталоге под
+> `/var/tmp`, модули пишутся через временный файл и переименование. Версия
+> `nvidia-l4t-kernel` из dpkg сверяется с алфавитом версий Debian, прежде чем попасть
+> в аргументы apt. Ключей нет.
+
+```
+EXTENSION can-usb                       # образ bisquite, после sensing-gmsl2-camera
+sudo cream install --accept-risk can-usb   # живая плата (live: confirm), код 10
+sudo cream remove can-usb
+```
+
 ## Манифест
 
 | Поле | Значение |
 |---|---|
-| `phase` | `build` |
-| `arch` | `arm64` |
+| `targets` | `build: exec`, `live: confirm` |
+| `platform.arch` | `arm64` |
 | `provides` | `can-usb-adapters` |
 | `requires` | `gmsl2-camera` — ядро Sensing кладёт `sensing-gmsl2-camera` |
-| `conflicts` | пусто |
+| `hooks` | `install` (90 мин), `remove` |
 
 ## Подключение
 
@@ -71,10 +86,10 @@ Sensing публикует ядро только бинарём (`boot/Image` в
   и `peak_usb`, с ядром Sensing и так работает (на нём живёт `mttcan`).
 
 Чтобы этот вывод не устарел молча, сборка привязана к сверенной паре
-закреплёнными суммами в `install.sh`: sha256 `/boot/Image` Sensing, sha256
+закреплёнными суммами в `hooks/install`: sha256 `/boot/Image` Sensing, sha256
 `.config` и `Module.symvers` заголовков и sha256 `public_sources.tbz2`.
 
-## Что делает (фаза build)
+## Что делает (`install`)
 
 1. **Барьеры до сети.** `/etc/nv_tegra_release` — ровно 36.4.3; есть
    `/boot/dtb/kernel_tegra234-p3737-0000+p3701-0000-nv.dtb` (AGX Orin
@@ -135,7 +150,7 @@ sudo slcand -o -c -s6 /dev/ttyACM0 slcan0 && sudo ip link set slcan0 up
 - **Обновление ядра запрещено hold'ом.** `sensing-gmsl2-camera` закрепляет
   пакеты ядра L4T (`apt-mark hold`), `apt upgrade` их не тронет. Смена ядра
   (новая сборка Sensing, другой L4T) — **пересборка образа** с новыми
-  суммами в `install.sh` и новой сверкой конфигов на плате; модули под старое
+  суммами в `hooks/install` и новой сверкой конфигов на плате; модули под старое
   ядро в новое не загрузятся.
 - **Модули не подписаны.** Ядро собрано с `CONFIG_MODULE_SIG=y` без
   `CONFIG_MODULE_SIG_FORCE`: неподписанный модуль грузится, ядро помечается
@@ -148,3 +163,31 @@ sudo slcand -o -c -s6 /dev/ttyACM0 slcan0 && sudo ip link set slcan0 up
   vermagic компилятора не содержит, суммы символов от него не зависят.
 - **Сборке нужна сеть** до `developer.nvidia.com` (исходники) и, если
   инструментов нет, до зеркала Ubuntu.
+
+## Как снять
+
+`install` записывает в `/var/lib/cream/ext/can-usb/` только своё: `packages` — пакеты,
+которых не было (заголовки, инструменты сборки), `held` — закрепление
+`nvidia-l4t-kernel-headers`, если поставил его сам. `sudo cream remove can-usb`
+сначала спрашивает apt в режиме симуляции (снял бы чужие пакеты — отказ до любых
+изменений; тогда руками и `sudo cream remove --forget can-usb`), затем убирает
+`gs_usb.ko`, `peak_usb.ko`, `slcan.ko` из `updates/can-usb` (`depmod`; загруженный
+модуль живёт до отключения адаптера или перезагрузки), снимает **своё** закрепление —
+кроме стоявшего до cream или записанного другим расширением
+(`/var/lib/cream/ext/*/held`, например `sensing-gmsl2-camera`) — и удаляет свои пакеты.
+`sensing-gmsl2-camera` не снимается, пока модули `can-usb` лежат под ядром Sensing.
+
+## Проверки
+
+- **V** — `make cream-validate`, `tools/check-names.sh`.
+- **H** — `tests/test-can-usb.sh`: порт прежнего теста функций `canusb.sh` (барьеры,
+  потоковое скачивание со сверкой, раскладка, vermagic, установка с depmod,
+  закрепления и порядок шагов `hooks/install`), манифест, `install` на подменённом
+  корне (20, штатное ядро до сети, сборка — 10, повтор — 0, заголовки и инструменты из
+  apt с записью, версия с чужими символами, сбой скачивания), `remove` (модули,
+  закрепление, пакеты, чужое закрепление остаётся, отказ при чужих зависимых).
+- **P — ожидает.** Плата AGX Orin с ядром Sensing: сборка образа через bisquite после
+  плана bisquite и `modinfo -n gs_usb peak_usb slcan` на устройстве (Task 26 плана
+  2026-10-19 cream-v1-migration).
+- **L** — не нужен: в контейнере нет `/etc/nv_tegra_release`, ответ — код 20, его
+  проверяет H.

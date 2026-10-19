@@ -1,0 +1,9 @@
+# Constraints of the pip install of jetson-stats (hooks/install, --constraint).
+# jetson-stats 7.x needs Python >= 3.7 (L4T R35/R36, Ubuntu 20.04+); on L4T R32
+# (Ubuntu 18.04, Python 3.6) the last fitting release is 4.3.2 (sdist only).
+# Raising a pin is a release of the extension: check on a board first (P).
+jetson-stats==7.2.1 ; python_version >= "3.7"
+jetson-stats==4.3.2 ; python_version < "3.7"
+smbus2==0.6.1 ; python_version >= "3.7"
+distro==1.9.0 ; python_version >= "3.7"
+nvidia-ml-py==13.615.71 ; python_version >= "3.7"

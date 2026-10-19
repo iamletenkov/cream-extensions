@@ -1,0 +1,18 @@
+# Fixture of tools/test-hooktest.sh: hooks that report what cream gave them.
+schema: cream/v1
+name: demo
+version: 2.1.0
+summary: фикстура H-раннера
+cream: ">=1.0.0"
+platform: {family: deb, arch: [amd64, arm64]}
+targets: {build: exec, live: "yes"}
+hooks:
+  install: {}
+  configure: {}
+actions:
+  hello: {summary: "печатает аргументы"}
+config:
+  keys:
+    DEMO_COLOR: {type: "enum:blue,red", default: blue, description: "цвет"}
+    DEMO_EMPTY: {type: str, default: "", empty: true, description: "пустой"}
+    DEMO_PASS: {type: str, default: "", empty: true, secret: file, description: "секрет"}

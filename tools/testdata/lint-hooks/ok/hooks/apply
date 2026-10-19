@@ -1,0 +1,5 @@
+#!/bin/sh
+# cream hook `apply` of the lint fixture (POSIX sh).
+set -eu
+echo "changed: ${CREAM_CHANGED_KEYS:-}" >&2
+systemctl --no-block try-restart ok.service

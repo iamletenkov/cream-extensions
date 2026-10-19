@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+# cream hook `install` of can: can-utils, iproute2, CAN kernel modules for the
+# kernels of the machine and their autoload list (hooks/apply).
+#
+# The kernels that matter are the ones installed in /lib/modules/*, not
+# `uname -r`: inside the virt-customize appliance `uname -r` is the
+# appliance's own kernel, and on a working machine the next boot may take a
+# newer one. Every module the robot needs is checked with
+# `modinfo -k <kernel>` (built-in ones through modules.builtin); on Ubuntu the
+# missing ones come from linux-modules-extra-<kernel>, on Debian they are part
+# of linux-image and a miss is a refusal (a cloud kernel without CAN drivers).
+# No kernel at all (a container) — code 20, "not applicable here" (ruling R11),
+# before apt touches anything.
+#
+# L4T (Jetson, kernel <version>-tegra): there is no linux-modules-extra; the
+# modules ship in nvidia-l4t-kernel (+ nvidia-l4t-kernel-oot-modules for the
+# native mttcan). The stock r36 kernel is built without slcan, gs_usb and
+# peak_usb (CONFIG_CAN_SLCAN/GS_USB/PEAK_USB not set), and no package brings
+# them: for such a kernel they are a loud warning, not a refusal — unless
+# CAN_MODULES_LOAD names them, then they are required as everywhere. They are
+# built by the separate extension can-usb (Sensing kernel), not here.
+#
+# Kernel packages are never upgraded, held or removed by this extension: only
+# linux-modules-extra of an already installed kernel is added on Ubuntu, and
+# remove leaves it. can-utils is recorded in $CREAM_STATE_DIR/packages when
+# this hook put it on (remove takes away only that).
+#
+# Keys (hook environment): CAN_MODULES_LOAD "can can_raw vcan" — autoload list.
+set -euo pipefail
+
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+log_info(){ >&2 echo -e "${GREEN}[INFO]${NC} can: $*"; }
+log_warn(){ >&2 echo -e "${YELLOW}[WARN]${NC} can: $*"; }
+log_error(){ >&2 echo -e "${RED}[ERROR]${NC} can: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}"
+CAN_MODULES_LOAD="${CAN_MODULES_LOAD-can can_raw vcan}"
+
+# Modules the robot's checklist asks for (modinfo -n vcan gs_usb peak_usb slcan)
+# plus the core of the stack. The autoload list is checked on top of these.
+REQUIRED_MODULES=(can can_raw can_dev vcan slcan gs_usb peak_usb)
+# Not built in the stock L4T kernel (checked on r36.4.3, 5.15.148-tegra).
+L4T_OPTIONAL_MODULES=(slcan gs_usb peak_usb)
+
+# --- kernels of the machine -------------------------------------------------
+image_kernels(){
+    local d
+    for d in "$R"/lib/modules/*/; do
+        d="${d%/}"
+        # A kernel package always ships modules.order; a leftover directory
+        # (an old kernel's DKMS output) does not.
+        [[ -f "$d/modules.order" ]] && echo "${d##*/}"
+    done
+    return 0
+}
+mapfile -t KERNELS < <(image_kernels | sort -V)
+if (( ${#KERNELS[@]} == 0 )); then
+    log_warn "ядер нет (/lib/modules/*/modules.order) — модули CAN проверять и грузить не на чем (контейнер?); неприменимо"
+    exit 20
+fi
+log_info "ядра: ${KERNELS[*]} (uname -r: $(uname -r) — не используется)"
+
+apt_retry(){
+    local i
+    for i in 1 2 3; do
+        "$@" && return 0
+        log_warn "попытка $i: $* — не удалась, повтор через 10 с"
+        sleep 10
+    done
+    return 1
+}
+is_installed(){
+    dpkg-query -W -f='${Status}\n' "$1" 2>/dev/null | grep -q '^install ok installed'
+}
+
+export DEBIAN_FRONTEND=noninteractive
+had_utils=0
+is_installed can-utils && had_utils=1
+apt_retry apt-get update -q || { log_error "apt-get update не прошёл"; exit 1; }
+# kmod — modinfo for the check below; minimal images may lack it.
+apt_retry apt-get install -y -q --no-install-recommends can-utils iproute2 kmod \
+    || { log_error "can-utils/iproute2 не установились"; exit 1; }
+if (( ! had_utils )) && [[ ! -s "$STATE/packages" ]]; then
+    install -d -m 0755 "$STATE"
+    echo can-utils > "$STATE/packages"
+fi
+
+# shellcheck disable=SC2206  # word splitting is the format of the key
+AUTOLOAD=($CAN_MODULES_LOAD)
+
+is_l4t_kernel(){ [[ "$1" == *-tegra ]]; }
+
+in_list(){
+    local x="$1" y; shift
+    for y in "$@"; do [[ "$x" == "$y" ]] && return 0; done
+    return 1
+}
+
+# Modules a kernel must have: an L4T kernel is let off the optional ones
+# unless the autoload list asks for them.
+wanted_for(){
+    local k="$1" m
+    for m in "${REQUIRED_MODULES[@]}" "${AUTOLOAD[@]}"; do
+        if is_l4t_kernel "$k" && in_list "$m" "${L4T_OPTIONAL_MODULES[@]}" \
+           && ! in_list "$m" "${AUTOLOAD[@]}"; then
+            continue
+        fi
+        echo "$m"
+    done | sort -u
+}
+
+# modinfo -k reads modules.builtin.modinfo too; modules.builtin is the
+# fallback for a kmod that does not (names there use either - or _).
+have_module(){
+    local k="$1" m="$2"
+    modinfo -k "$k" -n "$m" >/dev/null 2>&1 && return 0
+    grep -qE "/${m//[-_]/[-_]}\.ko(\.[a-z]+)?$" "$R/lib/modules/$k/modules.builtin" 2>/dev/null
+}
+
+missing_for(){
+    local k="$1" m
+    while read -r m; do
+        have_module "$k" "$m" || echo "$m"
+    done < <(wanted_for "$k")
+}
+
+# /etc/os-release is read as data, not sourced.
+DISTRO_ID="$(sed -n 's/^ID=//p' "$R/etc/os-release" 2>/dev/null | head -n1 | tr -d '"')"
+rc=0
+for k in "${KERNELS[@]}"; do
+    mapfile -t miss < <(missing_for "$k")
+    if is_l4t_kernel "$k"; then
+        # No linux-modules-extra for L4T: what nvidia-l4t-kernel lacks
+        # needs a rebuilt kernel (extension can-usb), not a package.
+        for m in "${L4T_OPTIONAL_MODULES[@]}"; do
+            in_list "$m" "${AUTOLOAD[@]}" && continue
+            have_module "$k" "$m" || log_warn "$k (L4T): модуля $m нет — штатное ядро L4T собрано без него (USB/serial-адаптеры CAN не заработают; нужно ядро с CONFIG_CAN_${m^^}=m, расширение can-usb)"
+        done
+        if (( ${#miss[@]} )); then
+            log_error "$k (L4T): модулей ${miss[*]} нет (modinfo -k $k) — linux-modules-extra для L4T не существует, они должны прийти с nvidia-l4t-kernel"
+            rc=1
+            continue
+        fi
+        log_info "$k (L4T): $(wanted_for "$k" | tr '\n' ' ')— есть"
+        continue
+    fi
+    if (( ${#miss[@]} )) && [[ "$DISTRO_ID" == ubuntu ]]; then
+        log_info "$k: нет ${miss[*]} — ставлю linux-modules-extra-$k"
+        apt_retry apt-get install -y -q --no-install-recommends "linux-modules-extra-$k" \
+            || log_error "linux-modules-extra-$k не установился"
+        mapfile -t miss < <(missing_for "$k")
+    fi
+    if (( ${#miss[@]} )); then
+        log_error "$k: модулей ${miss[*]} нет (modinfo -k $k)"
+        [[ "$DISTRO_ID" == debian ]] && log_error "ядро Debian без драйверов CAN — облачное? нужен linux-image-amd64"
+        rc=1
+        continue
+    fi
+    log_info "$k: $(wanted_for "$k" | tr '\n' ' ')— есть"
+done
+(( rc == 0 )) || exit 1
+
+# Ubuntu: a future kernel brings linux-modules-extra only through the generic
+# metapackage. linux-image-virtual alone updates the kernel without them, and
+# CAN would vanish after the first `apt upgrade` on the device.
+# L4T kernels come from nvidia-l4t-kernel, so the warning is not about them.
+generic_kernels=0
+for k in "${KERNELS[@]}"; do is_l4t_kernel "$k" || generic_kernels=1; done
+if [[ "$DISTRO_ID" == ubuntu ]] && (( generic_kernels )) \
+   && ! dpkg-query -W -f='${Status}\n' 'linux-image-generic*' 2>/dev/null | grep -q '^install ok installed'; then
+    log_warn "метапакета linux-image-generic нет: новое ядро на устройстве придёт без linux-modules-extra"
+    log_warn "и без vcan/gs_usb/peak_usb/slcan; надёжнее база с linux-generic (INSTALL linux-image-extra-virtual)"
+fi
+
+"${CREAM_EXT_DIR:?run by cream}/hooks/apply" || { log_error "/etc/modules-load.d/can.conf не записан"; exit 1; }
+log_info "автозагрузка: ${CAN_MODULES_LOAD:-(пусто)}; утилиты: $(command -v candump || echo '?') $(command -v cansend || echo '?')"

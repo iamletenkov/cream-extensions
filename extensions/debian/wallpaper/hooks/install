@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# cream hook `install` of wallpaper: the picture must be in the extension's
+# images/ (refusal at build, not a desktop without it), and dconf-cli for the
+# `dconf update` of the GNOME default. Applies nothing: configure does.
+set -euo pipefail
+
+log_warn(){ >&2 echo "[WARN] wallpaper: $*"; }
+log_error(){ >&2 echo "[ERROR] wallpaper: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+"${CREAM_EXT_DIR:?run by cream}/files/wallpaper.sh" check
+
+apt_retry(){
+    local i
+    for i in 1 2 3; do
+        "$@" && return 0
+        log_warn "попытка $i: $* — не удалась, повтор через 10 с"
+        sleep 10
+    done
+    return 1
+}
+
+if [[ ! -x "$R/usr/bin/dconf" ]]; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt_retry apt-get update -q || { log_error "apt-get update не прошёл"; exit 1; }
+    apt_retry apt-get install -y -q --no-install-recommends dconf-cli \
+        || { log_error "dconf-cli не установился"; exit 1; }
+fi
+>&2 echo "[INFO] wallpaper: готово; картинка и режим — sudo cream set wallpaper WALLPAPER_IMAGE=… WALLPAPER_MODE=…"

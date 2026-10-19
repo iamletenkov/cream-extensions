@@ -1,0 +1,5 @@
+#!/bin/sh
+# Enables a unit that fails at boot; install itself is fine.
+set -eu
+systemctl daemon-reload
+systemctl enable live-unit-allowed.service

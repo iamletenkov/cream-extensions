@@ -1,17 +1,27 @@
+# cuda-toolkit — CUDA Toolkit (nvcc and libraries) on NVIDIA Jetson from the
+# jetson/common repository the L4T BSP already put on (nvidia-l4t-apt-source),
+# plus a system profile with PATH/LD_LIBRARY_PATH.
+#
+# install — not a Jetson (no /etc/nv_tegra_release) — code 20 before apt
+#           (ruling R11); otherwise apt, the profile, and the packages it put on
+#           recorded in /var/lib/cream/ext/cuda-toolkit/packages.
+# remove  — its own packages (never one that was there before cream) and the
+#           profile; refuses when apt would take anything else with them.
+# No configure: nothing to finish on boot. No library: the L4T release is only
+# checked to exist, the branch does not matter here.
+schema: cream/v1
 name: cuda-toolkit
-version: 1.1.0
-layout: 2
-family: deb
-# Только arm64: расширение ставит из репозитория jetson/common, который
-# кладёт в rootfs nvidia-l4t-apt-source (часть BSP L4T) — на не-Jetson его
-# просто нет, и apt-get update отказал бы раньше, чем install.sh дошёл бы
-# до сути. Amd64/CUDA — отдельная задача: там источники NVIDIA другие
-# (cuda-repo-*, не jetson/*), общего кода с этим расширением нет.
-arch: [arm64]
-# Только build: cuda-toolkit не персонален — ни одного шага, зависящего
-# от пользователя cloud-init, у него нет. PATH/LD_LIBRARY_PATH прописаны
-# системно через /etc/profile.d, а не в чей-то домашний .bashrc.
-phase: build
+version: 2.0.0
+summary: CUDA Toolkit для NVIDIA Jetson из репозитория jetson/common и системный профиль PATH
+cream: ">=1.0.0"
+platform:
+  family: deb
+  # arm64 only: jetson/common exists only in an L4T image. amd64 CUDA comes
+  # from other sources (cuda-repo-*) and shares no code with this extension.
+  arch: [arm64]
+targets: {build: exec, live: "yes"}
 provides: [cuda]
-requires: []
-conflicts: []
+hooks:
+  # The toolkit is a few gigabytes from the network.
+  install: {timeout: 60m}
+  remove: {timeout: 15m}

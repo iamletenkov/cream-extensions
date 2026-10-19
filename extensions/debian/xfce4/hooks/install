@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# cream hook `install` of xfce4: Xfce4 with the lightdm display manager.
+# Paths of the machine go under $CREAM_ROOT (hooktest).
+#
+# - installs Xfce4, lightdm and the X server; a browser is optional;
+# - the session (user-session=xfce) is not written here: cream lays the drop-in
+#   /etc/xdg/lightdm/lightdm.conf.d/60-xfce4.conf (field `files`) — a path no
+#   package owns, so neither dpkg (conffile /etc/lightdm/lightdm.conf on Debian)
+#   nor cream (conflict.file_unowned on a machine with lightdm) refuses;
+# - the autologin and the blanking are the desktop extension (depends): it
+#   writes them into /etc/lightdm/lightdm.conf. Ubuntu ships no such file, so
+#   this hook creates an empty [Seat:*] one when there is none;
+# - enables lightdm and graphical.target. On a live machine either change takes
+#   effect at the next boot: exit 10 (reboot required). The build phase exits 0.
+#
+# What was there before is kept in $CREAM_STATE_DIR (first record wins), so that
+# `remove` puts back the default target and the display manager as they were.
+set -euo pipefail
+
+NAME=xfce4
+DM=lightdm.service
+
+log_info(){ >&2 echo "[INFO] $NAME: $*"; }
+log_warn(){ >&2 echo "[WARN] $NAME: $*"; }
+log_error(){ >&2 echo "[ERROR] $NAME: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}"
+SYSD="$R/etc/systemd/system"
+LCONF="$R/etc/lightdm/lightdm.conf"
+
+apt_retry(){
+    local i
+    for i in 1 2 3; do
+        "$@" && return 0
+        log_warn "попытка $i: $* — не удалась, повтор через 10 с"
+        sleep 10
+    done
+    return 1
+}
+
+# dm_current: the unit the display-manager.service alias points to, or nothing.
+dm_current(){
+    local l
+    l="$(readlink "$SYSD/display-manager.service" 2>/dev/null)" || true
+    printf '%s' "${l##*/}"
+}
+
+default_current(){ systemctl get-default 2>/dev/null || true; }
+
+# --- what was there before (first install only) --------------------------------
+if [[ ! -s "$STATE/before" ]]; then
+    install -d -m 0755 "$STATE"
+    printf 'default=%s\ndm=%s\n' "$(default_current)" "$(dm_current)" > "$STATE/before"
+fi
+dm_before="$(dm_current)"
+default_before="$(default_current)"
+
+# --- packages ------------------------------------------------------------------
+export DEBIAN_FRONTEND=noninteractive
+APT_OPTS=(-q -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+apt_retry apt-get -q update || { log_error "apt-get update не прошёл"; exit 1; }
+apt_retry apt-get "${APT_OPTS[@]}" install \
+    xfce4 xfce4-goodies \
+    lightdm lightdm-gtk-greeter \
+    xorg xinput x11-xserver-utils dconf-cli \
+    usbutils dbus-x11 \
+    || { log_error "Xfce4 и lightdm не установились"; exit 1; }
+
+# The browser is optional and native only: `firefox-esr` is a plain deb in
+# Debian. Ubuntu has no firefox-esr, and its `firefox` is a transitional package
+# for the snap: it pulls snapd, and inside the build guest (no running systemd)
+# the snap never installs — the image ends up with snapd and no browser
+# (measured for chromium-browser, gnome/hooks/install, 2026-09-12). Neither
+# lightdm nor the Xfce session depends on a browser.
+if apt-get "${APT_OPTS[@]}" install firefox-esr >/dev/null 2>&1; then
+    log_info "браузер: firefox-esr"
+else
+    log_warn "нативного браузера (firefox-esr) в этом дистрибутиве нет — сессия Xfce работает и без него"
+fi
+
+install -d -m 0755 "$R/etc/X11/xorg.conf.d"
+
+# --- a file for the autologin of the desktop extension -------------------------
+# Never through a link: the target of a link under /etc is not ours to write.
+if [[ -L "$LCONF" ]]; then
+    log_warn "${LCONF#"$R"} — ссылка; не пишу по ней, автологин desktop пойдёт туда, куда она ведёт"
+elif [[ ! -e "$LCONF" ]]; then
+    install -d -m 0755 "${LCONF%/*}"
+    tmp="$(mktemp "${LCONF%/*}/.lightdm.conf.XXXXXX")"
+    printf '%s\n' '# Written by the xfce4 extension (cream): Ubuntu ships no lightdm.conf.' \
+        '# The desktop extension writes the autologin here; the session is in' \
+        '# /etc/xdg/lightdm/lightdm.conf.d/60-xfce4.conf.' '[Seat:*]' > "$tmp"
+    chmod 0644 "$tmp"
+    mv -f -T -- "$tmp" "$LCONF"
+    : > "$STATE/created-lightdm-conf"
+    log_info "создан ${LCONF#"$R"} для ручек desktop"
+fi
+
+# --- display manager and default target ----------------------------------------
+reboot=0
+current="$(dm_current)"
+if [[ -n "$current" && "$current" != "$DM" ]]; then
+    log_warn "менеджер входа на машине — $current, не $DM; не перехватываю (systemctl enable --force $DM вручную)"
+elif [[ "$current" != "$DM" ]]; then
+    systemctl enable "$DM" || { log_error "$DM не включился"; exit 1; }
+fi
+[[ "$(dm_current)" == "$dm_before" ]] || reboot=1
+
+if [[ "$default_before" != graphical.target ]]; then
+    systemctl set-default graphical.target || { log_error "graphical.target не стал целью по умолчанию"; exit 1; }
+    reboot=1
+fi
+
+if [[ "$reboot" == 1 && "${CREAM_PHASE:-}" == live ]]; then
+    log_info "готово; экран входа lightdm — после перезагрузки"
+    exit 10
+fi
+log_info "готово"

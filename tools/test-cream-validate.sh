@@ -5,8 +5,11 @@
 # a pin whose sha256 does not match the downloaded .deb is a failure (the
 # download goes through file:// — no network). With cream (CREAM_DEB=<local
 # .deb> or a filled tools/cream-pin.env): the minimal valid fixture passes,
-# the deliberately invalid one fails. Without cream that half is skipped with
-# a line, not silently.
+# the deliberately invalid one fails; without arguments the script runs
+# `cream validate --catalog` over the repository root (a copy of it in a fake
+# repository): a valid catalog passes, a manifest without `schema: cream/v1`
+# fails it — there is no filtering. Without cream that half is skipped with a
+# line, not silently.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$HERE/cream-validate.sh"
@@ -67,6 +70,25 @@ if (( have_cream )); then
     fi
     out="$("$SCRIPT" "$FIX/ok" "$FIX/bad" 2>&1)"; rc=$?
     if (( rc != 0 )); then ok "cream validate: ok+bad красный"; else bad "cream validate: ok+bad код 0"; fi
+
+    # No arguments: the catalog is the repository root, as it is.
+    R="$T/repo"
+    mkdir -p "$R/tools" "$R/extensions/debian"
+    cp "$SCRIPT" "$HERE/cream-pin.env" "$R/tools/"
+    printf 'schema: cream/v1\nname: cream-extensions\nversion: 0.0.0\nroots: [extensions/debian]\n' \
+        > "$R/cream-catalog.yaml"
+    cp -a "$FIX/ok" "$R/extensions/debian/ok"
+    out="$(CREAM_CACHE_DIR="$HERE/../.cache/cream" "$R/tools/cream-validate.sh" 2>&1)"; rc=$?
+    if (( rc == 0 )); then ok "по корню: каталог зелёный"; else bad "по корню: код $rc: $out"; fi
+    if grep -qF -- "--catalog ." <<<"$out"; then ok "по корню: --catalog ."; else bad "по корню: не --catalog .: $out"; fi
+    mkdir -p "$R/extensions/debian/old"
+    printf 'name: old\nversion: 1.0.0\n' > "$R/extensions/debian/old/extension.yaml"
+    out="$(CREAM_CACHE_DIR="$HERE/../.cache/cream" "$R/tools/cream-validate.sh" 2>&1)"; rc=$?
+    if (( rc == 65 )); then
+        ok "по корню: манифест без schema — красный (65)"
+    else
+        bad "по корню: манифест без schema — код $rc (ждали 65): $out"
+    fi
 else
     echo "  skip cream validate на фикстурах: нет CREAM_DEB и пин cream не задан"
 fi

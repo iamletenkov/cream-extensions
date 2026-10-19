@@ -1,24 +1,39 @@
+# gnome — GNOME on Xorg (Wayland off) with the gdm3 display manager: the X
+# server and the session for the extensions that need one (x11vnc, kiosk,
+# selkies).
+#
+# install — GNOME, gdm3, Xorg (a browser is optional, native chromium only);
+#           WaylandEnable=false in the gdm3 config the package ships
+#           (daemon.conf on Debian, custom.conf on Ubuntu) — edited in place,
+#           not cream `files`: both are dpkg conffiles of gdm3; enables gdm and
+#           graphical.target — on a live machine exit 10 (reboot required).
+# remove  — the default target and the display manager back as they were; the
+#           packages stay.
+# The autologin, the screen lock and the blanking are the desktop extension
+# (depends): `cream set desktop DESKTOP_AUTOLOGIN=1 …`. The three desktops are
+# mutually exclusive by capability, not by a list of names.
+schema: cream/v1
 name: gnome
-version: 4.1.0
-layout: 2
-# 4.1.0: ручки — домен desktop библиотеки bisquite-conf (схема lib/knobs/desktop);
-#        `bisquite-conf set desktop …` и `bisquite-desktop set` — одна проверка.
-# 3.0.0: файл ручек переехал в /etc/bisquite/desktop/config (был
-#        /etc/default/bisquite-desktop; прежний не читается, установка удаляет).
-family: deb
-# Ставится только apt-пакетами, ничего не качает по фиксированной ссылке.
-arch: [amd64, arm64]
-# build     — install.sh ставит task-gnome-desktop/gdm3, выключает Wayland
-#             и ставит bisquite-desktop (ручки DESKTOP_*);
-# firstboot — bisquite-desktop.service на устройстве, на КАЖДОЙ загрузке до
-#             gdm: группы пользователя cloud-init, автологин, блокировка и
-#             затемнение по ручкам. 2.0.0: всё это по умолчанию ВЫКЛЮЧЕНО.
-phase: [build, firstboot]
-# xorg xinput          -> x11-server     (install.sh:21)
-# gdm3 + set-default graphical.target -> display-manager (install.sh:38-39)
-# task-gnome-desktop   -> desktop-session
+version: 5.0.0
+summary: GNOME на Xorg и менеджер входа gdm3 — X-сервер и сессия для x11vnc, kiosk, selkies
+cream: ">=1.0.0"
+platform:
+  family: deb
+  arch: [amd64, arm64]
+  os: [{id: debian}, {id: ubuntu}]
+targets:
+  build: exec
+  live: confirm
+  live_note: >-
+    ставит рабочий стол GNOME (гигабайты пакетов), выключает Wayland в gdm3 и включает
+    менеджер входа gdm и graphical.target: после перезагрузки экран машины занимает экран
+    входа; другой уже включённый менеджер входа не перехватывается (предупреждение);
+    remove возвращает цель загрузки и менеджер входа, пакеты остаются
 provides: [x11-server, display-manager, desktop-session]
-requires: []
-# Три десктопа взаимоисключающи: каждый ставит свой display manager и
-# делает его системным `display-manager.service`.
-conflicts: [xfce4, lxde]
+depends:
+  - {name: desktop, version: ">=1.0.0 <2"}
+conflicts:
+  capabilities: [desktop-session]
+hooks:
+  install: {timeout: 60m}
+  remove: {timeout: 2m}

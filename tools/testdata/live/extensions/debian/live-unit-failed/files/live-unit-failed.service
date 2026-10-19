@@ -1,0 +1,10 @@
+[Unit]
+Description=live-unit-failed fixture
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/false
+
+[Install]
+WantedBy=multi-user.target

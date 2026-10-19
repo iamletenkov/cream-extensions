@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# cream hook `install` of locale: the packages, then hooks/apply — the same
+# rendering the `apply` hook does on a working machine after `cream set`.
+#
+# Keys (hook environment, config.keys of the manifest):
+#   LOCALE             en_US.UTF-8
+#   KEYBOARD_LAYOUTS   us,ru
+#   KEYBOARD_TOGGLE    (empty)      e.g. grp:alt_shift_toggle
+set -euo pipefail
+
+log_warn(){ >&2 echo "[WARN] locale: $*"; }
+log_error(){ >&2 echo "[ERROR] locale: $*"; }
+
+apt_retry(){
+    local i
+    for i in 1 2 3; do
+        "$@" && return 0
+        log_warn "попытка $i: $* — не удалась, повтор через 10 с"
+        sleep 10
+    done
+    return 1
+}
+
+export DEBIAN_FRONTEND=noninteractive
+apt_retry apt-get update -q || { log_error "apt-get update не прошёл"; exit 1; }
+# xkb-data — /usr/share/X11/xkb/symbols (layout names are checked against it);
+# console-setup — the console keymap from /etc/default/keyboard.
+apt_retry apt-get install -y -q --no-install-recommends \
+    locales keyboard-configuration console-setup xkb-data \
+    || { log_error "пакеты локали не установились"; exit 1; }
+
+"${CREAM_EXT_DIR:?run by cream}/hooks/apply" || { log_error "локаль и раскладки не применены"; exit 1; }
+>&2 echo "[INFO] locale: готово; на машине: sudo cream set locale KEYBOARD_LAYOUTS=… (cream show locale)"

@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# cream hook `install` of pixelflux-tegra (header of extension.yaml for the why).
+#
+# Exit 20 — not a Jetson (no /etc/nv_tegra_release) or not arm64 (ruling R11).
+# Everything this hook writes is its own and written without following
+# symlinks: a temporary file next to the target, then rename.
+#   /var/lib/cream/ext/pixelflux-tegra/gbm_shim.so    focal only
+#   /var/lib/cream/ext/pixelflux-tegra/stamp          the AppImage prefix
+#   /etc/systemd/system/selkies@.service.d/10-pixelflux-tegra.conf
+# Nothing is written into the selkies tree or into a home directory.
+#
+# SHIM gbm (focal). Mesa 21.2 has no gbm_bo_create_with_modifiers2, and
+# `import pixelflux` may fail. The shim is built in the guest (a binary .so in
+# the repository is not wanted) with a fixed compiler command line from the
+# extension's own source; nothing from outside reaches it.
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] pixelflux-tegra: $*"; }
+log_error(){ >&2 echo "[ERROR] pixelflux-tegra: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+EXT_DIR="${CREAM_EXT_DIR:?run by cream}"
+STATE="${CREAM_STATE_DIR:-$R/var/lib/cream/ext/pixelflux-tegra}"
+LIBDIR=/usr/lib/aarch64-linux-gnu
+SYSTEM_LIBXCB="$LIBDIR/libxcb.so.1"
+SYSTEM_LIBGBM="$LIBDIR/libgbm.so.1"
+DROPIN_DIR="$R/etc/systemd/system/selkies@.service.d"
+DROPIN="$DROPIN_DIR/10-pixelflux-tegra.conf"
+SHIM="$STATE/gbm_shim.so"
+SHIM_REAL="${SHIM#"$R"}"
+
+# --- applicability ------------------------------------------------------------
+if [[ ! -f "$R/etc/nv_tegra_release" ]]; then
+    log_info "нет /etc/nv_tegra_release — это не NVIDIA Jetson (L4T); неприменимо"
+    exit 20
+fi
+arch="$(dpkg --print-architecture)"
+[[ "$arch" == arm64 ]] || { log_info "архитектура $arch: бэкенд Tegra есть только на arm64; неприменимо"; exit 20; }
+log_info "L4T: $(head -n 1 "$R/etc/nv_tegra_release" | LC_ALL=C tr -cd '[:print:]' | cut -c1-120)"
+
+PREFIX="$(readlink -f "$R/opt/selkies/current" 2>/dev/null || true)"
+SELKIES_PY="$PREFIX/usr/conda/bin/python"
+if [[ -z "$PREFIX" || ! -x "$SELKIES_PY" ]]; then
+    log_error "нет /opt/selkies/current/usr/conda/bin/python — сначала cream install selkies"
+    exit 1
+fi
+[[ -e "$R$SYSTEM_LIBXCB" ]] || { log_error "нет $SYSTEM_LIBXCB — без неё сессия падает"; exit 1; }
+
+# put_file <target> <mode> < content: atomic, never through a symlink;
+# unchanged content — nothing written.
+put_file(){
+    local target="$1" mode="$2" dir tmp
+    dir="${target%/*}"
+    [[ -d "$dir" && ! -L "$dir" ]] || { log_error "${dir#"$R"} — не каталог или символическая ссылка"; return 1; }
+    tmp="$(mktemp "$dir/.pixelflux-tegra.XXXXXX")"
+    if ! cat > "$tmp" || ! chmod "$mode" "$tmp"; then rm -f -- "$tmp"; return 1; fi
+    if [[ -f "$target" && ! -L "$target" ]] && cmp -s "$tmp" "$target"; then
+        rm -f -- "$tmp"; return 0
+    fi
+    mv -f -T -- "$tmp" "$target"
+}
+
+safe_dir(){
+    local d="$1"
+    [[ ! -L "$d" ]] || { log_error "${d#"$R"} — символическая ссылка, не пишу через неё"; return 1; }
+    [[ -d "$d" ]] || install -d -m 0755 -- "$d"
+}
+safe_dir "$STATE"
+
+# --- gbm shim (focal only) ----------------------------------------------------
+PRELOAD="$SYSTEM_LIBXCB"
+if [[ -e "$R$SYSTEM_LIBGBM" ]]; then
+    command -v nm >/dev/null 2>&1 || apt-get install -y -q --no-install-recommends binutils >/dev/null \
+        || { log_error "binutils (nm) не установился"; exit 1; }
+    syms="$(nm -D --defined-only "$R$SYSTEM_LIBGBM" 2>/dev/null || true)"
+    if [[ "$syms" != *gbm_bo_create_with_modifiers2* ]]; then
+        log_info "в системной libgbm нет gbm_bo_create_with_modifiers2 — собираю шим"
+        command -v gcc >/dev/null 2>&1 \
+            || { apt-get update -q && apt-get install -y -q --no-install-recommends gcc libc6-dev; } \
+            || { log_error "gcc не установился"; exit 1; }
+        build="$(mktemp -d "$STATE/.build.XXXXXX")"
+        trap 'rm -r -f -- "$build"' EXIT
+        gcc -shared -fPIC -O2 -o "$build/gbm_shim.so" "$EXT_DIR/files/gbm_shim.c" \
+            || { log_error "шим не собрался"; exit 1; }
+        put_file "$SHIM" 0644 < "$build/gbm_shim.so" || { log_error "шим не положен"; exit 1; }
+        PRELOAD="$SHIM_REAL:$PRELOAD"
+    else
+        log_info "системная libgbm полная — шим не нужен"
+        rm -f -- "$SHIM"
+    fi
+fi
+
+# --- the module, with the preload the session gets ------------------------------
+LD_PRELOAD="$PRELOAD" "$SELKIES_PY" -c 'import pixelflux; pixelflux.CaptureSettings().codec' >/dev/null \
+    || { log_error "pixelflux не импортируется с подкладкой или у CaptureSettings нет поля codec"; exit 1; }
+MODULE_SO="$("$SELKIES_PY" -c 'import pixelflux; print(pixelflux.__file__)' 2>/dev/null || true)"
+[[ -f "$MODULE_SO" ]] || { log_error "модуль pixelflux в AppImage не найден"; exit 1; }
+# grep -a reads the binary itself: `strings | grep -q` fails under pipefail on a match.
+grep -qa "vendor V4L2 encoder" "$MODULE_SO" \
+    || { log_error "в pixelflux AppImage нет бэкенда Tegra — Selkies собран без него"; exit 1; }
+log_info "базовый pixelflux несёт бэкенд Tegra"
+
+# --- the drop-in --------------------------------------------------------------
+safe_dir "$R/etc/systemd/system" && safe_dir "$DROPIN_DIR" || exit 1
+put_file "$DROPIN" 0644 <<EOF_DROPIN || { log_error "drop-in не записан"; exit 1; }
+# pixelflux-tegra: the AppImage carries its own libxcb (conda 1.17) while the
+# NVIDIA X/EGL of L4T is built against the system one; mixing them drops the
+# capture seconds after the start (selkies-project/selkies#396).
+[Service]
+Environment=LD_PRELOAD=$PRELOAD
+EOF_DROPIN
+log_info "подкладка: LD_PRELOAD=$PRELOAD"
+if [[ -d "$R/run/systemd/system" ]]; then
+    systemctl daemon-reload || log_error "daemon-reload не прошёл — подкладка дойдёт после перезагрузки"
+fi
+
+# A new Selkies version is a new prefix: the stamp lets configure notice that
+# the AppImage moved without this extension being reinstalled.
+printf 'prefix=%s\n' "${PREFIX#"$R"}" | put_file "$STATE/stamp" 0644 || { log_error "отпечаток не записан"; exit 1; }
+log_info "готово; бэкенд на железе проверит configure (cream-configure@pixelflux-tegra)"

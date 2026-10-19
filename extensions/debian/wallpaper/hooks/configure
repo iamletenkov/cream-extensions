@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# cream hook `configure` of wallpaper: stage cloud-user — every boot, after
+# install on a working machine and after `cream set wallpaper …` (no own apply
+# hook: cream restarts the configure unit). Writes the system defaults; no
+# desktop — a warning and 0 (ruling R11).
+set -euo pipefail
+exec "${CREAM_EXT_DIR:?run by cream}/files/wallpaper.sh" apply

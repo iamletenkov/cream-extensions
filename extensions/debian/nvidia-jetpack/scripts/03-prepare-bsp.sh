@@ -3,7 +3,7 @@
 # Библиотеку ISP из оверлея камер NVIDIA здесь больше не подменяют: это
 # делает расширение sensing-gmsl2-camera слоем bisquite.
 #
-#     sudo bash /opt/nvidia-jetpack/03-prepare-bsp.sh
+#     sudo bash /opt/cream/ext/nvidia-jetpack/scripts/03-prepare-bsp.sh
 #
 # Здесь всё выполняется НАТИВНО на станции: она и есть Ubuntu 22.04, ради
 # которой станцию заводили. Прежний обходной путь — jammy-chroot на Debian 13 —

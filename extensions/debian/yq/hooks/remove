@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# cream hook `remove` of yq; the logic is in files/yq.sh.
+set -euo pipefail
+# shellcheck source=../files/yq.sh
+source "${CREAM_EXT_DIR:?run by cream}/files/yq.sh"
+yq_hook_remove

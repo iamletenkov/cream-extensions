@@ -1,12 +1,17 @@
 # btop
 
 Ставит `btop` — TUI-монитор ресурсов (CPU, память, диски, сеть, процессы)
-обычным пакетом из `universe`.
+обычным пакетом из `universe`, а где пакета нет — статической сборкой релиза.
 
-> **С 1.1.0 — раскладка 2.** Манифест объявляет `layout: 2`: каталог расширения
-> в госте — `/opt/bisquite/btop/` (был `/opt/vmsetup/btop/`). Путей гостя
-> расширение не прибивает, поэтому версия минорная; нужен bisquite
-> с поддержкой `layout: 2`.
+```
+cream install btop          # живая машина
+cream remove btop
+EXTENSION btop              # образ bisquite
+```
+
+> **С 2.0.0 — cream/v1.** `install.sh` стал хуком `hooks/install`, появился хук
+> `remove`; каталог в госте — `/opt/cream/ext/btop/`. Ставит и удаляет cream,
+> настроек нет.
 
 ## Где пакета нет — сборка релиза (с 1.2.0)
 
@@ -15,17 +20,33 @@
 в `/usr/local/bin/btop`, сверив sha256 (закреплён для `aarch64` и `x86_64`;
 другая архитектура — отказ). Проверено на живом Nano 2026-09-15.
 
+## Что снимает `remove`
+
+`install` записывает, кто поставил btop, в `/var/lib/cream/ext/btop/method`:
+
+| Запись | Что было | Что делает `remove` |
+|---|---|---|
+| `apt` | пакет поставлен этим расширением | `apt-get remove btop` |
+| `static` | сборка релиза в `/usr/local/bin/btop` | удаляет файл |
+| `preexisting` | пакет стоял до cream | ничего |
+
+Повторный `install` (`--reinstall`) запись не меняет.
+
 ## Манифест
 
 | Поле | Значение |
 |---|---|
-| `phase` | `build` |
-| `arch` | `amd64`, `arm64` |
+| `targets` | `build: exec`, `live: yes` |
+| `platform.arch` | `amd64`, `arm64` |
 | `provides` | `system-monitor` |
-| `requires` | пусто |
-| `conflicts` | пусто |
+| `hooks` | `install` (15 мин), `remove` |
 
-## Проверено
+## Проверки
+
+- **V** — `make cream-validate`, `tools/check-names.sh`.
+- **H** — `tests/test-btop.sh`: apt (свой и чужой пакет), сборка релиза, отказ по
+  sha256 и архитектуре, повтор, `remove`.
+- **L** — `make test-live EXT=btop` на `debian-12` и `ubuntu-24.04` (`tests/live.env`).
 
 Живая плата, Ubuntu 22.04 (jammy) arm64, 2026-09-12:
 

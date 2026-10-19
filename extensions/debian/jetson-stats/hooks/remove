@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# cream hook `remove` of jetson-stats: jtop.service disabled (stopped on a
+# running system), the unit removed if we wrote it, what pip and apt put on
+# (records of install) removed — pip with HOME in a temporary directory and no
+# pip configuration, as at install. The group jtop stays: users are in it.
+# A repeat finds nothing and exits 0.
+set -euo pipefail
+log_info(){ >&2 echo "[INFO] jetson-stats: $*"; }
+log_error(){ >&2 echo "[ERROR] jetson-stats: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE_DIR="${CREAM_STATE_DIR:?run by cream}"
+UNIT="$R/etc/systemd/system/jtop.service"
+
+read_list(){ [[ -f "$1" && ! -L "$1" ]] && grep -E '^[A-Za-z0-9][A-Za-z0-9._-]*$' "$1" || true; }
+
+if [[ -f "$UNIT" || -s "$STATE_DIR/pip" ]]; then
+    if [[ "${CREAM_PHASE:-}" == live && -d "$R/run/systemd/system" ]]; then
+        systemctl stop jtop.service 2>/dev/null || true
+    fi
+    systemctl disable jtop.service 2>/dev/null || true
+fi
+if [[ -e "$STATE_DIR/unit-ours" ]]; then
+    rm -f -- "$UNIT"
+    log_info "юнит jtop.service снят"
+fi
+
+mapfile -t pips < <(read_list "$STATE_DIR/pip")
+if (( ${#pips[@]} )); then
+    WORK="$(mktemp -d "${TMPDIR:-/tmp}/jetson-stats.XXXXXX")"
+    trap 'rm -r -f -- "$WORK"' EXIT
+    flags=()
+    if compgen -G "$R/usr/lib/python3*/EXTERNALLY-MANAGED" >/dev/null; then flags+=(--break-system-packages); fi
+    env HOME="$WORK" PIP_CONFIG_FILE=/dev/null PIP_NO_CACHE_DIR=1 PIP_USER=0 \
+        PIP_DISABLE_PIP_VERSION_CHECK=1 PYTHONNOUSERSITE=1 \
+        python3 -m pip uninstall -y "${flags[@]+"${flags[@]}"}" "${pips[@]}" \
+        || { log_error "pip uninstall ${pips[*]} не прошёл"; exit 1; }
+    log_info "pip: сняты ${pips[*]}"
+fi
+mapfile -t debs < <(read_list "$STATE_DIR/packages")
+if (( ${#debs[@]} )); then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get -q -y remove "${debs[@]}" || { log_error "apt-get remove ${debs[*]} не прошёл"; exit 1; }
+fi
+rm -f -- "$STATE_DIR/pip" "$STATE_DIR/packages" "$STATE_DIR/unit-ours"
+log_info "готово; группа jtop оставлена"

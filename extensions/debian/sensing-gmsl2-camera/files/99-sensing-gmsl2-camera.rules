@@ -1,0 +1,4 @@
+# Profile of a Sensing camera on every video node that appears. A node that is
+# not Sensing (USB camera and so on) the action recognizes and skips. Only the
+# kernel name (%k, video[0-9]*) reaches the unit; the action checks it again.
+ACTION=="add", SUBSYSTEM=="video4linux", KERNEL=="video[0-9]*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="sensing-gmsl2-camera@%k.service"

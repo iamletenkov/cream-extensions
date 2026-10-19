@@ -1,16 +1,48 @@
+# locale — system locale and keyboard layouts wherever they are read: system,
+# console, Xorg and the GDM login screen, GNOME input-sources defaults.
+#
+# install — the packages (locales, keyboard-configuration, console-setup,
+#           xkb-data), then hooks/apply: the same rendering at build time and
+#           on a working machine.
+# apply   — after `cream set locale …`: regenerates the locale and rewrites the
+#           keyboard files; no systemctl at all.
+# remove  — takes away the GNOME defaults (dconf keyfiles); the locale and the
+#           keyboard files stay (a system without them is worse, README).
+#
+# Only apt packages and files. Checked in ubuntu:24.04 and debian:12 (amd64);
+# on arm64 the same packages, not run.
+schema: cream/v1
 name: locale
-version: 1.0.0
-layout: 2
-family: deb
-# Только apt-пакеты (locales, keyboard-configuration, console-setup) и файлы.
-# Проверено в контейнерах ubuntu:24.04 и debian:12 (amd64); на arm64 те же
-# пакеты, но не запускалось.
-arch: [amd64, arm64]
-# Только build: локаль и раскладки запекаются в образ. Правка на устройстве —
-# хук knobs.apply домена `locale` (те же файлы, тот же скрипт apply.sh).
-phase: build
+version: 2.0.0
+summary: Системная локаль и раскладки клавиатуры — система, консоль, Xorg/GDM, умолчания GNOME
+cream: ">=1.0.0"
+platform:
+  family: deb
+  arch: [amd64, arm64]
+  os: [{id: debian}, {id: ubuntu}]
+targets:
+  build: exec
+  live: "yes"
 # system-locale — /etc/default/locale, /etc/default/keyboard, X11 InputClass
-# и умолчания GNOME input-sources (системная база dconf).
+# and GNOME input-sources defaults (system dconf database).
 provides: [system-locale]
-requires: []
-conflicts: []
+hooks:
+  install: {timeout: 20m}
+  # locale-gen of one locale takes seconds; the default 60 s is tight on arm64.
+  apply: {timeout: 5m}
+  remove: {timeout: 2m}
+config:
+  keys:
+    LOCALE:
+      type: "re:^[a-z]{2,3}_[A-Z]{2}\\.UTF-8(@[a-z]+)?$"
+      default: "en_US.UTF-8"
+      description: "системная локаль (LANG в /etc/default/locale); только UTF-8 и только из /usr/share/i18n/SUPPORTED"
+    KEYBOARD_LAYOUTS:
+      type: "re:^[a-z]{2,8}(\\([a-z0-9_]+\\))?(,[a-z]{2,8}(\\([a-z0-9_]+\\))?)*$"
+      default: "us,ru"
+      description: "раскладки XKB через запятую, вариант в скобках: us,ru(phonetic); первая — основная"
+    KEYBOARD_TOGGLE:
+      type: "re:^grp:[a-z0-9_]+$"
+      default: ""
+      empty: true
+      description: "переключение раскладок (опция XKB), например grp:alt_shift_toggle; пусто — без опции (в GNOME — Super+Пробел)"

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# cream hook `remove` of wallpaper: takes our dconf and xfconf files away and
+# gives pcmanfm.conf back its values. A repeat finds nothing and exits 0.
+set -euo pipefail
+exec "${CREAM_EXT_DIR:?run by cream}/files/wallpaper.sh" remove

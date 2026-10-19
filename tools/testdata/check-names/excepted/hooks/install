@@ -1,0 +1,3 @@
+#!/bin/sh
+# the old path must be gone
+! grep -q /opt/bisquite "$1"  # check-names: allow

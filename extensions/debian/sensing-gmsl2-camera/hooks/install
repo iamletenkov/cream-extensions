@@ -1,0 +1,357 @@
+#!/usr/bin/env bash
+# cream hook `install` of sensing-gmsl2-camera: Sensing GMSL2 drivers for Jetson
+# AGX Orin + adapter SG8A-AGON-G2Y-A1 — libnvisppg.so of NVIDIA's camera
+# overlay, the Sensing kernel, modules, DTB overlay, a boot entry with it, the
+# L4T kernel held, and the cameras brought up on every boot.
+#
+# WHY A LAYER, NOT PART OF THE BASE IMAGE. Cameras are a property of a
+# PARTICULAR adapter on PARTICULAR robots, not of a Jetson; the BSP image stays
+# common to the fleet.
+#
+# libnvisppg.so IS HERE SINCE 4.0.0. The flash station used to swap it; the
+# owner's decision of 2026-09-18 took everything camera-specific out of the
+# base image. So the extension is pinned to L4T 36.4.3 and refuses any other
+# (step 1), before the network.
+#
+# WHY NOT `uname -r`. Inside virt-customize the guest is not booted; the path
+# /lib/modules/5.15.148-tegra is literal — the same literal as in Sensing's own
+# install.sh: the stock L4T kernel and the Sensing one have the same `uname -r`
+# (checked on a live board 2026-09-11) — the content changes, not the version.
+#
+# What it replaces is kept for `remove` in $CREAM_STATE_DIR: orig/ (the module
+# files as they were, each once), extlinux.conf.orig (once) and
+# extlinux.sha256 (the file as this hook left it), modules, overlays, held
+# (holds it added), diverted, packages, opt. The stock kernel stays in
+# /boot/Image.backup — the `backup` boot entry boots it.
+#
+# Key (hook environment, scope install — a module parameter):
+#   SENSING_GMSLMODE   link mode of the 8 ports, 0/1/2 by comma
+# SENSING_CAMERA_CONTROLS and SENSING_BOOST_CLOCK are read by the actions at
+# every boot (EnvironmentFile of the units), not here.
+#
+# Exit codes (spec §6.2, ruling R11): 20 — not a Jetson (no
+# /etc/nv_tegra_release); 10 — something on the boot path changed (kernel,
+# modules, overlay, extlinux.conf, modprobe.d, libnvisppg.so): reboot;
+# 0 — a repeat that changed nothing; 1 — failure.
+set -euo pipefail
+
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+log_info(){ >&2 echo -e "${GREEN}[INFO]${NC} sensing-gmsl2-camera: $*"; }
+log_warn(){ >&2 echo -e "${YELLOW}[WARN]${NC} sensing-gmsl2-camera: $*"; }
+log_error(){ >&2 echo -e "${RED}[ERROR]${NC} sensing-gmsl2-camera: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}"
+EXT_DIR="${CREAM_EXT_DIR:?run by cream}"
+
+KERNEL_VERSION="5.15.148-tegra"
+BOARD_DTB="tegra234-p3737-0000+p3701-0000-nv.dtb"
+REPO_URL="https://github.com/SENSING-Technology/nvidia-jetson-camera-drivers"
+# The _GMSL2x8_ package, not _YUV_: the camera does not work with _YUV_ (README,
+# «Почему пакет GMSL2x8»). A pin, not a parameter.
+PKG_REL="Jetson AGX Orin Devkit/SG8A-AGON-G2Y-A1/JetPack6.2/SG8A_AGON_G2Y_A1_AGX_Orin_GMSL2x8_JP6.2_L4TR36.4.3"
+
+# NVIDIA's camera overlay for L4T 36.4.3: the single ISP library libnvisppg.so
+# (measured 2026-09-19: 280128 bytes). The sums are not parameters: another
+# archive is a refusal, not a choice. Stock — nvidia-l4t-camera 36.4.3-20250107174145.
+NVISPPG_L4T=36.4.3
+NVISPPG_URL=https://developer.nvidia.com/downloads/embedded/L4T/r36_Release_v4.3/overlay_camera_36.4.3.tbz2
+NVISPPG_TBZ2_SHA256=acacdf47862b1212fb5ddff2046d49397f9f86757951b15ccde4af5e74f49f3f
+NVISPPG_OVERLAY_SHA256=3970c9cc85f86b978fdca1d20f2798c022f6852d26cfe03ae5bceec6ae0666ca
+NVISPPG_STOCK_SHA256=7e7c7500fae24da5bbb09dbed8d4235346c5110ab19b78e5daccbd8d078d5a2c
+
+# Local name on purpose: the default is never assigned to the exported key.
+GMSLMODE="${SENSING_GMSLMODE:-1,1,1,1,1,1,1,1}"
+if [[ ! "$GMSLMODE" =~ ^[012](,[012]){7}$ ]]; then
+    log_error "SENSING_GMSLMODE: нужно 8 значений 0/1/2 через запятую"
+    exit 1
+fi
+
+for f in nvisppg.sh kernel-hold.sh; do
+    [[ -f "$EXT_DIR/$f" ]] || { log_error "в каталоге расширения нет $f"; exit 1; }
+done
+# shellcheck disable=SC2034  # read by the sourced functions
+NVISPPG_ROOT="$R"
+# shellcheck source=../nvisppg.sh
+source "$EXT_DIR/nvisppg.sh"
+# shellcheck source=../kernel-hold.sh
+source "$EXT_DIR/kernel-hold.sh"
+
+# put_copy SRC DEST MODE: SRC into DEST through a temporary file in the same
+# directory and a rename — a symlink at DEST is replaced, never followed. An
+# identical DEST is left alone.
+put_copy(){
+    local src="$1" dest="$2" mode="$3" tmp
+    if [[ -f "$dest" && ! -L "$dest" ]] && cmp -s -- "$src" "$dest"; then return 0; fi
+    tmp="$(mktemp "$(dirname "$dest")/.sensing.XXXXXX")"
+    cp -- "$src" "$tmp"
+    chmod "$mode" "$tmp"
+    mv -f -T -- "$tmp" "$dest"
+}
+# put_file MODE DEST: stdin the same way.
+put_file(){
+    local mode="$1" dest="$2" tmp
+    tmp="$(mktemp "$(dirname "$dest")/.sensing.XXXXXX")"
+    cat > "$tmp"
+    chmod "$mode" "$tmp"
+    if [[ -f "$dest" && ! -L "$dest" ]] && cmp -s -- "$tmp" "$dest"; then rm -f -- "$tmp"; return 0; fi
+    mv -f -T -- "$tmp" "$dest"
+}
+# record FILE LINE…: add lines to a record of $STATE, keeping the old ones.
+record(){
+    local file="$STATE/$1"; shift
+    (( $# )) || return 0
+    { if [[ -f "$file" && ! -L "$file" ]]; then cat "$file"; fi
+      printf '%s\n' "$@"; } | sed '/^$/d' | sort -u | put_file 0644 "$file"
+}
+first_line(){ head -n 1 | tr -cd '[:print:]' | tr -d '\\'; }
+
+# Module files this hook writes: package file -> directory under updates/drivers.
+MOD_BASE="/lib/modules/$KERNEL_VERSION/updates/drivers"
+declare -A MOD_DIR=(
+    [tegra-camera]=media/platform/tegra/camera
+    [nvhost-nvcsi-t194]=video/tegra/host/nvcsi
+    [max96712]=media/i2c
+    [sgx-yuv-gmsl2]=media/i2c
+    [sgcam-gmsl2]=media/i2c
+    [pwm-gpio]=pwm
+)
+MOD_REQUIRED=(tegra-camera nvhost-nvcsi-t194 max96712 sgx-yuv-gmsl2 sgcam-gmsl2)
+MODPROBE_CONF=/etc/modprobe.d/sensing-gmsl2-camera.conf
+
+# Everything on the boot path, one digest: before and after decide code 10.
+fingerprint(){
+    local f k
+    {
+        for f in /boot/Image /boot/extlinux/extlinux.conf "$NVISPPG_LIB" "$MODPROBE_CONF"; do
+            if [[ -f "$R$f" ]]; then printf '%s %s\n' "$f" "$(sha256sum < "$R$f" | cut -d' ' -f1)"; fi
+        done
+        for k in "${!MOD_DIR[@]}"; do
+            f="$MOD_BASE/${MOD_DIR[$k]}/$k.ko"
+            if [[ -f "$R$f" ]]; then printf '%s %s\n' "$f" "$(sha256sum < "$R$f" | cut -d' ' -f1)"; fi
+        done
+        for f in "$R"/boot/tegra234-camera*.dtbo; do
+            if [[ -f "$f" ]]; then printf '%s %s\n' "${f#"$R"}" "$(sha256sum < "$f" | cut -d' ' -f1)"; fi
+        done
+    } | sort | sha256sum | cut -d' ' -f1
+}
+
+# --- 1. Board and release: before the network --------------------------------
+# /proc/device-tree does not help in a chroot. The build-time signals are files
+# already in the rootfs: the board DTB and /etc/nv_tegra_release of the BSP.
+if [[ ! -f "$R/etc/nv_tegra_release" ]]; then
+    log_warn "нет /etc/nv_tegra_release — это не NVIDIA Jetson (L4T): камерам Sensing здесь не на чем работать"
+    exit 20
+fi
+if [[ ! -f "$R/boot/dtb/kernel_${BOARD_DTB}" ]]; then
+    log_error "нет /boot/dtb/kernel_${BOARD_DTB}: расширение — только для AGX Orin Devkit (p3701-0000/p3737-0000)"
+    exit 1
+fi
+log_info "плата: $(first_line < "$R/etc/nv_tegra_release")"
+# Kernel, modules, the camera overlay and the ISP library are cut for one
+# release; the neighbour (36.4.4) is another set.
+nvisppg_gate "$NVISPPG_L4T" || exit 1
+for d in media/platform/tegra/camera video/tegra/host/nvcsi; do
+    if [[ ! -d "$R$MOD_BASE/$d" ]]; then
+        log_error "нет $MOD_BASE/$d — дерево модулей ядра $KERNEL_VERSION не то, что зашито в расширение"
+        exit 1
+    fi
+done
+if [[ ! -f "$R/boot/extlinux/extlinux.conf" ]]; then
+    log_error "нет /boot/extlinux/extlinux.conf"
+    exit 1
+fi
+
+before="$(fingerprint)"
+install -d -m 0755 "$STATE" "$R/var/tmp"
+WORK="$(mktemp -d "$R/var/tmp/sensing-gmsl2-camera.XXXXXX")"
+trap 'rm -r -f -- "$WORK"' EXIT
+
+# --- 2. ISP library from NVIDIA's camera overlay -----------------------------
+# The stock libnvisppg.so does not work with these cameras; NVIDIA publishes a
+# replacement per release. Download, check the pinned sum, swap through
+# dpkg-divert — nvisppg.sh. A diversion that was there before cream is not ours.
+log_info "оверлей камер NVIDIA $NVISPPG_L4T"
+mkdir -p "$WORK/nvisppg"
+nvisppg_fetch "$NVISPPG_URL" "$NVISPPG_TBZ2_SHA256" "$NVISPPG_OVERLAY_SHA256" "$WORK/nvisppg" || exit 1
+diverted_before=""
+nvisppg_diverted && diverted_before=1
+nvisppg_install "$WORK/nvisppg/libnvisppg.so" "$NVISPPG_STOCK_SHA256" "$NVISPPG_OVERLAY_SHA256" || exit 1
+[[ -n "$diverted_before" ]] || record diverted yes
+
+# --- 3. Driver package --------------------------------------------------------
+# A partial clone (--filter=blob:none, no checkout) + sparse-checkout: one
+# package folder of a repository over 380 MB, on the small disk of the image.
+log_info "клонирую $REPO_URL (частично: только ${PKG_REL##*/})"
+git clone -q --no-checkout --depth 1 --filter=blob:none "$REPO_URL" "$WORK/repo"
+git -C "$WORK/repo" sparse-checkout init --cone
+git -C "$WORK/repo" sparse-checkout set "$PKG_REL"
+git -C "$WORK/repo" checkout -q
+PKG="$WORK/repo/$PKG_REL"
+if [[ ! -f "$PKG/install.sh" || ! -f "$PKG/boot/Image" ]]; then
+    log_error "в клоне нет пакета драйверов ${PKG_REL##*/} (install.sh, boot/Image)"
+    exit 1
+fi
+for k in "${MOD_REQUIRED[@]}"; do
+    [[ -f "$PKG/ko/$k.ko" ]] || { log_error "в пакете нет ko/$k.ko — камеры не поднимутся"; exit 1; }
+done
+shopt -s nullglob
+overlays=("$PKG"/dtb/SGX_YUV_GMSL2/tegra234-camera*.dtbo)
+shopt -u nullglob
+(( ${#overlays[@]} )) || { log_error "в пакете нет dtb/SGX_YUV_GMSL2/tegra234-camera*.dtbo"; exit 1; }
+OVERLAY_NAME="$(basename "${overlays[0]}")"
+[[ "$OVERLAY_NAME" =~ ^tegra234-camera[A-Za-z0-9._+-]*\.dtbo$ ]] || { log_error "имя оверлея не то, что ждали"; exit 1; }
+
+# --- 4. Kernel and modules -----------------------------------------------------
+# The stock kernel is kept once: a repeat never overwrites the original with a
+# copy of the Sensing one.
+[[ -e "$R/boot/Image.backup" ]] || put_copy "$R/boot/Image" "$R/boot/Image.backup" 0644
+put_copy "$PKG/boot/Image" "$R/boot/Image" 0644
+
+# THE OTHER MODULES OF THE PACKAGE TOO. Sensing's own install.sh puts only
+# tegra-camera.ko and nvhost-nvcsi-t194.ko and REMOVES the stock max96712.ko,
+# expecting the replacement built into their kernel. On our image it is not
+# (measured 2026-09-13: no max96712 in /proc/kallsyms, `pca954x probe failed`,
+# no /dev/video*). ko/ of the package has the modules for THIS kernel —
+# max96712 (deserializer), sgx-yuv-gmsl2 (sensor), sgcam-gmsl2, pwm-gpio; with
+# them and depmod everything comes up on the first boot. The stock max96712.ko
+# (other hardware) is replaced by Sensing's under the same name.
+#
+# Each file this hook writes is saved once as it was (orig/), or marked absent.
+for k in "${!MOD_DIR[@]}"; do
+    rel="$MOD_BASE/${MOD_DIR[$k]}/$k.ko"
+    if [[ ! -f "$PKG/ko/$k.ko" ]]; then
+        log_warn "в пакете нет ko/$k.ko — внешняя синхронизация камер работать не будет"
+        continue
+    fi
+    if [[ ! -e "$STATE/orig$rel" && ! -e "$STATE/orig$rel.absent" ]]; then
+        install -d -m 0755 "$STATE/orig$(dirname "$rel")"
+        if [[ -f "$R$rel" ]]; then cp -p -- "$R$rel" "$STATE/orig$rel"; else : > "$STATE/orig$rel.absent"; fi
+    fi
+    install -d -m 0755 "$R$(dirname "$rel")"
+    put_copy "$PKG/ko/$k.ko" "$R$rel" 0644
+    record modules "$rel"
+done
+# DEPMOD IS REQUIRED: without it modules.dep does not know the new files.
+depmod_args=("$KERNEL_VERSION")
+[[ -n "$R" ]] && depmod_args=(-b "$R" "$KERNEL_VERSION")
+depmod "${depmod_args[@]}" || { log_error "depmod $KERNEL_VERSION не отработал — модули не будут найдены"; exit 1; }
+log_info "модули Sensing на месте, depmod $KERNEL_VERSION прошёл"
+
+# --- 4a. Hold the kernel from apt ---------------------------------------------
+# The NVIDIA repository (suite r36.4) has 36.4.4 and 36.4.7: the first
+# `apt upgrade` would put the stock Image, DTB, initrd and camera modules back.
+# Right after the swap, before any apt-get below. Holds that were there before
+# are not recorded as ours.
+held_before="$(apt-mark showhold 2>/dev/null || true)"
+sensing_kernel_hold || exit 1
+held_after="$(apt-mark showhold 2>/dev/null || true)"
+mapfile -t new_holds < <(comm -13 <(sort -u <<<"$held_before") <(sort -u <<<"$held_after") | sed '/^$/d')
+record held "${new_holds[@]}"
+
+# --- 5. DTB overlay -------------------------------------------------------------
+for o in "${overlays[@]}"; do
+    put_copy "$o" "$R/boot/$(basename "$o")" 0644
+    record overlays "$(basename "$o")"
+done
+log_info "оверлей камер: $OVERLAY_NAME"
+
+# --- 6. Driver package in /opt/sensing (for a manual quick_bring_up.sh) --------
+install -d -m 0755 "$R/opt"
+unpack="$(mktemp -d "$R/opt/.sensing.XXXXXX")"
+cp -a -- "$PKG/." "$unpack/"
+find "$unpack" -name '*.sh' -type f -exec chmod +x {} +
+chmod 0755 "$unpack"
+rm -r -f -- "$R/opt/sensing"
+mv -T -- "$unpack" "$R/opt/sensing"
+record opt yes
+
+# --- 7. extlinux.conf: a new entry with the overlay, the old one stays ------------
+# Python, not sed: root= of the existing APPEND is reused verbatim (PARTUUID of
+# the base image). The original is kept once for `remove`; the file is written
+# through a temporary file and a rename.
+EXTLINUX="$R/boot/extlinux/extlinux.conf"
+[[ -e "$STATE/extlinux.conf.orig" ]] || cp -p -- "$EXTLINUX" "$STATE/extlinux.conf.orig"
+python3 - "$EXTLINUX" "$BOARD_DTB" "$OVERLAY_NAME" <<'PYEOF'
+import os, re, sys, tempfile
+
+path, board_dtb, overlay_name = sys.argv[1], sys.argv[2], sys.argv[3]
+text = open(path, encoding="utf-8").read()
+if "JetsonIO" in text:
+    sys.exit(0)  # a repeat: the entry is there already
+match = re.search(r"^\s*APPEND\s+(.+)$", text, re.MULTILINE)
+if not match:
+    sys.exit("не нашёл строку APPEND в extlinux.conf — формат разошёлся с ожидаемым")
+append_line = match.group(1).strip()
+
+backup_stanza = f"""
+LABEL backup
+      MENU LABEL backup kernel (stock L4T, без камер)
+      LINUX /boot/Image.backup
+      INITRD /boot/initrd
+      APPEND {append_line}
+"""
+jetsonio_stanza = f"""
+LABEL JetsonIO
+      MENU LABEL Custom Header Config: <Sensing GMSL2 camera overlay>
+      LINUX /boot/Image
+      FDT /boot/dtb/kernel_{board_dtb}
+      INITRD /boot/initrd
+      APPEND {append_line}
+      OVERLAYS /boot/{overlay_name}
+"""
+text = re.sub(r"^DEFAULT\s+\S+", "DEFAULT JetsonIO", text, count=1, flags=re.MULTILINE)
+text = text.rstrip("\n") + "\n" + backup_stanza + jetsonio_stanza
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".extlinux.")
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    f.write(text)
+os.chmod(tmp, os.stat(path).st_mode & 0o7777)
+os.replace(tmp, path)
+PYEOF
+grep -q "^DEFAULT JetsonIO" "$EXTLINUX" || { log_error "правка extlinux.conf не применилась — DEFAULT не JetsonIO"; exit 1; }
+grep -q "^LABEL backup" "$EXTLINUX" || { log_error "резервная запись backup не появилась в extlinux.conf"; exit 1; }
+sha256sum < "$EXTLINUX" | cut -d' ' -f1 | put_file 0644 "$STATE/extlinux.sha256"
+
+# --- 8. Cameras on every boot ---------------------------------------------------
+# WITHOUT THIS NO PORT GIVES FRAMES although everything looks fine (measured
+# 2026-09-14: /dev/video0..7, probe success, `detect error` with link:0x02 on
+# all eight ports — the modules load with GMSLMODE_0=0,0,0,0, i.e. GMSL1, while
+# the cameras are GMSL2). Three parts, each with its own mechanism:
+#   link mode   /etc/modprobe.d  a module parameter, lives until it is unloaded
+#   profile     udev rule        the node may appear again (rmmod)
+#   SoC clocks  boot unit        not tied to nodes at all
+# The units and the rule are `files` of the manifest; the clock unit is enabled
+# by a link (no running systemd in the build).
+log_info "режим GMSL по портам: $GMSLMODE"
+IFS=, read -r -a m <<<"$GMSLMODE"
+install -d -m 0755 "$R/etc/modprobe.d"
+put_file 0644 "$R$MODPROBE_CONF" <<EOF
+# Written by the cream extension sensing-gmsl2-camera (SENSING_GMSLMODE).
+# 0=GMSL1, 1=GMSL2 6 Gbit/s, 2=GMSL2 3 Gbit/s; ports 0-3, then 4-7.
+# Read when the module loads: reboot after a change.
+options sgx_yuv_gmsl2 GMSLMODE_0=${m[0]},${m[1]},${m[2]},${m[3]} GMSLMODE_1=${m[4]},${m[5]},${m[6]},${m[7]}
+EOF
+install -d -m 0755 "$R/etc/systemd/system/multi-user.target.wants"
+ln -sfn /etc/systemd/system/sensing-gmsl2-clock.service \
+    "$R/etc/systemd/system/multi-user.target.wants/sensing-gmsl2-clock.service"
+
+# v4l2-ctl is the only tool of the actions; the L4T base does not always have it.
+if [[ ! -x "$R/usr/bin/v4l2-ctl" ]]; then
+    log_info "ставлю v4l-utils"
+    if [[ "$(dpkg-query -W -f='${db:Status-Status}' v4l-utils 2>/dev/null || true)" != installed ]]; then
+        DEBIAN_FRONTEND=noninteractive apt-get -q -y install v4l-utils || {
+            log_error "v4l-utils не установился — профиль камер ставить будет нечем"
+            exit 1
+        }
+        record packages v4l-utils
+    fi
+fi
+
+after="$(fingerprint)"
+if [[ "$before" == "$after" ]]; then
+    log_info "ничего не поменялось"
+    exit 0
+fi
+log_info "готово: libnvisppg.so из оверлея, ядро Sensing, модули, extlinux → JetsonIO; нужна перезагрузка"
+log_info "откат при проблемах — пункт backup в загрузочном меню"
+exit 10

@@ -1,29 +1,79 @@
-name: code-server
-version: 4.0.0
-layout: 2
-# 4.0.0: объявление для Teleport — в /etc/cream/teleport/apps.d/ (расширение
-#        teleport формата cream); прежний teleport-agent его не видит.
-# 3.0.1: объявление для Teleport несёт ICON=laptop (нужен teleport-agent 2.2.0+;
-#        более старый агент объявление с третьим ключом пропустит целиком).
-# 3.0.0: /etc/bisquite/code-server/config.yaml -> config (KEY=VALUE, домен
-#        code-server библиотеки bisquite-conf); прежний файл переносится и
-#        удаляется при установке; config.yaml в каталоге расширения удалён;
-#        версия (CODE_SERVER_VERSION) — только параметр сборки.
-family: deb
-# amd64 и arm64. Ограничение вносил не code-server, а mkcert: install.sh
-# качал его по прибитой ссылке mkcert-v1.4.4-linux-amd64 и валидировал ELF,
-# поэтому на arm64 сборка падала. Замер 2026-09-03: релиз mkcert v1.4.4
-# публикует и -linux-arm64, и -linux-arm, так что выбирать было из чего.
-# Ссылка стала зависеть от `dpkg --print-architecture`, ограничение снято.
+# code-server — VS Code in a browser, as the cloud-init user, behind a password.
 #
-# armhf в списке НЕТ, хотя mkcert его публикует: 32-битные цели проектом
-# не собираются и не проверялись, а объявить архитектуру значит обещать,
-# что она работает.
-arch: [amd64, arm64]
-# build     — install.sh ставит mkcert и code-server;
-# firstboot — configure-code-server.service выпускает сертификат и заводит
-#             сервис под пользователем (CODE_SERVER_USER либо из cloud-init).
-phase: [build, firstboot]
+# install   — the code-server .deb of the pinned version by sha256 per
+#             architecture (GitHub release), openssl for the self-signed
+#             certificate code-server issues itself. Starts nothing.
+# configure — every boot, stage cloud-user (after cloud-final: the user exists):
+#             ~/.config/code-server/config.yaml written AS THE USER (runuser,
+#             0600, the password on stdin, never through a symlink), the
+#             Teleport declaration /etc/cream/teleport/apps.d/code-server.conf
+#             and `systemctl start --no-block code-server@<user>`. Fail-closed:
+#             without CODE_SERVER_PASSWORD and without an explicit
+#             CODE_SERVER_ALLOW_NO_AUTH=1 the service is not started (a warning,
+#             exit 0); no user — a warning and exit 0 (plan ruling R11).
+# apply     — after `cream set code-server …`: the same, with a restart.
+# remove    — stops the instances, takes away the declaration and the package.
+# files     — code-server@.service: User=%i, EnvironmentFile config (no
+#             secrets), the wrapper files/code-server.sh start (refuses to start
+#             without authentication, exit 78 — not restarted).
+#
+# 5.0.0: cream/v1 (plan 2026-10-19, Task 15): settings in /etc/cream/code-server/config,
+#        the password in /etc/cream/code-server/secrets (secret: file); no password
+#        means no start unless CODE_SERVER_ALLOW_NO_AUTH=1; CODE_SERVER_BIND defaults
+#        to 127.0.0.1; the .deb by sha256 instead of the install script; mkcert is
+#        gone (code-server issues the certificate, cert: true); CODE_SERVER_VERSION
+#        is gone. Rename table — README.md.
+schema: cream/v1
+name: code-server
+version: 5.0.0
+summary: code-server — VS Code в браузере от имени пользователя; без пароля не стартует, наружу — через Teleport
+cream: ">=1.1.1"
+platform:
+  family: deb
+  # The release publishes .deb for amd64 and arm64 (armhf too, never built or
+  # checked here — not declared).
+  arch: [amd64, arm64]
+  os: [{id: debian}, {id: ubuntu}]
+targets:
+  build: exec
+  live: "yes"
 provides: [web-ide]
-requires: []
-conflicts: []
+depends:
+  - {name: cloud-user, version: ">=1.0.0 <2"}
+hooks:
+  # The .deb is ~100 MB over the network.
+  install: {timeout: 20m}
+  # At boot up to 30 s of waiting for the cloud-init user, then one bounded
+  # write as the user and non-blocking systemctl.
+  configure:
+    stage: cloud-user
+    timeout: 3m
+  apply: {timeout: 2m}
+  remove: {timeout: 10m}
+files:
+  - {src: files/code-server@.service, dst: /etc/systemd/system/code-server@.service, mode: "0644"}
+# Every value reaches a YAML file of the user, a unit name or a Teleport
+# declaration: the types admit no newline, quote, $, backquote, backslash or
+# space (tests/test-code-server.sh).
+config:
+  keys:
+    CODE_SERVER_USER:
+      type: 're:^[a-z_][a-z0-9_-]{0,31}$'
+      default: ""
+      empty: true
+      description: "пользователь; пусто — из cloud-init (библиотека cloud-user); root — нельзя"
+    CODE_SERVER_PASSWORD:
+      type: 're:^[A-Za-z0-9!#%&()*+,./:;<=>?@^_{|}~\[\]-]{8,128}$'
+      default: ""
+      empty: true
+      secret: file
+      description: "пароль: 8–128 знаков без пробелов, кавычек, $ и обратной косой; без него служба не стартует"
+    CODE_SERVER_PORT: {type: port, default: "9001", description: "порт"}
+    CODE_SERVER_BIND:
+      type: 're:^[A-Za-z0-9.:-]{1,253}$'
+      default: "127.0.0.1"
+      description: "адрес прослушивания; снаружи — через Teleport или ssh-туннель"
+    CODE_SERVER_ALLOW_NO_AUTH:
+      type: bool
+      default: "0"
+      description: "1 — запускать без пароля (шелл пользователя любому, кто достаёт до адреса; предупреждение при каждом старте)"
