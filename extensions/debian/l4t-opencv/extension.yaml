@@ -1,17 +1,30 @@
+# l4t-opencv — OpenCV 4.8.0 for NVIDIA Jetson from the NVIDIA repository
+# (cv2 with GStreamer, FFmpeg and V4L2, without CUDA). On L4T R32 (Jetson Nano)
+# nothing is installed: cv2 of the base image is checked and
+# OPENBLAS_CORETYPE=ARMV8 is pinned for logins and services (library l4t).
+#
+# install — not a Jetson (no /etc/nv_tegra_release) — code 20 before apt
+#           (ruling R11); the branch comes from l4t_major of the library l4t;
+#           the packages it put on go to /var/lib/cream/ext/l4t-opencv/packages.
+# remove  — its own packages (never those there before cream; refuses when apt
+#           would take anything else with them) and the OPENBLAS_CORETYPE pin of
+#           R32 while no other extension's drop-in needs it.
+# No configure: nothing to finish on boot. The GStreamer backend of cv2 works
+# on bare libgstreamer; the hardware camera path (nvvidconv) is l4t-gstreamer,
+# not a requirement.
+schema: cream/v1
 name: l4t-opencv
-version: 1.2.0
-layout: 2
-# 1.2.0: ветка R32 (Jetson Nano) — ничего не ставит, сверяет cv2 с CUDA и GStreamer
-#        и закрепляет OPENBLAS_CORETYPE=ARMV8 (lib/l4t); поведение на r36 прежнее.
-family: deb
-# Только arm64: пакеты OpenCV от NVIDIA лежат в jetson/common, который
-# подключён только в образе L4T.
-arch: [arm64]
-phase: build
+version: 2.0.0
+summary: OpenCV 4.8.0 для NVIDIA Jetson (cv2 с GStreamer) — пакеты NVIDIA на R36, проверка образа на R32
+cream: ">=1.0.0"
+platform:
+  family: deb
+  # The NVIDIA OpenCV packages live only in jetson/common (an L4T image).
+  arch: [arm64]
+targets: {build: exec, live: "yes"}
 provides: [opencv]
-# GStreamer-бэкенд OpenCV (cv2.CAP_GSTREAMER) собран в самой библиотеке
-# и работает на голом libgstreamer1.0, но аппаратный путь с камеры —
-# nvvidconv — даёт только l4t-gstreamer. Требованием это не объявлено:
-# OpenCV без него импортируется и работает, просто медленнее на входе.
-requires: []
-conflicts: []
+depends:
+  - {name: l4t, version: ">=1.0.0 <2"}
+hooks:
+  install: {timeout: 30m}
+  remove: {timeout: 15m}

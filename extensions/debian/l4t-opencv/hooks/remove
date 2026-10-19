@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# cream hook `remove` of l4t-opencv: the packages `install` put on (the record
+# in $CREAM_STATE_DIR/packages; packages that were there before cream stay) and,
+# on R32, the OPENBLAS_CORETYPE pin (record $CREAM_STATE_DIR/openblas): the
+# services drop-in of this extension, and the /etc/environment line while no
+# other drop-in (l4t-pytorch) still carries the variable. apt is asked first
+# in simulation: when it would take away anything besides our packages
+# (something installed later depends on them) the hook refuses and changes
+# nothing. A repeat finds nothing and exits 0.
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] l4t-opencv: $*"; }
+log_warn(){ >&2 echo "[WARN] l4t-opencv: $*"; }
+log_error(){ >&2 echo "[ERROR] l4t-opencv: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}"
+
+# --- packages -----------------------------------------------------------------
+export DEBIAN_FRONTEND=noninteractive
+ours=()
+if [[ -f "$STATE/packages" && ! -L "$STATE/packages" ]]; then
+    mapfile -t ours < <(sed '/^$/d' "$STATE/packages")
+fi
+if (( ${#ours[@]} )); then
+    sim="$(apt-get -s remove "${ours[@]}")" || { log_error "apt-get -s remove ${ours[*]} не прошёл"; exit 1; }
+    extra=()
+    while read -r verb pkg _; do
+        [[ "$verb" == Remv ]] || continue
+        mine=""
+        for p in "${ours[@]}"; do [[ "$p" == "$pkg" ]] && mine=1; done
+        [[ -n "$mine" ]] || extra+=("$pkg")
+    done <<< "$sim"
+    if (( ${#extra[@]} )); then
+        log_error "вместе с ${ours[*]} apt снял бы и чужие пакеты: ${extra[*]}"
+        log_error "сними руками или забудь запись: cream remove --forget l4t-opencv"
+        exit 1
+    fi
+    apt-get -q -y remove "${ours[@]}" || { log_error "apt-get remove ${ours[*]} не прошёл"; exit 1; }
+    log_info "удалены: ${ours[*]}"
+else
+    log_info "своих пакетов нет — OpenCV не трогаю"
+fi
+rm -f -- "$STATE/packages"
+
+# --- OPENBLAS_CORETYPE (R32) ----------------------------------------------------
+if [[ -e "$STATE/openblas" ]]; then
+    dropins="$R/etc/systemd/system.conf.d"
+    rm -f -- "$dropins/l4t-opencv.conf"
+    still=""
+    for f in "$dropins"/*.conf; do
+        [[ -f "$f" ]] && grep -q 'OPENBLAS_CORETYPE=' "$f" && still=1
+    done
+    envf="$R/etc/environment"
+    if [[ -n "$still" ]]; then
+        log_info "OPENBLAS_CORETYPE нужен другому расширению — строка /etc/environment остаётся"
+    elif [[ -L "$envf" ]]; then
+        log_warn "/etc/environment — символическая ссылка: не трогаю"
+    elif [[ -f "$envf" ]] && grep -qxF 'OPENBLAS_CORETYPE=ARMV8' "$envf"; then
+        tmp="$(mktemp "$R/etc/.environment.XXXXXX")"
+        grep -vxF 'OPENBLAS_CORETYPE=ARMV8' "$envf" > "$tmp" || true
+        chmod 0644 "$tmp"
+        mv -f -T -- "$tmp" "$envf"
+        log_info "OPENBLAS_CORETYPE снят из /etc/environment"
+    fi
+    rm -f -- "$STATE/openblas"
+fi

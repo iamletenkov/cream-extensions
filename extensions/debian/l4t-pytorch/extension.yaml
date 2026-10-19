@@ -1,18 +1,44 @@
+# l4t-pytorch — PyTorch and torchvision with CUDA for NVIDIA Jetson (JetPack 6,
+# L4T 36.4): the NVIDIA torch wheel and cuSPARSELt by sha256, cuDNN from apt,
+# torchvision built from source at a pinned commit. On L4T R32 (Jetson Nano)
+# nothing is installed: torch of the base image is checked and
+# OPENBLAS_CORETYPE=ARMV8 is pinned (library l4t).
+#
+# install — not a Jetson (no /etc/nv_tegra_release) — code 20 before apt
+#           (ruling R11); pip only with constraints.txt, as root into
+#           /usr/local, never with a home directory of root; what it put on is
+#           recorded in /var/lib/cream/ext/l4t-pytorch/{packages,pip,cusparselt}.
+# remove  — its own pip distributions (never one another still needs, e.g.
+#           numpy of l4t-tensorflow, pip-owned.py), its own apt packages (refuses
+#           when apt would take anything else; cuDNN and pip stay while
+#           tensorflow is installed), cuSPARSELt, the OPENBLAS pin of R32.
+# Tree: constraints.txt, check-system-python.py, pip-owned.py.
+schema: cream/v1
 name: l4t-pytorch
-version: 1.2.0
-layout: 2
-# 1.2.0: ветка R32 (Jetson Nano) — ничего не ставит, сверяет импорт torch с CUDA
-#        и закрепляет OPENBLAS_CORETYPE=ARMV8 (lib/l4t); поведение на r36 прежнее.
-family: deb
-# Только arm64 и только L4T: колесо torch — сборка NVIDIA под JetPack,
-# с PyPI-колесом aarch64 оно несовместимо (PyPI-сборка без CUDA).
-arch: [arm64]
-phase: build
+version: 2.0.0
+summary: PyTorch и torchvision с CUDA для NVIDIA Jetson — колесо NVIDIA и сборка torchvision (R36), проверка образа (R32)
+cream: ">=1.0.0"
+platform:
+  family: deb
+  # The torch wheel is an NVIDIA build for JetPack; the PyPI aarch64 wheel has no CUDA.
+  arch: [arm64]
+targets: {build: exec, live: "yes"}
 provides: [pytorch]
-# cuda — не порядок ради порядка. torchvision собирается из исходников
-# с FORCE_CUDA=1, и ему нужен nvcc из cuda-toolkit; сам torch грузит
-# libcublas, libcufft, libcusparse и прочие библиотеки тулкита.
-# На R32 (Nano) torch уже в образе вместе с CUDA 10.2, и cuda-toolkit там не
-# ставится: требование — объявление для r36, резолвер из него запрета не делает.
+# cuda: torchvision builds with FORCE_CUDA=1 and needs nvcc of cuda-toolkit;
+# torch loads libcublas, libcufft, libcusparse and the rest of the toolkit.
+# On R32 torch comes with CUDA 10.2 in the image: the requirement is for R36.
 requires: [cuda]
-conflicts: []
+depends:
+  - {name: l4t, version: ">=1.0.0 <2"}
+hooks:
+  # The 769 MB wheel and torchvision built with CUDA: 128 s on 12 cores of a
+  # board, much longer with one job in a small build appliance.
+  install: {timeout: 4h}
+  remove: {timeout: 20m}
+config:
+  keys:
+    TORCH_CUDA_ARCH_LIST:
+      type: "re:^[0-9]+\\.[0-9]+(\\+PTX)?(;[0-9]+\\.[0-9]+(\\+PTX)?)*$"
+      default: "8.7"
+      scope: install
+      description: "вычислительные архитектуры сборки torchvision; 8.7 — Ampere в Orin (единственная в JetPack 6)"

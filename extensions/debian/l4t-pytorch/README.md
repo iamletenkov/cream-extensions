@@ -2,15 +2,26 @@
 
 PyTorch и torchvision с CUDA для Jetson (JetPack 6, L4T 36.4, Orin).
 
-> **С 1.1.0 — раскладка 2.** Манифест объявляет `layout: 2`: каталог расширения
-> в госте — `/opt/bisquite/l4t-pytorch/` (был `/opt/vmsetup/l4t-pytorch/`). Путей гостя
-> расширение не прибивает, поэтому версия минорная; нужен bisquite
-> с поддержкой `layout: 2`.
+```
+EXTENSION l4t-pytorch          # образ bisquite (основной путь), после cuda-toolkit
+sudo cream install l4t-pytorch # живая плата Jetson; l4t — по depends, cuda — поставщик requires
+sudo cream remove l4t-pytorch
+```
+
+> **2.0.0 — cream/v1.** `install.sh` стал хуком `hooks/install`, появился хук `remove`;
+> `live: yes`. Каталог в госте — `/opt/cream/ext/l4t-pytorch/` (`constraints.txt`,
+> `check-system-python.py`, `pip-owned.py` — в дереве расширения). Общий код L4T — библиотека [`l4t`](../l4t/README.md) (`depends: l4t >=1.0.0 <2`) вместо общего L4T-файла из `lib/` layout 2.
+> Нет `/etc/nv_tegra_release` (не Jetson) — код **20** до apt (рулинг Р11), а не
+> отказ 1. `TORCH_CUDA_ARCH_LIST` — прежнее имя, теперь ключ `config.keys`
+> (`scope: install`). Временный каталог сборки — `/var/tmp`, cuSPARSELt распаковывается
+> рядом и подменяется переименованием. `pip` — только с `constraints.txt` из дерева расширения, под root в `/usr/local`,
+> с `HOME` во временном каталоге и без конфигурации pip (`PIP_CONFIG_FILE=/dev/null`):
+> в домашний каталог root ничего не пишется. Загрузки NVIDIA сверяются по sha256.
 
 ## Ветка R32 (Jetson Nano, JetPack 4.6) — с 1.2.0
 
 Ветка выбирается по первой строке `/etc/nv_tegra_release` (`# R32 …`),
-разбор общий — `lib/l4t` источника. Поведение на r36 не меняется.
+разбор общий — `l4t_major` библиотеки `l4t` (файл читается как данные).
 
 В образе Q-engineering PyTorch 1.13 и torchvision 0.14 уже собраны с CUDA
 10.2 под Python 3.8. Ничего не ставится (всё про колесо 2.5.0, cuSPARSELt
@@ -32,17 +43,19 @@ instruction` (замер на Nano: rc=132). Вендорский образ э�
 импорт без переменной, на сборке не проверить: appliance видит CPU машины
 сборки (на AGX — Cortex-A78AE).
 
-Проверено на живом Nano (L4T R32.6.1, 2026-09-15) прогоном `install.sh` на работающей системе.
+Проверено на живом Nano (L4T R32.6.1, 2026-09-15) прогоном установки (1.2.0) на работающей системе.
 
 ## Манифест
 
 | Поле | Значение |
 |---|---|
-| `phase` | `build` |
-| `arch` | `arm64` |
+| `targets` | `build: exec`, `live: yes` |
+| `platform.arch` | `arm64` |
 | `provides` | `pytorch` |
 | `requires` | `cuda` — `nvcc` для сборки torchvision и библиотеки тулкита для torch |
-| `conflicts` | пусто |
+| `depends` | `l4t >=1.0.0 <2` (библиотека) |
+| `hooks` | `install` (4 ч — сборка torchvision в малом appliance), `remove` |
+| `config.keys` | `TORCH_CUDA_ARCH_LIST` |
 
 ## Что ставится и откуда
 
@@ -75,7 +88,8 @@ PyPI-torch, и его C++-операции с torch от NVIDIA несовмес
 
 **Внутри `bs image build` ресурсы appliance по умолчанию — 1 vCPU и 2 ГБ.**
 Сборка пройдёт и так (число потоков компиляции расширение считает по
-памяти, по ~1.5 ГБ на поток, чтобы не словить OOM), но долго. С ресурсами —
+памяти, по ~1.5 ГБ на поток, чтобы не словить OOM; `/proc/meminfo` сверяется
+с числом до арифметики), но долго. С ресурсами —
 быстрее:
 
 ```bash
@@ -108,8 +122,48 @@ pip под root ставит в `/usr/local`, и оттуда пакеты пе�
   зависимости cloud-init импортируются из apt, и что cloud-init рендерит
   jinja-шаблон. Нарушение — отказ сборки.
 
-## Переменные окружения
+## Настройки
 
-| Переменная | Умолчание | Что делает |
+| Ключ | Умолчание | Что делает |
 |---|---|---|
-| `TORCH_CUDA_ARCH_LIST` | `8.7` | архитектура CUDA для torchvision; 8.7 — Ampere во всех Orin, другой JetPack 6 не поддерживает |
+| `TORCH_CUDA_ARCH_LIST` | `8.7` | архитектура CUDA для torchvision (`8.7` или `7.2;8.7`, допускается `+PTX`); 8.7 — Ampere во всех Orin, другой JetPack 6 не поддерживает |
+
+## Что снимает `remove`
+
+`install` записывает в `/var/lib/cream/ext/l4t-pytorch/` только своё: `packages` —
+apt-пакеты, которых не было; `pip` — дистрибутивы, появившиеся в `/usr/local` за
+установку (и при отказе на полпути); `cusparselt`; `openblas` (R32). Повтор
+(`--reinstall`) записи не меняет. `remove`:
+
+1. спрашивает apt в режиме симуляции — если вместе со своими пакетами он снял бы
+   чужие, отказ до любых изменений (`cream remove --forget l4t-pytorch` или руками);
+2. `pip uninstall` своих дистрибутивов, кроме тех, что ещё нужны другим в
+   `/usr/local` (`numpy`, `scipy` при `l4t-tensorflow`) — `pip-owned.py removable`;
+3. `apt-get remove` своих пакетов; `libcudnn9-cuda-12` и `python3-pip` остаются,
+   пока в `/usr/local` стоит `tensorflow`;
+4. `/usr/local/cusparselt` и `/etc/ld.so.conf.d/cusparselt.conf`, `ldconfig`;
+5. R32 — drop-in `l4t-pytorch.conf`, строка `/etc/environment` — если её больше не
+   несёт ни один drop-in (`l4t-opencv`).
+
+## Коды выхода `install`
+
+| Код | Когда |
+|---|---|
+| 0 | поставлено (R36) или torch образа на месте (R32) |
+| 1 | неверный `TORCH_CUDA_ARCH_LIST`, нет библиотеки `l4t`, нет `nvcc`, Python не 3.10, sha256 не совпал, тег torchvision передвинут, сборка или pip не прошли, проверка импорта или системного Python не прошла; R32 — torch без CUDA |
+| 20 | нет `/etc/nv_tegra_release` — не Jetson, ставить неоткуда (до apt) |
+
+## Проверки
+
+- **V** — `make cream-validate`, `tools/check-names.sh`.
+- **H** — `tests/test-l4t-pytorch.sh`: `pip-owned.py` на фикстурах dist-info; код 20,
+  отказы до apt (ключ, библиотека, `nvcc`, Python); R36 — apt, cuSPARSELt, каждый
+  `pip install` с `constraints.txt`, `HOME` не root, сборка torchvision с CUDA,
+  `MAX_JOBS` по памяти и при мусоре в meminfo, отказы (sha256, коммит, сборка, импорт,
+  системный Python), запись pip и при отказе; R32; `remove` (своё, чужое, при
+  `l4t-tensorflow`, отказ при чужих зависимых).
+- **P — ожидает.** Платы Jetson в CI нет: установка на живой плате (R36 — AGX Orin, R32 — Nano) через
+  `cream install` или сборка образа через bisquite проверяются вручную после плана
+  bisquite (Task 23 плана 2026-10-19 cream-v1-migration).
+- **L** — не нужен: в контейнере нет `/etc/nv_tegra_release`, ответ — код 20, его
+  проверяет H.
