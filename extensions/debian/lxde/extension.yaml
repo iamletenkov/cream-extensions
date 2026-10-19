@@ -1,21 +1,42 @@
+# lxde — LXDE with the lightdm display manager: the X server and the session
+# for the extensions that need one (x11vnc, kiosk, selkies).
+#
+# install — LXDE, lightdm, Xorg (a browser is optional, firefox-esr only);
+#           enables lightdm and graphical.target — on a live machine exit 10
+#           (reboot required); creates /etc/lightdm/lightdm.conf when the
+#           distribution ships none (Ubuntu), for the autologin of desktop.
+# files   — the session and the greeter: a lightdm drop-in under /etc/xdg that
+#           no package owns (the conffile /etc/lightdm/lightdm.conf is left to
+#           dpkg and to the desktop extension).
+# remove  — the default target and the display manager back as they were; the
+#           packages stay.
+# The autologin, the screen lock and the blanking are the desktop extension
+# (depends): `cream set desktop DESKTOP_AUTOLOGIN=1 …`. The three desktops are
+# mutually exclusive by capability, not by a list of names.
+schema: cream/v1
 name: lxde
-version: 4.1.0
-layout: 2
-# 4.1.0: ручки — домен desktop библиотеки bisquite-conf (схема lib/knobs/desktop);
-#        `bisquite-conf set desktop …` и `bisquite-desktop set` — одна проверка.
-# 3.0.0: файл ручек переехал в /etc/bisquite/desktop/config (был
-#        /etc/default/bisquite-desktop; прежний не читается, установка удаляет).
-family: deb
-arch: [amd64, arm64]
-# build     — install.sh ставит LXDE и lightdm, пишет lightdm.conf и ставит
-#             bisquite-desktop (ручки DESKTOP_*);
-# firstboot — bisquite-desktop.service на устройстве, на КАЖДОЙ загрузке до
-#             lightdm. 2.0.0: автологин, отключение блокировки и затемнения
-#             по умолчанию ВЫКЛЮЧЕНЫ.
-phase: [build, firstboot]
-# xorg xinput                          -> x11-server     (install.sh:21)
-# lightdm + set-default graphical.target -> display-manager (install.sh:38-39)
-# lxde                                 -> desktop-session
+version: 5.0.0
+summary: LXDE и менеджер входа lightdm — X-сервер и сессия для x11vnc, kiosk, selkies
+cream: ">=1.0.0"
+platform:
+  family: deb
+  arch: [amd64, arm64]
+  os: [{id: debian}, {id: ubuntu}]
+targets:
+  build: exec
+  live: confirm
+  live_note: >-
+    ставит рабочий стол LXDE (сотни мегабайт пакетов) и включает менеджер входа
+    lightdm и graphical.target: после перезагрузки экран машины занимает экран входа;
+    другой уже включённый менеджер входа не перехватывается (предупреждение);
+    remove возвращает цель загрузки и менеджер входа, пакеты остаются
 provides: [x11-server, display-manager, desktop-session]
-requires: []
-conflicts: [gnome, xfce4]
+depends:
+  - {name: desktop, version: ">=1.0.0 <2"}
+conflicts:
+  capabilities: [desktop-session]
+hooks:
+  install: {timeout: 30m}
+  remove: {timeout: 2m}
+files:
+  - {src: files/60-lxde.conf, dst: /etc/xdg/lightdm/lightdm.conf.d/60-lxde.conf, mode: "0644"}

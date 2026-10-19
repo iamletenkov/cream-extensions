@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# cream hook `remove` of gnome: puts back what install changed and leaves the
+# packages (GNOME, gdm3, Xorg — other software may use them; take them away
+# with apt by hand) and WaylandEnable=false in the gdm3 config (harmless while
+# gdm is off). From $CREAM_STATE_DIR/before: the default target goes back to
+# what it was (multi-user.target when unknown), gdm is disabled when it was not
+# the display manager before. On a live machine a changed default target is
+# exit 10 (reboot required).
+set -euo pipefail
+
+NAME=gnome
+
+log_info(){ >&2 echo "[INFO] $NAME: $*"; }
+log_warn(){ >&2 echo "[WARN] $NAME: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}"
+SYSD="$R/etc/systemd/system"
+
+if [[ ! -f "$STATE/before" ]]; then
+    log_info "install не оставил записи — менять нечего"
+    exit 0
+fi
+
+# before_value <key>: the value of key=… in the state file, as data (no eval).
+before_value(){
+    local line
+    line="$(grep -m1 -E "^$1=" "$STATE/before")" || true
+    printf '%s' "${line#*=}"
+}
+is_gdm(){ [[ "$1" == gdm.service || "$1" == gdm3.service ]]; }
+unit_re='^[A-Za-z0-9@._-]+\.(target|service)$'
+
+dm_link="$(readlink "$SYSD/display-manager.service" 2>/dev/null)" || true
+dm_now="${dm_link##*/}"
+dm_before="$(before_value dm)"
+if [[ -n "$dm_before" && ! "$dm_before" =~ $unit_re ]]; then
+    log_warn "негодное значение dm в состоянии — менеджер входа не трогаю"
+elif is_gdm "$dm_now" && ! is_gdm "$dm_before"; then
+    systemctl disable "$dm_now" || log_warn "$dm_now не выключился"
+fi
+
+reboot=0
+default_before="$(before_value default)"
+if [[ ! "$default_before" =~ $unit_re ]]; then
+    [[ -z "$default_before" ]] || log_warn "негодное значение default в состоянии — беру multi-user.target"
+    default_before=multi-user.target
+fi
+if [[ "$(systemctl get-default 2>/dev/null || true)" != "$default_before" ]]; then
+    systemctl set-default "$default_before" || log_warn "цель по умолчанию не вернулась к $default_before"
+    reboot=1
+fi
+rm -f -- "$STATE/before"
+
+log_info "готово; пакеты GNOME и gdm3 остаются (apt-get remove — вручную)"
+if [[ "$reboot" == 1 && "${CREAM_PHASE:-}" == live ]]; then
+    exit 10
+fi

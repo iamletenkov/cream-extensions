@@ -9,7 +9,9 @@
 # Дистрибутивы — LIVE_DISTROS из его live.env (умолчание «debian-12 ubuntu-24.04»).
 # По изменённым путям: расширение попадает в матрицу, если изменилось оно само
 # или одно из его LIVE_DEPS; изменение пина cream (tools/cream-pin.env) —
-# все L-расширения. Изменение самого раннера проверяет самопроверка
+# все L-расширения. LIVE_NIGHTLY_ONLY=1 в live.env (тяжёлые: gnome, lxde) —
+# только в --all (ночь, ручной запуск), в --changed (PR) — никогда, даже при
+# смене пина. Изменение самого раннера проверяет самопроверка
 # (tools/test-live-test.sh), не матрица.
 #
 # stdout — одна строка JSON: {"include":[{"ext":"…","distro":"…"},…]}; пустая
@@ -56,6 +58,9 @@ items=()
 while IFS= read -r envf; do
     dir="$(dirname "$(dirname "$envf")")"
     name="$(basename "$dir")"
+    if [[ "$mode" == --changed && "$(envval "$envf" LIVE_NIGHTLY_ONLY)" == 1 ]]; then
+        continue
+    fi
     pick="$all"
     if [[ -z "$pick" ]]; then
         is_changed "$name" && pick=1
