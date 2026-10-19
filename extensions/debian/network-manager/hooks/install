@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
-# Build phase: make sure the image carries NetworkManager, so that a Wi-Fi
-# interface declared in a device manifest actually comes up.
+# cream hook `install` of network-manager: make sure the machine carries
+# NetworkManager, so that a Wi-Fi interface declared in a device manifest
+# actually comes up. Paths of the machine go under $CREAM_ROOT (hooktest).
+#
+# What this install put on is recorded in $CREAM_STATE_DIR/installed (a package
+# per line) so that `remove` takes away only its own; a repeat keeps the record.
+# Debian and Ubuntu only: platform.os of the manifest, cream refuses elsewhere.
 #
 # ЗАЧЕМ ЭТО РАСШИРЕНИЕ ВООБЩЕ. `bs device write` при наличии секции `wifi`
 # генерирует network-config с `renderer: NetworkManager` — systemd-networkd
@@ -23,14 +28,12 @@
 # предупреждение, если в образе не нашлось никакой прошивки вовсе.
 set -euo pipefail
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
+log_info(){ >&2 echo "[INFO] network-manager: $*"; }
+log_warn(){ >&2 echo "[WARN] network-manager: $*"; }
+log_error(){ >&2 echo "[ERROR] network-manager: $*"; }
 
-log_info(){ >&2 echo -e "${GREEN}[INFO]${NC} $*"; }
-log_warn(){ >&2 echo -e "${YELLOW}[WARN]${NC} $*"; }
-log_error(){ >&2 echo -e "${RED}[ERROR]${NC} $*"; }
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}/installed"
 
 # Тот же повтор, что у расширения docker: индекс apt на сборочной машине
 # отваливается достаточно часто, чтобы это стоило одной функции.
@@ -49,29 +52,20 @@ APT_OPTS=(-q -y -o Dpkg::Options::=--force-confnew)
 
 pkg_installed(){ dpkg-query -W -f='${db:Status-Status}\n' "$1" 2>/dev/null | grep -qx installed; }
 
-# `systemctl is-enabled` внутри virt-customize отвечать не обязан — systemd
-# здесь не запущен, это chroot. Смотрим то, что `systemctl enable` физически
-# создаёт: симлинк в multi-user.target.wants и dbus-алиас, которым Debian
-# включает NetworkManager.
+# `systemctl is-enabled` inside the build chroot need not answer — systemd is
+# not running there. Look at what `systemctl enable` physically creates: the
+# link in multi-user.target.wants and the dbus alias Debian enables it with.
 unit_enabled(){
-    [[ -L /etc/systemd/system/multi-user.target.wants/NetworkManager.service ]] \
-        || [[ -L /etc/systemd/system/dbus-org.freedesktop.NetworkManager.service ]]
+    [[ -L "$R/etc/systemd/system/multi-user.target.wants/NetworkManager.service" ]] \
+        || [[ -L "$R/etc/systemd/system/dbus-org.freedesktop.NetworkManager.service" ]]
 }
 
-# --- какая это система -------------------------------------------------------
-# shellcheck disable=SC1091
-. /etc/os-release
-DISTRO_ID="${ID:-}"
-case "$DISTRO_ID" in
-    debian|ubuntu) ;;
-    *)
-        log_error "расширение network-manager рассчитано на debian и ubuntu, а здесь ID=$DISTRO_ID"
-        log_error "OpenWrt обслуживается отдельно: там нет ни apt, ни systemd"
-        exit 1
-        ;;
-esac
-ARCH="$(dpkg --print-architecture)"
-log_info "система $DISTRO_ID ${VERSION_CODENAME:-?} ($ARCH)"
+# remember <pkg...>: the packages this install put on; the first record wins.
+remember(){
+    [[ -s "$STATE" ]] && return 0
+    install -d -m 0755 "$(dirname "$STATE")"
+    printf '%s\n' "$@" > "$STATE"
+}
 
 # --- что уже есть ------------------------------------------------------------
 # wpasupplicant объявлен ЯВНО, а не оставлен на Recommends пакета
@@ -106,6 +100,7 @@ else
             fi
         done
         apt_retry apt-get "${APT_OPTS[@]}" install "${missing[@]}"
+        remember "${missing[@]}"
         log_info "установлено: ${missing[*]}"
     fi
 
@@ -129,8 +124,8 @@ fi
 # двух хозяев у одного интерфейса. cloud-init при наличии wifi в манифесте
 # кладёт профили NetworkManager, и Ethernet, поднятый networkd, будет
 # настроен по-старому.
-if [[ -L /etc/systemd/system/multi-user.target.wants/systemd-networkd.service \
-   || -L /etc/systemd/system/dbus-org.freedesktop.network1.service ]]; then
+if [[ -L "$R/etc/systemd/system/multi-user.target.wants/systemd-networkd.service" \
+   || -L "$R/etc/systemd/system/dbus-org.freedesktop.network1.service" ]]; then
     log_warn "в образе включён и systemd-networkd — два менеджера на одних интерфейсах"
     log_warn "расширение его НЕ выключает: это сетевой стек вашего образа"
 fi
@@ -140,8 +135,8 @@ fi
 # на Debian — в отдельных firmware-*, а в pi-gen прошивка вообще может приехать
 # файлами. Смотрим на то, что общее для всех трёх, — на /lib/firmware.
 firmware_found=""
-for probe in /lib/firmware/brcm /lib/firmware/iwlwifi-*.ucode /lib/firmware/rtlwifi \
-             /lib/firmware/mediatek /lib/firmware/ath10k /lib/firmware/ath11k; do
+for probe in "$R"/lib/firmware/brcm "$R"/lib/firmware/iwlwifi-*.ucode "$R"/lib/firmware/rtlwifi \
+             "$R"/lib/firmware/mediatek "$R"/lib/firmware/ath10k "$R"/lib/firmware/ath11k; do
     if [[ -e "$probe" ]]; then
         firmware_found="${firmware_found} $(basename "$probe")"
     fi

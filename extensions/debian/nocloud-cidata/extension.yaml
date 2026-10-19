@@ -1,14 +1,32 @@
+# nocloud-cidata — cloud-init reads the NoCloud seed from the partition labelled
+# cidata (written by `bs device write`): /etc/cloud/cloud.cfg.d/zz-cream-nocloud.cfg
+# with datasource_list [NoCloud, None], fs_label cidata, seedfrom "". Stock
+# images look elsewhere (Pi OS: seedfrom /boot/firmware; Ubuntu: fs_label
+# system-boot) and the device comes up without a user, network or keys.
+#
+# install — refuses without /etc/cloud/cloud.cfg.d (no cloud-init); copies the
+#           file from the extension (exec on the target, no `files`: the refusal
+#           must come before the file lands); warns about a stock config it overrides.
+# remove  — the file.
+# The name starts with zz-: cloud-init reads cloud.cfg.d in reverse order.
+schema: cream/v1
 name: nocloud-cidata
-version: 1.1.0
-layout: 2
-family: deb
-# Копирование файла архитектуры не касается, но фаза `build` означает
-# «выполняется код в госте», а libguestfs требует совпадения хоста и гостя.
-# Объявлены обе цели: расширение работает на любой, где архитектуры совпали.
-arch: [amd64, arm64]
-# Только `build`: на первой загрузке делать нечего — cloud-init читает
-# конфигурацию до того, как что-либо могло бы её поправить.
-phase: [build]
+version: 2.0.0
+summary: cloud-init читает NoCloud-seed с раздела с меткой cidata
+cream: ">=1.0.0"
+platform:
+  family: deb
+  arch: [amd64, arm64]
+  os: [{id: debian}, {id: ubuntu}]
+targets:
+  build: exec
+  # The datasource is chosen on the first boot: on a running machine the seed
+  # has already been read, the file would change nothing until a reinstall.
+  live: "no"
+  live_note: >-
+    меняет источник данных cloud-init первой загрузки — на работающей машине seed уже
+    прочитан; только сборка образа
 provides: [nocloud-cidata-seed]
-requires: []
-conflicts: []
+hooks:
+  install: {timeout: 5m}
+  remove: {timeout: 5m}

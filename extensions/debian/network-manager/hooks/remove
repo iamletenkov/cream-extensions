@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# cream hook `remove` of network-manager: removes only the packages this
+# extension's install put on ($CREAM_STATE_DIR/installed). Packages that were
+# there before cream (the Raspberry Pi OS case) are left alone, and so is the
+# network configuration: profiles belong to cloud-init and the operator.
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] network-manager: $*"; }
+
+STATE="${CREAM_STATE_DIR:?run by cream}/installed"
+
+if [[ ! -s "$STATE" ]]; then
+    log_info "пакеты ставило не это расширение — не трогаю ничего"
+    rm -f -- "$STATE"
+    exit 0
+fi
+
+mapfile -t pkgs < "$STATE"
+export DEBIAN_FRONTEND=noninteractive
+log_info "снимаю: ${pkgs[*]}"
+apt-get -q -y remove "${pkgs[@]}"
+rm -f -- "$STATE"
+log_info "готово"

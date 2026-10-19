@@ -1,12 +1,33 @@
+# network-manager — NetworkManager and wpasupplicant in the image, so that a
+# Wi-Fi interface declared in a device manifest actually comes up: `bs device
+# write` generates network-config with `renderer: NetworkManager` (networkd has
+# no Wi-Fi), and without NetworkManager cloud-init has nowhere to put the profile.
+#
+# install — "already there and enabled" (Raspberry Pi OS) touches nothing;
+#           otherwise installs what is missing and checks the unit is enabled;
+#           warns about systemd-networkd next to it and about missing Wi-Fi
+#           firmware (never installs firmware — README, "Прошивку не ставим").
+# remove  — only the packages this install put on ($CREAM_STATE_DIR/installed).
+# No configure: the network configuration is written by cloud-init.
+schema: cream/v1
 name: network-manager
-version: 1.1.0
-layout: 2
-family: deb
-arch: [amd64, arm64]
-# Только `build`. На первой загрузке донастраивать нечего: конфигурацию сети
-# пишет cloud-init из `network-config`, который кладёт на раздел cidata
-# `bs device write`, а профили NetworkManager он раскладывает сам.
-phase: [build]
+version: 2.0.0
+summary: NetworkManager и wpasupplicant в образе — чтобы Wi-Fi из манифеста устройства поднялся
+cream: ">=1.0.0"
+platform:
+  family: deb
+  arch: [amd64, arm64]
+  os: [{id: debian}, {id: ubuntu}]
+targets:
+  build: exec
+  live: confirm
+  live_note: >-
+    меняет сетевой стек работающей машины: пакет network-manager при установке сразу
+    запускает NetworkManager, и он берёт под управление интерфейсы, которых не держат
+    ifupdown или netplan, — соединение, по которому вы зашли, может оборваться;
+    systemd-networkd не выключается (два менеджера на одних интерфейсах — предупреждение);
+    remove снимает только поставленные этим расширением пакеты
 provides: [network-manager]
-requires: []
-conflicts: []
+hooks:
+  install: {timeout: 20m}
+  remove: {timeout: 10m}
