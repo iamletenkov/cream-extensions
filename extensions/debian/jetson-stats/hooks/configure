@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# cream hook `configure` of jetson-stats: stage cloud-user (after cloud-final:
+# the user exists) — every boot and after install on a working machine.
+#
+# Adds the cloud-init user to the group `jtop`: the daemon's socket
+# /run/jtop.sock is 0660 root:jtop, and outside the group the client answers
+# "I can't access jtop.service. Please logout or reboot this board". Then
+# makes sure jtop.service runs (--no-block: the hook runs inside a boot job).
+#
+# NO ORDER AGAINST jtop.service. jtop.service is After=multi-user.target; an
+# After=jtop.service here made a cycle that systemd broke by silently dropping
+# this job (measured on a Jetson Nano, 2026-09-04). The group and the package
+# are all this hook needs, not a running daemon.
+#
+# Not a Jetson or no user — a warning and 0 (ruling R11).
+set -euo pipefail
+log_info(){ >&2 echo "[INFO] jetson-stats: $*"; }
+log_warn(){ >&2 echo "[WARN] jetson-stats: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+CLOUD_USER_LIB="$R/opt/cream/ext/cloud-user/get_cloud_user.sh"
+
+if [[ ! -f "$R/etc/nv_tegra_release" ]]; then
+    log_warn "нет /etc/nv_tegra_release — не Jetson, настраивать нечего"
+    exit 0
+fi
+
+wait_s=0
+[[ "${CREAM_REASON:-boot}" == boot ]] && wait_s=30
+user=""
+for (( i = 0; ; i += 3 )); do
+    if [[ -x "$CLOUD_USER_LIB" ]]; then
+        user="$("$CLOUD_USER_LIB" 2>/dev/null || true)"
+    fi
+    if [[ -n "$user" ]] && getent passwd "$user" >/dev/null 2>&1; then break; fi
+    user=""
+    (( i < wait_s )) || break
+    sleep 3
+done
+if [[ -z "$user" || ! "$user" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
+    log_warn "пользователь cloud-init не найден — в группу jtop вносить некого"
+    exit 0
+fi
+
+if ! getent group jtop >/dev/null 2>&1; then
+    log_warn "группы jtop нет — завожу (это работа install)"
+    groupadd jtop
+fi
+if id -nG "$user" | tr ' ' '\n' | grep -qx jtop; then
+    log_info "'$user' уже в группе jtop"
+else
+    usermod -aG jtop "$user"
+    log_info "'$user' внесён в группу jtop; в уже открытой сессии — после нового входа"
+fi
+
+if [[ "${CREAM_PHASE:-}" == live && -d "$R/run/systemd/system" ]] \
+    && ! systemctl is-active --quiet jtop.service 2>/dev/null; then
+    systemctl --no-block start jtop.service
+    log_info "jtop.service запускается"
+fi

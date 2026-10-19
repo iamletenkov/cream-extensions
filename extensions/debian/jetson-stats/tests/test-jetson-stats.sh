@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2016  # literal $… in fakes is the test data
+# Tests of the jetson-stats extension (cream/v1): manifest, hooks install,
+# configure and remove on a scratch root (CREAM_ROOT) the way cream runs them.
+# apt-get, dpkg-query, python3 (only `-m pip`), jtop, systemctl, groupadd,
+# usermod, getent, id and sleep are fakes; the cloud-user library is a stub.
+# No board, root, network or systemd — the live check is P (AGX Orin).
+#
+# Held here: pip runs with constraints, HOME in a temporary directory, no pip
+# configuration and no --user — nothing lands in root's home; what pip put on
+# is recorded and taken away by remove; configure is stage cloud-user and
+# never orders itself against jtop.service (that made a cycle on the board).
+#
+#   extensions/debian/jetson-stats/tests/test-jetson-stats.sh   code 0 — all checks passed
+set -uo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+EXT="$(dirname "$HERE")"
+# shellcheck source=../../../../tools/hooktest.sh
+. "$EXT/../../../tools/hooktest.sh"
+ht_init
+
+jroot() {
+    ht_root "$EXT"
+    STATE="$ROOT/var/lib/cream/ext/jetson-stats"
+    UNIT="$ROOT/etc/systemd/system/jtop.service"
+    mkdir -p "$ROOT/etc/systemd/system" "$ROOT/root"
+    echo '# R36 (release), REVISION: 4.3, BOARD: generic' > "$ROOT/etc/nv_tegra_release"
+    printf '%s\n' 'alice:x:1000:1000::/home/alice:/bin/bash' > "$FAKE/passwd"
+    printf '%s\n' 'alice:x:1000:' > "$FAKE/group"
+    echo alice > "$FAKE/user"
+    printf '%s\n' pip setuptools > "$FAKE/pip-installed"
+    ht_fake getent 'f="$FAKE/$1"; [[ -f "$f" ]] || exit 2; [[ -z "${2-}" ]] && { cat "$f"; exit 0; }; grep -E "^${2}:" "$f" || exit 2'
+    ht_fake id '
+if [[ "$1" == -nG ]]; then u="$2"; out="$u"
+  while IFS=: read -r g _ _ m; do [[ ",$m," == *",$u,"* ]] && out="$out $g"; done < "$FAKE/group"
+  echo "$out"; exit 0; fi
+grep -qE "^${*: -1}:" "$FAKE/passwd"'
+    ht_fake groupadd 'echo "$1:x:999:" >> "$FAKE/group"'
+    ht_fake usermod '[[ "$1" == -aG ]] || exit 2
+awk -F: -v OFS=: -v g="$2" -v u="$3" "\$1 == g { \$4 = (\$4 == \"\" ? u : \$4 \",\" u) } { print }" "$FAKE/group" > "$FAKE/g.new"; mv "$FAKE/g.new" "$FAKE/group"'
+    ht_fake systemctl '[[ "$1" == is-active ]] && { [[ -f "$FAKE/active" ]]; exit; }; exit 0'
+    ht_fake dpkg-query 'p="${*: -1}"; [[ -f "$FAKE/pkg-$p" ]] && printf installed; exit 0'
+    ht_fake apt-get 'if [[ " $* " == *" install "* ]]; then
+  for a in "$@"; do case "$a" in -*|install|Dpkg::*) ;; *) : > "$FAKE/pkg-$a" ;; esac; done
+fi; exit 0'
+    # python3 -m pip: list/install/uninstall over $FAKE/pip-installed; the
+    # environment and argv of every call are recorded.
+    ht_fake python3 '
+[[ "$1 $2" == "-m pip" ]] || exit 2
+shift 2
+env > "$FAKE/pip.env.$1"
+case "$1" in
+  list) cat "$FAKE/pip-installed" | sed "s/$/==1.0/" ;;
+  install) [[ -f "$FAKE/pip-fails" ]] && exit 1
+    printf "%s\n" jetson-stats smbus2 distro nvidia-ml-py >> "$FAKE/pip-installed"
+    mkdir -p "'"$ROOT"'/usr/local/share/jetson_stats" ;;
+  uninstall) shift; for p in "$@"; do [[ "$p" == -y ]] && continue; sed -i "/^$p\$/d" "$FAKE/pip-installed"; done ;;
+esac'
+    ht_fake jtop '[[ "$1" == --install-service && -f "$FAKE/jtop-installs-unit" ]] && printf "[Service]\nExecStart=jtop\n" > "'"$UNIT"'"; exit 0'
+    ht_fake sleep
+    LIB="$ROOT/opt/cream/ext/cloud-user/get_cloud_user.sh"
+    mkdir -p "$(dirname "$LIB")"
+    printf '#!/usr/bin/env bash\ncat %q 2>/dev/null || exit 1\n' "$FAKE/user" > "$LIB"
+    chmod +x "$LIB"
+}
+live_systemd() { mkdir -p "$ROOT/run/systemd/system"; }
+
+echo "== манифест =="
+# eval: test-only literal expressions over our own manifest, as in nvidia-jetpack.
+mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
+eq "schema" cream/v1 "$(mf 'm["schema"]')"
+eq "мажор 3" 3.0.0 "$(mf 'm["version"]')"
+eq "cream >=1.1.1 (стадия cloud-user, Р14)" ">=1.1.1" "$(mf 'm["cream"]')"
+eq "только arm64" "['arm64']" "$(mf 'm["platform"]["arch"]')"
+eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
+eq "стадия cloud-user" cloud-user "$(mf 'm["hooks"]["configure"]["stage"]')"
+check_not "без порядка относительно jtop.service" grep -q 'jtop' <<< "$(mf 'm["hooks"]["configure"].get("after", []) + m["hooks"]["configure"].get("before", []) + m["hooks"]["configure"].get("wants", [])')"
+eq "хуки" "['configure', 'install', 'remove']" "$(mf 'sorted(m["hooks"])')"
+eq "depends cloud-user" "cloud-user >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
+check "constraints закрепляют jetson-stats" grep -qE '^jetson-stats==[0-9.]+' "$EXT/constraints.txt"
+for f in install.sh configure.sh configure-jetson-stats.service; do
+    check_not "layout 2: нет $f" test -e "$EXT/$f"
+done
+
+echo "== install: не Jetson — 20 =="
+jroot
+rm -f -- "$ROOT/etc/nv_tegra_release"
+ht_hook install; eq "нет /etc/nv_tegra_release — 20" 20 "$?"
+check_not "apt не звали" ht_called '^apt-get '
+
+echo "== install: pip без следов в доме root =="
+jroot
+: > "$FAKE/jtop-installs-unit"
+ht_hook install; eq "install — 0" 0 "$?"
+check "apt: python3-pip" ht_called '^apt-get .*install .*python3-pip'
+check "pip с constraints" ht_called '^python3 -m pip install .*--constraint .*jetson-stats'
+check_not "pip без --user" ht_called '^python3 -m pip .*--user'
+envf="$FAKE/pip.env.install"
+check "HOME pip — временный каталог" grep -qE "^HOME=$ROOT/tmp/" "$envf"
+check "PIP_CONFIG_FILE=/dev/null" grep -qx 'PIP_CONFIG_FILE=/dev/null' "$envf"
+check "PIP_USER=0" grep -qx 'PIP_USER=0' "$envf"
+check "PYTHONNOUSERSITE=1" grep -qx 'PYTHONNOUSERSITE=1' "$envf"
+check_not "в /root ничего" test -n "$(ls -A "$ROOT/root")"
+check_not "временный каталог убран" test -n "$(ls -A "$ROOT/tmp")"
+eq "pip: записано поставленное" "distro jetson-stats nvidia-ml-py smbus2" "$(sort "$STATE/pip" | tr '\n' ' ' | sed 's/ $//')"
+check "юнит от jtop --install-service" test -f "$UNIT"
+check "группа jtop" grep -q '^jtop:' "$FAKE/group"
+check "jtop.service включён" ht_called '^systemctl enable jtop\.service$'
+check_not "юнит не наш — remove его не тронет" test -e "$STATE/unit-ours"
+
+echo "== install: колесо без юнита — юнит пишет расширение =="
+jroot
+ht_hook install; eq "install — 0" 0 "$?"
+check "юнит написан" grep -qx 'Environment="JTOP_SERVICE=True"' "$UNIT"
+check "ExecStart — путь jtop" grep -qE "^ExecStart=/[^ ]+/jtop --force$" "$UNIT"
+eq "юнит 0644" 644 "$(stat -c %a "$UNIT")"
+check "помечен как наш" test -e "$STATE/unit-ours"
+: > "$FAKE/calls"
+ht_hook install; eq "повтор — 0" 0 "$?"
+eq "повтор: pip-запись та же" "distro jetson-stats nvidia-ml-py smbus2" "$(sort "$STATE/pip" | tr '\n' ' ' | sed 's/ $//')"
+
+echo "== install: своя версия и сбой pip =="
+jroot
+ht_hook install JETSON_STATS_VERSION=4.3.2; eq "версия 4.3.2 — 0" 0 "$?"
+check "ставит заданную версию" ht_called '^python3 -m pip install .* jetson-stats==4\.3\.2$'
+ht_hook install 'JETSON_STATS_VERSION=1;id'; eq "версия не по форме — 1" 1 "$?"
+jroot; : > "$FAKE/pip-fails"
+ht_hook install; eq "pip упал — 1" 1 "$?"
+
+echo "== configure: пользователь cloud-init в группе jtop =="
+jroot
+ht_hook install >/dev/null
+ht_hook configure CREAM_REASON=boot; eq "configure — 0" 0 "$?"
+check "alice в jtop" grep -qE '^jtop:.*alice' "$FAKE/group"
+check_not "без systemd: не запускает" ht_called '^systemctl --no-block start'
+jroot; live_systemd
+ht_hook configure CREAM_REASON=install; eq "live — 0" 0 "$?"
+check "jtop.service запускается --no-block" ht_called '^systemctl --no-block start jtop\.service$'
+check_not "блокирующего systemctl нет" ht_called '^systemctl (start|restart|stop) '
+: > "$FAKE/calls"; : > "$FAKE/active"
+ht_hook configure CREAM_REASON=apply; eq "повтор — 0" 0 "$?"
+check_not "повтор: usermod не нужен" ht_called '^usermod '
+check_not "уже работает — не запускает" ht_called 'start jtop'
+jroot; rm -f -- "$FAKE/user"
+ht_hook configure CREAM_REASON=boot; eq "нет пользователя — 0" 0 "$?"
+check "предупреждение" grep -q 'пользовател' <(ht_out)
+jroot; rm -f -- "$ROOT/etc/nv_tegra_release"
+ht_hook configure CREAM_REASON=boot; eq "не Jetson — 0" 0 "$?"
+
+echo "== remove =="
+jroot; live_systemd
+ht_hook install >/dev/null
+: > "$FAKE/calls"
+ht_hook remove; eq "remove — 0" 0 "$?"
+check "pip снимает своё" ht_called '^python3 -m pip uninstall -y .*jetson-stats'
+check "HOME pip при снятии — временный" grep -qE "^HOME=$ROOT/tmp/" "$FAKE/pip.env.uninstall"
+check "службу выключили" ht_called '^systemctl disable jtop\.service'
+check_not "наш юнит снят" test -e "$UNIT"
+check "apt снимает своё" ht_called '^apt-get .*remove .*python3-pip'
+check_not "состояние снято" test -e "$STATE/pip" -o -e "$STATE/packages" -o -e "$STATE/unit-ours"
+: > "$FAKE/calls"
+ht_hook remove; eq "повтор — 0" 0 "$?"
+check_not "повтор: pip и apt не звали" ht_called '^(apt-get|python3) '
+
+ht_done
