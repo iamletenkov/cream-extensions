@@ -1,13 +1,33 @@
+# cloud-growroot — the cloud-init modules growpart and resizefs in
+# cloud_init_modules of /etc/cloud/cloud.cfg itself (after write_files), so the
+# root grows to the medium on first boot. Raspberry Pi OS lists neither, and the
+# failure is silent: cloud-init reports SUCCESS with an 11.5 GB root on a 58 GB card.
+#
+# install — inserts only the missing modules with the anchor's indent; the
+#           backup cloud.cfg.before-growroot is taken only when the file changes
+#           (after the anchor check, before the mv) and is never overwritten.
+# remove  — takes out exactly the modules install inserted
+#           ($CREAM_STATE_DIR/inserted) and the backup.
+# Not a cloud.cfg.d fragment: mergemanydict replaces lists whole (hooks/install).
+schema: cream/v1
 name: cloud-growroot
-version: 1.1.0
-layout: 2
-family: deb
-# Правка конфигурации архитектуры не касается, но фаза `build` означает
-# «выполняется код в госте», а libguestfs требует совпадения хоста и гостя.
-arch: [amd64, arm64]
-# Только `build`: на первой загрузке уже поздно — cloud-init читает
-# cloud_init_modules раньше, чем что-либо успело бы его поправить.
-phase: [build]
+version: 2.0.0
+summary: Модули cloud-init growpart и resizefs в cloud.cfg — корень растёт до размера носителя
+cream: ">=1.0.0"
+platform:
+  family: deb
+  arch: [amd64, arm64]
+  os: [{id: debian}, {id: ubuntu}]
+  commands: [growpart, resize2fs]
+targets:
+  build: exec
+  # cloud-init reads cloud_init_modules on the first boot only: on a running
+  # machine the root has already been laid out and will not grow.
+  live: "no"
+  live_note: >-
+    правит список модулей cloud-init первой загрузки — на работающей машине корень уже
+    размечен и не вырастет; только сборка образа
 provides: [cloud-growroot]
-requires: []
-conflicts: []
+hooks:
+  install: {timeout: 5m}
+  remove: {timeout: 5m}

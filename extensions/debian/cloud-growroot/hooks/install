@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Включить модули cloud-init `growpart` и `resizefs`.
+# cream hook `install` of cloud-growroot: enable the cloud-init modules
+# `growpart` and `resizefs`. Paths of the machine go under $CREAM_ROOT (hooktest).
+# Only the missing modules are inserted; which ones — $CREAM_STATE_DIR/inserted,
+# read by `remove`.
 #
 # ЗАЧЕМ. Без них корень не растёт до размера носителя, и это тихо:
 # cloud-init отрабатывает успешно и рапортует SUCCESS, потому что со своей
@@ -22,15 +25,16 @@
 # и `resize2fs_once` в нём отсутствуют, конкурента у cloud-init не будет.
 set -euo pipefail
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
-log_info(){ >&2 echo -e "${GREEN}[INFO]${NC} cloud-growroot: $*"; }
-log_warn(){ >&2 echo -e "${YELLOW}[WARN]${NC} cloud-growroot: $*"; }
-log_error(){ >&2 echo -e "${RED}[ERROR]${NC} cloud-growroot: $*"; }
+log_info(){ >&2 echo "[INFO] cloud-growroot: $*"; }
+log_warn(){ >&2 echo "[WARN] cloud-growroot: $*"; }
+log_error(){ >&2 echo "[ERROR] cloud-growroot: $*"; }
 
-CFG=/etc/cloud/cloud.cfg
+R="${CREAM_ROOT:-}"; R="${R%/}"
+CFG="$R/etc/cloud/cloud.cfg"
+STATE="${CREAM_STATE_DIR:?run by cream}/inserted"
 
 [[ -f "$CFG" ]] || {
-    log_error "нет $CFG — cloud-init не установлен"
+    log_error "нет /etc/cloud/cloud.cfg — cloud-init не установлен"
     log_error "без него корень не вырастет, а seed не прочитается вовсе"
     exit 1
 }
@@ -47,7 +51,13 @@ if (( ${#missing[@]} )); then
     exit 1
 fi
 
-if grep -qE '^\s*-\s*growpart\s*$' "$CFG" && grep -qE '^\s*-\s*resizefs\s*$' "$CFG"; then
+# Only the modules that are not listed yet: with one of them already there,
+# inserting both would list it twice.
+want=()
+for mod in growpart resizefs; do
+    grep -qE "^[[:space:]]*-[[:space:]]*${mod}[[:space:]]*$" "$CFG" || want+=("$mod")
+done
+if (( ${#want[@]} == 0 )); then
     log_info "модули уже включены — ничего не меняю"
     exit 0
 fi
@@ -64,11 +74,15 @@ fi
 # версиями) — там же, где они стоят в каноническом cloud.cfg у Ubuntu,
 # и до `disk_setup`/`mounts`: расширять раздел надо раньше, чем на него
 # что-то смонтируют.
-awk '
+# The anchor is write_files; when only resizefs is missing — growpart, so that
+# resizefs goes right after it, as in the stock Ubuntu cloud.cfg.
+anchor='^[[:space:]]*-[[:space:]]*write[_-]files[[:space:]]*$'
+[[ "${want[*]}" == resizefs ]] && anchor='^[[:space:]]*-[[:space:]]*growpart[[:space:]]*$'
+awk -v want="${want[*]}" -v anchor="$anchor" '
   /^cloud_init_modules:/ { in_list = 1 }
   in_list && /^[^ \t-]/ && !/^cloud_init_modules:/ { in_list = 0 }
   { print }
-  in_list && !done && /^[ \t]*-[ \t]*write[_-]files[ \t]*$/ {
+  in_list && !done && $0 ~ anchor {
       # Отступ берётся У СТРОКИ-ЯКОРЯ, а не пишется константой.
       # Замер: с жёстко вписанным одним пробелом получается смесь
       # одно- и двухпробельных элементов одного блока, а это НЕВАЛИДНЫЙ
@@ -76,14 +90,14 @@ awk '
       # выходит хуже болезни.
       indent = $0
       sub(/-.*$/, "", indent)
-      print indent "- growpart"
-      print indent "- resizefs"
+      n = split(want, mods, " ")
+      for (i = 1; i <= n; i++) print indent "- " mods[i]
       done = 1
   }
   END { if (!done) exit 3 }
 ' "$CFG" > "$CFG.new" || {
-    rm -f "$CFG.new"
-    log_error "в $CFG не нашёлся якорь write_files внутри cloud_init_modules"
+    rm -f -- "$CFG.new"
+    log_error "в /etc/cloud/cloud.cfg не нашёлся якорь write_files внутри cloud_init_modules"
     log_error "список устроен иначе, чем ожидалось — впишите модули вручную"
     exit 1
 }
@@ -95,12 +109,16 @@ awk '
 # с ненайденным якорем оставлял `cloud.cfg.before-growroot` при нетронутом
 # `cloud.cfg`: след от правки, которой не было. Читается он ровно наоборот —
 # как «расширение уже применялось», — и это подталкивает искать изменения
-# там, где их нет.
-cp -a "$CFG" "$CFG.before-growroot"
+# там, где их нет. An existing backup is never overwritten (cream spec §6.3):
+# it holds the file as it was before the first change.
+[[ -e "$CFG.before-growroot" ]] || cp -a "$CFG" "$CFG.before-growroot"
 
+install -d -m 0755 "$(dirname "$STATE")"
+printf '%s\n' "${want[@]}" > "$STATE.new"
 mv "$CFG.new" "$CFG"
-log_info "в cloud_init_modules добавлены growpart и resizefs"
-log_info "прежний файл сохранён как $CFG.before-growroot"
+mv "$STATE.new" "$STATE"
+log_info "в cloud_init_modules добавлены: ${want[*]}"
+log_info "прежний файл сохранён как /etc/cloud/cloud.cfg.before-growroot"
 
 # Сказать вслух про соседа: раздел seed создаётся В КОНЦЕ диска, и корень
 # растёт только до его начала. Это не мешает — между ними обычно всё
