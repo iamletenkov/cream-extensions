@@ -1,25 +1,83 @@
-name: kiosk
-version: 3.0.0
-layout: 2
-# 3.0.0: /etc/bisquite/kiosk/config.yaml -> config (KEY=VALUE, KIOSK_*, домен
-#        kiosk библиотеки bisquite-conf); yq не нужен; /var/lib/kiosk/config
-#        больше нет — обёртка читает настройки сама.
-family: deb
-arch: [amd64, arm64]
-# build     — install.sh ставит chromium и кладёт kiosk-chromium@.service;
-# firstboot — configure.sh поднимает kiosk-chromium@<пользователь> под
-#             пользователем из cloud-init.
-phase: [build, firstboot]
-provides: [kiosk-browser]
-# install.sh НЕ ставит xorg — только клиентские утилиты X (x11-xserver-utils,
-# x11-utils, xauth) и dbus-x11. X-сервер и автологин обязан дать кто-то другой:
-#   kiosk-chromium@.service   — DISPLAY=:0, а authority ищет run-kiosk.sh
-#   configure-kiosk.service:3 — After=graphical.target ... display-manager.service
+# kiosk — Chromium in kiosk mode on top of a running graphical session: the
+# browser takes the whole screen as the session user once the display manager
+# has logged that user in (autologin — the desktop extension).
 #
-# Требование родовое, и это верно: путь к X authority больше не зашит в юните,
-# а ищется в рантайме — под LightDM и под GDM он разный. Различать в манифесте
-# «какой именно дисплей-менеджер» значило бы зафиксировать ось, которая ответа
-# не определяет.
+# install   — chromium and the X client tools (xdpyinfo for the X authority
+#             check); only the missing packages, recorded for remove.
+# configure — stage graphical (after the display manager): the user (KIOSK_USER
+#             or the cloud-init user, library cloud-user), the instance
+#             kiosk-chromium@<user> enabled and restarted (--no-block), the
+#             instances of other users disabled; the GNOME on-screen keyboard as
+#             a system dconf keyfile. No display manager or no user — a warning
+#             and 0 (ruling R11). Nothing is written into the user's home.
+#             No own apply: `cream set kiosk …` restarts configure.
+# remove    — every instance off, the keyfile and our packages away.
+# files     — the unit template (EnvironmentFile=/etc/cream/kiosk/config, the
+#             wrapper without a shell, User=%i), the wrapper run-kiosk.sh and
+#             the system xfconf defaults of the Xfce4 panel and desktop.
+#
+# 4.0.0: cream/v1; stage graphical instead of configure-kiosk.service; the
+#        wrapper reads the domain from EnvironmentFile and checks the form of
+#        every value; Xfce4 and GNOME settings are system defaults in /etc
+#        instead of files written by root into ~/.config; Debian only.
+schema: cream/v1
+name: kiosk
+version: 4.0.0
+summary: Chromium в режиме киоска поверх графического сеанса — от пользователя сеанса, на весь экран
+cream: ">=1.1.0"
+platform:
+  family: deb
+  arch: [amd64, arm64]
+  # The package `chromium` is Debian's; on Ubuntu the browser is a snap
+  # (chromium-browser is a transitional package) and never worked here.
+  os: [{id: debian}]
+targets:
+  build: exec
+  live: confirm
+  live_note: >-
+    захватывает экран: браузер Chromium на весь экран поверх сеанса пользователя
+    (KIOSK_USER или пользователь cloud-init), без панели и рабочего стола Xfce4 —
+    системные умолчания xfconf для всех пользователей машины; перезапускается
+    сам при закрытии; ставит chromium; снимается cream remove kiosk
+provides: [kiosk-browser]
+# Any X server and display manager: the X authority is found at run time.
 requires: [x11-server, display-manager]
-# Обе реализации киоска забирают экран себе, автостартом на graphical.target.
-conflicts: [chromium-kiosk]
+depends:
+  - {name: cloud-user, version: ">=1.0.0 <2"}
+# Both kiosks take the screen.
+conflicts:
+  extensions: [chromium-kiosk]
+hooks:
+  install: {timeout: 20m}
+  # Up to 60 s of waiting for the cloud-init user at boot, then a few links.
+  configure: {stage: graphical, timeout: 3m}
+  remove: {timeout: 10m}
+config:
+  keys:
+    KIOSK_USER:
+      type: "re:^[a-z_][a-z0-9_-]{0,31}$"
+      default: ""
+      empty: true
+      description: "пользователь киоска; пусто — пользователь cloud-init (библиотека cloud-user)"
+    KIOSK_URL:
+      type: "re:^(https?|file)://[A-Za-z0-9._~:/?#@!&()*+,;=%-]+$"
+      default: "https://github.com/iamletenkov/bisquite"
+      description: "страница киоска: http(s):// или file://, без пробелов, кавычек и $"
+    KIOSK_DISPLAY:
+      type: "re:^:[0-9]{1,3}(\\.[0-9]{1,2})?$"
+      default: ":0"
+      description: "X-дисплей браузера"
+    KIOSK_KEYBOARD_ENABLED:
+      type: "enum:true,false"
+      default: "true"
+      description: "экранная клавиатура — только под GNOME (системный dconf)"
+    KIOSK_CHROMIUM_FLAGS:
+      type: "list:re:^--[a-z0-9][a-z0-9-]*(=[A-Za-z0-9._,:/=+-]*)?$"
+      default: "--disable-pinch --overscroll-history-navigation=0"
+      empty: true
+      description: "флаги Chromium через пробел, к базовому набору; заменяют умолчание"
+files:
+  - {src: files/kiosk-chromium@.service, dst: /etc/systemd/system/kiosk-chromium@.service, mode: "0644"}
+  - {src: files/run-kiosk.sh, dst: /usr/local/lib/kiosk/run-kiosk.sh, mode: "0755"}
+  - {src: files/xfce4-panel.xml, dst: /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml, mode: "0644"}
+  - {src: files/xfce4-desktop.xml, dst: /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml, mode: "0644"}
