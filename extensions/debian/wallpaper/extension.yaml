@@ -1,21 +1,52 @@
-name: wallpaper
-version: 2.0.1
-layout: 2
-family: deb
-# Обе оси: расширение кладёт картинку и правит dconf — ничего
-# машинно-зависимого в нём нет.
-arch: [amd64, arm64]
-# build     — install.sh кладёт файл в /usr/share/backgrounds;
-# firstboot — configure.sh прописывает его пользователю cloud-init.
+# wallpaper — the desktop wallpaper as a SYSTEM DEFAULT under /etc, from a
+# picture of the extension's own tree (/opt/cream/ext/wallpaper/images):
+#   GNOME — the system dconf database `local` with locks (the user database and
+#           the vendor nvbackground.sh of L4T cannot override it);
+#   Xfce  — the system xfconf channel xfce4-desktop (a default: the user's own
+#           channel, once there, wins);
+#   LXDE  — [desktop] of /etc/xdg/pcmanfm/LXDE/pcmanfm.conf (lxde-common).
+# Root writes nothing into a home directory and runs nothing as the user.
 #
-# Вторая фаза здесь не для полноты: gsettings пишет в dconf КОНКРЕТНОГО
-# пользователя (~/.config/dconf/user), а его имя на сборке неизвестно —
-# учётку создаёт cloud-init. Тот же довод, что у vino-vnc и автологина.
-phase: [build, firstboot]
+# install   — dconf-cli when dconf is absent; refuses (exit 1) when the chosen
+#             picture is not in images/ — an image without it is not what was
+#             asked for.
+# configure — stage cloud-user (after cloud-final, as the firstboot service
+#             before; no order against the display manager): writes the three
+#             defaults, warns when the cloud-init user has own Xfce/LXDE
+#             settings that override them; no desktop — a warning and 0.
+# remove    — takes our files away and gives pcmanfm.conf back its values.
+#
+# 3.0.0: cream/v1; configure-wallpaper.service → stage cloud-user (cream
+#        >= 1.1.1, ruling R14); gsettings per user → system defaults; not only
+#        GNOME; WALLPAPER_IMAGE is a file name in images/, WALLPAPER_MODE new.
+schema: cream/v1
+name: wallpaper
+version: 3.0.0
+summary: Обои рабочего стола — системное умолчание GNOME (dconf), Xfce (xfconf) и LXDE (pcmanfm) из картинок расширения
+cream: ">=1.1.1"
+platform:
+  family: deb
+  arch: [amd64, arm64]
+  os: [{id: debian}, {id: ubuntu}]
+targets:
+  build: exec
+  live: "yes"
 provides: [wallpaper]
-# Нужен рабочий стол: без него ключи org.gnome.desktop.background просто
-# некому прочитать. Объявляем явно, чтобы отказ пришёл на СБОРКЕ.
-# Урок свежий: у code-server зависимость от yq не была объявлена, и
-# узналось это отказом службы на живой плате (2026-09-12).
+# Without a desktop nobody reads the keys: the refusal comes at build.
 requires: [desktop-session]
-conflicts: []
+depends:
+  - {name: cloud-user, version: ">=1.0.0 <2"}
+hooks:
+  install: {timeout: 10m}
+  configure: {stage: cloud-user, timeout: 1m}
+  remove: {timeout: 1m}
+config:
+  keys:
+    WALLPAPER_IMAGE:
+      type: "re:^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\\.(jpg|jpeg|png|svg)$"
+      default: "dst_1080.jpg"
+      description: "картинка — имя файла в /opt/cream/ext/wallpaper/images (без каталогов)"
+    WALLPAPER_MODE:
+      type: "enum:zoom,scaled,centered,stretched,spanned,wallpaper"
+      default: "zoom"
+      description: "как вписать: zoom — заполнить с обрезкой, scaled — целиком, centered, stretched, spanned, wallpaper — плиткой"
