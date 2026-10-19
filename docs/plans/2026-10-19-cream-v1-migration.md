@@ -27,7 +27,7 @@
 - [ ] Task 17: `selkies`
 - [ ] Task 18: `x11vnc` + `vino-vnc`
 - [ ] Task 19: `rustdesk` + `jetson-stats`
-- [ ] Task 20: `nvidia` + `nvidia-container-toolkit`
+- [x] Task 20: `nvidia` + `nvidia-container-toolkit`
 - [ ] Task 21: `nvidia-jetpack`
 - [ ] Task 22: `cuda-toolkit` + `tensorrt` + `l4t-gstreamer`
 - [ ] Task 23: `l4t-opencv` + `l4t-pytorch` + `l4t-tensorflow`
