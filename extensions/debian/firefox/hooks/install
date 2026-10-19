@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Firefox from Mozilla's own APT repository — a real .deb, not the snap.
+# cream hook `install` of firefox: Firefox from Mozilla's own APT repository —
+# a real .deb, not the snap.
 #
 # WHY NOT THE DISTRIBUTION PACKAGE. On Ubuntu 22.04+ `firefox` is a
 # transitional package (version 1:1snap1-0ubuntu2) that installs a snap on
@@ -12,13 +13,16 @@
 # The epoch of the transitional package (1:) outranks Mozilla's version
 # string, so a plain `apt-get install` would keep the stub. Pin 1000 on
 # origin packages.mozilla.org plus --allow-downgrades replaces it.
+#
+# The packages this hook installed (not there before) are added to
+# $CREAM_STATE_DIR/packages: `remove` purges only those.
 set -euo pipefail
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-NC='\033[0m'
-log_info(){ >&2 echo -e "${GREEN}[INFO]${NC} firefox: $*"; }
-log_error(){ >&2 echo -e "${RED}[ERROR]${NC} firefox: $*"; }
+log_info(){ >&2 echo "[INFO] firefox: $*"; }
+log_error(){ >&2 echo "[ERROR] firefox: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}/packages"
 
 # Fingerprint published by Mozilla for the repository signing key. The key is
 # downloaded over TLS and then compared with this value: a key that does not
@@ -27,18 +31,30 @@ MOZILLA_KEY_URL="https://packages.mozilla.org/apt/repo-signing-key.gpg"
 MOZILLA_KEY_FPR="35BAA0B33E9EB396F59CA838C0BA5CE6DC6315A3"
 KEYRING=/etc/apt/keyrings/packages.mozilla.org.asc
 
-# Optional language pack, e.g. FIREFOX_LANGPACK=ru -> firefox-l10n-ru.
+# Optional language pack (config key), e.g. FIREFOX_LANGPACK=ru -> firefox-l10n-ru.
+# cream checks the type already; the check stays for a direct run.
 FIREFOX_LANGPACK="${FIREFOX_LANGPACK:-}"
 if [[ -n "$FIREFOX_LANGPACK" && ! "$FIREFOX_LANGPACK" =~ ^[a-z]{2,3}(-[A-Za-z]{2,4})?$ ]]; then
     log_error "FIREFOX_LANGPACK='$FIREFOX_LANGPACK': ожидали код языка вроде ru или pt-BR"
     exit 1
 fi
 
+packages=(firefox)
+[[ -n "$FIREFOX_LANGPACK" ]] && packages+=("firefox-l10n-${FIREFOX_LANGPACK}")
+
+# Which of them are not installed yet: those become ours after the install.
+fresh=()
+for p in "${packages[@]}"; do
+    if [[ "$(dpkg-query -W -f='${db:Status-Status}' "$p" 2>/dev/null || true)" != installed ]]; then
+        fresh+=("$p")
+    fi
+done
+
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends ca-certificates curl gnupg
 
-install -d -m 0755 /etc/apt/keyrings
+install -d -m 0755 "$R/etc/apt/keyrings" "$R/etc/apt/sources.list.d" "$R/etc/apt/preferences.d"
 tmp_key="$(mktemp)"
 # gpg needs a home directory; a chroot during the build has no ~/.gnupg and
 # gpg exits 2 with "Fatal: /root/.gnupg: directory does not exist".
@@ -73,22 +89,19 @@ if [[ "$actual_fpr" != "$MOZILLA_KEY_FPR" ]]; then
 fi
 gpg --homedir "$gpg_home" --batch --armor --export "$MOZILLA_KEY_FPR" > "$tmp_key.export"
 [[ -s "$tmp_key.export" ]] || { log_error "не удалось экспортировать ключ $MOZILLA_KEY_FPR"; exit 1; }
-install -m 0644 "$tmp_key.export" "$KEYRING"
+install -m 0644 "$tmp_key.export" "$R$KEYRING"
 
 echo "deb [signed-by=$KEYRING] https://packages.mozilla.org/apt mozilla main" \
-    > /etc/apt/sources.list.d/mozilla.list
+    > "$R/etc/apt/sources.list.d/mozilla.list"
 
 # Only Firefox packages follow the pin: the repository carries nothing else
 # today, but a broad `Package: *` would silently prefer it for anything added
 # there later.
-cat > /etc/apt/preferences.d/mozilla <<'PIN'
+cat > "$R/etc/apt/preferences.d/mozilla" <<'PIN'
 Package: firefox*
 Pin: origin packages.mozilla.org
 Pin-Priority: 1000
 PIN
-
-packages=(firefox)
-[[ -n "$FIREFOX_LANGPACK" ]] && packages+=("firefox-l10n-${FIREFOX_LANGPACK}")
 
 apt-get update
 apt-get install -y --allow-downgrades "${packages[@]}"
@@ -97,6 +110,13 @@ version="$(dpkg -s firefox | sed -n 's/^Version: //p')"
 case "$version" in
     *snap*) log_error "остался транзитный пакет snap ($version) — пин не сработал"; exit 1 ;;
 esac
-[[ -x /usr/lib/firefox/firefox ]] || { log_error "нет /usr/lib/firefox/firefox после установки"; exit 1; }
+[[ -x "$R/usr/lib/firefox/firefox" ]] || { log_error "нет /usr/lib/firefox/firefox после установки"; exit 1; }
+
+# Record ours: the union with earlier installs (a changed FIREFOX_LANGPACK adds one).
+if (( ${#fresh[@]} )) || [[ -f "$STATE" ]]; then
+    install -d -m 0755 "$(dirname "$STATE")"
+    { cat "$STATE" 2>/dev/null || true; printf '%s\n' "${fresh[@]}"; } | sed '/^$/d' | LC_ALL=C sort -u > "$STATE.new"
+    mv -f "$STATE.new" "$STATE"
+fi
 
 log_info "установлен Firefox $version из packages.mozilla.org"
