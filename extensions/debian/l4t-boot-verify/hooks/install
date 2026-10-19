@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# cream hook `install` of l4t-boot-verify: every boot of a Jetson (L4T) is
+# marked successful by our own l4t-boot-verify.service (`nvbootctrl verify`),
+# and the vendor nv-l4t-bootloader-config.service is masked. Paths of the
+# machine go under $CREAM_ROOT (hooktest).
+#
+# WHY. UEFI of Jetson counts rootfs boot attempts (RootfsRetryCountMax = 3 on
+# AGX Orin, 2026-09-14). A boot nobody marked successful spends an attempt;
+# after three in a row UEFI declares the system unbootable — NVIDIA logo and a
+# black screen, internal NVMe included. Only reflashing QSPI resets it.
+#
+# WHY OUR OWN UNIT AND NOT THE VENDOR'S. The vendor unit runs
+# nv-l4t-bootloader-config.sh -v, which marks the boot only at its very end,
+# after writing UEFI variables and mounting the ESP; the failures of 2026-09-13
+# are plausibly that script dying earlier when booting from USB (not
+# confirmed). Masking the vendor unit without a replacement turned off the
+# marking — the board died on the fourth boot from SSD (2026-09-14). So the
+# vendor stays masked and the marking is done separately and by nothing else.
+#
+# Our unit file is a `files` entry: cream lays it out before this hook. Here:
+#   1. what stands at /etc/systemd/system/nv-l4t-bootloader-config.service and
+#      its multi-user.target.wants link is recorded ONCE in $CREAM_STATE_DIR
+#      (a file — copied as <unit>.orig), so that `remove` puts it back;
+#   2. the vendor unit is masked by hand (a symlink to /dev/null; `systemctl
+#      mask` refuses on an existing file in /etc) and dropped from the wants;
+#   3. ours is enabled by a link in multi-user.target.wants (offline: the same
+#      in the build appliance and on a live machine; cream reloads systemd).
+# Codes: 20 — not L4T (no /etc/nv_tegra_release, ruling R11); 1 — no
+# nvbootctrl or a symlink in place of a state file.
+set -euo pipefail
+GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
+log_info(){ >&2 echo -e "${GREEN}[INFO]${NC} l4t-boot-verify: $*"; }
+log_error(){ >&2 echo -e "${RED}[ERROR]${NC} l4t-boot-verify: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}"
+VENDOR=nv-l4t-bootloader-config.service
+OURS=l4t-boot-verify.service
+SD="$R/etc/systemd/system"
+WANTS="$SD/multi-user.target.wants"
+
+[[ -f "$R/etc/nv_tegra_release" ]] || { log_error "нет /etc/nv_tegra_release — это не L4T"; exit 20; }
+[[ -x "$R/usr/sbin/nvbootctrl" ]] || {
+    log_error "нет /usr/sbin/nvbootctrl — отмечать загрузку нечем (пакет nvidia-l4t-tools?)"; exit 1; }
+
+for f in "$STATE/vendor-unit" "$STATE/vendor-wants" "$STATE/$VENDOR.orig"; do
+    if [[ -L "$f" ]]; then
+        log_error "$f — символическая ссылка; через ссылку не пишу и не читаю"
+        exit 1
+    fi
+done
+
+# put_file DST: stdin into DST through a temporary file and rename.
+put_file() {
+    local dst="$1" tmp
+    tmp="$(mktemp "$(dirname "$dst")/.$(basename "$dst").XXXXXX")"
+    cat > "$tmp"
+    chmod 0644 "$tmp"
+    mv -f -T -- "$tmp" "$dst"
+}
+# put_link TARGET DST: DST becomes a symlink to TARGET (rename, not follow).
+put_link() {
+    local target="$1" dst="$2" tmp
+    tmp="$(dirname "$dst")/.$(basename "$dst").$$.lnk"
+    rm -f -- "$tmp"
+    ln -s -- "$target" "$tmp"
+    mv -f -T -- "$tmp" "$dst"
+}
+# describe PATH: `none`, `file` or `link <target>` — what stands there now.
+describe() {
+    if [[ -L "$1" ]]; then
+        printf 'link %s\n' "$(readlink -- "$1")"
+    elif [[ -e "$1" ]]; then
+        printf 'file\n'
+    else
+        printf 'none\n'
+    fi
+}
+
+install -d -m 0755 "$STATE" "$WANTS"
+
+# 1. Record once: a repeat must not take our own mask for the vendor's state.
+if [[ ! -e "$STATE/vendor-unit" ]]; then
+    was="$(describe "$SD/$VENDOR")"
+    if [[ "$was" == file ]]; then
+        put_file "$STATE/$VENDOR.orig" < "$SD/$VENDOR"
+    fi
+    printf '%s\n' "$was" | put_file "$STATE/vendor-unit"
+    describe "$WANTS/$VENDOR" | put_file "$STATE/vendor-wants"
+    log_info "прежнее состояние вендорской службы записано: $was"
+fi
+
+# 2. Mask the vendor unit.
+if [[ -L "$SD/$VENDOR" && "$(readlink -- "$SD/$VENDOR")" == /dev/null ]]; then
+    log_info "$VENDOR уже замаскирована"
+else
+    put_link /dev/null "$SD/$VENDOR"
+    log_info "$VENDOR замаскирована"
+fi
+if [[ -L "$WANTS/$VENDOR" || -e "$WANTS/$VENDOR" ]]; then
+    rm -f -- "$WANTS/$VENDOR"
+fi
+
+# 3. Enable ours.
+if [[ "$(readlink -- "$WANTS/$OURS" 2>/dev/null || true)" != "/etc/systemd/system/$OURS" ]]; then
+    put_link "/etc/systemd/system/$OURS" "$WANTS/$OURS"
+fi
+log_info "$OURS включена: каждая загрузка отмечается успешной (nvbootctrl verify)"
