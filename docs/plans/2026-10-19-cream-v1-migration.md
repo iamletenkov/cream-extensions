@@ -22,7 +22,7 @@
 - [x] Task 12: новое расширение `desktop` (из `lib/bisquite-desktop` и `lib/knobs/desktop`)
 - [x] Task 13: `gnome` + `xfce4` + `lxde`
 - [ ] Task 14: `cloud-user-desktop` + `wallpaper`
-- [ ] Task 15: `code-server`
+- [x] Task 15: `code-server`
 - [x] Task 16: `kiosk` + `chromium-kiosk`
 - [x] Task 17: `selkies`
 - [x] Task 18: `x11vnc` + `vino-vnc`
