@@ -2,7 +2,9 @@
 # Tests for l4t-kernel-kvm — what can be checked without a board or an
 # appliance: rewriting `root=` to `root=PARTUUID=<P>` in every APPEND line of
 # extlinux.conf, the refusals, idempotency, the partition number cross-check,
-# and (a scanner, not a behaviour test) the position of step 1v in install.sh.
+# and (a scanner, not a behaviour test) the position of step 1v in hooks/install.
+# The hook itself on a scratch root, the backup-once rule and the kvm entry —
+# tests/test-hooks.sh.
 #
 # NOT checked here: kvm_root_partition itself (st_dev of / -> node in /dev ->
 # blkid). It needs a real block device under /; the probe on an overlay of the
@@ -175,22 +177,22 @@ check   "13. отказ проверки говорит на stderr" bash -c "
         err=\$(bash -c '. \"\$0/extlinux-root.sh\"; kvm_check_extlinux_roots \"\$1\" \"\$2\" 1' '$X' '$T/c5' '$P' 2>&1 >/dev/null)
         [ -z \"\$out\" ] && [ -n \"\$err\" ]"
 
-echo "== install.sh: порядок (сканер) =="
-I="$X/install.sh"
+echo "== hooks/install: порядок (сканер) =="
+I="$X/hooks/install"
 line() { grep -nE "$1" "$I" | head -1 | cut -d: -f1; }
-check   "14. помощник подключается относительно install.sh" \
-        grep -qE '^\. "\$HERE/extlinux-root\.sh"' "$I"
+check   "14. помощник подключается из дерева расширения (CREAM_EXT_DIR)" \
+        grep -qE '^\. "\$EXT_DIR/extlinux-root\.sh"' "$I"
 check   "14. шаг 1в стоит раньше первого apt-get" \
         test "$(line '^[^#]*kvm_check_extlinux_roots ')" -lt "$(line '^[^#]*apt-get ')"
 check   "14. определение раздела — раньше первого apt-get" \
         test "$(line '^[^#]*kvm_root_partition')" -lt "$(line '^[^#]*apt-get ')"
-check   "14. переписывание — после бэкапа before-kvm" \
-        test "$(line '^cp -a "\$EXTLINUX" "\$\{EXTLINUX\}\.before-kvm"')" -lt "$(line '^[^#]*kvm_rewrite_root ')"
+check   "14. переписывание — после бэкапа .cream-orig" \
+        test "$(line '^[^#]*kvm_backup_once ')" -lt "$(line '^[^#]*kvm_rewrite_root ')"
 last_line() { grep -nE "$1" "$I" | tail -1 | cut -d: -f1; }
-check   "14. APPEND перечитывается после переписывания" \
-        test "$(line '^[^#]*kvm_rewrite_root ')" -lt "$(last_line '^[[:space:]]*APPEND_LINE=')"
-check   "14. heredoc записи kvm — после переписывания" \
-        test "$(line '^[^#]*kvm_rewrite_root ')" -lt "$(line '^cat >> "\$EXTLINUX" <<EXTEOF')"
+check   "14. запись kvm — после переписывания (APPEND берётся уже переписанный)" \
+        test "$(line '^[^#]*kvm_rewrite_root ')" -lt "$(last_line '^[^#]*kvm_write_entry ')"
+refuses   "14. extlinux.conf не правится мимо помощника (sed -i, cat >>)" \
+        grep -qE '^[^#]*(sed -i|cat >>)[^#]*EXTLINUX' "$I"
 
 echo "== конфиг ядра: squashfs lzo (сканер) =="
 # Снапы, собранные с `compression: lzo`, без CONFIG_SQUASHFS_LZO не монтируются,
@@ -202,7 +204,7 @@ check   "15. CONFIG_SQUASHFS_LZO сверяется после olddefconfig" \
         grep -qE '^for key in .*CONFIG_SQUASHFS_LZO' "$I"
 
 if command -v shellcheck >/dev/null 2>&1; then
-    check "shellcheck -S warning" shellcheck -S warning -x "$X/install.sh" "$X/extlinux-root.sh" "$0"
+    check "shellcheck -S warning" shellcheck -S warning -x "$X/hooks/install" "$X/extlinux-root.sh" "$0"
 else
     echo "  SKIP shellcheck: нет в PATH"
 fi

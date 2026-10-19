@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# cream hook `remove` of l4t-boot-verify: disables our unit (the wants link)
+# and puts the vendor nv-l4t-bootloader-config.service back the way install
+# found it — from the record in $CREAM_STATE_DIR. The vendor place is restored
+# only while it still holds our mask (a symlink to /dev/null): whatever the
+# operator put there after install is left alone. The unit file itself is a
+# `files` entry and cream takes it away after this hook. A repeat finds
+# nothing and exits 0.
+#
+# The record is read as data (`none`, `file`, `link <target>`), never sourced.
+#
+# NOTE for the operator: without a replacement nothing marks the boot any more,
+# and an AGX Orin stops booting after three boots (README) unless the vendor
+# unit, restored here, does the marking.
+set -euo pipefail
+log_info(){ >&2 echo "[INFO] l4t-boot-verify: $*"; }
+log_warn(){ >&2 echo "[WARN] l4t-boot-verify: $*"; }
+log_error(){ >&2 echo "[ERROR] l4t-boot-verify: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}"
+VENDOR=nv-l4t-bootloader-config.service
+OURS=l4t-boot-verify.service
+SD="$R/etc/systemd/system"
+WANTS="$SD/multi-user.target.wants"
+
+put_link() {
+    local target="$1" dst="$2" tmp
+    tmp="$(dirname "$dst")/.$(basename "$dst").$$.lnk"
+    rm -f -- "$tmp"
+    ln -s -- "$target" "$tmp"
+    mv -f -T -- "$tmp" "$dst"
+}
+# read_record FILE: KIND and TARGET from one line; refuses anything else.
+read_record() {
+    local line
+    KIND=""; TARGET=""
+    [[ -f "$1" && ! -L "$1" ]] || return 0
+    IFS= read -r line < "$1" || true
+    case "$line" in
+        none|file) KIND="$line" ;;
+        "link "?*) KIND="link"; TARGET="${line#link }" ;;
+        *) log_error "$1: запись '$line' не разобрана (ждали none, file или link <цель>)"; exit 1 ;;
+    esac
+}
+
+if [[ -L "$WANTS/$OURS" ]]; then
+    rm -f -- "$WANTS/$OURS"
+    log_info "$OURS выключена"
+fi
+
+read_record "$STATE/vendor-unit"
+unit_kind="$KIND"; unit_target="$TARGET"
+read_record "$STATE/vendor-wants"
+wants_kind="$KIND"; wants_target="$TARGET"
+
+if [[ -n "$unit_kind" ]]; then
+    if [[ -L "$SD/$VENDOR" && "$(readlink -- "$SD/$VENDOR")" == /dev/null ]]; then
+        case "$unit_kind" in
+            none)
+                rm -f -- "$SD/$VENDOR"
+                log_info "маска $VENDOR снята" ;;
+            file)
+                orig="$STATE/$VENDOR.orig"
+                if [[ -L "$orig" || ! -f "$orig" ]]; then
+                    log_error "нет копии $orig — вендорскую службу вернуть не из чего"
+                    exit 1
+                fi
+                tmp="$(mktemp "$SD/.$VENDOR.XXXXXX")"
+                cat -- "$orig" > "$tmp"
+                chmod 0644 "$tmp"
+                mv -f -T -- "$tmp" "$SD/$VENDOR"
+                log_info "$VENDOR возвращена из копии" ;;
+            link)
+                if [[ "$unit_target" != /dev/null ]]; then
+                    put_link "$unit_target" "$SD/$VENDOR"
+                fi
+                log_info "$VENDOR возвращена как была (ссылка)" ;;
+        esac
+    else
+        log_warn "на месте $VENDOR не наша маска — оставляю как есть"
+    fi
+    if [[ "$wants_kind" == link && ! -e "$WANTS/$VENDOR" && ! -L "$WANTS/$VENDOR" ]]; then
+        put_link "$wants_target" "$WANTS/$VENDOR"
+        log_info "$VENDOR снова включена в multi-user.target"
+    fi
+fi
+
+rm -f -- "$STATE/vendor-unit" "$STATE/vendor-wants" "$STATE/$VENDOR.orig"
+log_info "готово; без отметки загрузки AGX Orin перестаёт грузиться после трёх загрузок (README)"

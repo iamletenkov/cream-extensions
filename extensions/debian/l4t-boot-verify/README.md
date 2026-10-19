@@ -3,19 +3,55 @@
 Отмечает каждую загрузку Jetson (L4T) успешной — `nvbootctrl verify`.
 **Без этого AGX Orin после трёх загрузок перестаёт грузиться вообще.**
 
-> **С 1.1.0 — раскладка 2.** Манифест объявляет `layout: 2`: каталог расширения
-> в госте — `/opt/bisquite/l4t-boot-verify/` (был `/opt/vmsetup/l4t-boot-verify/`). Путей гостя
-> расширение не прибивает, поэтому версия минорная; нужен bisquite
-> с поддержкой `layout: 2`.
+> **2.0.0 — cream/v1.** Служба называется `l4t-boot-verify.service` и
+> раскладывается cream (`files`); хук `install` маскирует вендорскую
+> `nv-l4t-bootloader-config.service` и включает свою, хук `remove` возвращает
+> вендорскую как была. Нет `/etc/nv_tegra_release` — код 20 («неприменимо»).
 
 ## Манифест
 
 | Поле | Значение |
 |---|---|
-| `phase` | `build` |
-| `arch` | `arm64` |
+| `platform.arch` | `arm64` |
+| `targets` | `build: exec`, `live: yes` |
 | `provides` | `l4t-boot-verify` |
-| `requires`, `conflicts` | пусто |
+| хуки | `install`, `remove` |
+| `files` | `files/l4t-boot-verify.service` → `/etc/systemd/system/l4t-boot-verify.service` |
+
+## Подключение
+
+```vmfile
+EXTENSION l4t-boot-verify
+```
+
+На живой плате — `cream install l4t-boot-verify` (ключей нет); отметка начнётся
+со следующей загрузки. Снять — `cream remove l4t-boot-verify`.
+
+## Что делают хуки
+
+**`install`:**
+1. Записывает **один раз** в `/var/lib/cream/ext/l4t-boot-verify/`, что стояло на месте
+   `/etc/systemd/system/nv-l4t-bootloader-config.service` (`vendor-unit`: `none`,
+   `file` или `link <цель>`; файл — копией `nv-l4t-bootloader-config.service.orig`)
+   и в `multi-user.target.wants` (`vendor-wants`). Повтор запись не трогает: иначе
+   вторая установка приняла бы свою же маску за состояние вендора.
+2. Маскирует вендорскую службу руками — ссылкой на `/dev/null` (`systemctl mask`
+   внутри сборки отказывает на существующем файле в `/etc`) и убирает её из
+   `multi-user.target.wants`.
+3. Включает свою ссылкой в `multi-user.target.wants` — одинаково в сборке и на живой
+   машине (после установки cream сам делает `daemon-reload`).
+
+**`remove`:** выключает свою, а на месте вендорской — только если там всё ещё наша
+маска — возвращает то, что записал `install` (файл — байт в байт из копии), и её
+ссылку в `multi-user.target.wants`. Сам юнит `l4t-boot-verify.service` снимает cream.
+**После `remove` загрузку отмечает только вернувшаяся вендорская служба** — см. ниже,
+чем это грозит на AGX Orin.
+
+| Код `install` | Когда |
+|---|---|
+| 0 | служба включена (повтор — тоже 0, без изменений) |
+| 20 | нет `/etc/nv_tegra_release` — не L4T |
+| 1 | нет `/usr/sbin/nvbootctrl` (пакет `nvidia-l4t-tools`) или ссылка на месте файла состояния |
 
 ## Что происходит без отметки
 
@@ -54,7 +90,7 @@ AGX Orin после прошивки QSPI, 2026-09-14: пять загрузок
 ## Диагностика
 
 ```bash
-systemctl status bisquite-l4t-boot-verify
+systemctl status l4t-boot-verify
 sudo nvbootctrl dump-slots-info
 for v in RootfsRetryCountMax RootfsStatusSlotA; do
   sudo od -An -tx1 /sys/firmware/efi/efivars/$v-781e084c-a330-417c-b678-38e696380cb9

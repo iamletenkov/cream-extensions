@@ -1,20 +1,29 @@
 #!/usr/bin/env bash
-# Собрать ядро L4T с KVM и сделать его загружаемым по умолчанию.
+# cream hook `install` of l4t-kernel-kvm: builds the L4T kernel with KVM and
+# makes it the default boot entry. Paths of the image go under $CREAM_ROOT
+# (hooktest); the partition of / is that of the running system.
 #
-# ЗАЧЕМ. Штатное ядро Jetson собрано без KVM, и libguestfs из-за этого
-# поднимает appliance под полной эмуляцией TCG. Замер на Jetson Nano
-# (2026-09-02): `libguestfs-test-tool` — 2 мин 42 с на штатном ядре против
-# 11.8 с на ядре с KVM, то есть ~14 раз. Без этого Jetson как машина
-# сборки arm64-образов непрактичен.
+# WHY. The stock Jetson kernel has no KVM, and libguestfs then runs its
+# appliance under full TCG emulation. Measured on Jetson Nano (2026-09-02):
+# `libguestfs-test-tool` 2 min 42 s on the stock kernel against 11.8 s with
+# KVM, ~14 times. Without it a Jetson is impractical as an arm64 build host.
 #
-# ПОЧЕМУ ФАЗА BUILD, А НЕ FIRSTBOOT. Ядро обязано быть запечено в образ:
-# собранное на устройстве давало бы каждой плате свой бинарь, и «одинаковый
-# флот» переставал бы быть правдой. Тот же довод, которым `resolve_phases`
-# запрещает подменять `build` на `firstboot`.
+# WHY ONLY THE BUILD (targets.live: no). The kernel must be baked into the
+# image: built on the device it would give every board its own binary. It
+# takes about three hours on a Nano and 11 GB of sources — this extension
+# belongs to the BASE image, everything else inherits the kernel via `FROM`.
+# The hook timeout in the manifest is explicit for that reason.
 #
-# ЭТО ДОЛГО: около трёх часов на Nano и 11 ГБ под исходники. Поэтому
-# расширению место в БАЗОВОМ образе, откуда всё остальное наследует ядро
-# через `FROM`, а не в каждой сборке.
+# Codes: 10 — the kernel is installed and the kvm entry is the default
+# (applies on reboot); 20 — no /etc/nv_tegra_release, not L4T (ruling R11);
+# 1 — refusal (another SoC, a key out of its type, extlinux.conf missing or a
+# symlink, root= that cannot be rewritten — all before apt and the download).
+#
+# extlinux.conf: the copy extlinux.conf.cream-orig is taken ONCE, before the
+# first change made by cream (here or by l4t-board-fdt), and never overwritten
+# (spec cream §6.3); the file is written only by the helpers of
+# extlinux-root.sh — through a temporary file and rename, never through a
+# symlink, its content parsed as data.
 set -euo pipefail
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
@@ -22,16 +31,16 @@ log_info(){ >&2 echo -e "${GREEN}[INFO]${NC} l4t-kernel-kvm: $*"; }
 log_warn(){ >&2 echo -e "${YELLOW}[WARN]${NC} l4t-kernel-kvm: $*"; }
 log_error(){ >&2 echo -e "${RED}[ERROR]${NC} l4t-kernel-kvm: $*"; }
 
-# Помощник лежит рядом и подключается относительно САМОГО скрипта:
-# сборка копирует каталог расширения в гостя (/opt/bisquite/l4t-kernel-kvm/)
-# и запускает install.sh по абсолютному пути, рабочий каталог при этом не наш.
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ ! -f "$HERE/extlinux-root.sh" ]]; then
-    log_error "рядом с install.sh нет extlinux-root.sh ($HERE)"
+R="${CREAM_ROOT:-}"; R="${R%/}"
+# The helper lives in the extension tree (/opt/cream/ext/l4t-kernel-kvm), not
+# next to the hook: cream copies the whole tree and runs hooks/install from it.
+EXT_DIR="${CREAM_EXT_DIR:?run by cream}"
+if [[ ! -f "$EXT_DIR/extlinux-root.sh" ]]; then
+    log_error "в дереве расширения нет extlinux-root.sh ($EXT_DIR)"
     exit 1
 fi
-# shellcheck source=extlinux-root.sh
-. "$HERE/extlinux-root.sh"
+# shellcheck source=../extlinux-root.sh
+. "$EXT_DIR/extlinux-root.sh"
 
 JOBS="${L4T_KERNEL_JOBS:-2}"
 LOCALVERSION="${L4T_KERNEL_LOCALVERSION:--tegra-kvm}"
@@ -50,10 +59,24 @@ KEEP_SOURCES="${L4T_KERNEL_KEEP_SOURCES:-no}"
 # поэтому «gcc-9 тоже сгодится» — предположение, а не факт. Пин стоит
 # минуты установки пакета; выяснение обратного стоит трёх часов.
 CC_BIN="${L4T_KERNEL_CC:-gcc-8}"
+FDT_BOARD="${L4T_KERNEL_FDT:-}"
 
-RELEASE_FILE=/etc/nv_tegra_release
-EXTLINUX=/boot/extlinux/extlinux.conf
-WORK=/usr/src/l4t-kernel-kvm
+RELEASE_FILE="$R/etc/nv_tegra_release"
+EXTLINUX="$R/boot/extlinux/extlinux.conf"
+WORK="$R/usr/src/l4t-kernel-kvm"
+
+# The keys are typed in the manifest; repeated here because each one becomes a
+# command, a make variable, a path or a line of the boot loader.
+key_ok() {
+    local name="$1" value="$2" re="$3"
+    [[ "$value" =~ $re ]] && return 0
+    log_error "$name=$(printf '%q' "$value"): не подходит под $re"
+    exit 1
+}
+key_ok L4T_KERNEL_CC "$CC_BIN" '^[a-z][a-z0-9.+_-]{0,31}$'
+key_ok L4T_KERNEL_LOCALVERSION "$LOCALVERSION" '^-[a-z0-9][a-z0-9._-]{0,31}$'
+key_ok L4T_KERNEL_KEEP_SOURCES "$KEEP_SOURCES" '^(yes|no)$'
+[[ -z "$FDT_BOARD" ]] || key_ok L4T_KERNEL_FDT "$FDT_BOARD" '^[a-z0-9][a-z0-9._-]{0,127}$'
 
 # --- 0. Число заданий: не больше ядер и памяти appliance ---------------------
 #
@@ -63,24 +86,30 @@ WORK=/usr/src/l4t-kernel-kvm
 # молча, и сборка падает через час-два. Потолок — nproc и MemAvailable
 # по 1.5 ГБ на задание, тот же расчёт, что у l4t-pytorch; урезание — вслух,
 # иначе заданное в VMFILE число читалось бы как применённое.
-if [[ ! "$JOBS" =~ ^[1-9][0-9]*$ ]]; then
-    log_error "L4T_KERNEL_JOBS='$JOBS': ожидается целое число от 1"
+# Arithmetic only over values that passed a digits check: a string from the
+# environment or /proc in $(( )) would be evaluated as an expression.
+if [[ ! "$JOBS" =~ ^[1-9][0-9]{0,2}$ ]]; then
+    log_error "L4T_KERNEL_JOBS=$(printf '%q' "$JOBS"): ожидается целое число от 1 до 999"
     exit 1
 fi
-mem_mb=$(( $(awk '/MemAvailable/{print $2}' /proc/meminfo) / 1024 ))
+mem_kb="$(awk '/^MemAvailable:/{print $2; exit}' /proc/meminfo 2>/dev/null || true)"
+cpus="$(nproc 2>/dev/null || true)"
+[[ "$mem_kb" =~ ^[0-9]{1,12}$ ]] || mem_kb=0
+[[ "$cpus" =~ ^[1-9][0-9]{0,4}$ ]] || cpus=1
+mem_mb=$(( mem_kb / 1024 ))
 jobs_cap=$(( mem_mb / 1536 )); (( jobs_cap < 1 )) && jobs_cap=1
-(( jobs_cap > $(nproc) )) && jobs_cap=$(nproc)
+(( jobs_cap > cpus )) && jobs_cap=$cpus
 if (( JOBS > jobs_cap )); then
-    log_warn "L4T_KERNEL_JOBS=$JOBS урезано до $jobs_cap: ядер $(nproc), свободно памяти ${mem_mb} МБ (по 1.5 ГБ на задание)"
+    log_warn "L4T_KERNEL_JOBS=$JOBS урезано до $jobs_cap: ядер $cpus, свободно памяти ${mem_mb} МБ (по 1.5 ГБ на задание)"
     log_warn "больше заданий — больше ресурсов appliance: bs image build --smp N --memsize M"
     JOBS=$jobs_cap
 fi
 
 # --- 1. Это вообще Tegra? ----------------------------------------------------
 if [[ ! -f "$RELEASE_FILE" ]]; then
-    log_error "нет $RELEASE_FILE — это не L4T и не Jetson"
+    log_error "нет /etc/nv_tegra_release — это не L4T и не Jetson"
     log_error "расширение собирает ядро NVIDIA Tegra и на другой системе бессмысленно"
-    exit 1
+    exit 20
 fi
 
 # `# R32 (release), REVISION: 6.1, ...` -> 32 и 6.1
@@ -88,7 +117,7 @@ L4T_MAJOR="$(sed -n '1s/.*R\([0-9]\+\).*/\1/p' "$RELEASE_FILE")"
 L4T_REV="$(sed -n '1s/.*REVISION: \([0-9.]\+\).*/\1/p' "$RELEASE_FILE")"
 if [[ -z "$L4T_MAJOR" || -z "$L4T_REV" ]]; then
     log_error "не разобрал версию L4T из $RELEASE_FILE:"
-    log_error "  $(head -1 "$RELEASE_FILE")"
+    log_error "  $(head -1 "$RELEASE_FILE" | cat -v)"
     exit 1
 fi
 log_info "L4T R${L4T_MAJOR}.${L4T_REV}, сборка -j${JOBS}, суффикс ${LOCALVERSION}"
@@ -138,7 +167,7 @@ esac
 # отказ с НЕВЕРНОЙ причиной — «деревьев tegra*.dtb нет ни одного» при
 # лежащем рядом t234. Отказ был бы правильный, объяснение — ложное.
 if [[ -z "$SOC" ]]; then
-    DTB_FAMILIES="$(find /boot -maxdepth 2 -name '*tegra*.dtb' -printf '%f\n' 2>/dev/null \
+    DTB_FAMILIES="$(find "$R/boot" -maxdepth 2 -name '*tegra*.dtb' -printf '%f\n' 2>/dev/null \
                     | sed -n 's/.*tegra\([0-9]\+\).*/\1/p' | sort -u)"
     if [[ -n "$DTB_FAMILIES" ]]; then
         if grep -qx 210 <<<"$DTB_FAMILIES"; then
@@ -179,6 +208,14 @@ log_info "SoC t210 (определено по: $SOC_SRC)"
 #
 # Здесь только проверка, файл не меняется: переписывание — деструктивная
 # правка и идёт в шаге 7 после бэкапа, как все остальные.
+if [[ -L "$EXTLINUX" ]]; then
+    log_error "/boot/extlinux/extlinux.conf — символическая ссылка; через ссылку не пишем"
+    exit 1
+fi
+if [[ ! -f "$EXTLINUX" ]]; then
+    log_error "нет /boot/extlinux/extlinux.conf — загрузчик L4T писать некуда"
+    exit 1
+fi
 if ! ROOT_INFO="$(kvm_root_partition)"; then
     log_error "не определился раздел корня — PARTUUID для root= брать неоткуда"
     exit 1
@@ -215,7 +252,7 @@ if ! command -v "$CC_BIN" >/dev/null 2>&1; then
 fi
 log_info "компилятор: $("$CC_BIN" --version | head -1)"
 
-rm -rf "$WORK"
+rm -r -f -- "$WORK"
 mkdir -p "$WORK"
 log_info "качаю исходники: $SRC_URL"
 if ! wget -q -O "$WORK/public_sources.tbz2" "$SRC_URL"; then
@@ -315,7 +352,7 @@ fi
 #      to false»), и там же `all warnings being treated as errors`.
 #
 # После второго раза я перестал чинить по одному и посмотрел, что
-# пропатчено в дереве, собранном руками: `grep -rl bisquite` нашёл
+# пропатчено в дереве, собранном руками: `grep -rl` по маркеру нашёл
 # ДЕСЯТЬ Makefile, и все до одного — под `drivers/net/wireless/`
 # (шесть Realtek, три bcmdhd и родительский).
 #
@@ -341,13 +378,13 @@ else
     patched=0
     skipped=0
     while IFS= read -r mk; do
-        if grep -q "bisquite: silence vendor wireless" "$mk"; then
+        if grep -q "l4t-kernel-kvm: silence vendor wireless" "$mk"; then
             skipped=$((skipped + 1))
             continue
         fi
         cat >> "$mk" <<'MKEOF'
 
-# bisquite: silence vendor wireless warning escalation.
+# l4t-kernel-kvm: silence vendor wireless warning escalation.
 # These out-of-tree NVIDIA drivers target GCC 7 (bionic) and turn their own
 # warnings into errors. Scoped to drivers/net/wireless; the rest of the tree
 # builds clean.
@@ -408,10 +445,19 @@ log_info "CONFIG_KVM, CONFIG_VHOST_NET и CONFIG_SQUASHFS_LZO включены"
 # --- 5. Сборка ---------------------------------------------------------------
 log_info "собираю ядро (-j${JOBS}); на Nano это часы"
 make O="$TEGRA_KERNEL_OUT" CC="$CC_BIN" -j"$JOBS" Image dtbs modules || exit 1
-make O="$TEGRA_KERNEL_OUT" CC="$CC_BIN" INSTALL_MOD_PATH=/ modules_install || exit 1
+make O="$TEGRA_KERNEL_OUT" CC="$CC_BIN" INSTALL_MOD_PATH="${R:-/}" modules_install || exit 1
 
 # --- 6. Установка ------------------------------------------------------------
-install -m 0644 "$TEGRA_KERNEL_OUT/arch/arm64/boot/Image" /boot/Image.kvm
+# put_boot SRC DST: a file in /boot through a temporary file and rename — a
+# symlink at DST is replaced, never followed.
+put_boot() {
+    local src="$1" dst="$2" tmp
+    tmp="$(mktemp "$(dirname "$dst")/.$(basename "$dst").XXXXXX")"
+    cat -- "$src" > "$tmp"
+    chmod 0644 "$tmp"
+    mv -f -T -- "$tmp" "$dst"
+}
+put_boot "$TEGRA_KERNEL_OUT/arch/arm64/boot/Image" "$R/boot/Image.kvm"
 log_info "ядро установлено: /boot/Image.kvm"
 
 # Имя DTB берём у ТЕКУЩЕЙ записи extlinux, а не угадываем по плате:
@@ -451,7 +497,7 @@ installed_dtb=0
 # отрабатывал вдвое чаще, чем нужно, и счётчик врал ровно вдвое
 # (говорил 44 при 22 уникальных файлах; замер 2026-09-04).
 while IFS= read -r dtb; do
-    install -m 0644 "$dtb" "/boot/$(basename "${dtb%.dtb}")-kvm.dtb"
+    put_boot "$dtb" "$R/boot/$(basename "${dtb%.dtb}")-kvm.dtb"
     installed_dtb=$((installed_dtb + 1))
 done < <(find "$DTB_DIR" -name 'tegra210-*.dtb' -printf '%f\t%p\n' \
          | sort -u -k1,1 | cut -f2)
@@ -475,21 +521,32 @@ log_info "деревьев устройств установлено: $installed
 # Он защищал от угадывания (`find … | head -1`, положивший в образ дерево
 # чужого модуля), а угадывания больше нет: либо имя названо, либо строки
 # нет вовсе.
+#
+# Текущая строка FDT берётся из файла — это данные: имя дерева проверяется
+# по форме, и суффикс `-kvm` срезается — после l4t-board-fdt там уже
+# `<плата>-kvm.dtb`, и повторная сборка базы не должна искать `-kvm-kvm`.
 NEW_FDT=""
-CUR_FDT="$(sed -n 's/^\s*FDT\s\+//p' "$EXTLINUX" | head -1)"
-if [[ -n "${L4T_KERNEL_FDT:-}" ]]; then
-    NEW_FDT="/boot/${L4T_KERNEL_FDT%.dtb}-kvm.dtb"
+CUR_FDT="$(sed -n 's/^[[:space:]]*FDT[[:space:]]\+//p' "$EXTLINUX" | head -1)"
+if [[ -n "$FDT_BOARD" ]]; then
+    NEW_FDT="/boot/${FDT_BOARD%.dtb}-kvm.dtb"
     SRC_HINT="L4T_KERNEL_FDT"
 elif [[ -n "$CUR_FDT" ]]; then
-    NEW_FDT="/boot/$(basename "${CUR_FDT%.dtb}")-kvm.dtb"
-    SRC_HINT="строка FDT в $EXTLINUX"
+    cur_name="$(basename -- "${CUR_FDT%.dtb}")"
+    cur_name="${cur_name%-kvm}"
+    if [[ ! "$cur_name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; then
+        log_error "строка FDT в extlinux.conf не разобрана: $(printf '%q' "$CUR_FDT")"
+        log_error "назовите плату явно: L4T_KERNEL_FDT=<имя дерева>"
+        exit 1
+    fi
+    NEW_FDT="/boot/${cur_name}-kvm.dtb"
+    SRC_HINT="строка FDT в extlinux.conf"
 fi
 
 if [[ -n "$NEW_FDT" ]]; then
-    if [[ ! -f "$NEW_FDT" ]]; then
+    if [[ ! -f "$R$NEW_FDT" ]]; then
         log_error "дерево $NEW_FDT не найдено среди установленных ($SRC_HINT)"
         log_error "есть в образе:"
-        find /boot -name 'tegra210-*-kvm.dtb' -printf '  %f\n' | sort >&2
+        find "$R/boot" -name 'tegra210-*-kvm.dtb' -printf '  %f\n' | sort >&2
         exit 1
     fi
     log_info "дерево устройств для записи kvm: $NEW_FDT ($SRC_HINT)"
@@ -503,126 +560,34 @@ fi
 # Прочие параметры ядра (`rootwait`, `rootfstype=`, консоль, `${cbootargs}`)
 # — вендора, и писать их константой незачем. А `root=` у базы Q-engineering —
 # `/dev/mmcblk0p1`, имя устройства: образ с ним грузится только с SD, на
-# USB-SSD тот же раздел называется /dev/sda1. Поэтому после бэкапа корень
-# переписывается на `root=PARTUUID=<P>` раздела, на котором лежит / (шаг 1в),
-# — во ВСЕХ записях, запасная `primary` тоже: с именем устройства она на SSD
-# бесполезна ровно тогда, когда нужна. Запись kvm берёт APPEND уже из
+# USB-SSD тот же раздел называется /dev/sda1. Поэтому корень переписывается
+# на `root=PARTUUID=<P>` раздела, на котором лежит / (шаг 1в), — во ВСЕХ
+# записях, запасная `primary` тоже. Запись kvm берёт APPEND уже из
 # переписанного файла, так что источник правды один.
-APPEND_LINE="$(sed -n 's/^\s*APPEND\s\+//p' "$EXTLINUX" | head -1)"
-if [[ -z "$APPEND_LINE" ]]; then
-    log_error "в $EXTLINUX нет ни одной строки APPEND — брать нечего"
-    exit 1
-fi
-
-# БЭКАП — ПОСЛЕ ПРОВЕРКИ ЯКОРЯ И ДО ПЕРВОЙ ДЕСТРУКТИВНОЙ ПРАВКИ.
 #
-# Порядок несущий, и обе его половины проверены отказом:
-#   * до проверки якоря — прогон, который ничего не менял (нет строки
-#     APPEND, выход выше), оставлял бы файл-след `extlinux.conf.before-kvm`
-#     от правки, которой не было;
-#   * после удаления прежней записи (так было) — «прежний файл» уже не
-#     прежний: повторное применение слоя сохраняло состояние БЕЗ записи
-#     kvm, то есть откат возвращал не то, с чего начали. А сохранить надо
-#     именно то, с чего начали: на плате без монитора этот файл — весь
-#     запас отката, который есть.
-cp -a "$EXTLINUX" "${EXTLINUX}.before-kvm"
+# КОПИЯ — ДО ПЕРВОЙ ДЕСТРУКТИВНОЙ ПРАВКИ И ОДИН РАЗ. `extlinux.conf.cream-orig`
+# снимается перед переписыванием и больше не перезаписывается: повторная
+# сборка поверх базы (или l4t-board-fdt до неё) не подменяет «исходный файл»
+# уже изменённым — на плате без монитора эта копия весь запас отката.
+kvm_backup_once "$EXTLINUX" || { log_error "копия extlinux.conf не снята — правку не начинаю"; exit 1; }
 
-# Корень по PARTUUID — первая деструктивная правка, сразу после бэкапа.
 # Те же входы шаг 1в уже проверил, поэтому отказ здесь значит, что файл
-# изменился за время сборки; он громкий, а бэкап выше и есть исходный файл.
+# изменился за время сборки; он громкий, а копия выше и есть исходный файл.
 if ! kvm_rewrite_root "$EXTLINUX" "$ROOT_PARTUUID"; then
-    log_error "root= в $EXTLINUX не переписан (причины выше); исходный файл — ${EXTLINUX}.before-kvm"
+    log_error "root= в extlinux.conf не переписан (причины выше); исходный файл — extlinux.conf.cream-orig"
     exit 1
 fi
-# APPEND перечитывается: запись kvm обязана взять уже переписанный root=,
-# а не строку, прочитанную до правки.
-APPEND_LINE="$(sed -n 's/^\s*APPEND\s\+//p' "$EXTLINUX" | head -1)"
-log_info "APPEND записи kvm: $APPEND_LINE"
 
-# ЗАПИСЬ КОНЧАЕТСЯ СЛЕДУЮЩИМ `LABEL `, А НЕ ПУСТОЙ СТРОКОЙ.
-#
-# Прежний `sed -i '/^LABEL kvm$/,/^$/d'` считал границей записи пустую
-# строку, а она границей не является ни с одной стороны. Прогон обоих
-# разборов на тестовых файлах, 2026-09-11 (вне сборки, копии extlinux.conf
-# в /tmp):
-#   * пустая строка ВНУТРИ записи законна, и вписанная руками она оставляла
-#     хвост нашей записи в файле. Хвост не висит сам по себе: строки без
-#     своего `LABEL` достаются ПРЕДЫДУЩЕЙ записи, то есть `INITRD`, `FDT`
-#     и `APPEND` от ядра kvm приезжали в запись `primary` — она начинала
-#     грузиться с чужим деревом и чужим PARTUUID;
-#   * своя запись (её дописывает heredoc ниже) пустой строкой НЕ кончается
-#     вовсе — она последняя в файле, — поэтому `sed` удалял до конца файла.
-#     На входе, где сразу за нашей записью дописана чужая, он уносил её
-#     целиком: четыре строки вместо четырёх своих — восемь.
-#
-# Разбор тот же, что у соседнего `l4t-board-fdt` (install.sh:69-120),
-# и довод про сравнение оттуда же: `MENU LABEL kvm kernel` СОДЕРЖИТ
-# `LABEL kvm`, поэтому начало записи опознаётся РОВНЫМ сравнением, а конец —
-# префиксом `LABEL `.
-#
-# Сторожевой grep тоже считает отступ незначащим — иначе он и разбор
-# отвечали бы на разные вопросы: найденная разбором запись не нашлась бы
-# grep'ом, и рядом с ней появилась бы вторая.
-if grep -qE '^[[:space:]]*LABEL kvm[[:space:]]*$' "$EXTLINUX"; then
-    log_info "запись kvm уже есть — обновляю"
-    python3 - "$EXTLINUX" <<'PYEOF' || { log_error "прежняя запись kvm не снялась"; exit 1; }
-import pathlib, sys
-
-path = pathlib.Path(sys.argv[1])
-lines = path.read_text().splitlines()
-out, in_kvm = [], False
-
-for line in lines:
-    stripped = line.strip()
-
-    if stripped == "LABEL kvm":
-        in_kvm = True
-        continue
-
-    if in_kvm:
-        if stripped.startswith("LABEL "):
-            # Чужая запись — она и есть конец нашей.
-            in_kvm = False
-        else:
-            continue
-
-    out.append(line)
-
-# Пустая строка-разделитель перед удалённой записью принадлежала ей
-# не больше, чем файлу, но heredoc ниже начинается со своей, поэтому
-# без среза хвоста каждое повторное применение слоя добавляло бы ещё
-# одну пустую строку. Срезаем — и результат повторного применения
-# совпадает с первым байт в байт.
-while out and not out[-1].strip():
-    out.pop()
-
-path.write_text("\n".join(out) + "\n")
-PYEOF
+# Запись kvm: прежняя снимается, DEFAULT kvm, прежние записи — запасные в
+# меню. Строка FDT — только когда плата названа: без неё CBoot берёт дерево
+# из QSPI (своё для платы), и образ грузится; выбрать дерево потом можно
+# дешёвым слоем `l4t-board-fdt`. Разбор и довод про границы записи — в
+# extlinux-root.sh (kvm_write_entry).
+if ! kvm_write_entry "$EXTLINUX" "$LOCALVERSION" "$NEW_FDT"; then
+    log_error "запись kvm в extlinux.conf не сделана (причины выше)"
+    exit 1
 fi
-
-# DEFAULT переключается на kvm, ПРЕЖНЯЯ ЗАПИСЬ ОСТАЁТСЯ в меню.
-# Незагружаемое ядро на плате без монитора не чинится вовсе — только
-# последовательной консолью или перепрошивкой. Запасная запись стоит ничего.
-sed -i 's/^DEFAULT .*/DEFAULT kvm/' "$EXTLINUX"
-grep -q "^DEFAULT kvm$" "$EXTLINUX" || sed -i '1i DEFAULT kvm' "$EXTLINUX"
-
-# Строка FDT пишется ТОЛЬКО когда плата названа. Без неё CBoot берёт
-# дерево из раздела QSPI — своё для этой платы, — и образ грузится.
-# Дописать её потом можно дешёвым слоем `l4t-board-fdt`.
-FDT_LINE=""
-[[ -n "$NEW_FDT" ]] && FDT_LINE="
-      FDT ${NEW_FDT}"
-
-cat >> "$EXTLINUX" <<EXTEOF
-
-LABEL kvm
-      MENU LABEL kvm kernel (${LOCALVERSION#-}, собрано bisquite)
-      LINUX /boot/Image.kvm
-      INITRD /boot/initrd${FDT_LINE}
-      APPEND ${APPEND_LINE}
-EXTEOF
-log_info "extlinux.conf: запись kvm добавлена и назначена умолчанием"
-log_info "прежний файл сохранён как ${EXTLINUX}.before-kvm"
+log_info "extlinux.conf: запись kvm — умолчание; исходный файл — extlinux.conf.cream-orig"
 
 # --- 8. Уборка ---------------------------------------------------------------
 if [[ "$KEEP_SOURCES" == "yes" ]]; then
@@ -632,4 +597,5 @@ else
     log_info "исходники удалены (освобождено около 11 ГБ)"
 fi
 
-log_info "готово; после загрузки проверьте: uname -r, ls -l /dev/kvm"
+log_info "готово; нужна перезагрузка, после неё проверьте: uname -r, ls -l /dev/kvm"
+exit 10
