@@ -99,17 +99,29 @@ get_cloud_user() {
     # а запускается уже с чистым окружением.
     local yq_bin
     yq_bin="$(command -v yq)"
-    ci_user=$(echo "$userdata" | env -i PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" TERM=dumb "$yq_bin" -r '.user // ""' 2>/dev/null || true)
+    # Один запрос по документации cloud-init: `user` — строка (имя как есть)
+    # или словарь (берётся `.name`); если его нет — первый элемент `users`,
+    # тоже строкой или словарём. `select(tag == …)` оставляет узел только
+    # нужного типа, поэтому словарь не печатается YAML-ом вместо имени
+    # (так было с `.user // ""` при `user: {name: …}`). Язык — mikefarah/yq
+    # (расширение yq); у kislyuk/yq запрос не разберётся, и ответ будет пуст.
+    local query
+    query='(.user | select(tag == "!!map") | .name) // (.user | select(tag == "!!str")) // '
+    query+='(.users[0] | select(tag == "!!map") | .name) // (.users[0] | select(tag == "!!str")) // ""'
+    ci_user=$(echo "$userdata" | env -i PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" TERM=dumb "$yq_bin" -r "$query" 2>/dev/null || true)
 
-    # Если пользователь не найден, пробуем альтернативные поля
-    if [[ -z "$ci_user" ]]; then
-        ci_user=$(echo "$userdata" | env -i PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" TERM=dumb "$yq_bin" -r '.users[0].name // ""' 2>/dev/null || true)
-    fi
-
-    # Если пользователь найден, возвращаем его
     if [[ -n "$ci_user" ]]; then
-        echo "$ci_user"
-        return 0
+        # Имя уходит в пути, gsettings и юниты потребителей: только то, что
+        # примет useradd по умолчанию. `default` в `users` — ссылка на
+        # default_user из cloud.cfg, а не имя; его, как и мусор, закрывает
+        # запасной путь (первая обычная учётка с домом и есть default_user).
+        if [[ "$ci_user" =~ ^[a-z_][a-z0-9_-]{0,31}$ && "$ci_user" != default ]]; then
+            echo "$ci_user"
+            return 0
+        fi
+        echo "Note: cloud-init user '${ci_user:0:64}' is not a valid user name" >&2
+        fallback_user
+        return $?
     fi
 
     # Данные cloud-init есть, пользователя в них нет. Запасной путь здесь

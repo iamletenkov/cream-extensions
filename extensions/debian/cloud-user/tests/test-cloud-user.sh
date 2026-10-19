@@ -31,17 +31,30 @@ lib_root() {
         printf '#!%s\n' "$PY"
         cat <<'PY'
 import sys, yaml
-expr = sys.argv[-1]
-doc = yaml.safe_load(sys.stdin.read()) or {}
-val = ""
-try:
-    if expr == '.user // ""':
-        val = doc.get("user") or ""
-    elif expr == '.users[0].name // ""':
-        val = (doc.get("users") or [{}])[0].get("name") or ""
-except (AttributeError, IndexError, TypeError):
-    sys.exit(1)
-print(val)
+# The one query of get_cloud_user.sh, with the semantics of mikefarah/yq
+# (checked against v4.45.1): `select(tag == …)` keeps a node of that type only,
+# `//` takes the first non-null.
+EXPR = ('(.user | select(tag == "!!map") | .name) // (.user | select(tag == "!!str")) // '
+        '(.users[0] | select(tag == "!!map") | .name) // (.users[0] | select(tag == "!!str")) // ""')
+if sys.argv[-1] != EXPR:
+    sys.exit(3)
+doc = yaml.safe_load(sys.stdin.read())
+doc = doc if isinstance(doc, dict) else {}
+def pick(node):
+    if isinstance(node, dict):
+        v = node.get("name")
+        return str(v) if v is not None else None
+    if isinstance(node, str):
+        return node
+    return None
+users = doc.get("users")
+first = users[0] if isinstance(users, list) and users else None
+for cand in (pick(doc.get("user")), pick(first)):
+    if cand is not None:
+        print(cand)
+        break
+else:
+    print("")
 PY
     } > "$ROOT/bin/yq"
     chmod +x "$ROOT/bin/yq"
@@ -82,6 +95,28 @@ check "cloud-init спрошен" ht_called '^cloud-init query userdata$'
 printf '#cloud-config\nusers:\n  - name: bob\n    groups: [sudo]\n' > "$FAKE/userdata"
 run_lib; eq "users[0].name — код 0" 0 "$?"
 eq "users[0].name — имя" bob "$(stdout)"
+
+printf '#cloud-config\nuser: {name: dora, sudo: "ALL=(ALL) NOPASSWD:ALL"}\n' > "$FAKE/userdata"
+run_lib; eq "user: словарь — код 0" 0 "$?"
+eq "user: словарь — .user.name" dora "$(stdout)"
+
+printf '#cloud-config\nuser: {sudo: x}\nusers: [{name: zed}]\n' > "$FAKE/userdata"
+run_lib; eq "user: словарь без name — код 0" 0 "$?"
+eq "user: словарь без name — users[0].name" zed "$(stdout)"
+
+printf '#cloud-config\nusers: [frank, {name: x}]\n' > "$FAKE/userdata"
+run_lib; eq "users[0] строкой — код 0" 0 "$?"
+eq "users[0] строкой — как есть" frank "$(stdout)"
+
+echo "== недопустимое имя — запасной путь =="
+printf 'carol:x:1001:1001::/home/carol:/bin/bash\n' > "$FAKE/passwd"
+mkdir -p "$ROOT/home/carol"
+for junk in 'Bad Name;rm -rf' '-root' 'default' 'abcdefghijklmnopqrstuvwxyz0123456789'; do
+    printf '#cloud-config\nuser: %s\n' "'$junk'" > "$FAKE/userdata"
+    run_lib; eq "имя [$junk] — код 0" 0 "$?"
+    eq "имя [$junk] — запасная учётка" carol "$(stdout)"
+    check "имя [$junk] — сказано в stderr" grep -q 'not a valid user name' "$ROOT/stderr"
+done
 
 echo "== запасной файл user-data.txt =="
 lib_root
