@@ -36,7 +36,7 @@
 - [x] Task 26: `sensing-gmsl2-camera` + `can-usb`
 - [x] Task 27: `pixelflux-tegra` + `pixelflux-v4l2m2m`
 - [x] Task 28: уборка переходного — `lib/`, layout 2 в инструментах, `extensions/openwrt/`, документация
-- [ ] Task 29: Финальная интеграция + `make ci`, выпуск каталога 5.0.0
+- [x] Task 29: Финальная интеграция + `make ci`, выпуск каталога 5.0.0
 
 Задачи с пометкой **[cream]** исполняются в репозитории `cream`, остальные — в `cream-extensions`.
 
@@ -376,6 +376,8 @@ depends `l4t` (opencv, pytorch), requires `cuda`; `check-system-python.py`, `con
 - README обёртки `stvor-agent`: уточнить, что пакет включает юнит при установке, а старт ждёт токена
   (`ConditionPathExists=/etc/stvor-agent/token`), который пишет `stvor-agent enable` (найдено приёмкой bisquite).
 - `network-manager`: живой прогон на Ubuntu не идёт в контейнере (polkit/hostnamed без `SYS_ADMIN`) — только debian-12.
+- `teleport`: `cream validate` предупреждает `validate.unit_lock` — юниты `teleport-{apps,token,join}`
+  зовут действия с `lock: exclusive` (§7.3); решить: `lock: none` у действий из Exec* или иначе.
 
 ### Task 29: Финальная интеграция + `make ci`, выпуск каталога 5.0.0
 1. Сквозной `make ci` на `main` после всех слияний («зелено у агента» ≠ «зелено в ветке»).
