@@ -362,25 +362,85 @@ apply_xfce_screensaver(){
 EOF
 }
 
-# lxsession starts the screensaver from ~/.config/lxsession/LXDE/desktop.conf.
-# The file is the user's, lxsession writes it too, so one key is edited and
-# ONLY with the key turned on; turning it off does not roll it back — the user
-# switches back in the session settings.
+# lxsession starts the screensaver by the key screensaver of [Startup] in
+# desktop.conf: the system default /etc/xdg/lxsession/LXDE/desktop.conf, or the
+# user's ~/.config/lxsession/LXDE/desktop.conf once the user has one (lxsession
+# writes it on the first change in the session settings, then reads only it).
+#
+# The system default is ours to write (root-owned /etc). The user's file is
+# NEVER written by root: the home directory is the user's, and any component of
+# the path may be a symlink the user planted (to /etc/shadow and the like). It
+# is edited only when it already exists, by this script run AS THE USER
+# (runuser), after a refusal on a symlink in any component and on a real path
+# outside the home directory — so the worst a planted link reaches is what the
+# user could write anyway. Turning the key off rolls back the system default
+# only; the user's own file is the user's to switch back.
+LXSESSION_SYS="$R/etc/xdg/lxsession/LXDE/desktop.conf"
+LXSESSION_KEY=screensaver
+LXSESSION_OFF=disabled
+
 apply_lxsession(){
-    local user="$1" home conf d
-    [[ "$DESKTOP_DISABLE_SCREEN_BLANK" == 1 && -n "$user" ]] || return 0
+    local user="$1"
     command -v lxsession >/dev/null 2>&1 || return 0
+    if [[ "$DESKTOP_DISABLE_SCREEN_BLANK" != 1 ]]; then
+        unset_lxsession_system
+        return 0
+    fi
+    install -d -m 0755 "${LXSESSION_SYS%/*}"
+    [[ -f "$LXSESSION_SYS" ]] || printf '[Session]\nwindow_manager=openbox-lxde\n' > "$LXSESSION_SYS"
+    set_ini_key "$LXSESSION_SYS" Startup "$LXSESSION_KEY" "$LXSESSION_OFF" \
+        || log "lxsession: не записался $LXSESSION_KEY=$LXSESSION_OFF в ${LXSESSION_SYS#"$R"}"
+    [[ -n "$user" ]] && lxsession_user "$user"
+    return 0
+}
+
+unset_lxsession_system(){
+    [[ -f "$LXSESSION_SYS" ]] || return 0
+    if grep -qxF "$LXSESSION_KEY=$LXSESSION_OFF" "$LXSESSION_SYS"; then
+        del_ini_key "$LXSESSION_SYS" "$LXSESSION_KEY"
+    fi
+}
+
+# safe_user_path <home> <file>: 0 — no component from <home> down to <file> is a
+# symlink and the real path stays inside the real <home>.
+safe_user_path(){
+    local home="$1" file="$2" rel part cur
+    [[ -d "$home" && ! -L "$home" ]] || return 1
+    rel="${file#"$home"/}"
+    [[ "$rel" != "$file" ]] || return 1
+    cur="$home"
+    while IFS= read -r -d / part || [[ -n "$part" ]]; do
+        [[ -n "$part" && "$part" != . && "$part" != .. ]] || return 1
+        cur="$cur/$part"
+        [[ -L "$cur" ]] && return 1
+    done < <(printf '%s' "$rel")
+    case "$(realpath -m -- "$file")/" in
+        "$(realpath -m -- "$home")"/*) return 0 ;;
+    esac
+    return 1
+}
+
+lxsession_user(){
+    local user="$1" home conf
     home="$R$(home_of "$user")"
     conf="$home/.config/lxsession/LXDE/desktop.conf"
-    for d in "$home/.config" "$home/.config/lxsession" "$home/.config/lxsession/LXDE"; do
-        if [[ ! -d "$d" ]]; then
-            mkdir -m 0755 "$d"
-            chown "$user:$user" "$d"
-        fi
-    done
-    [[ -f "$conf" ]] || printf '[Session]\nwindow_manager=openbox-lxde\n' > "$conf"
-    set_ini_key "$conf" Startup screensaver disabled || log "lxsession: не записался screensaver=disabled"
-    chown "$user:$user" "$conf"
+    [[ -e "$conf" || -L "$conf" ]] || return 0
+    if ! safe_user_path "$home" "$conf"; then
+        log "lxsession: ${conf#"$R"} — символическая ссылка в пути или вне домашнего каталога, не правлю"
+        return 0
+    fi
+    # As the user, never as root: runuser drops to the user's uid, gid and groups.
+    runuser -u "$user" -- "${BASH_SOURCE[0]}" lxsession-user "$conf" \
+        || log "lxsession: ${conf#"$R"} не исправлен (от имени $user)"
+}
+
+# The edit itself, run as the user by lxsession_user: refuses a symlink once
+# more (the user may have swapped it in meanwhile — harmless now, but no reason
+# to follow it).
+cmd_lxsession_user(){
+    local conf="$1"
+    [[ -f "$conf" && ! -L "$conf" ]] || { log "lxsession: $conf — не обычный файл"; exit 1; }
+    set_ini_key "$conf" Startup "$LXSESSION_KEY" "$LXSESSION_OFF"
 }
 
 # The link <channel>.xml -> our file only when the channel is absent, so what a
@@ -489,6 +549,7 @@ cmd_remove(){
     remove_files "$XSESSION_BLANK" "$XFCE_POWER" "$XFCE_SAVER" || true
     link_xfconf
     unset_lightdm_blank
+    unset_lxsession_system
     if (( DCONF_CHANGED )) && command -v dconf >/dev/null 2>&1; then
         dconf update || die "dconf update не прошёл"
     fi
@@ -504,5 +565,6 @@ case "${1:-}" in
         esac ;;
     status) cmd_status ;;
     remove) cmd_remove ;;
+    lxsession-user) cmd_lxsession_user "${2:?}" ;;
     *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
 esac

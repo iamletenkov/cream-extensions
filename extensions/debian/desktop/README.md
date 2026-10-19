@@ -63,11 +63,17 @@ initialize the NVIDIA graphics device», AGX Orin 2026-09-14), а `systemd --use
 |---|---|
 | автологин | `/etc/gdm3/daemon.conf` и `custom.conf` (`[daemon]`), `/etc/lightdm/lightdm.conf` и `lightdm.conf.d/*.conf` (`[Seat:*]` или прежняя `[SeatDefaults]`) |
 | блокировка | `/etc/dconf/db/local.d/50-desktop-screen-lock` + `locks/`, профиль `/etc/dconf/profile/user` (`system-db:local`, то же правило, что у `locale`); xfce4-screensaver |
-| затемнение | `/etc/dconf/db/local.d/50-desktop-screen-blank` + `locks/`, `gdm.d/` при профиле gdm, `/etc/X11/Xsession.d/90-desktop-disable-dpms`, xfce4-power-manager, `xserver-command=X -s 0 -dpms` у lightdm, `screensaver=disabled` у lxsession |
+| затемнение | `/etc/dconf/db/local.d/50-desktop-screen-blank` + `locks/`, `gdm.d/` при профиле gdm, `/etc/X11/Xsession.d/90-desktop-disable-dpms`, xfce4-power-manager, `xserver-command=X -s 0 -dpms` у lightdm, `screensaver=disabled` у lxsession (`/etc/xdg/lxsession/LXDE/desktop.conf`) |
 
 Каналы xfconf — `<канал>.desktop-ext.xml` в `/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/`
 и ссылка `<канал>.xml` на него, только если канала там ещё нет. `dconf update` — только
 при изменении: повторный configure систему не меняет.
+
+**В домашний каталог root не пишет.** Всё — системные умолчания в `/etc`. Единственное
+исключение — уже существующий `~/.config/lxsession/LXDE/desktop.conf` (lxsession заводит его
+при первой правке настроек и дальше читает только его): ключ `screensaver` в нём правится
+**от имени пользователя** (`runuser -u`), и только если ни один компонент пути не ссылка
+и настоящий путь не выходит из домашнего каталога; иначе — предупреждение, файл не трогается.
 
 ## Действия
 
@@ -112,8 +118,9 @@ initialize the NVIDIA graphics device», AGX Orin 2026-09-14), а `systemd --use
 ## Удаление
 
 `cream remove desktop` снимает файлы dconf, X и xfconf и выключает автологин в
-конфигах gdm3/lightdm (сами конфиги — пакетов); группы пользователя и правка
-`desktop.conf` lxsession остаются. Пакеты `dconf-cli`, `x11-xserver-utils` не снимаются.
+конфигах gdm3/lightdm (сами конфиги — пакетов), снимает `screensaver=disabled` из
+системного `desktop.conf` lxsession; группы пользователя и правка его собственного
+`desktop.conf` остаются. Пакеты `dconf-cli`, `x11-xserver-utils` не снимаются.
 
 ## Проверки
 

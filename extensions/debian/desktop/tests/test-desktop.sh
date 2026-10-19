@@ -58,6 +58,9 @@ case "$1" in
 esac
 exit 0'
     ht_fake chown
+    # runuser: the tests cannot drop privileges — the fake logs the user and runs
+    # the command as is (the caller of the hook is not root anyway).
+    ht_fake runuser '[[ "$1" == -u && "$3" == -- ]] || exit 2; shift 3; exec "$@"'
     ht_fake sleep
     ht_fake cream
     LIB="$ROOT/opt/cream/ext/cloud-user/get_cloud_user.sh"
@@ -202,9 +205,13 @@ ht_hook configure CREAM_REASON=boot DESKTOP_DISABLE_SCREEN_LOCK=1 DESKTOP_DISABL
 check "xfconf: power manager" grep -q 'name="dpms-enabled" type="bool" value="false"' "$XFC/xfce4-power-manager.desktop-ext.xml"
 check "xfconf: канал — ссылка на наш файл" test "$(readlink "$XFC/xfce4-power-manager.xml")" = xfce4-power-manager.desktop-ext.xml
 check "xfconf: screensaver выключен" grep -q 'value="false"' "$XFC/xfce4-screensaver.desktop-ext.xml"
-check "lxsession: screensaver=disabled" grep -qx 'screensaver=disabled' "$ROOT/home/alice/.config/lxsession/LXDE/desktop.conf"
-check "lxsession: файл отдан пользователю" ht_called '^chown alice:alice .*/home/alice/.config/lxsession/LXDE/desktop.conf'
+LXSYS="$ROOT/etc/xdg/lxsession/LXDE/desktop.conf"
+check "lxsession: системное умолчание screensaver=disabled" grep -qx 'screensaver=disabled' "$LXSYS"
+check_not "lxsession: в домашний каталог root не пишет (файла пользователя не было)" test -e "$ROOT/home/alice/.config"
+check_not "lxsession: runuser без файла пользователя не зовётся" ht_called '^runuser'
 ht_hook configure CREAM_REASON=boot; eq "выключено — 0" 0 "$?"
+check_not "lxsession: системное умолчание снято" grep -q '^screensaver=' "$LXSYS"
+check "lxsession: файл пакета остался" test -f "$LXSYS"
 check_not "xfconf: файл снят" test -e "$XFC/xfce4-power-manager.desktop-ext.xml"
 check_not "xfconf: ссылка снята" test -L "$XFC/xfce4-power-manager.xml"
 check_not "X: DPMS-файл снят" test -e "$XSESS"
@@ -212,6 +219,38 @@ desk_root; mkdir -p "$XFC"
 printf '<channel name="xfce4-power-manager"/>\n' > "$XFC/xfce4-power-manager.xml"
 ht_hook configure CREAM_REASON=boot DESKTOP_DISABLE_SCREEN_BLANK=1; eq "свой канал — 0" 0 "$?"
 check "xfconf: чужой канал не затёрт" grep -qx '<channel name="xfce4-power-manager"/>' "$XFC/xfce4-power-manager.xml"
+
+echo "== lxsession: файл пользователя — только от его имени и без ссылок =="
+desk_root; ht_fake lxsession
+UC="$ROOT/home/alice/.config/lxsession/LXDE"
+mkdir -p "$UC"; printf '[Session]\nwindow_manager=openbox-lxde\n' > "$UC/desktop.conf"
+ht_hook configure CREAM_REASON=boot DESKTOP_DISABLE_SCREEN_BLANK=1; eq "файл пользователя — 0" 0 "$?"
+check "правка от имени пользователя (runuser -u alice)" ht_called '^runuser -u alice -- .*/files/desktop.sh lxsession-user .*/home/alice/.config/lxsession/LXDE/desktop.conf$'
+check "файл пользователя: screensaver=disabled" grep -qx 'screensaver=disabled' "$UC/desktop.conf"
+check_not "chown от root не нужен" ht_called '^chown'
+for case in file dir; do
+    desk_root; ht_fake lxsession
+    mkdir -p "$ROOT/outside"; printf 'root:secret:1::\n' > "$ROOT/outside/shadow"
+    mkdir -p "$ROOT/home/alice/.config"
+    if [[ "$case" == file ]]; then
+        mkdir -p "$ROOT/home/alice/.config/lxsession/LXDE"
+        ln -s "$ROOT/outside/shadow" "$ROOT/home/alice/.config/lxsession/LXDE/desktop.conf"
+    else
+        mkdir -p "$ROOT/outside/LXDE"; ln -s "$ROOT/outside/shadow" "$ROOT/outside/LXDE/desktop.conf"
+        ln -s "$ROOT/outside" "$ROOT/home/alice/.config/lxsession"
+    fi
+    snap="$(sha256sum < "$ROOT/outside/shadow")"
+    ht_hook configure CREAM_REASON=boot DESKTOP_DISABLE_SCREEN_BLANK=1; eq "ссылка ($case) — предупреждение, 0" 0 "$?"
+    eq "ссылка ($case): цель вне \$HOME не изменена" "$snap" "$(sha256sum < "$ROOT/outside/shadow")"
+    check "ссылка ($case): отказ назван" grep -q 'символическая ссылка' <<< "$(ht_out)"
+    check_not "ссылка ($case): runuser не зовётся" ht_called '^runuser'
+done
+desk_root
+printf 'x\n' > "$ROOT/target"; ln -s "$ROOT/target" "$ROOT/link.conf"
+HT_ACTION_FILE="$HT_EXT/files/desktop.sh"
+(cd "$HT_EXT" && env -i PATH="$ROOT/bin:/usr/bin:/bin" "$HT_ACTION_FILE" lxsession-user "$ROOT/link.conf") 2>/dev/null
+eq "от имени пользователя: ссылку не открывает — 1" 1 "$?"
+eq "от имени пользователя: цель не изменена" x "$(cat "$ROOT/target")"
 
 echo "== configure: без менеджера входа и без пользователя =="
 desk_root; with_dconf
