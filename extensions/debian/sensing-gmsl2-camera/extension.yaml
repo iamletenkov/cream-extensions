@@ -18,7 +18,7 @@
 # and the udev rule are `files` and call them by absolute path (ruling R7).
 schema: cream/v1
 name: sensing-gmsl2-camera
-version: 5.0.0
+version: 5.0.1
 summary: Камеры Sensing GMSL2 на Jetson AGX Orin (SG8A-AGON-G2Y-A1, L4T 36.4.3) — ядро, модули, оверлей, запуск на загрузке
 cream: ">=1.0.0"
 platform:
@@ -33,6 +33,8 @@ targets:
     и делает её основной, закрепляет пакеты ядра L4T (apt-mark hold); камеры заработают
     после перезагрузки; откат — пункт backup загрузочного меню или cream remove
 provides: [gmsl2-camera]
+depends:
+  - {name: apt-guard, version: ">=1.0.0 <2"}
 hooks:
   install: {timeout: 30m}
   apply: {}
