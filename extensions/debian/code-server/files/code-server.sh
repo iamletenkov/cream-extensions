@@ -42,6 +42,9 @@
 # and rename — never through a symlink, and not at all when /etc/cream,
 # /etc/cream/teleport or apps.d is one. Harmless without the teleport extension.
 #
+# LEFTOVERS OF 4.x (units, enablement links, configs with `auth: none`, the
+# mkcert CA): install, configure and apply refuse with the list — see below.
+#
 # systemctl in configure and apply: start/restart/stop only with --no-block
 # (configure runs at boot inside a systemd job, apply inside `cream set`). The
 # instance is not enabled: configure starts it on every boot after the checks.
@@ -141,6 +144,68 @@ decide_auth(){
     warn "нет CODE_SERVER_PASSWORD — code-server без аутентификации не запускается"
     warn "  пароль: echo <пароль> | sudo cream set code-server CODE_SERVER_PASSWORD=-"
     warn "  или осознанно без пароля: sudo cream set code-server CODE_SERVER_ALLOW_NO_AUTH=1"
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# Leftovers of the layout 2 code-server (4.x)
+# ---------------------------------------------------------------------------
+# There is no transition (plan ruling R1). The 4.x extension left things that
+# start code-server around this extension's password check, or keep a trusted
+# root CA: its own instance units and their enablement links, the
+# configure-code-server.service with its link, user configs with `auth: none`
+# it wrote, and the mkcert CA in the system trust store. install refuses before
+# changing anything, configure and apply refuse (the service is not started)
+# while any of them is there — the operator cleans up by the listed commands.
+CONFIG_HEADER="# Written by cream (extension code-server)"
+SYSTEMD_ETC="$R/etc/systemd/system"
+CA_DIR="$R/usr/local/share/ca-certificates"
+
+# legacy_leftovers: one line per leftover (path on the machine), nothing when clean.
+legacy_leftovers(){
+    local f ent home conf
+    shopt -s nullglob
+    # Instance units and drop-ins; the template code-server@.service is ours (files).
+    for f in "$SYSTEMD_ETC"/code-server@?*.service "$SYSTEMD_ETC"/code-server@*.service.d \
+             "$SYSTEMD_ETC"/configure-code-server.service "$SYSTEMD_ETC"/configure-code-server.service.d; do
+        [[ -e "$f" || -L "$f" ]] && echo "${f#"$R"}"
+    done
+    # Enablement links: this extension never enables an instance.
+    for f in "$SYSTEMD_ETC"/*.wants/code-server@*.service "$SYSTEMD_ETC"/*.requires/code-server@*.service \
+             "$SYSTEMD_ETC"/*.wants/configure-code-server.service "$SYSTEMD_ETC"/*.requires/configure-code-server.service; do
+        echo "${f#"$R"}"
+    done
+    for f in "$CA_DIR"/mkcert_development_CA_*.crt; do echo "${f#"$R"}"; done
+    shopt -u nullglob
+    # User configs without authentication not written by this extension. Only
+    # regular files are looked at (a symlink is not followed); only a match is told.
+    while IFS= read -r ent; do
+        IFS=: read -r _ _ _ _ _ home _ <<< "$ent"
+        [[ "$home" == /* ]] || continue
+        conf="$R$home/.config/code-server/config.yaml"
+        [[ -f "$conf" && ! -L "$conf" ]] || continue
+        if grep -qE '^auth:[[:space:]]*none[[:space:]]*$' -- "$conf" 2>/dev/null \
+            && ! grep -qF -- "$CONFIG_HEADER" "$conf" 2>/dev/null; then
+            echo "${conf#"$R"}"
+        fi
+    done < <(getent passwd 2>/dev/null || true)
+}
+
+# refuse_on_leftovers: 0 — clean; otherwise the list and the cleanup to stderr, 1.
+refuse_on_leftovers(){
+    local found
+    found="$(legacy_leftovers)"
+    [[ -n "$found" ]] || return 0
+    log "ОШИБКА: остатки прежнего code-server (4.x) — они запускают code-server в обход проверки пароля или держат доверенный корневой CA:"
+    printf '%s\n' "$found" | sed 's/^/code-server:   /' >&2
+    log "уберите их и повторите (подробно — README расширения, «Остатки 4.x»):"
+    log "  sudo systemctl disable --now configure-code-server.service 'code-server@*.service'"
+    log "  sudo rm -r -f -- /etc/systemd/system/configure-code-server.service* /etc/systemd/system/code-server@?*.service* \\"
+    log "      /etc/systemd/system/*.wants/configure-code-server.service /etc/systemd/system/*.wants/code-server@*.service"
+    log "  sudo systemctl daemon-reload"
+    log "  config.yaml с auth: none — удалить (sudo rm <путь>); configure расширения напишет свой"
+    log "  CA mkcert: sudo CAROOT=<домашний каталог>/.local/share/code-server/certs mkcert -uninstall,"
+    log "      или sudo rm /usr/local/share/ca-certificates/mkcert_development_CA_*.crt && sudo update-ca-certificates --fresh"
     return 1
 }
 
@@ -295,6 +360,11 @@ scrub_user_config(){
 run(){
     local mode="$1" ent user home wait_s=0 verb=restart rc=0
     check_values
+    if ! refuse_on_leftovers; then
+        decl_remove
+        stop_instances
+        exit 1
+    fi
     decide_auth || rc=$?
     if (( rc != 0 )); then
         decl_remove
@@ -362,7 +432,7 @@ cmd_write_config(){
     chmod 0700 -- "$dir"
     conf="$dir/config.yaml"
     host="$bind"; [[ "$bind" == *:* ]] && host="[$bind]"
-    content="# Written by cream (extension code-server) on every configure: change the
+    content="$CONFIG_HEADER on every configure: change the
 # domain with \`cream set code-server …\`, not this file.
 bind-addr: $host:$port
 auth: $auth"
@@ -440,6 +510,7 @@ installed_version(){
 cmd_install(){
     local arch work have=0 url
     local -a need=()
+    refuse_on_leftovers || exit 1
     arch="$(dpkg --print-architecture)"
     [[ -n "${DEB_SHA256[$arch]:-}" ]] || die "архитектура $arch — .deb code-server закреплён только для amd64 и arm64"
     export DEBIAN_FRONTEND=noninteractive
