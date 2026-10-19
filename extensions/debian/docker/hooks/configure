@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# cream hook `configure` of docker (stage system, after docker.service): runs
+# on every boot and after install on a live machine. Every step checks the fact
+# before changing anything, so a repeat changes nothing.
+#
+#   1. the cloud-init user joins group docker — the account is created by
+#      cloud-init from the deployment manifest, its name is unknown at build;
+#   2. Raspberry Pi: cgroup_enable=memory in /boot/firmware/cmdline.txt —
+#      exit 10 (reboot required) when the line was changed;
+#   3. Jetson: dockerd is restarted once daemon.json (edited by nvidia-ctk in
+#      the build chroot, where no daemon ran) differs from what it last saw.
+#
+# Nothing here is a failure for want of a device or a user (rule P11): warn, exit 0.
+set -euo pipefail
+
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+log_info(){ >&2 echo -e "${GREEN}[INFO]${NC} docker: $*"; }
+log_warn(){ >&2 echo -e "${YELLOW}[WARN]${NC} docker: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}"
+rc=0
+
+# --- 1. group docker for the cloud-init user -----------------------------------
+# The name comes from the cloud-user library (depends), and this hook keeps NO
+# fallback of its own. The local copy that used to live here ("first account
+# with uid >= 1000 and a home directory") is the one that moved into the shared
+# library: measured 2026-09-04 on a live Jetson, vendor image without cloud-init.
+# The copy had DIVERGED, in the worse direction: the library tells "cloud-init
+# absent" (fallback) from "cloud-init present, userdata not ready" (refuse —
+# the vendor account is not the one cloud-init is about to create); the copy
+# did not, and in that race handed group docker (root-equivalent) to the vendor
+# account.
+#
+# stderr of the library is NOT silenced: it says there that it took the
+# fallback path and which account it picked.
+LIB="$R/opt/cream/ext/cloud-user/get_cloud_user.sh"
+user=""
+if [[ -x "$LIB" ]]; then
+    user="$("$LIB" || true)"
+else
+    log_warn "нет библиотеки cloud-user ($LIB) — группа docker не назначена"
+fi
+
+if [[ -z "$user" ]]; then
+    # Not a failure: Docker works without this, the group is a convenience. No
+    # wait loop either: configure runs on every boot and cloud-init's userdata
+    # stays in /var/lib/cloud/instance, so a first-boot race resolves on the
+    # next boot.
+    log_warn "пользователь не определился, группа docker не назначена"
+    log_warn "на первой загрузке это может быть гонка с cloud-init — группа назначится на следующей"
+elif ! getent group docker >/dev/null 2>&1; then
+    log_warn "группы docker нет (пакет docker-ce не установлен?) — '$user' не добавлен"
+elif id -nG "$user" | tr ' ' '\n' | grep -qx docker; then
+    log_info "'$user' уже в группе docker"
+else
+    usermod -aG docker "$user"
+    log_info "'$user' добавлен в группу docker"
+    # Membership in docker is equivalent to root on this host: the socket can
+    # start a privileged container. Said here so it is a decision, not an accident.
+    log_warn "членство в группе docker равносильно root на этой машине"
+fi
+
+# --- 2. Raspberry Pi: memory cgroup --------------------------------------------
+# The kernel supports memcg (CONFIG_MEMCG=y in every branch) but the DTB turns
+# it off: bcm2711-rpi-ds.dtsi and bcm2712-rpi.dtsi carry cgroup_disable=memory
+# in bootargs. Without the fix `docker run --memory` is SILENTLY ignored.
+#
+# Here and not in install for a measured reason: inside virt-customize
+# /boot/firmware is EMPTY — libguestfs does not mount the FAT partition. The
+# build-time check never found the file and silently took the "not a Pi" branch.
+# cgroup_enable= is a Raspberry Pi patch, not upstream; on any other kernel the
+# argument is ignored, and the file gate closes that case anyway.
+#
+# The backup is taken once and never overwritten (spec §6.3).
+CMDLINE="$R/boot/firmware/cmdline.txt"
+if [[ -f "$CMDLINE" ]]; then
+    if grep -Eq '(^|[[:space:]])cgroup_enable=memory([[:space:]]|$)' "$CMDLINE"; then
+        log_info "cgroup_enable=memory уже в cmdline.txt"
+    else
+        [[ -e "$CMDLINE.before-docker" ]] || cp -a "$CMDLINE" "$CMDLINE.before-docker"
+        # Everything must stay on ONE line — the bootloader requires it.
+        sed -i '1s/[[:space:]]*$//; 1s/$/ cgroup_enable=memory/' "$CMDLINE"
+        log_info "в cmdline.txt добавлен cgroup_enable=memory"
+        log_warn "ограничения памяти у контейнеров заработают после перезагрузки"
+        rc=10
+    fi
+fi
+
+# --- 3. L4T: NVIDIA runtime ------------------------------------------------------
+# nvidia-ctk rewrote /etc/docker/daemon.json in the build chroot, where the
+# daemon was not running. Restart it when daemon.json differs from the one it
+# was last restarted for (or found stopped with) — once, not on every boot.
+# --no-block: this unit is After=docker.service, a blocking restart from here
+# would wait on a job ordered around ourselves.
+DAEMON_JSON="$R/etc/docker/daemon.json"
+SEEN="$STATE/daemon-json.sha256"
+if [[ -f "$R/etc/nv_tegra_release" && -f "$DAEMON_JSON" ]] && command -v nvidia-ctk >/dev/null 2>&1; then
+    cur="$(sha256sum < "$DAEMON_JSON" | cut -d' ' -f1)"
+    if [[ "$cur" == "$(cat "$SEEN" 2>/dev/null || true)" ]]; then
+        log_info "daemon.json не менялся — перезапуск под NVIDIA не нужен"
+    else
+        if systemctl is-active --quiet docker.service; then
+            systemctl --no-block try-restart docker.service
+            log_info "docker перезапускается под среду выполнения NVIDIA"
+        else
+            log_info "docker не запущен — подхватит среду выполнения NVIDIA при старте"
+        fi
+        install -d -m 0755 "$STATE"
+        printf '%s\n' "$cur" > "$SEEN"
+    fi
+fi
+
+exit "$rc"

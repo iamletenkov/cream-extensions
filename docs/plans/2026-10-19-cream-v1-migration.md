@@ -15,7 +15,7 @@
 - [x] Task 5: библиотека `cloud-user` (`kind: library`) + `yq`
 - [x] Task 6: библиотека `l4t` (`kind: library`) + `btop` + `firefox`
 - [ ] Task 7: пин cream 1.1.0, линт хуков вместо `validate-extensions.py`, конвенция cream/v1 в документации и `new-extension.sh`
-- [ ] Task 8: `docker`
+- [x] Task 8: `docker`
 - [ ] Task 9: `locale` + `can`
 - [ ] Task 10: `firewall` (стадия `early`, `inet cream`, `CREAM-INPUT`, CLI → действия)
 - [ ] Task 11: `network-manager` + `cloud-growroot` + `nocloud-cidata`
