@@ -1,0 +1,15 @@
+[Unit]
+Description=Sensing GMSL2 camera: lock VI/ISP/NVCSI/EMC clocks at max rate
+# The clocks live in debugfs, mounted by systemd. No dependency on the cameras:
+# this is a SoC setting, and the vendor does it first.
+Requires=sys-kernel-debug.mount
+After=sys-kernel-debug.mount
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=/etc/cream/sensing-gmsl2-camera/config
+ExecStart=/opt/cream/ext/sensing-gmsl2-camera/actions/boost-clock
+
+[Install]
+WantedBy=multi-user.target

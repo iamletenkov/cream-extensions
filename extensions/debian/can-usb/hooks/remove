@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# cream hook `remove` of can-usb: by the records of hooks/install in
+# $CREAM_STATE_DIR —
+#   modules   gs_usb, peak_usb, slcan in /lib/modules/<kernel>/updates/can-usb
+#             go, depmod for the kernel of the image (a loaded module stays
+#             until it is unplugged or the machine reboots);
+#   held      apt-mark unhold of the headers hold it added — never one held
+#             before cream or recorded by another extension
+#             (/var/lib/cream/ext/*/held, e.g. sensing-gmsl2-camera);
+#   packages  apt-get remove of what it installed (headers, build tools).
+# apt is asked first in simulation: when it would take away anything besides
+# our packages, the hook refuses before changing anything (README, «Как снять»).
+# A repeat finds nothing and exits 0.
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] can-usb: $*"; }
+log_warn(){ >&2 echo "[WARN] can-usb: $*"; }
+log_error(){ >&2 echo "[ERROR] can-usb: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}"
+KERNEL=5.15.148-tegra
+MODDIR="$R/lib/modules/$KERNEL/updates/can-usb"
+
+lines(){ if [[ -f "$1" && ! -L "$1" ]]; then sed '/^$/d' "$1"; fi; }
+
+export DEBIAN_FRONTEND=noninteractive
+mapfile -t ours < <(lines "$STATE/packages")
+if (( ${#ours[@]} )); then
+    sim="$(apt-get -s remove "${ours[@]}")" || { log_error "apt-get -s remove ${ours[*]} не прошёл"; exit 1; }
+    extra=()
+    while read -r verb pkg _; do
+        [[ "$verb" == Remv ]] || continue
+        mine=""
+        for p in "${ours[@]}"; do [[ "$p" == "$pkg" ]] && mine=1; done
+        [[ -n "$mine" ]] || extra+=("$pkg")
+    done <<< "$sim"
+    if (( ${#extra[@]} )); then
+        log_error "вместе с ${ours[*]} apt снял бы и чужие пакеты: ${extra[*]}"
+        log_error "сними руками или забудь запись: cream remove --forget can-usb"
+        exit 1
+    fi
+fi
+
+if [[ -d "$MODDIR" && ! -L "$MODDIR" ]]; then
+    rm -f -- "$MODDIR"/gs_usb.ko "$MODDIR"/peak_usb.ko "$MODDIR"/slcan.ko
+    rmdir -- "$MODDIR" 2>/dev/null || log_warn "в $MODDIR остались чужие файлы — каталог оставлен"
+    args=("$KERNEL")
+    [[ -n "$R" ]] && args=(-b "$R" "$KERNEL")
+    depmod "${args[@]}" || log_warn "depmod $KERNEL не отработал"
+    log_info "модули gs_usb, peak_usb, slcan сняты"
+fi
+
+mapfile -t held < <(lines "$STATE/held")
+release=()
+for p in "${held[@]}"; do
+    other=""
+    for f in "$R"/var/lib/cream/ext/*/held; do
+        [[ "$f" == "$STATE/held" || ! -f "$f" ]] && continue
+        grep -qxF -- "$p" "$f" && other=1
+    done
+    if [[ -n "$other" ]]; then
+        log_info "$p держит и другое расширение — hold остаётся"
+    else
+        release+=("$p")
+    fi
+done
+if (( ${#release[@]} )); then
+    apt-mark unhold "${release[@]}" >/dev/null || { log_error "apt-mark unhold ${release[*]} не прошёл"; exit 1; }
+    log_info "сняты с hold: ${release[*]}"
+fi
+
+if (( ${#ours[@]} )); then
+    apt-get -q -y remove "${ours[@]}" || { log_error "apt-get remove ${ours[*]} не прошёл"; exit 1; }
+    log_info "удалены: ${ours[*]}"
+fi
+rm -f -- "$STATE/packages" "$STATE/held"

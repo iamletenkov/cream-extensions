@@ -1,0 +1,15 @@
+[Unit]
+Description=Sensing GMSL2 camera profile on /dev/%i
+# Started by the udev rule 99-sensing-gmsl2-camera.rules when the node appears
+# (ENV{SYSTEMD_WANTS}), not by a boot target: the profile follows the node
+# after `rmmod`/`modprobe` of the driver on a running machine, which resets the
+# controls. Waiting in a loop for /dev/video0 would be a race the other way.
+BindsTo=dev-%i.device
+After=dev-%i.device
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# The keys of the extension as cream wrote them; the action checks them again.
+EnvironmentFile=/etc/cream/sensing-gmsl2-camera/config
+ExecStart=/opt/cream/ext/sensing-gmsl2-camera/actions/camera-profile %i

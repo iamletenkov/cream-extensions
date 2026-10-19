@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# cream action `boost-clock` of sensing-gmsl2-camera: VI/ISP/NVCSI/EMC clocks of
+# the SoC locked at their maximum rate, as the vendor's boost_clock.sh does.
+# sensing-gmsl2-clock.service calls it by absolute path on every boot, with the
+# keys from EnvironmentFile=/etc/cream/sensing-gmsl2-camera/config.
+#
+# Exit: 0 — done or SENSING_BOOST_CLOCK=0; 1 — a clock is missing in debugfs
+# (not mounted, not a Tegra) or could not be set.
+set -euo pipefail
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+boost="${SENSING_BOOST_CLOCK:-1}"
+case "$boost" in
+    0) echo "SENSING_BOOST_CLOCK=0 — частоты не трогаю"; exit 0 ;;
+    1) ;;
+    *) echo "SENSING_BOOST_CLOCK: только 0 или 1" >&2; exit 1 ;;
+esac
+
+clk="$R/sys/kernel/debug/bpmp/debug/clk"
+rc=0
+for c in vi isp nvcsi emc; do
+    if [[ ! -d "$clk/$c" ]]; then
+        echo "нет /sys/kernel/debug/bpmp/debug/clk/$c — debugfs не смонтирован или это не Tegra" >&2
+        rc=1; continue
+    fi
+    echo 1 > "$clk/$c/mrq_rate_locked" || rc=1
+    cat "$clk/$c/max_rate" > "$clk/$c/rate" || rc=1
+    echo "$c: $(tr -cd '0-9' < "$clk/$c/rate")"
+done
+exit "$rc"
