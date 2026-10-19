@@ -1,0 +1,14 @@
+# cloud-user — library: get_cloud_user.sh, the name of the cloud-init user
+# (userdata via cloud-init and yq; without them — the first regular account
+# with a home directory). Consumers run it by the stable path
+# ${CREAM_ROOT:-}/opt/cream/ext/cloud-user/get_cloud_user.sh (cream spec §4.5).
+schema: cream/v1
+name: cloud-user
+kind: library
+version: 1.0.0
+summary: Библиотека — имя пользователя cloud-init для хуков других расширений
+cream: ">=1.0.0"
+platform:
+  family: deb
+  arch: [amd64, arm64]
+targets: {build: exec, live: "yes"}
