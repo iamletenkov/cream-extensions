@@ -363,6 +363,16 @@ depends `l4t` (opencv, pytorch), requires `cuda`; `check-system-python.py`, `con
 (исключения — CHANGELOG и история в docs/research).
 **Приёмка:** `make ci`; `grep -rn 'layout: 2\|/opt/bisquite\|/etc/bisquite' extensions tools lib` пуст.
 
+**Найдено исполнителями (для Task 28):** `docs/extensions.md:947` — старое имя `bisquite-l4t-boot-verify.service`
+(Task 24 переименовал юнит в `l4t-boot-verify.service`).
+
+**Бэклог после 5.0.0 (найдено в волнах, вне плана):**
+- `l4t-kernel-kvm`: `public_sources.tbz2` NVIDIA скачивается без sha256 — нужны суммы по версиям L4T.
+- `l4t-pytorch`, `l4t-tensorflow`: колёса PyPI — только по `constraints.txt`, без `--require-hashes`.
+- `nvidia-jetpack`: шаг 04 принимает пароль в argv (`-p`) — перевести на файл/stdin; шаг 09 — `chown -R` каталога
+  результатов на оператора, при повторе root пишет в каталог оператора (повышения нет, но стоит писать от оператора).
+- `network-manager`: живой прогон на Ubuntu не идёт в контейнере (polkit/hostnamed без `SYS_ADMIN`) — только debian-12.
+
 ### Task 29: Финальная интеграция + `make ci`, выпуск каталога 5.0.0
 1. Сквозной `make ci` на `main` после всех слияний («зелено у агента» ≠ «зелено в ветке»).
 2. `make snapshot-check`; ночной workflow вручную по всем L-расширениям (`debian:12`, `ubuntu:24.04`).
