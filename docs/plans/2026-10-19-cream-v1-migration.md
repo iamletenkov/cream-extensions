@@ -13,7 +13,7 @@
 - [x] Task 3: обвязка проверок — автообнаружение тестов расширений, живой стенд `tools/live-test.sh`, гейт имён bisquite
 - [x] Task 4: [cream] статическая проверка графа в `cream validate --catalog` и выпуск cream 1.1.0
 - [x] Task 5: библиотека `cloud-user` (`kind: library`) + `yq`
-- [ ] Task 6: библиотека `l4t` (`kind: library`) + `btop` + `firefox`
+- [x] Task 6: библиотека `l4t` (`kind: library`) + `btop` + `firefox`
 - [ ] Task 7: пин cream 1.1.0, линт хуков вместо `validate-extensions.py`, конвенция cream/v1 в документации и `new-extension.sh`
 - [ ] Task 8: `docker`
 - [ ] Task 9: `locale` + `can`
