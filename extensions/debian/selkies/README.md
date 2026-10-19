@@ -184,17 +184,17 @@ firstboot-commands:
 
 ## Веб-приложение Teleport
 
-С 2.1.0 `install.sh` кладёт объявление для расширения `teleport-agent` —
-`/etc/bisquite/teleport/apps.d/selkies.conf` с `NAME=selkies` и
-`URI=<http|https>://127.0.0.1:<SELKIES_PORT>` (схема — по
+С 2.1.0 `install.sh` кладёт объявление для Teleport, с 5.0.0 — для
+расширения `teleport` формата cream: `/etc/cream/teleport/apps.d/selkies.conf`
+(до 5.0.0 — `/etc/bisquite/teleport/apps.d/` прежнего `teleport-agent`)
+с `NAME=selkies` и `URI=<http|https>://127.0.0.1:<SELKIES_PORT>` (схема — по
 `SELKIES_ENABLE_HTTPS`). С 4.0.3 там же `ICON=desktop` — иконка в веб-морде
-прокси; она требует `teleport-agent` 2.2.0 и новее, более старый агент
-объявление с третьим ключом пропустит целиком. С ним Selkies публикуется как
+прокси; её понимает расширение `teleport` (и `teleport-agent` с 2.2.0). С ним Selkies публикуется как
 `https://selkies.<нода>.<хост прокси>`; кому видно — метка `env` ноды и
 `tpApps: selkies` пользователя. Не публиковать —
-`bisquite-teleport set TELEPORT_APPS_DISABLE=selkies`.
+`cream set teleport TELEPORT_APPS_DISABLE=selkies`.
 
-WebSocket через Teleport проходит, потому что `teleport-agent` переписывает
+WebSocket через Teleport проходит, потому что расширение `teleport` переписывает
 приложению на петле `Host` на публичный адрес, и Origin браузера с ним
 совпадает. Без этого (или за другим прокси, который передаёт `Host` петли)
 Selkies отвечает `403` и пишет `Rejected WebSocket upgrade from disallowed

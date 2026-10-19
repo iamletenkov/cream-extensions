@@ -9,7 +9,7 @@
 ## Дальше
 1. Спека cream: формат `extension.yaml` и жизненный цикл переезжают под исполнитель cream;
    план миграции расширений и `lib/bisquite-conf` → `cream set/show`.
-2. Ссылки на старые имена репозиториев в README и в `teleport-agent` (URL релизов агента)
+2. Ссылки на старые имена репозиториев в README (URL релизов агента)
    — заменить на stvor-agent/cream-extensions; GitHub пока перенаправляет.
 3. Разгрести предупреждения shellcheck (37 на уровне warning, планка `make lint` — error).
 

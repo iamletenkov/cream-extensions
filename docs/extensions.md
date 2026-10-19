@@ -308,7 +308,7 @@ echo 'пароль' | sudo bisquite-conf set x11vnc X11VNC_PASSWORD=-   # сек
 | `selkies` | `/etc/bisquite/selkies/config` (0600) | `selkies` | `EnvironmentFile` юнита `selkies@.service` | объявление для Teleport + перезапуск `selkies@*` |
 | `vino` | `/etc/bisquite/vino/config` | `vino-vnc` | `configure.sh` → dconf пользователя | перезапуск `configure-vino-vnc` (сервер берёт порт и адрес при старте сессии) |
 | `sensing-camera` | `/etc/bisquite/sensing-camera/config` | `sensing-gmsl2-camera` | `bisquite-sensing-camera-ctl` в юнитах камер | перезапуск `bisquite-sensing-camera@*`, `bisquite-sensing-clock` |
-| `teleport` | `/etc/bisquite/teleport/config` (0600) | пакет `bisquite-teleport-agent` (ставит `teleport-agent`; схема — `/usr/lib/bisquite-teleport/knobs`) | `bisquite-teleport render` на старте агента | `render` + reload агента; кластер — только `bisquite-teleport join` |
+| `teleport` | `/etc/cream/teleport/config` (домен cream, `config.keys` манифеста) | `teleport` (`cream/v1`) | `cream run teleport render` на старте агента | хук `apply`: `render` + reload агента; кластер — только `cream run teleport join` |
 | `code-server` | `/etc/bisquite/code-server/config` (0600) | `code-server` | `configure.sh` → `~/.config/code-server/config.yaml` | перезапуск `configure-code-server` |
 | `kiosk` | `/etc/bisquite/kiosk/config` | `kiosk` | `configure.sh`, `run-kiosk.sh` | перезапуск `configure-kiosk` |
 | `chromium-kiosk` | `/etc/bisquite/chromium-kiosk/config` | `chromium-kiosk` | `configure.sh` → `/etc/chromium-kiosk/config.yml` | перезапуск `configure-chromium-kiosk` |
@@ -319,7 +319,7 @@ echo 'пароль' | sudo bisquite-conf set x11vnc X11VNC_PASSWORD=-   # сек
 
 Остальные расширения действующих настроек не имеют: они однократно
 настраивают систему, и повторить это можно только повторным прогоном
-`configure-<имя>.service`. `/etc/bisquite/teleport/apps.d/` — не настройки
+`configure-<имя>.service`. `/etc/cream/teleport/apps.d/` — не настройки
 домена, а объявления других расширений; библиотека его не трогает.
 
 Формат у всех один — `KEY=VALUE` с грамматикой systemd `EnvironmentFile`.
@@ -335,11 +335,11 @@ YAML-файлы `code-server`, `kiosk` и `chromium-kiosk` (формат bisquit
 шелл под пользователем, который обычно состоит в группе `sudo`, — то есть
 машину целиком.
 
-Вторая альтернатива — веб-приложение Teleport (`teleport-agent`): служба
+Вторая альтернатива — веб-приложение Teleport (расширение `teleport`): служба
 остаётся на петле, а расширение кладёт объявление в
-`/etc/bisquite/teleport/apps.d/<имя>.conf` — ровно `NAME` и `URI` на петле.
-Кому приложение видно, решает метка `env` оператора, а не объявление;
-формат и проверки — README `teleport-agent`.
+`/etc/cream/teleport/apps.d/<имя>.conf` — `NAME` и `URI` на петле (и при нужде
+`ICON`). Кому приложение видно, решает метка `env` оператора, а не объявление;
+формат и проверки — README `teleport`.
 
 Альтернатива без открытия порта и без кластера — туннель, он не требует правки
 конфигурации вовсе:
@@ -789,7 +789,7 @@ LightDM он разный, а под самим LightDM зависит от ег
 | `tensorrt` | `tensorrt` | мета-пакет `tensorrt` плюс `python3-libnvinfer` и `nvidia-l4t-dla-compiler` |
 | `web-remote-desktop` | `selkies` | Selkies 2.0 (AppImage) на существующем X-дисплее, WebSocket на `127.0.0.1:8080`; `selkies@.service` от пользователя сессии |
 | `web-browser` | `firefox` | `firefox` из `packages.mozilla.org` с пином 1000 поверх транзитного пакета снапа |
-| `teleport-node` | `teleport-agent` | `/usr/local/bin/teleport`, `teleport.service` из `bisquite-teleport join`; приложения — из `/etc/bisquite/teleport/apps.d` |
+| `teleport-node` | `teleport` (`cream/v1`) | `/usr/local/bin/teleport`, `teleport.service` из `cream run teleport join`; приложения — из `/etc/cream/teleport/apps.d` |
 | `l4t-boot-verify` | `l4t-boot-verify` | `bisquite-l4t-boot-verify.service` — `nvbootctrl verify` на каждой загрузке; вендорская `nv-l4t-bootloader-config` заглушена |
 | `gmsl2-camera` | `sensing-gmsl2-camera` | ядро и модули Sensing (пакеты ядра L4T — `apt-mark hold`), DTB-оверлей, запуск камер на каждой загрузке (`modprobe.d`, правило udev, `bisquite-sensing-clock.service`) |
 | `gstreamer` | `l4t-gstreamer` | `gstreamer1.0-tools` и плагины base/good/bad/ugly/libav, RTSP-сервер, `gstreamer1.0-nice`, `python3-gst-1.0` |
