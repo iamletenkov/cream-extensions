@@ -716,6 +716,8 @@ out="$(env -u CI STVOR_AGENT_DIR="$TMP/none" "$CHK" 2>&1)"; rc=$?
 eq "нет соседней копии локально — пропуск, код 0" 0 "$rc"
 check "нет соседней копии — предупреждение" grep -q 'сверка с stvor-agent пропущена' <<< "$out"
 check_not "нет соседней копии в CI — красный" env CI=true STVOR_AGENT_DIR="$TMP/none" "$CHK" >/dev/null 2>&1
+check_not "нет соседней копии при CI=1 — красный" env CI=1 STVOR_AGENT_DIR="$TMP/none" "$CHK" >/dev/null 2>&1
+check "CI=false — локальный пропуск" env CI=false STVOR_AGENT_DIR="$TMP/none" "$CHK" >/dev/null 2>&1
 
 echo
 echo "проверок: $((pass + fail)), не прошло: $fail"

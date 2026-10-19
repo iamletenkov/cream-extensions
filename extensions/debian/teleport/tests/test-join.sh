@@ -687,6 +687,25 @@ eq "метка env в домене — JSON result" failed "$(json_get "$out" re
 check "метка env в домене — причина" grep -q "TELEPORT_LABELS: ключ 'env' зарезервирован" <<< "$(json_get "$out" reason)"
 untouched "метка env в домене"
 
+echo "== секрет регистрации: граница 1000 знаков в манифесте и в скрипте =="
+# RE2 of cream allows at most 1000 repetitions: both sides say {8,1000}.
+eq "манифест: тип TELEPORT_REGISTRATION_SECRET" "TELEPORT_REGISTRATION_SECRET: {type: 're:^[[:graph:]]{8,1000}\$', secret: true}" \
+    "$(manifest_action join | grep -o 'TELEPORT_REGISTRATION_SECRET: .*')"
+check "скрипт: RE_REG_SECRET той же границы" grep -qx "RE_REG_SECRET='^\[\[:graph:\]\]{8,1000}\\\$'" "$EXT/files/teleport.sh"
+for n in 1000 1001; do
+    new_root
+    echo 7 > "$FAKE/net"
+    long="$(printf 'k%.0s' $(seq "$n"))"
+    out="$(printf '%s' "$long" | tp join "${STVOR_ARGS[@]}" 2>/dev/null)"; rc=$?
+    if (( n == 1000 )); then
+        eq "секрет 1000 знаков — код 0" 0 "$rc"
+    else
+        eq "секрет 1001 знак — код 1" 1 "$rc"
+        eq "секрет 1001 знак — JSON failed" failed "$(json_get "$out" result)"
+        check_not "секрет 1001 знак — не записан" test -e "$SECRET_FILE"
+    fi
+done
+
 echo "== TELEPORT_FORCE и TELEPORT_DEFER — bool до арифметики =="
 PWN_DIR="$(mktemp -d /tmp/pwnXXXXXX)"
 for key in TELEPORT_FORCE TELEPORT_DEFER; do

@@ -126,7 +126,7 @@ RE_APP_ICON='^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
 RE_LOOPBACK_URI='^https?://(127\.0\.0\.1|localhost|\[::1\])(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$'
 # The first-join secret: bound_keypair — one printable word; token — a join
 # token of Teleport (it lands in teleport.yaml in double quotes).
-RE_REG_SECRET='^[[:graph:]]{8,1024}$'
+RE_REG_SECRET='^[[:graph:]]{8,1000}$'
 RE_JOIN_TOKEN='^[A-Za-z0-9._-]{8,256}$'
 RE_VERSION='^[0-9]+\.[0-9]+\.[0-9]+$'
 
@@ -1049,7 +1049,7 @@ cmd_join(){
     if [[ "$method" == bound_keypair ]]; then
         [[ -n "${N[TELEPORT_TOKEN]:-}" ]] || die "bound_keypair: нужен TELEPORT_TOKEN — имя токена"
         if (( has_secret )) && [[ ! "$secret" =~ $RE_REG_SECRET ]]; then
-            die "секрет регистрации: ожидали 8–1024 печатных знаков без пробелов"
+            die "секрет регистрации: ожидали 8–1000 печатных знаков без пробелов"
         fi
     else
         [[ -z "${N[TELEPORT_TOKEN]:-}" ]] \
