@@ -11,7 +11,7 @@
 # No configure: the network configuration is written by cloud-init.
 schema: cream/v1
 name: network-manager
-version: 2.0.0
+version: 2.0.1
 summary: NetworkManager и wpasupplicant в образе — чтобы Wi-Fi из манифеста устройства поднялся
 cream: ">=1.0.0"
 platform:
@@ -28,6 +28,8 @@ targets:
     systemd-networkd не выключается (два менеджера на одних интерфейсах — предупреждение);
     remove снимает только поставленные этим расширением пакеты
 provides: [network-manager]
+depends:
+  - {name: apt-guard, version: ">=1.0.0 <2"}
 hooks:
   install: {timeout: 20m}
   remove: {timeout: 10m}
