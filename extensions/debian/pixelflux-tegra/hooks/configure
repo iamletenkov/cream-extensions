@@ -62,7 +62,8 @@ log_info "узел кодера: $node"
 
 # Access of the session user. JetPack 5/6: a 0666 clone of /dev/null. JetPack 4:
 # /dev/nvhost-msenc root:video 0660, and cloud-init gives the user only sudo —
-# without video pixelflux silently falls back to x264. Read from the mode bits:
+# without video pixelflux silently falls back to x264. Only video or render is
+# granted; any other group of the node is a warning, never usermod. Read from the mode bits:
 # the encoder is opened O_RDWR, `test -r` as the user would not show it.
 user=""
 if [[ -x "$CLOUD_USER_LIB" ]]; then user="$("$CLOUD_USER_LIB" 2>/dev/null || true)"; fi
@@ -82,6 +83,10 @@ else
             log_info "$node доступен через группу $group, $user в ней"
         elif [[ "$group" == root ]]; then
             log_warn "$node с правами $mode и группой root — группой доступ $user не дать; кодирование пойдёт процессором"
+        elif [[ "$group" != video && "$group" != render ]]; then
+            # Only the device groups of the encoder: a node relabelled to sudo,
+            # disk or docker must not turn into root for the session user.
+            log_warn "$node ($mode, группа $group) — не video и не render: в группу $group $user не добавляю; кодирование пойдёт процессором"
         else
             log_warn "$node ($mode, группа $group) недоступен $user — добавляю в группу $group"
             usermod -aG "$group" "$user" || { log_error "usermod -aG $group $user не сработал"; exit 1; }
