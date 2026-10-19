@@ -24,7 +24,7 @@
 - [ ] Task 14: `cloud-user-desktop` + `wallpaper`
 - [ ] Task 15: `code-server`
 - [x] Task 16: `kiosk` + `chromium-kiosk`
-- [ ] Task 17: `selkies`
+- [x] Task 17: `selkies`
 - [x] Task 18: `x11vnc` + `vino-vnc`
 - [ ] Task 19: `rustdesk` + `jetson-stats`
 - [x] Task 20: `nvidia` + `nvidia-container-toolkit`
