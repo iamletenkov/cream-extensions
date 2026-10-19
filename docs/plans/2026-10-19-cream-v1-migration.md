@@ -33,7 +33,7 @@
 - [x] Task 23: `l4t-opencv` + `l4t-pytorch` + `l4t-tensorflow`
 - [x] Task 24: `l4t-board-fdt` + `l4t-boot-verify`
 - [x] Task 25: `l4t-kernel-kvm`
-- [ ] Task 26: `sensing-gmsl2-camera` + `can-usb`
+- [x] Task 26: `sensing-gmsl2-camera` + `can-usb`
 - [ ] Task 27: `pixelflux-tegra` + `pixelflux-v4l2m2m`
 - [ ] Task 28: уборка переходного — `lib/`, layout 2 в инструментах, `extensions/openwrt/`, документация
 - [ ] Task 29: Финальная интеграция + `make ci`, выпуск каталога 5.0.0
