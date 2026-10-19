@@ -486,10 +486,10 @@ eq "тик засчитан" 2 "$(field attempts "$PENDING")"
 check_not "join и тик не зовут flock" test -e "$FAKE/flock.log"
 check_not "в состоянии нет файла блокировки" test -n "$(find "$ROOT" -name '*.lock' 2>/dev/null)"
 check_not "в коде нет flock" grep -q 'flock' "$EXT/files/teleport.sh"
-for a in join join-retry leave scrub-token; do
+for a in join join-retry leave scrub-token reload-apps; do
     check "манифест: $a — lock: exclusive" grep -qx '    lock: exclusive' <<< "$(manifest_action "$a")"
 done
-for a in render reload-apps status; do
+for a in render status; do
     check "манифест: $a — lock: none" grep -qx '    lock: none' <<< "$(manifest_action "$a")"
 done
 
@@ -889,13 +889,11 @@ check "teleport.service: ExecReload — render через cream" grep -qx 'ExecR
 # A restart inside set-managed: lock ≤ 20 s + restart + confirmation ≤ 30 s
 # within the 90 s of the stvor-agent adapter; the default stop is 90 s alone.
 check "teleport.service: TimeoutStopSec=30s" grep -qx 'TimeoutStopSec=30s' "$U/teleport.service"
-# HUP without /bin/kill: procps is not in minimal images (docker debian-12 of
-# the Stvor gate); systemctl is always there with systemd. --kill-who (not
-# --kill-whom): Ubuntu 22.04 has systemd 249.
-check "teleport.service: HUP через systemctl kill, только главному процессу" \
-    grep -qx 'ExecReload=systemctl kill --kill-who=main --signal=HUP %n' "$U/teleport.service"
-eq "teleport.service: render до HUP" "render HUP" \
-    "$(grep '^ExecReload=' "$U/teleport.service" | sed 's/.*teleport render$/render/; s/.*--signal=HUP.*/HUP/' | tr '\n' ' ' | sed 's/ $//')"
+# HUP without /bin/kill (procps is not in minimal images) and to the newest
+# Teleport process, not the MainPID that may be draining: the action `hup`
+# (lock: none, the bash builtin kill), after render.
+eq "teleport.service: ExecReload — render, затем cream run teleport hup" "render hup" \
+    "$(grep '^ExecReload=' "$U/teleport.service" | sed 's/.*teleport render$/render/; s/.*teleport hup$/hup/' | tr '\n' ' ' | sed 's/ $//')"
 # Every command an Exec* line of a unit runs exists on the machine: cream, the
 # Teleport binary of the extension, systemctl of systemd, or platform.commands.
 unit_cmds_unknown="$(python3 - "$EXT" <<'PY'
@@ -915,17 +913,18 @@ print(" ".join(bad))
 PY
 )"
 eq "Exec* юнитов зовут только известные команды" "" "$unit_cmds_unknown"
-# validate.unit_lock warns about teleport-join.service (join-retry) and
-# teleport-token.service (scrub-token): exclusive actions from Exec*. The
+# validate.unit_lock warns about teleport-join.service (join-retry),
+# teleport-token.service (scrub-token) and teleport-apps.service (reload-apps):
+# exclusive actions from Exec*. The
 # deadlock of §7.3 needs a lock holder that waits for the job of such a unit;
 # here none does — only enable/disable and --no-block starts of the timer.
 # Keep it so: no blocking start/restart/reload of these units anywhere.
-check_not "держатель блокировки не ждёт job юнитов повтора и стирания" \
-    bash -c "grep -hE 'systemctl[^#]*(start|restart|reload|enable --now)[^#]*(JOIN_SERVICE|JOIN_TIMER|teleport-join|teleport-token\.service)' \
+check_not "держатель блокировки не ждёт job юнитов повтора, стирания и приложений" \
+    bash -c "grep -hE 'systemctl[^#]*(start|restart|reload|enable --now)[^#]*(JOIN_SERVICE|JOIN_TIMER|teleport-join|teleport-token\.service|teleport-apps\.service)' \
         \"\$1\"/files/teleport.sh \"\$1\"/hooks/* \"\$1\"/actions/* | grep -v -- --no-block" _ "$EXT"
 check "teleport-apps.path: apps.d" grep -qx 'PathChanged=/etc/cream/teleport/apps.d' "$U/teleport-apps.path"
 check "teleport-apps.path: command-labels.d" grep -qx 'PathChanged=/etc/cream/teleport/command-labels.d' "$U/teleport-apps.path"
-check "teleport-apps.service: reload-apps" grep -qx 'ExecStart=/usr/bin/cream run teleport reload-apps' "$U/teleport-apps.service"
+check "teleport-apps.service: reload-apps, ждёт блокировку" grep -qx 'ExecStart=/usr/bin/cream run --lock-timeout 6m teleport reload-apps' "$U/teleport-apps.service"
 check "teleport-token.service: RemainAfterExit" grep -qx 'RemainAfterExit=yes' "$U/teleport-token.service"
 check "teleport-token.service: scrub-token ждёт блокировку join" \
     grep -qx 'ExecStart=/usr/bin/cream run --lock-timeout 6m teleport scrub-token' "$U/teleport-token.service"

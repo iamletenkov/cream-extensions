@@ -188,11 +188,42 @@ render добавляет `ssh_service.commands`: `{name: <ключ>, command: [
 (не root, запись группе или всем, символическая ссылка — значит, `/bin/…` на
 merged-usr не годится, нужен `/usr/bin/…`); команда под `/home`, `/tmp`,
 `/var/tmp`, `/run/user` (там пишет пользователь, а у `stvor-agent.service`
-`ProtectHome`/`PrivateTmp`) или путь с `//`; команда — не исполняемый файл;
+`ProtectHome`/`PrivateTmp`) или путь с `//`; команда есть, но не исполняемый файл;
 больше 8 аргументов или аргумент не из `[A-Za-z0-9._=-]`; больше 8 файлов.
 Каталог — 0755 root, и вся цепочка над ним до `/` — тоже (иначе пропускается
 каталог целиком). Shell не участвует.
-Изменение каталога видит `teleport-apps.path` — reload (HUP, плавный).
+
+**Команды может ещё не быть** (с 4.0.2) — но только непосредственно в
+`/usr/bin`, `/usr/sbin` или `/usr/local/bin`: cream раскладывает `files`
+расширения до его хука `install` (спека cream §6.5), и drop-in `stvor_agent`
+появляется раньше `/usr/bin/stvor-agent`. Такая метка попадает в конфиг, команду
+при запуске проверяет сам Teleport (раз в 5 мин). Каталог и вся цепочка над ним
+до `/` включительно — root, без записи группе и всем, без ссылок: файл туда
+позже положит только root. Отсутствующая команда в любом другом месте (`/opt/…`,
+подкаталог `/usr/bin/…/x`) — пропуск строкой журнала, как раньше. Это часть
+контракта drop-in: расширение, чья команда появляется после раскладки `files`,
+ставит её в один из этих трёх каталогов.
+
+Изменение каталога видит `teleport-apps.path` → `teleport-apps.service` →
+`reload-apps` — **одна сериализованная точка** (`lock: exclusive`, с 4.0.2):
+1. ждёт, пока `teleport.service` выйдет из перехода (до 30 с);
+2. собирает конфиг; остановленный агент получает только файл; если
+   `teleport.yaml` не изменился — HUP не нужен (кроме случая, когда прошлое
+   применение не завершилось: пометка `reload-pending` в состоянии);
+3. HUP встроенным `kill` bash процессу из pid-файла — самому новому Teleport.
+   После HUP старый родитель, пока открыты SSH-сессии, остаётся главным
+   процессом юнита; сигнал ему потерялся бы, а сессии рвать незачем. Нет
+   pid-файла — главному процессу. Сигнал получает только процесс Teleport
+   системного юнита: его cgroup совпадает с `ControlGroup` юнита целиком (v2 —
+   строка `0::…`, v1 — строка `name=systemd:…`; пользовательский юнит
+   `user@…/app.slice/teleport.service` — не он), исполняемый файл —
+   `/usr/local/bin/teleport` (в том числе `(deleted)` после обновления), и это
+   главный процесс или его потомок (не дальше 8 поколений по `PPid`): оболочки
+   SSH-сессий живут в том же cgroup. Проверка повторяется прямо перед `kill`.
+   Успех — новый pid-файл другого процесса Teleport юнита: потомок прочитал
+   новый конфиг и стартовал (до 60 с);
+4. restart (открытые сессии рвутся) — только если живого процесса Teleport в
+   cgroup нет вовсе (ждёт до 30 с) или HUP не подтвердился.
 
 ## Действия и файлы
 
@@ -205,20 +236,27 @@ merged-usr не годится, нужен `/usr/bin/…`); команда по�
 | `managed-status` | none | управляемые метки, маркер, регистрация, агент; JSON схемы 1 |
 | `status` | none | регистрация, служба, ручки, приложения, управляемые и командные метки — текстом |
 | `render` | none | `/etc/teleport.yaml` (0600); `ExecStartPre`/`ExecReload` `teleport.service` |
-| `reload-apps` | none | `ExecStart` `teleport-apps.service` |
+| `reload-apps` | exclusive | `teleport-apps.service`: render, HUP с подтверждением новым процессом или restart |
+| `hup` | none | `ExecReload` `teleport.service`: адресный HUP с подтверждением, иначе `reload-pending` |
 | `scrub-token` | exclusive | `teleport-token.service`: стирает секрет первого входа |
 
-`render`, `reload-apps`, `status`, `managed-status` — `lock: none`: их зовут
+`render`, `hup`, `status`, `managed-status` — `lock: none`: их зовут
 юниты, которые перезапускаются, пока блокировку держит другой процесс
 (`set-managed` держит её, перезапуская `teleport.service`; спека cream §7.3).
 
-Перезагрузка `teleport.service` (`ExecReload`) — render и HUP главному процессу через
-`systemctl kill --kill-who=main --signal=HUP` (с 4.0.1): `/bin/kill` (procps) в
-минимальных образах нет, `systemctl` есть везде, где есть systemd; `--kill-who`, а не
-`--kill-whom` — на Ubuntu 22.04 systemd 249.
+Перезагрузка `teleport.service` (`ExecReload`) — render и действие `hup` (с 4.0.2):
+адресный HUP встроенным `kill` bash новейшему процессу Teleport юнита с
+подтверждением новым pid-файлом — тот же код, что у `reload-apps`. Главному
+процессу (`systemctl kill --kill-who=main`, 4.0.1) сигнал не годится: после HUP
+старый родитель дренирует сессии и остаётся главным, и следующий HUP терялся бы
+(`cream set teleport …` молча не применялся). `/bin/kill` (procps) в минимальных
+образах нет. `hup` перезапусков не делает (он внутри reload-задания юнита):
+неподтверждённый HUP оставляет пометку `reload-pending`, и ближайший `reload-apps`
+досылает его, даже если `teleport.yaml` не изменился.
 
 `cream validate` предупреждает (`validate.unit_lock`) о `teleport-join.service`
-(`join-retry`) и `teleport-token.service` (`scrub-token`): их `ExecStart` зовёт
+(`join-retry`), `teleport-token.service` (`scrub-token`) и `teleport-apps.service`
+(`reload-apps`, с 4.0.2): их `ExecStart` зовёт
 действие с `lock: exclusive`. Это допустимо: правило ловит юнит, который
 перезапускает держатель блокировки и сам ждёт её, — а эти два никто под
 блокировкой не стартует и не ждёт (`join` включает таймер `--no-block`, а

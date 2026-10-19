@@ -157,7 +157,7 @@ eq "cream" '>=1.0.0' "$(manifest 'm["cream"]')"
 eq "arch" "['amd64', 'arm64']" "$(manifest 'm["platform"]["arch"]')"
 eq "targets" "{'build': 'exec', 'live': 'yes'}" "$(manifest 'm["targets"]')"
 eq "provides" "['stvor-agent']" "$(manifest 'm["provides"]')"
-eq "depends: teleport >=4.0.0 <5" "[{'name': 'teleport', 'version': '>=4.0.0 <5'}]" "$(manifest 'm["depends"]')"
+eq "depends: teleport >=4.0.2 <5 (метка без бинаря)" "[{'name': 'teleport', 'version': '>=4.0.2 <5'}]" "$(manifest 'm["depends"]')"
 eq "хуки" "['apply', 'install', 'remove', 'upgrade']" "$(manifest 'sorted(m["hooks"])')"
 for h in install upgrade remove apply; do
     check "hooks/$h исполняемый" test -x "$EXT/hooks/$h"
@@ -349,34 +349,22 @@ new_root
 PHASE=build hook install >/dev/null 2>&1; rc=$?
 eq "фаза build — пакет ставится" "0 dpkg -i stvor-agent_4.0.0_amd64.deb $SUM_AMD64" "$rc $(installed)"
 
-echo "== install: метка stvor_agent подхватывается сразу =="
-# cream lays the drop-in before the install hook (spec cream §6.5): the render
-# of teleport-apps.path then skips the command — no binary yet. After dpkg -i
-# the hook asks teleport-apps.service for a render + reload (no restart).
+echo "== install: метку применяет teleport, обёртка его не дёргает =="
+# cream lays the drop-in before the install hook (spec cream §6.5); since
+# teleport 4.0.2 its render keeps a command that does not exist yet and
+# reload-apps (teleport-apps.path) is the one serialized point that applies it.
+# A second start of teleport-apps.service from here only met the old process
+# still draining after the first HUP and cost a restart (debian-12, 2026-10-19).
 new_root; mkdir -p "$ROOT/run/systemd/system"
 hook install >/dev/null 2>&1; rc=$?
 eq "live, systemd — код 0" 0 "$rc"
-eq "live, systemd — после dpkg -i неблокирующий start teleport-apps.service" \
+eq "live, systemd — только curl и dpkg, без teleport-apps.service" \
     "curl $GH/v4.0.0/stvor-agent_4.0.0_amd64.deb
-dpkg -i stvor-agent_4.0.0_amd64.deb $SUM_AMD64
-systemctl --no-block start teleport-apps.service" "$(calls)"
-new_root; mkdir -p "$ROOT/run/systemd/system"
-PHASE=build hook install >/dev/null 2>&1; rc=$?
-eq "фаза build — teleport-apps.service не трогается" "0 " "$rc $(grep '^systemctl' "$FAKE/calls")"
-new_root
-hook install >/dev/null 2>&1; rc=$?
-eq "без systemd — teleport-apps.service не трогается" "0 " "$rc $(grep '^systemctl' "$FAKE/calls")"
-new_root; mkdir -p "$ROOT/run/systemd/system"; echo 4.0.0 > "$FAKE/installed"
-hook install >/dev/null 2>&1; rc=$?
-eq "та же версия уже стоит — teleport-apps.service не трогается" "0 " "$rc $(calls)"
+dpkg -i stvor-agent_4.0.0_amd64.deb $SUM_AMD64" "$(calls)"
 new_root; mkdir -p "$ROOT/run/systemd/system"; echo 3.1.0 > "$FAKE/installed"
 hook upgrade CREAM_PREV_VERSION=3.1.0 >/dev/null 2>&1; rc=$?
-eq "upgrade, systemd — тоже reload меток" "0 systemctl --no-block start teleport-apps.service" \
-    "$rc $(grep '^systemctl' "$FAKE/calls")"
-new_root; mkdir -p "$ROOT/run/systemd/system"
-printf 'not the package\n' > "$FAKE/deb-amd64"
-hook install >/dev/null 2>&1
-eq "сумма не та — teleport-apps.service не трогается" "" "$(grep '^systemctl' "$FAKE/calls")"
+eq "upgrade, systemd — teleport-apps.service не трогается" "0 " "$rc $(grep '^systemctl' "$FAKE/calls")"
+check_not "в коде обёртки нет запуска teleport-apps.service" grep -qE "systemctl[^#]*teleport-apps" "$EXT/files/agent.sh" "$EXT"/hooks/*
 
 echo "== upgrade =="
 new_root; echo 3.1.0 > "$FAKE/installed"
@@ -448,14 +436,14 @@ if [[ -z "$cream_deb" || ! -f "$cream_deb" ]] || ! command -v docker >/dev/null 
    || ! docker info >/dev/null 2>&1; then
     echo "ПРОПУЩЕНО: drop-in живьём — нет cream (CREAM_DEB или кеш пина) или docker; проверен манифест" >&3
 else
-    # A catalog: a stub `teleport` 4.0.0 (the dependency) and this extension.
+    # A catalog: a stub `teleport` 4.0.2 (the dependency) and this extension.
     CAT="$TMP/cat"
     mkdir -p "$CAT/extensions/teleport/hooks"
     printf 'schema: cream/v1\nname: cat\nversion: 0.0.0\nroots: [extensions]\n' > "$CAT/cream-catalog.yaml"
     cat > "$CAT/extensions/teleport/extension.yaml" <<'EOF'
 schema: cream/v1
 name: teleport
-version: 4.0.0
+version: 4.0.2
 summary: заглушка teleport для теста обёртки stvor-agent
 cream: ">=1.0.0"
 platform: {family: deb, arch: [amd64, arm64]}

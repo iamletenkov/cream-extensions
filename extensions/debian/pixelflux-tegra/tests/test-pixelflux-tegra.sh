@@ -72,6 +72,9 @@ esac'
     STAMP="$ROOT/var/lib/cream/ext/pixelflux-tegra/stamp"
 }
 node_v4l2() { ln -s /dev/null "$ROOT/dev/v4l2-nvenc"; }
+# sel_sum: paths, modes and contents of the selkies tree (a timestamp
+# comparison was flaky: files of the same tick are not "newer").
+sel_sum() { (cd "$ROOT/opt/selkies" && find . -print0 | LC_ALL=C sort -z | xargs -0 stat -c '%n %a %s' && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum); }
 mf() { python3 -c 'import sys,yaml; m=yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 tree_sum() { (cd "$ROOT" && find etc var opt -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum; find etc var -type l -printf '%p -> %l\n' | LC_ALL=C sort); }
 blocking_systemctl() { grep -E '^systemctl (start|restart|stop|reload) ' "$FAKE/calls" | grep -qv -- '--no-block'; }
@@ -108,7 +111,7 @@ ht_hook install; check_not "нет /opt/selkies/current — не 0" test "$?" -e
 check_not "drop-in не записан" test -e "$DROPIN"
 
 echo "== install: jammy — без шима =="
-pf_root
+pf_root; sel0="$(sel_sum)"
 ht_hook install; eq "install — 0" 0 "$?"
 eq "drop-in: LD_PRELOAD системной libxcb" "Environment=LD_PRELOAD=$LIBDIR/libxcb.so.1" "$(grep '^Environment=' "$DROPIN")"
 eq "drop-in 0644" 644 "$(stat -c %a "$DROPIN")"
@@ -117,7 +120,7 @@ check_not "шима нет" test -e "$SHIM"
 check "проверка импорта с той же подкладкой" grep -qx "$LIBDIR/libxcb.so.1" "$FAKE/python.preload"
 check "отпечаток в состоянии расширения" grep -q "prefix=/opt/selkies/$VER" "$STAMP"
 check_not "в дерево selkies не пишет" test -e "$ROOT/opt/selkies/$VER/.pixelflux-tegra"
-check_not "в чужое дерево — ни одного нового файла" bash -c "find '$ROOT/opt/selkies' -newer '$MOD' -type f | grep -q ."
+eq "в чужое дерево — ни одного нового файла" "$sel0" "$(sel_sum)"
 check "daemon-reload на живой машине" ht_called '^systemctl daemon-reload'
 check_not "блокирующих start/restart нет" blocking_systemctl
 snap="$(tree_sum)"

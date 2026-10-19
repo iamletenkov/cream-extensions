@@ -15,10 +15,13 @@ RestartSec=5
 ExecStartPre=/usr/bin/cream run teleport render
 ExecStart=/usr/local/bin/teleport start --config /etc/teleport.yaml --pid-file=/run/teleport.pid
 # HUP is Teleport's graceful restart: open SSH sessions survive a new app list.
-# systemctl kill, not /bin/kill: procps is absent from minimal images, systemd
-# is not. --kill-who (Ubuntu 22.04 has systemd 249, no --kill-whom).
+# `hup` (lock: none) signals the newest Teleport process of this unit with the
+# bash builtin kill and confirms a new run by the pid file: after a HUP the old
+# parent drains sessions and stays the MainPID, so signalling the main process
+# would be lost (and procps — /bin/kill — is not in minimal images). An
+# unconfirmed HUP leaves reload-pending for teleport-apps (reload-apps).
 ExecReload=/usr/bin/cream run teleport render
-ExecReload=systemctl kill --kill-who=main --signal=HUP %n
+ExecReload=/usr/bin/cream run teleport hup
 PIDFile=/run/teleport.pid
 # set-managed restarts this unit under lock/teleport and confirms the new run
 # within 30 s; the stvor-agent adapter gives the whole call 90 s. The default

@@ -39,6 +39,9 @@ PY
     ht_fake systemctl
     STAMP="$ROOT/var/lib/cream/ext/pixelflux-v4l2m2m/stamp"
 }
+# sel_sum: paths, modes and contents of the selkies tree (a timestamp
+# comparison was flaky: files of the same tick are not "newer").
+sel_sum() { (cd "$ROOT/opt/selkies" && find . -print0 | LC_ALL=C sort -z | xargs -0 stat -c '%n %a %s' && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum); }
 mf() { python3 -c 'import sys,yaml; m=yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 probed() { grep -q hardware_encoders "$FAKE/python.calls" 2>/dev/null; }
 
@@ -60,11 +63,11 @@ for f in install.sh configure.sh verify-pixelflux-v4l2m2m.service; do
 done
 
 echo "== install на живой машине: кодер есть =="
-pf_root
+pf_root; sel0="$(sel_sum)"
 ht_hook install; eq "install — 0" 0 "$?"
 check "живая проба бэкенда" probed
 eq "отпечаток в состоянии" "prefix=/opt/selkies/$VER" "$(cat "$STAMP")"
-check_not "в дерево selkies не пишет" bash -c "find '$ROOT/opt/selkies' -newer '$MOD' -type f | grep -q ."
+eq "в дерево selkies не пишет" "$sel0" "$(sel_sum)"
 check_not "службы не трогает" ht_called '^systemctl'
 s1="$(stat -c '%i %Y' "$STAMP")"
 ht_hook install; eq "повтор — 0" 0 "$?"
