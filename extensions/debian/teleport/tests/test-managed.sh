@@ -939,7 +939,7 @@ not_ours "тот же путь, но в чужой строке v1 (не name=sy
 not_ours "exe — не бинарь Teleport" \
     'ln -sfn /usr/bin/bash "$ROOT/proc/$p/exe"'
 not_ours "не MainPID и не его потомок" \
-    'printf "PPid:\t1\n" > "$ROOT/proc/$p/status"; echo 999999 > "$FAKE/unit.MainPID"'
+    'printf "PPid:\t4242\n" > "$ROOT/proc/$p/status"; echo 999999 > "$FAKE/unit.MainPID"'
 not_ours "MainPID нет" \
     'echo 0 > "$FAKE/unit.MainPID"'
 
@@ -954,6 +954,37 @@ eq "корень systemd в контейнере — 0" 0 "$rc"
 eq "корень systemd в контейнере — HUP процессу" "$p" "$(cat "$FAKE/hup.log" 2>/dev/null)"
 not_ours "путь не совпал с ControlGroup юнита — не наш" \
     'echo "0::/system.slice/docker-abc.scope/system.slice/teleport.service" > "$ROOT/proc/$p/cgroup"'
+
+not_ours "ControlGroup юнита не в system.slice (пользовательский путь)" \
+    'cg=/user.slice/user-1000.slice/user@1000.service/app.slice/teleport.service; echo "$cg" > "$FAKE/unit.ControlGroup"; echo "0::$cg" > "$ROOT/proc/$p/cgroup"'
+not_ours "ControlGroup юнита — мусорная строка" \
+    'cg="/system.slice/a b;c/system.slice/teleport.service"; echo "$cg" > "$FAKE/unit.ControlGroup"; echo "0::$cg" > "$ROOT/proc/$p/cgroup"'
+
+echo "== reload-apps: промежуточный потомок отдренировал, новейший осиротел (PPid 1) =="
+# Parent P (MainPID, draining) → C1 → C2. C1 finishes draining first: C2 is
+# reparented to PID 1 while P is still the MainPID. The process of the pid file
+# with the exact cgroup and the binary is still ours — HUP to C2, no restart.
+registered
+P="$(pidnow)"
+mklabel stvor_agent 'command=/usr/bin/stvor-agent version --label'
+tp reload-apps 2>/dev/null; C1="$(pidnow)"
+mklabel probe_o1 'command=/usr/bin/stvor-agent version'
+tp reload-apps 2>/dev/null; C2="$(pidnow)"
+kill -TERM "$C1"; /usr/bin/sleep 0.3
+printf 'Name:\tteleport\nPPid:\t1\n' > "$ROOT/proc/$C2/status"
+: > "$FAKE/hup.log"; : > "$FAKE/systemctl.log"
+mklabel probe_o2 'command=/usr/bin/stvor-agent version'
+tp reload-apps 2>"$TMP/err"; rc=$?
+eq "сирота — 0" 0 "$rc"
+check "старый родитель жив и остаётся MainPID" test "$(cat "$FAKE/unit.MainPID")" = "$P"
+eq "третий HUP — осиротевшему новейшему процессу" "$C2" "$(cat "$FAKE/hup.log" 2>/dev/null)"
+check "сирота — новый процесс подтвердил" test "$(pidnow)" != "$C2"
+check_not "сирота — без перезапуска" grep -q '^restart' "$FAKE/systemctl.log"
+rm -f "$CMDS/probe_o1" "$CMDS/probe_o2"
+# An orphan is accepted only from the pid file: a stray process with PPid 1
+# (not in the pid file, MainPID elsewhere) is never a target.
+not_ours "сирота не из pid-файла и MainPID мёртв" \
+    'printf "PPid:\t1\n" > "$ROOT/proc/$p/status"; rm -f "$ROOT/run/teleport.pid"; echo 999999 > "$FAKE/unit.MainPID"'
 
 echo "== reload-apps: cgroup v1, бинарь обновлён (deleted), правнук MainPID — сигнал идёт =="
 registered
