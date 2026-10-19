@@ -1,0 +1,19 @@
+convert-v1: docker 3.0.0 → 4.0.0 (черновик cream/v1)
+раскладка:
+  install.sh → hooks/install
+  configure.sh → hooks/configure
+  configure-docker.service — удалён: configure ставит cream (cream-configure@docker)
+проверить руками:
+  - targets.live: confirm — по таблице плана; live_note — черновик, проверь текст
+  - hooks.configure: configure-docker.service: WantedBy multi-user.target, отброшено network-online.target network.target
+  - depends: cloud-user — по общему коду; укажи диапазон версий
+  - hooks.install: явный timeout рекомендован (§6.1)
+  - hooks.remove: по возможности, иначе README описывает `cream remove --forget` (Р9)
+  - коды выхода: перезагрузка — 10; «нет устройства/ядра/GPU» — 20 только в install (Р11)
+  - summary — из README, проверь; platform.os и platform.commands — по образцу teleport
+имена и механика layout 2 в файлах (менять руками; гейт tools/check-names.sh):
+  - каталог скрипта теперь hooks/ — файлы расширения от CREAM_EXT_DIR (cwd хука): hooks/configure:14; hooks/install:50
+  - → "${CREAM_ROOT:-}/opt/cream/ext/cloud-user/get_cloud_user.sh" (depends cloud-user): README.md:7,240,248,271; hooks/configure:20,36,37
+  - /opt/bisquite → /opt/cream/ext: README.md:6,241,305,310
+  - файл в госте → имя по расширению или cream (опись §8): hooks/install:251,252
+  - юниты раскладывает cream (`files`), configure включает cream — убрать из хука: hooks/install:153,257,260

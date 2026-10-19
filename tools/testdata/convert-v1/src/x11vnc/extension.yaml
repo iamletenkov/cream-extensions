@@ -1,0 +1,28 @@
+name: x11vnc
+version: 4.0.0
+layout: 2
+# 4.0.0: настройки — домен x11vnc библиотеки bisquite-conf (схема knobs):
+#        установка не переписывает файл, проверяет значения; пароль —
+#        secret:hook (X11VNC_PASSFILE меняет только хук).
+# 2.0.0: файл параметров переехал в /etc/bisquite/x11vnc/config (был
+#        /etc/default/bisquite-x11vnc; прежний не читается, установка удаляет).
+family: deb
+arch: [amd64, arm64]
+# build     — install.sh ставит x11vnc и кладёт x11vnc@.service;
+# firstboot — configure.sh включает x11vnc@<пользователь>.service, а имя
+#             пользователя приходит из cloud-init уже на устройстве.
+phase: [build, firstboot]
+provides: [remote-desktop]
+# x11-server      — сервер прицепляется к DISPLAY=:0;
+# display-manager — `Requires=display-manager.service` в юните.
+#
+# Требование родовое, и это верно: путь к X authority больше не зашит
+# в юните, а ищется в рантайме — под LightDM и под GDM он разный, а под
+# самим LightDM зависит от его конфига, а не от имени пакета. Различать
+# в манифесте «какой именно дисплей-менеджер» значило бы зафиксировать ось,
+# которая ответа не определяет.
+#
+# Ровно то отношение, которое сегодня держится только порядком слоёв
+# в четырёх VMFILE: desktop, затем x11vnc.
+requires: [x11-server, display-manager]
+conflicts: []

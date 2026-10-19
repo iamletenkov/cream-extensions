@@ -1,0 +1,9 @@
+# Synthetic schema: every knobs form the converter maps.
+# ключ               тип                  умолчание  описание
+EDGE_PORT            port                 8080       порт
+EDGE_ADDR            "re:^[a-z ]+$"       "a b"      поле в кавычках с пробелами
+EDGE_TOKEN           secret:path          —          путь к токену, секретный
+EDGE_LIST            list:host?           localhost  хосты через запятую
+EDGE_STATE           ro:str               —          пишет только хук
+BISQUITE_EDGE_FLAG   bool                 0          флаг со старым префиксом
+EDGE_*               str                  —          любая переменная edge

@@ -1,0 +1,6 @@
+644 README.md
+644 extension.yaml
+755 hooks/apply
+755 hooks/configure
+755 hooks/install
+755 teleport-app.sh

@@ -9,7 +9,7 @@
 Исполнителю: после выполнения отметь свою задачу `- [x]` в том же коммите.
 
 - [ ] Task 1: [cream] стадии configure `early`, `cloud-user`, `graphical` (§6.4), `cream resolve --installed`, правка спеки по `desktop`
-- [ ] Task 2: конвертер `tools/convert-v1.py` (§4.7) с тестом на фикстурах
+- [x] Task 2: конвертер `tools/convert-v1.py` (§4.7) с тестом на фикстурах
 - [x] Task 3: обвязка проверок — автообнаружение тестов расширений, живой стенд `tools/live-test.sh`, гейт имён bisquite
 - [ ] Task 4: [cream] статическая проверка графа в `cream validate --catalog` и выпуск cream 1.1.0
 - [ ] Task 5: библиотека `cloud-user` (`kind: library`) + `yq`
@@ -186,7 +186,7 @@ P — живая проверка **ожидает** (плата Jetson/ВМ с 
 **Приёмка:** `make ci` и `make test-integration DISTRO=all` зелёные (под замком, по одному).
 
 ### Task 2: конвертер `tools/convert-v1.py`
-**Файлы:** `tools/convert-v1.py`, `tools/test-convert-v1.sh`, `tools/testdata/convert/{btop,x11vnc}/` (копии layout 2 + эталон).
+**Файлы:** `tools/convert-v1.py`, `tools/test-convert-v1.sh`, `tools/testdata/convert-v1/{src,expected}/` (копии layout 2 docker, code-server, firewall, kiosk, nvidia-jetpack, can, x11vnc и синтетика `edge` + эталоны).
 **Шаги.**
 1. Тест первым: фикстура `btop` (только `install.sh`) и `x11vnc` (knobs, `secret:hook`, `ro:`, `?`, `knobs.apply`,
    `configure.sh`, `configure-*.service`) → эталонный манифест и раскладка; повторный запуск — без изменений.

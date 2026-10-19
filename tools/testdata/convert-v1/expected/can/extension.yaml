@@ -1,0 +1,24 @@
+# Черновик tools/convert-v1.py из layout 2 (can 1.1.0): отчёт конвертера — что
+# проверить руками (план 2026-10-19-cream-v1-migration, «Порядок перевода одного расширения»).
+schema: cream/v1
+name: can
+version: 2.0.0
+summary: "Шина CAN на машине"
+cream: ">=1.0.0"
+platform:
+  family: deb
+  arch: [amd64, arm64]
+targets:
+  build: exec
+  live: "yes"
+provides: [can-bus]
+hooks:
+  install: {}
+  apply: {}
+config:
+  keys:
+    CAN_MODULES_LOAD:
+      type: "re:^[a-z0-9_-]+( [a-z0-9_-]+)*$"
+      default: "can can_raw vcan"
+      empty: true
+      description: "модули для автозагрузки через пробел; пусто — /etc/modules-load.d/can.conf удаляется"

@@ -1,0 +1,59 @@
+# Черновик tools/convert-v1.py из layout 2 (edge 0.3.1): отчёт конвертера — что
+# проверить руками (план 2026-10-19-cream-v1-migration, «Порядок перевода одного расширения»).
+schema: cream/v1
+name: edge
+version: 1.0.0
+summary: "Синтетика для конвертера"
+cream: ">=1.1.0"
+platform:
+  family: deb
+  arch: [amd64]
+targets:
+  build: exec
+  live: "confirm"
+  live_note: "TODO: риск живой установки"
+provides: [edge-cap]
+depends:
+  - {name: cloud-user}
+conflicts: {extensions: [other]}
+hooks:
+  install: {}
+  upgrade: {}
+  configure: {stage: cloud-user, after: [custom.service], before: [edge-worker.service], timeout: 90s}
+config:
+  keys:
+    EDGE_PORT:
+      type: "port"
+      default: "8080"
+      description: "порт"
+    EDGE_ADDR:
+      type: "re:^[a-z ]+$"
+      default: "a b"
+      description: "поле в кавычках с пробелами"
+    EDGE_TOKEN:
+      type: "path"
+      default: ""
+      empty: true
+      secret: "file"
+      description: "путь к токену, секретный"
+    EDGE_LIST:
+      type: "list:host"
+      default: "localhost"
+      empty: true
+      description: "хосты через запятую"
+    EDGE_STATE:
+      type: "str"
+      default: ""
+      empty: true
+      readonly: true
+      description: "пишет только хук"
+    EDGE_FLAG:
+      type: "bool"
+      default: "0"
+      description: "флаг со старым префиксом"
+    EDGE_*:
+      type: "str"
+      pattern: true
+      description: "любая переменная edge"
+files:
+  - {src: edge-worker.timer, dst: /etc/systemd/system/edge-worker.timer, mode: "0644"}

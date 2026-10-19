@@ -1,0 +1,344 @@
+#!/usr/bin/env bash
+# Configure kiosk mode with Chromium and on-screen keyboard
+
+set -euo pipefail
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+log_info(){ echo -e "${GREEN}[INFO]${NC} $*" >&2; }
+log_warn(){ echo -e "${YELLOW}[WARN]${NC} $*" >&2; }
+log_error(){ echo -e "${RED}[ERROR]${NC} $*" >&2; }
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Settings of the device: the kiosk domain of bisquite-conf,
+# /etc/bisquite/kiosk/config (schema: knobs next to this script).
+
+check_prereqs(){
+  if ! command -v chromium >/dev/null 2>&1; then
+    log_error "chromium is not installed"
+    exit 1
+  fi
+  if [[ ! -x "$SCRIPT_DIR/lib/get_cloud_user.sh" ]]; then
+    log_error "get_cloud_user.sh not found or not executable at $SCRIPT_DIR/lib/get_cloud_user.sh"
+    exit 1
+  fi
+  if [[ ! -f "$SCRIPT_DIR/lib/bisquite-conf" ]]; then
+    log_error "lib/bisquite-conf not found at $SCRIPT_DIR/lib/bisquite-conf"
+    exit 1
+  fi
+  # shellcheck source=/dev/null
+  source "$SCRIPT_DIR/lib/bisquite-conf"
+  conf_load kiosk || exit 1
+}
+
+resolve_user(){
+  local user
+  local attempts=0
+  local max_attempts=40
+
+  # Ключ KIOSK_USER ПЕРЕКРЫВАЕТ cloud-init.
+  #
+  # Раньше его не читал никто: configure.sh всегда шёл в get_cloud_user.sh,
+  # а ключ стоял в config.yaml и в README как ручка, которой нет. Это та же
+  # болезнь «мёртвых ручек», из-за которой у расширения x11vnc config.yaml
+  # удалён целиком. Здесь выбран второй исход — ключ включён, а не удалён:
+  #   * у соседнего code-server ровно этот ключ работает именно так
+  #     (CODE_SERVER_USER, иначе get_cloud_user.sh), и два
+  #     одноимённых ключа с разным поведением хуже любого из двух;
+  #   * случай, который он закрывает, реален — киоск на образе, где сессию
+  #     держит не тот пользователь, которого создал cloud-init.
+  #
+  # Молчаливого отката на cloud-init при заданном USER НЕТ: оператор назвал
+  # пользователя, и подмена его другим вернула бы ту же немоту с другой
+  # стороны. Ждём именно названного — cloud-init мог ещё не создать и его.
+  local configured="$KIOSK_USER"
+  if [[ -n "$configured" ]]; then
+    log_info "Пользователь задан в KIOSK_USER: $configured"
+    while true; do
+      if id "$configured" >/dev/null 2>&1; then
+        echo "$configured"
+        return 0
+      fi
+      attempts=$((attempts+1))
+      if (( attempts >= max_attempts )); then
+        log_error "пользователь '$configured' из KIOSK_USER так и не появился"
+        log_error "сбросьте ключ (bisquite-conf set kiosk KIOSK_USER=), чтобы взять пользователя из cloud-init"
+        exit 1
+      fi
+      log_info "Waiting for user '$configured' (attempt $attempts/$max_attempts)..."
+      sleep 3
+    done
+  fi
+
+  # Wait up to 120s for cloud user to appear to avoid racing cloud-init
+  while true; do
+    if user="$("$SCRIPT_DIR"/lib/get_cloud_user.sh 2>/dev/null || true)" && [[ -n "$user" ]]; then
+      if id "$user" >/dev/null 2>&1; then
+        log_info "Found user from cloud-init: $user"
+        echo "$user"
+        return 0
+      fi
+    fi
+
+    attempts=$((attempts+1))
+    if (( attempts >= max_attempts )); then
+      log_error "Timeout waiting for cloud-init user to be created"
+      exit 1
+    fi
+
+    log_info "Waiting for cloud-init user (attempt $attempts/$max_attempts)..."
+    sleep 3
+  done
+}
+
+# Какой рабочий стол здесь на самом деле.
+#
+# Расширение kiosk десктоп не ставит (см. README) — его даёт gnome, xfce4 или
+# lxde, и до этой правки две ветки настройки рассчитывали на РАЗНЫЕ окружения:
+# экранная клавиатура — на GNOME, а конфиги, прячущие панель, раскладывались
+# как Xfce4 безусловно, в том числе под GNOME и LXDE, где их не читает никто.
+#
+# Спрашиваем гостя о нём самом, а не объявляем таблицу «расширение десктопа ->
+# что делать»: таблица устарела бы молча — тот же довод, по которому расширение
+# docker смотрит на /boot/firmware/cmdline.txt и /etc/nv_tegra_release, а не на
+# ID дистрибутива.
+#
+# Сначала — что РАБОТАЕТ: в образе может стоять и gnome, и xfce4, а решает
+# дисплей-менеджер. Юнит стоит After=graphical.target ... display-manager.service,
+# но автологин мог ещё не довести сессию до конца, поэтому есть и запасной
+# признак — что установлено.
+detect_desktop(){
+  local user="$1"
+
+  if pgrep -u "$user" -x xfce4-session >/dev/null 2>&1; then echo xfce4; return 0; fi
+  if pgrep -u "$user" -x gnome-shell >/dev/null 2>&1 \
+     || pgrep -u "$user" -x gnome-session-binary >/dev/null 2>&1; then echo gnome; return 0; fi
+  if pgrep -u "$user" -x lxsession >/dev/null 2>&1; then echo lxde; return 0; fi
+
+  if command -v xfce4-session >/dev/null 2>&1; then echo xfce4; return 0; fi
+  if command -v gnome-shell >/dev/null 2>&1; then echo gnome; return 0; fi
+  if command -v lxsession >/dev/null 2>&1; then echo lxde; return 0; fi
+
+  echo unknown
+}
+
+enable_gnome_keyboard(){
+  local cloud_user="$1"
+  local keyboard_enabled="$2"
+  local desktop="$3"
+
+  if [[ "$keyboard_enabled" != "true" ]]; then
+    log_info "On-screen keyboard is disabled in config"
+    return 0
+  fi
+
+  # Ветка работает только под GNOME: gsettings пишет в схему
+  # org.gnome.desktop.a11y, а читает её gnome-shell. Под Xfce и LXDE запись
+  # проходила успешно и не давала НИЧЕГО — плюс в автозапуск ложился .desktop,
+  # который выглядел как включённая клавиатура. Отказ вслух вместо этого.
+  if [[ "$desktop" != "gnome" ]]; then
+    log_warn "KIOSK_KEYBOARD_ENABLED=true, но рабочий стол — $desktop, а клавиатура здесь только GNOME"
+    log_warn "экранной клавиатуры не будет; onboard/matchbox-keyboard расширение не ставит"
+    return 0
+  fi
+
+  local user_home="/home/$cloud_user"
+  local user_uid
+  user_uid=$(id -u "$cloud_user")
+
+  log_info "Enabling GNOME on-screen keyboard via gsettings"
+
+  # Enable on-screen keyboard using gsettings as the user
+  # This is more reliable than directly writing to dconf
+  su - "$cloud_user" -c "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$user_uid/bus gsettings set org.gnome.desktop.a11y.applications screen-keyboard-enabled true" 2>/dev/null || \
+    log_warn "Could not set gsettings via session bus, creating startup script"
+
+  # Create autostart script to enable keyboard on session start
+  local autostart_dir="$user_home/.config/autostart"
+  mkdir -p "$autostart_dir"
+
+  cat > "$autostart_dir/enable-keyboard.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Enable GNOME Keyboard
+Exec=bash -c "gsettings set org.gnome.desktop.a11y.applications screen-keyboard-enabled true"
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=1
+EOF
+
+  chown -R "$cloud_user:$cloud_user" "$autostart_dir"
+  log_info "GNOME on-screen keyboard enabled (will activate on next session)"
+}
+
+hide_desktop_ui(){
+  local cloud_user="$1"
+  local desktop="$2"
+  local user_home="/home/$cloud_user"
+
+  # Конфиги ниже — Xfce4-специфичные (xfconf-каналы xfce4-desktop и
+  # xfce4-panel). Раньше они раскладывались безусловно; под GNOME и LXDE это
+  # был мусор в ~/.config, выглядящий как настройка.
+  if [[ "$desktop" != "xfce4" ]]; then
+    log_info "рабочий стол — $desktop, Xfce4-конфиги не раскладываю"
+    # Не «недоделка»: окно киоска и так полноэкранное поверх всего, а панель
+    # под ним не видна. Прятать её у каждого окружения пришлось бы своим
+    # способом, и ни один из них не проверялся.
+    log_info "панель и иконки прячутся только под Xfce4 — см. README, раздел про окружение"
+    return 0
+  fi
+
+  log_info "Hiding desktop UI for minimal kiosk experience"
+
+  # Конфиги ниже перезаписываются БЕЗУСЛОВНО, на каждой загрузке, и это
+  # решение, а не недосмотр. Юнит `Type=oneshot` с `RemainAfterExit=yes`
+  # перезагрузку не переживает, то есть скрипт отрабатывает каждый раз.
+  #
+  # Граница «своего» файла проходит не по «кто его создал», а по «кому
+  # разрешено его менять». `xfce4-desktop.xml` и `xfce4-panel.xml` пишет
+  # сторонний компонент (xfconf), и на рабочем столе человека их затирать
+  # нельзя — так же, как lxde не вправе затирать `desktop.conf` сессии.
+  # Но здесь весь сеанс — продукт расширения: панель и рабочий стол киоска
+  # и ЕСТЬ то, что расширение делает, человек в них ничего не настраивает,
+  # а уехавший конфиг панели ломает сам киоск (панель поверх браузера).
+  # Настраивать эти два файла здесь некому, поэтому безусловная запись —
+  # правильный исход того же правила, а не исключение из него.
+  #
+  # Разрешение «безусловно» ограничено двумя этими каналами: строками выше
+  # (ветка `desktop != xfce4`) записано, что под GNOME и LXDE раскладка тех
+  # же файлов была мусором в ~/.config, выглядящим как настройка.
+
+  # Create XFCE4 config directory
+  local xfce_config_dir="$user_home/.config/xfce4/xfconf/xfce-perchannel-xml"
+  mkdir -p "$xfce_config_dir"
+
+  # Set black wallpaper and hide desktop icons
+  cat > "$xfce_config_dir/xfce4-desktop.xml" <<'XFCE_DESKTOP_EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-desktop" version="1.0">
+  <property name="backdrop" type="empty">
+    <property name="screen0" type="empty">
+      <property name="monitor0" type="empty">
+        <property name="color-style" type="int" value="0"/>
+        <property name="color1" type="array">
+          <value type="uint" value="0"/>
+          <value type="uint" value="0"/>
+          <value type="uint" value="0"/>
+          <value type="uint" value="65535"/>
+        </property>
+        <property name="image-style" type="int" value="0"/>
+      </property>
+    </property>
+  </property>
+  <property name="desktop-icons" type="empty">
+    <property name="style" type="int" value="0"/>
+  </property>
+</channel>
+XFCE_DESKTOP_EOF
+
+  # Hide all panels
+  cat > "$xfce_config_dir/xfce4-panel.xml" <<'XFCE_PANEL_EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-panel" version="1.0">
+  <property name="panels" type="empty">
+  </property>
+</channel>
+XFCE_PANEL_EOF
+
+  chown -R "$cloud_user:$cloud_user" "$user_home/.config/xfce4"
+  log_info "XFCE4 desktop UI hidden (black background, no panels)"
+}
+
+# Гасим прежние экземпляры шаблона при смене пользователя.
+#
+# `systemctl enable kiosk-chromium@<user>` кладёт симлинк в
+# graphical.target.wants/ (шаблон объявлен WantedBy=graphical.target), а
+# `disable` прежнего не делал никто. После смены ключа `KIOSK_USER`
+# — а ключ этот живой, см. resolve_user — там оставались ОБА экземпляра,
+# и на следующей загрузке поднимались два браузера на один дисплей :0,
+# оба с `Restart=always`.
+#
+# Ищем именно в graphical.target.wants/, потому что это единственный
+# надёжный список ВКЛЮЧЁННЫХ экземпляров: сам шаблон ничего не помнит,
+# а `systemctl list-units 'kiosk-chromium@*'` показывает запущенные.
+#
+# Уже прошитое устройство эта правка не лечит: симлинк лежит в его образе,
+# и снять его можно только перезаписью носителя или `systemctl disable`
+# руками.
+disable_stale_instances(){
+  local keep="$1"
+  local wants_dir=/etc/systemd/system/graphical.target.wants
+  local unit name
+
+  [[ -d "$wants_dir" ]] || return 0
+
+  shopt -s nullglob
+  for unit in "$wants_dir"/'kiosk-chromium@'*.service; do
+    name="$(basename "$unit")"
+    [[ "$name" == "kiosk-chromium@${keep}.service" ]] && continue
+    log_info "гашу прежний экземпляр $name"
+    systemctl disable --now "$name" || log_warn "не удалось погасить $name"
+  done
+  shopt -u nullglob
+}
+
+configure_kiosk_service(){
+  local cloud_user="$1"
+
+  log_info "Configuring kiosk service for user '$cloud_user'"
+
+  # Settings: loaded by check_prereqs (conf_load kiosk). Defaults live in the
+  # schema — one value per key for the whole chain (knobs -> configure.sh ->
+  # run-kiosk.sh), not three copies.
+  #
+  # The URL default used to be http://192.168.202.785 here (octet 785 does
+  # not exist) and the lab address 192.168.202.78 in config.yaml — both
+  # unreachable for anyone else, and silently so: Chromium shows a network
+  # error. The schema default is a public page instead.
+  local keyboard_enabled="$KIOSK_KEYBOARD_ENABLED"
+
+  log_info "Kiosk configuration:"
+  log_info "  User: $cloud_user"
+  log_info "  URL: $KIOSK_URL"
+  log_info "  Display: $KIOSK_DISPLAY"
+  log_info "  Keyboard enabled: $keyboard_enabled (GNOME on-screen keyboard)"
+  log_info "  Chromium flags: ${KIOSK_CHROMIUM_FLAGS:-<none>}"
+
+  local desktop
+  desktop="$(detect_desktop "$cloud_user")"
+  log_info "  Desktop: $desktop"
+
+  # Hide desktop UI for cleaner kiosk experience
+  hide_desktop_ui "$cloud_user" "$desktop"
+
+  # Enable GNOME on-screen keyboard
+  enable_gnome_keyboard "$cloud_user" "$keyboard_enabled" "$desktop"
+
+  # Before 3.0.0 a copy of URL/DISPLAY/flags went to /var/lib/kiosk/config for
+  # the unit's EnvironmentFile — two copies that drifted apart. run-kiosk.sh
+  # reads /etc/bisquite/kiosk/config itself now.
+  rm -f /var/lib/kiosk/config
+
+  # Enable and start kiosk-chromium service for user
+  disable_stale_instances "$cloud_user"
+  systemctl enable "kiosk-chromium@${cloud_user}.service" || true
+  systemctl restart "kiosk-chromium@${cloud_user}.service" || true
+
+  log_info "kiosk-chromium service enabled and started for user '$cloud_user'"
+}
+
+main(){
+  check_prereqs
+  local user
+  user=$(resolve_user)
+
+  log_info "Configuring kiosk mode for user '$user'"
+  configure_kiosk_service "$user"
+  log_info "Kiosk configuration completed for '$user'"
+}
+
+main "$@"

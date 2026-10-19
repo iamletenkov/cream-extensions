@@ -1,0 +1,6 @@
+644 10-bisquite-iptables-raw.conf
+644 README.md
+644 extension.yaml
+755 docker-iptables-raw-check
+755 hooks/configure
+755 hooks/install

@@ -1,0 +1,24 @@
+[Unit]
+Description=x11vnc VNC server for user %i
+After=graphical.target display-manager.service
+Requires=display-manager.service
+
+[Service]
+Type=simple
+User=%i
+Environment=DISPLAY=:0
+# Параметры — домен x11vnc библиотеки bisquite-conf (схема knobs, правка —
+# `bisquite-conf set x11vnc …`); дефис означает «нет файла — не ошибка»,
+# умолчания живут в самой обёртке.
+EnvironmentFile=-/etc/bisquite/x11vnc/config
+# Ждём сокет X. Он есть и под Wayland (его создаёт mutter для Xwayland),
+# поэтому сокет — не признак пригодной сессии; тип сессии проверяет обёртка.
+ExecStartPre=/bin/bash -c 'for i in {1..30}; do [ -S /tmp/.X11-unix/X0 ] && break || sleep 2; done'
+# Путь к X authority раньше был зашит здесь и не существовал ни под одним
+# дисплей-менеджером. Теперь его ищет обёртка — разбор в её шапке.
+ExecStart=/bin/bash /opt/bisquite/x11vnc/run-x11vnc.sh %i
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical.target

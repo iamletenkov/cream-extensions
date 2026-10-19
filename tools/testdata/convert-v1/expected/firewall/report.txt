@@ -1,0 +1,28 @@
+convert-v1: firewall 1.2.0 → 2.0.0 (черновик cream/v1)
+раскладка:
+  install.sh → hooks/install
+  configure.sh → hooks/configure
+  knobs.apply → hooks/apply
+  knobs → config.keys (файл удалён)
+  bisquite-firewall.service — удалён: configure ставит cream (cream-configure@firewall)
+проверить руками:
+  - targets.live: confirm — по таблице плана; live_note — черновик, проверь текст
+  - hooks.configure: юнит даёт early after [nftables.service], по плану early — взято из плана
+  - hooks.configure: bisquite-firewall.service: WantedBy sysinit.target, отброшено local-fs.target network-pre.target
+  - cream: ">=1.1.0" — стадия early: нужен cream >=1.1.0 (cream 1.0 откажет)
+  - hooks.install: явный timeout рекомендован (§6.1)
+  - hooks.remove: по возможности, иначе README описывает `cream remove --forget` (Р9)
+  - коды выхода: перезагрузка — 10; «нет устройства/ядра/GPU» — 20 только в install (Р11)
+  - summary — из README, проверь; platform.os и platform.commands — по образцу teleport
+имена и механика layout 2 в файлах (менять руками; гейт tools/check-names.sh):
+  - каталог скрипта теперь hooks/ — файлы расширения от CREAM_EXT_DIR (cwd хука): hooks/configure:30; hooks/install:23
+  - bisquite-conf → ключи из окружения хука, `cream set/show/config`; conf_init не нужен (§8): README.md:71,197,209,234; hooks/apply:3; hooks/configure:32,62,335; hooks/install:26,30,46,47,89,143
+  - /opt/bisquite → /opt/cream/ext: rules.d/README:8
+  - /etc/bisquite/<домен> → /etc/cream/<расширение>: README.md:13,25,63,110,128,138,166,192,194,205; hooks/configure:5,38; hooks/install:4,46,95
+  - /var/lib/bisquite → /var/lib/cream/ext: README.md:25,86; hooks/configure:42; hooks/install:124,126,128
+  - inet bisquite → inet cream (Р2): README.md:6,107,111,113,115,116,192,219; backend.sh:9; hooks/configure:4,36,135,140,368; hooks/install:2; rules.d/10-defaults.nft:4,16,19,20,24,28
+  - BISQUITE-INPUT → CREAM-INPUT (Р2): README.md:7,48,49,124,131,220,221; backend.sh:12; hooks/configure:6,37,188; hooks/install:3; rules.d/10-defaults.rules:6,10; rules.d/10-defaults.rules6:4; rules.d/README:6
+  - BISQUITE_CONF_ROOT → CREAM_ROOT (Р8): hooks/configure:38,42
+  - BISQUITE_<X> → без префикса (Р8): hooks/configure:39,43,53,58,59; hooks/install:114
+  - CLI → действие (`cream run <ext> …`), юнит — по имени расширения (Р7): README.md:13,25,57,92,151,195,203,204,206,207,208,218,232; hooks/apply:5,6; hooks/configure:15,21,39,156,301; hooks/install:5,25,131,133,138,142,143; rules.d/10-defaults.nft:8,12; rules.d/10-defaults.rules:14,18; rules.d/README:2,8
+  - юниты раскладывает cream (`files`), configure включает cream — убрать из хука: hooks/install:131,142
