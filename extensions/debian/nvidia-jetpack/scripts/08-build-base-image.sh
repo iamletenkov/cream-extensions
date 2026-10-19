@@ -1,7 +1,7 @@
 #!/bin/bash
 # Шаг 8: сборка БАЗОВОГО образа диска (qcow2) из подготовленного дерева BSP.
 #
-#     sudo /opt/nvidia-jetpack/08-build-base-image.sh
+#     sudo /opt/cream/ext/nvidia-jetpack/scripts/08-build-base-image.sh
 #
 # Что это и зачем.
 #

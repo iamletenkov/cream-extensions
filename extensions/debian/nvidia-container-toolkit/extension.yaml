@@ -1,18 +1,51 @@
+# nvidia-container-toolkit — NVIDIA Container Toolkit for Docker: NVIDIA's apt
+# repository with a pinned key, the four toolkit packages (optionally of an
+# exact version), and the `nvidia` runtime MERGED into /etc/docker/daemon.json
+# by nvidia-ctk — other keys stay, default-runtime is not touched (containers
+# stay on runc unless asked for --gpus / --runtime=nvidia).
+#
+# install — refuses without dockerd (container-runtime); a missing driver
+#           library (gpu-driver-nvidia skipped: no kernel/GPU) is a warning:
+#           the toolkit and the runtime entry do not need the GPU to be there.
+#           A daemon.json that already has the runtime is not rewritten; a
+#           changed one restarts a running docker on a live machine.
+# remove  — puts daemon.json back as it was before us (only if nobody edited
+#           it since), purges the packages this install put on, drops the
+#           source and the key.
+schema: cream/v1
 name: nvidia-container-toolkit
-version: 1.0.0
-layout: 2
-family: deb
-# Репозиторий nvidia.github.io публикует и arm64, но драйвер под этот
-# тулкит — расширение nvidia — только amd64; на Jetson тулкит ставит
-# расширение docker из репозитория L4T. Объявлять arm64 значило бы обещать
-# непроверенное.
-arch: [amd64]
-# Только build: install.sh правит /etc/docker/daemon.json, демон подхватит
-# runtime при первом старте; на первой загрузке донастраивать нечего.
-phase: build
+version: 2.0.0
+summary: NVIDIA Container Toolkit для Docker — среда выполнения nvidia без смены default-runtime
+cream: ">=1.0.0"
+platform:
+  family: deb
+  # The nvidia.github.io repository publishes arm64 too, but the driver for
+  # this toolkit (extension nvidia) is amd64 only; on Jetson the toolkit comes
+  # with the docker extension from the L4T repository.
+  arch: [amd64]
+  os: [{id: debian}, {id: ubuntu}]
+targets:
+  build: exec
+  live: confirm
+  live_note: >-
+    подключает репозиторий NVIDIA, ставит тулкит и дописывает в /etc/docker/daemon.json
+    среду выполнения nvidia (остальные ключи и default-runtime не трогаются); при изменении
+    файла работающий docker перезапускается — его контейнеры останавливаются (без
+    live-restore) и поднимаются по своей restart-политике; remove возвращает daemon.json,
+    если его не правили после установки, и перезапускает docker снова
 provides: [nvidia-container-runtime]
-# container-runtime — Docker (расширение docker): install.sh отказывает без
-# dockerd и правит его daemon.json. gpu-driver-nvidia — драйвер (расширение
-# nvidia): install.sh отказывает без libnvidia-ml.so.1.
+# container-runtime — Docker (extension docker): install refuses without
+# dockerd and merges into its daemon.json. gpu-driver-nvidia — the driver
+# (extension nvidia); its `skipped` record (no kernel/GPU) is a provider too.
 requires: [container-runtime, gpu-driver-nvidia]
-conflicts: []
+hooks:
+  install: {timeout: 20m}
+  remove: {timeout: 10m}
+config:
+  keys:
+    NVIDIA_CTK_VERSION:
+      type: "re:^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.~+]+)?$"
+      default: ""
+      empty: true
+      scope: install
+      description: "точная версия тулкита (1.17.8 или 1.17.8-1); пусто — новейшая в репозитории"

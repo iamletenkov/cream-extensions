@@ -5,7 +5,8 @@
 #   tools/live-test.sh [флаги] <расширение>
 #
 #   --distro D        debian-12 (умолчание; или DISTRO=…) | debian-13 | ubuntu-22.04 | ubuntu-24.04
-#   --deps "a b"      расширения, которые ставятся раньше, по порядку (с --accept-risk)
+#   --deps "a b"      расширения, которые ставятся раньше, по порядку (с --accept-risk
+#                     и --allow-skip: код 20 зависимости — запись skipped, не сбой)
 #   --accept-risk     расширение с targets.live: confirm
 #   --expect-skip     хук install обязан вернуть 20 (нет устройства/ядра/GPU, рулинг Р11):
 #                     установка с --allow-skip, в реестре status: skipped
@@ -15,6 +16,9 @@
 #   --memory M        предел памяти контейнера (умолчание 1g; gnome — 2g)
 #   --cap CAP         --cap-add контейнеру (повторяемый; firewall — NET_ADMIN)
 #   --catalog DIR     где искать расширения: DIR/extensions/<семейство>/<имя> (умолчание — репозиторий)
+#   --failed-ignore E юниты, которым разрешено быть в systemctl --failed: ERE с якорями
+#                     ^…$, сравнивается с именем юнита целиком; каждый такой юнит
+#                     печатается строкой «разрешено упасть: <юнит>»
 #   --keep-image      не удалять образ (самопроверка гоняет несколько прогонов подряд)
 #
 # Умолчания флагов расширения — в его tests/live.env (строки KEY=value, читаются
@@ -22,6 +26,7 @@
 # LIVE_PARAMS="K=V …", LIVE_SECRETS="K …", LIVE_MEMORY, LIVE_CAPS="CAP …",
 # LIVE_SNAPSHOT_IGNORE (ERE путей, которым разрешено меняться при --reinstall),
 # LIVE_BOOT_CONFIGURE=optional (configure на загрузке может не запускаться),
+# LIVE_FAILED_IGNORE (как --failed-ignore: стенд, а не расширение, роняет юнит),
 # LIVE_DISTROS="debian-12 ubuntu-24.04" (матрица CI). Флаги перекрывают файл.
 # Наличие tests/live.env — признак L-расширения для CI (ночной прогон, PR).
 #
@@ -48,7 +53,7 @@ REPO="$(dirname "$HERE")"
 die() { echo "live-test: $*" >&2; exit 2; }
 log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*" >&2; }
 
-usage() { sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 # ---------------------------------------------------------------------------
 # Arguments
@@ -56,6 +61,7 @@ distro="${DISTRO:-}" deps="" accept_risk="" expect_skip="" memory="" catalog="$R
 keep_image="${LIVE_KEEP_IMAGE:-}" ext=""
 caps=() params=() secrets=()
 set_deps="" set_risk="" set_skip="" set_mem="" set_caps="" set_params="" set_secrets=""
+failed_ignore="" set_failed_ignore=""
 while (( $# )); do
     case "$1" in
         --distro) distro="${2:?}"; shift 2 ;;
@@ -67,6 +73,7 @@ while (( $# )); do
         --memory) memory="${2:?}"; set_mem=1; shift 2 ;;
         --cap) caps+=("${2:?}"); set_caps=1; shift 2 ;;
         --catalog) catalog="$(cd "${2:?}" && pwd)" || die "--catalog $2: нет каталога"; shift 2 ;;
+        --failed-ignore) failed_ignore="${2:?}"; set_failed_ignore=1; shift 2 ;;
         --keep-image) keep_image=1; shift ;;
         -h | --help) usage ;;
         -*) die "неизвестный флаг $1 (--help)" ;;
@@ -111,6 +118,17 @@ memory="${memory:-1g}"
 [[ -n "$set_secrets" ]] || read -r -a secrets <<< "$(envval LIVE_SECRETS)"
 snapshot_ignore="$(envval LIVE_SNAPSHOT_IGNORE)"
 boot_configure="$(envval LIVE_BOOT_CONFIGURE)"
+[[ -n "$set_failed_ignore" ]] || failed_ignore="$(envval LIVE_FAILED_IGNORE)"
+# Anchors are mandatory: an unanchored expression would quietly allow every unit
+# whose name merely contains it. The expression is only ever used in [[ =~ ]].
+if [[ -n "$failed_ignore" ]]; then
+    [[ "$failed_ignore" == ^*\$ ]] \
+        || die "LIVE_FAILED_IGNORE «$failed_ignore»: нужны якоря ^…\$ (имя юнита целиком)"
+    re_rc=0
+    # shellcheck disable=SC2319  # status 2 of [[ =~ ]] is a malformed expression
+    [[ "x" =~ $failed_ignore ]] || re_rc=$?
+    (( re_rc != 2 )) || die "LIVE_FAILED_IGNORE «$failed_ignore»: не регулярное выражение"
+fi
 read -r -a dep_list <<< "$deps"
 for c in "${caps[@]}"; do [[ "$c" =~ ^[A-Z_]+$ ]] || die "--cap $c: не имя capability"; done
 for p in "${params[@]}"; do [[ "$p" =~ ^[A-Z][A-Z0-9_]*=.*$ ]] || die "--param $p: ждали KEY=VALUE"; done
@@ -182,6 +200,22 @@ finish() {
 abort() { bad "$*"; finish; }
 
 cx() { docker exec -i "$NAME" "$@"; }
+
+# failed_units: lines of `systemctl --failed` minus the units LIVE_FAILED_IGNORE
+# allows (whole name, anchored ERE). Runs in $(…), so each allowed unit is
+# reported on stderr — the ignore stays visible in the runner's output.
+failed_units() {
+    local line unit
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        unit="${line%% *}"
+        if [[ -n "$failed_ignore" && "$unit" =~ $failed_ignore ]]; then
+            echo "     разрешено упасть: $unit" >&2
+            continue
+        fi
+        printf '%s\n' "$line"
+    done < <(cx systemctl --failed --no-legend --plain 2>/dev/null)
+}
 
 # creamj <log name> <args…>: cream --json in the container; envelope to
 # $LOGDIR/<name>.json, stderr to <name>.err; status is cream's code.
@@ -270,12 +304,21 @@ creamj init system init || { tailerr init; abort "cream system init"; }
 creamj source source add live --path /live/cat --sync || { tailerr source; abort "cream source add"; }
 ok "cream $(jf init 'j["cream"]'), источник с $(( ${#dep_dirs[@]} + 1 )) расширениями"
 
+# Deps go on with --allow-skip: a dep whose install exits 20 (no kernel/GPU in
+# the container) stays in the registry as skipped, and that record is still a
+# provider of its capabilities (nvidia -> gpu-driver-nvidia). Told apart by the
+# status in cream's envelope, not by arithmetic.
 for d in "${dep_list[@]}"; do
-    if creamj "dep-$d" install --accept-risk "$d"; then
-        ok "зависимость $d установлена"
-    else
+    rc=0
+    creamj "dep-$d" install --accept-risk --allow-skip "$d" || rc=$?
+    if [[ "$rc" != 0 ]]; then
         tailerr "dep-$d"
-        abort "зависимость $d: cream install — код $?"
+        abort "зависимость $d: cream install — код $rc"
+    fi
+    if [[ "$(jf "dep-$d" 'j["result"]["status"]')" == skipped ]]; then
+        ok "зависимость $d пропущена (skipped)"
+    else
+        ok "зависимость $d установлена"
     fi
 done
 
@@ -376,7 +419,7 @@ fi
 echo "== загрузка =="
 docker restart "$NAME" > /dev/null || abort "docker restart"
 wait_boot || abort "systemd не загрузился после перезапуска"
-failed="$(cx systemctl --failed --no-legend --plain 2>/dev/null)"
+failed="$(failed_units)"
 if [[ -z "$failed" ]]; then
     ok "после перезапуска systemctl --failed пуст"
 else
@@ -427,7 +470,7 @@ if [[ -n "$has_remove" && -z "$expect_skip" ]]; then
     else
         ok "после remove $ext нет в cream list"
     fi
-    failed="$(cx systemctl --failed --no-legend --plain 2>/dev/null)"
+    failed="$(failed_units)"
     if [[ -z "$failed" ]]; then ok "после remove systemctl --failed пуст"; else bad "после remove упавшие юниты: $failed"; fi
 fi
 

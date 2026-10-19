@@ -1,0 +1,4 @@
+# NVIDIA Jetson: не усыплять USB-устройства платы во время прошивки.
+# 0955 — vendor id NVIDIA. По product id правило писать нельзя: за сеанс
+# прошивки плата меняет PID трижды (7020 -> 7023 APX -> 7035 initrd).
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0955", TEST=="power/control", ATTR{power/control}="on"

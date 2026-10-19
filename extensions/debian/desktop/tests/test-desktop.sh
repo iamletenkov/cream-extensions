@@ -66,9 +66,12 @@ exit 0'
 if [[ -e /proc/$$/fd/9 ]]; then echo open; else echo closed; fi > "$FAKE/runuser-lockfd"
 readlink /proc/$$/fd/0 > "$FAKE/runuser-stdin"
 [[ -e "$FAKE/runuser-fails" ]] && exit 1
+[[ -e "$FAKE/runuser-noisy" ]] && printf "\033[2J\033]0;title\007noisy\302\233x \302\302\233\233y \233z привет\ncream: forged\n" >&2
 [[ "$1" == -u && "$3" == -- ]] || exit 2
 shift 3; exec "$@"'
     ht_fake sleep
+    # timeout: logged, then runs the command (no real limit in the tests).
+    ht_fake timeout '[[ "$1" == -k ]] && shift 2; shift; exec "$@"'
     ht_fake cream
     LIB="$ROOT/opt/cream/ext/cloud-user/get_cloud_user.sh"
     mkdir -p "$(dirname "$LIB")"
@@ -247,10 +250,29 @@ check "правка от имени пользователя, с пустым о
 check "файл пользователя: screensaver=disabled" grep -qx 'screensaver=disabled' "$UC/desktop.conf"
 check_not "chown от root не нужен" ht_called '^chown'
 printf '[Session]\nwindow_manager=openbox-lxde\n' > "$UC/desktop.conf"
+# Not ht_hook: it gives the hook /dev/null as stdin, and the check of stdin
+# would pass without the redirect in desktop.sh. Here stdin is a file.
+echo "stdin of the hook" > "$ROOT/stdin-file"
+: > "$FAKE/runuser-noisy"
 exec 9> "$ROOT/lockfile"
-ht_hook configure CREAM_REASON=boot DESKTOP_DISABLE_SCREEN_BLANK=1 CREAM_LOCK_FD=9 CREAM_LOCK_MODE=exclusive
-eq "с блокировкой cream — 0" 0 "$?"
+(
+    cd "$HT_EXT" || exit 125
+    mapfile -d '' -t envv < <(_ht_env)
+    exec env -i "${envv[@]}" CREAM_REASON=boot DESKTOP_DISABLE_SCREEN_BLANK=1 CREAM_LOCK_FD=9 \
+        CREAM_LOCK_MODE=exclusive "$HT_EXT/hooks/configure" < "$ROOT/stdin-file"
+) > "$ROOT/out" 2>&1
+eq "с блокировкой cream и непустым stdin — 0" 0 "$?"
 exec 9>&-
+rm -f "$FAKE/runuser-noisy"
+check "в пределе времени: timeout -k 5 30 runuser" ht_called '^timeout -k 5 30 runuser -u alice -- '
+check "вывод процесса пользователя дошёл" grep -q 'noisy' <<< "$(ht_out)"
+check_not "вывод процесса пользователя без ESC и BEL" grep -q $'[\033\007]' <<< "$(ht_out)"
+check_not "вывод процесса пользователя без C1 (CSI)" grep -q $'\302\233' <<< "$(ht_out)"
+check_not "вывод процесса пользователя без байтов C1 (и без обхода через вложенную пару)" \
+    env LC_ALL=C grep -q $'\233' <<< "$(ht_out)"
+check "текст UTF-8 из вывода пользователя сохранён" grep -q 'привет' <<< "$(ht_out)"
+check_not "строки пользователя не выдают себя за запись журнала" grep -q '^cream: forged' <<< "$(ht_out)"
+check "строки пользователя помечены" grep -q '^lxsession-user: cream: forged' <<< "$(ht_out)"
 eq "fd блокировки cream процессу пользователя не достаётся" closed "$(cat "$FAKE/runuser-lockfd")"
 eq "stdin процесса пользователя — /dev/null" /dev/null "$(cat "$FAKE/runuser-stdin")"
 : > "$FAKE/runuser-fails"

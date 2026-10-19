@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Выборочная прошивка ВНУТРЕННИХ носителей платы: только QSPI либо QSPI+eMMC.
 #
-#     sudo /opt/nvidia-jetpack/10-flash-internal.sh --target qspi
-#     sudo /opt/nvidia-jetpack/10-flash-internal.sh --target emmc
+#     sudo /opt/cream/ext/nvidia-jetpack/scripts/10-flash-internal.sh --target qspi
+#     sudo /opt/cream/ext/nvidia-jetpack/scripts/10-flash-internal.sh --target emmc
 #
 # ЧЕМ ОТЛИЧАЕТСЯ ОТ 06. Шаг 06 заливает плату целиком под загрузку
 # с ВНЕШНЕГО NVMe: QSPI, загрузочные разделы и rootfs на nvme0n1.

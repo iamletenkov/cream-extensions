@@ -1,7 +1,7 @@
 #!/bin/bash
 # Разворачивает rootfs в APP-раздел платы ПО SSH, минуя NFS.
 #
-#     sudo /opt/nvidia-jetpack/07-flash-rootfs-ssh.sh
+#     sudo /opt/cream/ext/nvidia-jetpack/scripts/07-flash-rootfs-ssh.sh
 #     DRY_RUN=1 ./07-flash-rootfs-ssh.sh   # только план: пара, образ, раздел
 #
 # НЕОБРАТИМО для APP-раздела платы: перед форматированием спрашивает «да».

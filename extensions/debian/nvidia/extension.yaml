@@ -1,14 +1,56 @@
+# nvidia — the NVIDIA driver of a pinned branch, its kernel module built strictly
+# for the kernels installed in /lib/modules (never `uname -r`: in the build
+# appliance that is the appliance's kernel), nouveau blacklisted, initramfs of
+# every such kernel rebuilt, and the result checked (modinfo against the
+# user-space library).
+#
+# install — the only hook. No kernels in /lib/modules (a container) — code 20
+#           before apt (ruling R11); a new driver or a new blacklist — code 10
+#           (reboot: nouveau leaves only with the initramfs). The appliance
+#           branch (an initrd the package triggers made for `uname -r`) runs
+#           in build only.
+# No configure: nothing to finish on boot. No remove: taking a driver and
+# its DKMS module off a running machine is a manual job (README, «Как снять»),
+# `cream remove --forget nvidia` drops the record (ruling R9, live: confirm).
+schema: cream/v1
 name: nvidia
-version: 2.0.0
-layout: 2
-family: deb
-# Ubuntu: модули Canonical и PPA graphics-drivers публикуются для amd64;
-# Debian: репозиторий CUDA NVIDIA — каталог x86_64 (install.sh). arm64-серверы
-# (SBSA) не проверялись, Jetson обслуживает nvidia-jetpack.
-arch: [amd64]
-# Только build: configure.sh у расширения нет, модуль собирается под ядро
-# образа при сборке; на машине нужна лишь загрузка.
-phase: build
+version: 3.0.0
+summary: Драйвер NVIDIA заданной ветки (по умолчанию 580, открытые модули) под ядра машины
+cream: ">=1.0.0"
+platform:
+  family: deb
+  # Ubuntu: Canonical's modules and the graphics-drivers PPA are published for
+  # amd64; Debian: the x86_64 directory of NVIDIA's CUDA repository. arm64
+  # servers (SBSA) were never checked, Jetson is nvidia-jetpack.
+  arch: [amd64]
+  os: [{id: debian}, {id: ubuntu}]
+targets:
+  build: exec
+  live: confirm
+  live_note: >-
+    ставит драйвер NVIDIA и собирает модуль ядра (DKMS — компилятор и заголовки ядра)
+    под каждое ядро в /lib/modules, блокирует nouveau и пересобирает initramfs всех ядер;
+    до перезагрузки работает прежний драйвер (nouveau), после — NVIDIA: графический
+    сеанс и консоль переключаются; Secure Boot должен быть выключен (README);
+    снимать драйвер — руками (README, «Как снять»)
 provides: [gpu-driver-nvidia]
-requires: []
-conflicts: []
+hooks:
+  # DKMS of a large branch for several kernels takes long on a small machine.
+  install: {timeout: 90m}
+config:
+  keys:
+    NVIDIA_DRIVER_VERSION:
+      type: "re:^[0-9]{3,4}$"
+      default: "580"
+      scope: install
+      description: "ветка драйвера (580, 590, …), не полная версия; внутри ветки — новейшая из источника"
+    NVIDIA_KERNEL_MODULES:
+      type: "enum:open,proprietary"
+      default: open
+      scope: install
+      description: "open — открытые модули (Blackwell, RTX 50xx — только они); proprietary — для карт до Turing"
+    NVIDIA_SOURCE:
+      type: "enum:archive,ppa"
+      default: archive
+      scope: install
+      description: "Ubuntu: архив Ubuntu или PPA graphics-drivers (всегда DKMS); Debian: только archive — репозиторий CUDA NVIDIA"
