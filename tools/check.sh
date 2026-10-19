@@ -62,6 +62,8 @@ echo "== test-live-matrix =="
 
 echo "== test-agent-bump =="
 "$HERE/test-agent-bump.sh" || rc=1
+echo "== test-convert-v1 =="
+"$HERE/test-convert-v1.sh" || rc=1
 
 echo "== test-snapshot =="
 "$HERE/test-snapshot.sh" || rc=1
