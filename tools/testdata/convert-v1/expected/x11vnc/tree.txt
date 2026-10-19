@@ -1,0 +1,8 @@
+644 README.md
+644 extension.yaml
+644 x11vnc@.service
+755 hooks/apply
+755 hooks/configure
+755 hooks/install
+755 knobs.secret
+755 run-x11vnc.sh

@@ -1,0 +1,30 @@
+convert-v1: edge 0.3.1 → 1.0.0 (черновик cream/v1)
+раскладка:
+  install.sh → hooks/install
+  update.sh → hooks/upgrade
+  configure.sh → hooks/configure
+  knobs → config.keys (файл удалён)
+  configure-edge.service — удалён: configure ставит cream (cream-configure@edge)
+проверить руками:
+  - targets.live: расширения нет в таблице плана — выбери yes|confirm|no
+  - hooks.configure: стадии нет в таблице плана — взята из юнита (cloud-user), проверь
+  - hooks.configure: configure-edge.service: WantedBy multi-user.target, отброшено cloud-final.service network-online.target
+  - cream: ">=1.1.0" — стадия cloud-user: нужен cream >=1.1.0 (cream 1.0 откажет)
+  - files: юниты edge-worker.timer раскладывает cream — убрать их `install -m`/`ln -s` из hooks/install
+  - config.keys: EDGE_LIST — list: в cream через пробел, в bisquite-conf было через запятую
+  - config.keys: EDGE_STATE — readonly; кто пишет его теперь (хук, действие)?
+  - config.keys: BISQUITE_EDGE_FLAG → EDGE_FLAG (Р8) — таблица переименований в README и PR
+  - домен настроек edge-domain → edge: /etc/bisquite/edge-domain → /etc/cream/edge
+  - depends: cloud-user — по общему коду; укажи диапазон версий
+  - conflicts.extensions: перенесены по именам; взаимоисключение по способности — conflicts.capabilities
+  - hooks.install: явный timeout рекомендован (§6.1)
+  - hooks.remove: по возможности, иначе README описывает `cream remove --forget` (Р9)
+  - коды выхода: перезагрузка — 10; «нет устройства/ядра/GPU» — 20 только в install (Р11)
+  - summary — из README, проверь; platform.os и platform.commands — по образцу teleport
+имена и механика layout 2 в файлах (менять руками; гейт tools/check-names.sh):
+  - каталог скрипта теперь hooks/ — файлы расширения от CREAM_EXT_DIR (cwd хука): hooks/install:3
+  - bisquite-conf → ключи из окружения хука, `cream set/show/config`; conf_init не нужен (§8): hooks/install:5,6
+  - → "${CREAM_ROOT:-}/opt/cream/ext/cloud-user/get_cloud_user.sh" (depends cloud-user): hooks/configure:3
+  - /opt/bisquite → /opt/cream/ext: hooks/configure:3
+  - /var/lib/bisquite → /var/lib/cream/ext: hooks/configure:4
+  - юниты раскладывает cream (`files`), configure включает cream — убрать из хука: hooks/install:7,8,9

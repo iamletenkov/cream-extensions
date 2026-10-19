@@ -1,0 +1,32 @@
+[Unit]
+Description=Chromium kiosk mode for user %i
+After=graphical.target
+Wants=graphical.target
+
+[Service]
+Type=simple
+User=%i
+Environment="DISPLAY=:0"
+# XAUTHORITY здесь БОЛЬШЕ НЕ ЗАДАЁТСЯ. Прибитый /home/%i/.Xauthority верен
+# только под LightDM: под GDM >= 42 файл лежит в /run/user/<uid>/gdm/Xauthority,
+# и юнит уходил в вечный цикл рестарта молча. Путь ищет обёртка — разбор
+# и замеры в её шапке.
+# EnvironmentFile больше нет: адрес, дисплей и флаги обёртка читает сама из
+# /etc/bisquite/kiosk/config (bisquite-conf) — копии в /var/lib/kiosk/config,
+# которая расходилась с оригиналом, не стало.
+
+# ExecStartPre с `xdpyinfo` убран: он проверял дисплей тем же неверным
+# authority, что и сам запуск, то есть повторял ошибку. Ожидание дисплея
+# переехало внутрь обёртки, где кандидат и проверка — одно и то же.
+ExecStart=/bin/bash /opt/bisquite/kiosk/run-kiosk.sh %i
+
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kiosk-chromium-%i
+
+[Install]
+WantedBy=graphical.target

@@ -1,0 +1,20 @@
+# Черновик tools/convert-v1.py из layout 2 (docker 3.0.0): отчёт конвертера — что
+# проверить руками (план 2026-10-19-cream-v1-migration, «Порядок перевода одного расширения»).
+schema: cream/v1
+name: docker
+version: 4.0.0
+summary: "Docker CE из официального apt-репозитория Docker (`download.docker.com`)"
+cream: ">=1.0.0"
+platform:
+  family: deb
+  arch: [amd64, arm64]
+targets:
+  build: exec
+  live: "confirm"
+  live_note: "удаляет docker.io, podman-docker, containerd, runc, если стоят; на Raspberry Pi правит cmdline.txt — нужна перезагрузка"
+provides: [container-runtime]
+depends:
+  - {name: cloud-user}
+hooks:
+  install: {}
+  configure: {stage: system, after: [docker.service], timeout: 5m}

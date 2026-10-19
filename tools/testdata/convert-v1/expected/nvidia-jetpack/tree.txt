@@ -1,0 +1,5 @@
+644 README.md
+644 extension.yaml
+644 scripts/README.md
+755 hooks/install
+755 scripts/04-customize-rootfs.sh

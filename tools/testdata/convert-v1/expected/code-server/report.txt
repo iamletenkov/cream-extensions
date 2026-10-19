@@ -1,0 +1,25 @@
+convert-v1: code-server 4.0.0 → 5.0.0 (черновик cream/v1)
+раскладка:
+  install.sh → hooks/install
+  configure.sh → hooks/configure
+  knobs.apply → hooks/apply
+  knobs → config.keys (файл удалён)
+  configure-code-server.service — удалён: configure ставит cream (cream-configure@code-server)
+проверить руками:
+  - targets.live: yes — по таблице плана
+  - hooks.configure: configure-code-server.service: WantedBy cloud-init.target, отброшено cloud-final.service network-online.target network.target
+  - cream: ">=1.1.0" — стадия cloud-user: нужен cream >=1.1.0 (cream 1.0 откажет)
+  - config.keys: CODE_SERVER_PASSWORD — secret → secret: file, тип str (без `$` и обратных кавычек)
+  - depends: cloud-user — по общему коду; укажи диапазон версий
+  - hooks.install: явный timeout рекомендован (§6.1)
+  - hooks.remove: обязателен при targets.live: yes (Р9)
+  - коды выхода: перезагрузка — 10; «нет устройства/ядра/GPU» — 20 только в install (Р11)
+  - summary — из README, проверь; platform.os и platform.commands — по образцу teleport
+имена и механика layout 2 в файлах (менять руками; гейт tools/check-names.sh):
+  - каталог скрипта теперь hooks/ — файлы расширения от CREAM_EXT_DIR (cwd хука): hooks/configure:46; hooks/install:33
+  - bisquite-conf → ключи из окружения хука, `cream set/show/config`; conf_init не нужен (§8): README.md:9,13,30,51,70,96,116,155,158,175,186,205; hooks/apply:5; hooks/configure:43,44,67,72,73,77,78,334; hooks/install:132,139,146,157,160,304; teleport-app.sh:13,14
+  - → "${CREAM_ROOT:-}/opt/cream/ext/cloud-user/get_cloud_user.sh" (depends cloud-user): README.md:17,51,71,235,237; hooks/configure:95,96,103,290; hooks/install:263
+  - /opt/bisquite → /opt/cream/ext: README.md:16,58,290,297; hooks/install:28
+  - /etc/bisquite/<домен> → /etc/cream/<расширение>: README.md:8,11,70,113,142,185,196; hooks/configure:45; hooks/install:101,141,149,159,297
+  - BISQUITE_CONF_ROOT → CREAM_ROOT (Р8): teleport-app.sh:15
+  - юниты раскладывает cream (`files`), configure включает cream — убрать из хука: hooks/configure:244,267; hooks/install:273,308

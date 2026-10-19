@@ -1,0 +1,46 @@
+[Unit]
+Description=Configure code-server after network is online
+After=network.target network-online.target
+Wants=network-online.target
+# И ПОСЛЕ cloud-final: сеть нужна для скачивания, а пользователь —
+# для настройки, и появляется он позже. `cloud-init.service` тут не
+# годится, это вторая стадия из четырёх; пользователя создаёт
+# `cloud-config`, а заканчивает всё `cloud-final`. Замер 2026-09-06:
+# служба падала с «User not found in cloud-init userdata», хотя
+# пользователь уже существовал.
+After=cloud-final.service
+Wants=cloud-final.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash /opt/bisquite/code-server/configure.sh
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=HOME=/root
+
+# Логирование
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=configure-code-server
+TimeoutStartSec=300
+
+[Install]
+# ПРИВЯЗКА К cloud-init.target, А НЕ К multi-user.target.
+#
+# С `After=cloud-final.service` привязка к multi-user даёт цикл, потому
+# что сам `cloud-final` объявлен `After=multi-user.target`:
+#
+#     multi-user.target → тянет эту службу → ждёт cloud-final
+#                       → ждёт multi-user.target
+#
+# systemd разрывает кольцо, МОЛЧА выбрасывая нашу задачу. Замер
+# 2026-09-06 на Jetson Nano: так выбросило сразу три службы.
+#
+# Это та же форма, что была с `After=jtop.service`; исправляя её,
+# я подставил её же с другой стороны, не проверив упорядочение
+# `cloud-final`. Проверка теперь записана здесь.
+#
+# `cloud-init.target` для этого и существует: он объявлен
+# `After=cloud-final.service`, то есть достигается уже после того,
+# как cloud-init закончил всё.
+WantedBy=cloud-init.target
