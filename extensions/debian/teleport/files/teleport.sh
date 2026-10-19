@@ -306,12 +306,16 @@ check_labels(){
 proxy_with_port(){ [[ "$1" == *:* ]] && echo "$1" || echo "$1:443"; }
 proxy_host(){ echo "${1%%:*}"; }
 
-nodename(){
-    local n="${C[TELEPORT_NODENAME]}"
+# resolve_nodename [TELEPORT_NODENAME] — NODE: the knob (by default the loaded
+# one) or the hostname. Called in the main shell, so a die there prints the
+# JSON of an action (DIE_JSON); nodename is the same for $(…) of a log line.
+resolve_nodename(){
+    local n="${1-${C[TELEPORT_NODENAME]}}"
     [[ -n "$n" ]] || n="$(hostname -s 2>/dev/null | tr '[:upper:]' '[:lower:]')"
     [[ "$n" =~ $RE_NODENAME ]] || die "имя ноды '$n' (hostname) не метка DNS — задайте TELEPORT_NODENAME"
-    echo "$n"
+    NODE="$n"
 }
+nodename(){ resolve_nodename && echo "$NODE"; }
 
 # ---------------------------------------------------------------------------
 # Приложения: apps.d + TELEPORT_APPS − TELEPORT_APPS_DISABLE
@@ -508,7 +512,8 @@ render_file(){
     check_labels "${C[TELEPORT_LABELS]}"
     [[ -n "${C[TELEPORT_PROXY]}" ]] || die "TELEPORT_PROXY не задан — сначала cream run teleport join"
     local node proxy host apps labels cmds name uri icon first="" key path args a
-    node="$(nodename)" || exit 1
+    resolve_nodename
+    node="$NODE"
     proxy="$(proxy_with_port "${C[TELEPORT_PROXY]}")"
     host="$(proxy_host "$proxy")"
     labels="$(node_labels)"
@@ -995,6 +1000,13 @@ cmd_join(){
         N[$key]="$val"
     done
     [[ -n "${N[TELEPORT_PROXY]:-}" ]] || die "нужен TELEPORT_PROXY=host[:port]"
+    # Both meet (( )), which evaluates a[$(cmd)] in its operand: bool is
+    # checked here, not trusted to the caller.
+    for key in TELEPORT_FORCE TELEPORT_DEFER; do
+        if [[ -n "${N[$key]+x}" && ! "${N[$key]}" =~ ^[01]$ ]]; then
+            die "$key: ожидали 0 или 1"
+        fi
+    done
     local force="${N[TELEPORT_FORCE]:-0}" defer="${N[TELEPORT_DEFER]:-0}"
     unset 'N[TELEPORT_FORCE]' 'N[TELEPORT_DEFER]'
     # The method follows this join, not the history: a join without it is a
@@ -1036,6 +1048,11 @@ cmd_join(){
     load_conf
     local old_proxy="${C[TELEPORT_PROXY]}"
     [[ -n "$old_proxy" ]] && old_proxy="$(proxy_with_port "$old_proxy")"
+    # What render will check, by the final knobs (this join over the domain),
+    # before anything is written: a failure after step 3 would leave the
+    # registration in rollback/.
+    check_labels "${N[TELEPORT_LABELS]-${C[TELEPORT_LABELS]}}"
+    resolve_nodename "${N[TELEPORT_NODENAME]-${C[TELEPORT_NODENAME]}}"
 
     # 1. Idempotent: a rerun of runcmd (cloned card, cloud-init clean) must
     #    not wipe a working identity with the stale secret from the seed.

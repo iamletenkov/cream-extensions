@@ -633,6 +633,83 @@ eq "defer: join-retry — код 0" 0 "$rc"
 check "defer: join-retry зарегистрировал" test -s "$HOST_UUID"
 check_not "defer: после регистрации ожидания нет" test -e "$PENDING"
 
+echo "== имя ноды и метки по итоговым ручкам — в preflight, до записей =="
+# fake_hostname <name>: `hostname -s` of the machine.
+fake_hostname(){ printf '#!/bin/sh\necho %s\n' "$1" > "$ROOT/bin/hostname"; chmod +x "$ROOT/bin/hostname"; }
+# A machine registered in old.example.org without TELEPORT_NODENAME (the name
+# came from a good hostname); then the hostname turns bad_host and Stvor moves
+# it to another proxy: join must fail with JSON before it touches anything.
+moved_root(){
+    new_root
+    echo up > "$FAKE/net"; echo join > "$FAKE/agent"
+    fake_hostname good-host
+    printf '%s' "$SECRET" | tp join TELEPORT_PROXY=old.example.org TELEPORT_JOIN_METHOD=bound_keypair \
+        TELEPORT_TOKEN=robot-lab-1 TELEPORT_REGISTRATION_SECRET=- TELEPORT_ENV=dev >/dev/null 2>&1 \
+        || bad "moved_root: первый join"
+    test -s "$HOST_UUID" || bad "moved_root: не зарегистрирован"
+    cp -a "$CONF" "$TMP/conf.before"
+    cp -a "$ROOT/etc/teleport.yaml" "$TMP/yaml.before"
+    : > "$FAKE/systemctl.log"; : > "$FAKE/cream.log"
+}
+# untouched <what>: domain, teleport.yaml, registration and state as before.
+untouched(){
+    check "$1: домен не тронут" cmp -s "$TMP/conf.before" "$CONF"
+    check "$1: teleport.yaml не тронут" cmp -s "$TMP/yaml.before" "$ROOT/etc/teleport.yaml"
+    eq "$1: регистрация цела" 55555555-6666 "$(cat "$HOST_UUID" 2>/dev/null)"
+    check_not "$1: rollback не создан" test -e "$STATE/rollback"
+    check_not "$1: секрет не записан" test -e "$SECRET_FILE"
+    check_not "$1: cream set не звался" test -s "$FAKE/cream.log"
+    check_not "$1: агент не останавливался" grep -q 'stop teleport.service' <<< "$(slog)"
+}
+moved_root
+fake_hostname bad_host
+out="$(printf '%s' "$SECRET" | tp join TELEPORT_PROXY=new.example.org TELEPORT_JOIN_METHOD=bound_keypair \
+    TELEPORT_TOKEN=robot-lab-1 TELEPORT_REGISTRATION_SECRET=- TELEPORT_ENV=dev 2>"$TMP/err")"; rc=$?
+eq "hostname bad_host — код 1" 1 "$rc"
+check "hostname bad_host — stdout один JSON-объект" json_ok "$out"
+eq "hostname bad_host — JSON result" failed "$(json_get "$out" result)"
+check "hostname bad_host — причина про имя ноды" grep -q 'имя ноды' <<< "$(json_get "$out" reason)"
+untouched "hostname bad_host"
+out="$(printf '%s' "$SECRET" | tp join TELEPORT_PROXY=new.example.org TELEPORT_JOIN_METHOD=bound_keypair \
+    TELEPORT_TOKEN=robot-lab-1 TELEPORT_REGISTRATION_SECRET=- TELEPORT_NODENAME=lab-9 2>/dev/null)"; rc=$?
+eq "hostname bad_host, но TELEPORT_NODENAME задан — код 0" 0 "$rc"
+eq "TELEPORT_NODENAME задан — переезд состоялся" new.example.org:443 "$(get TELEPORT_PROXY)"
+
+# The labels in the domain (a hand edit) are the final ones when join does not
+# pass TELEPORT_LABELS: a reserved key fails before any write.
+moved_root
+sed -i '/^TELEPORT_LABELS=/d' "$CONF"; echo 'TELEPORT_LABELS=env=x' >> "$CONF"
+cp -a "$CONF" "$TMP/conf.before"
+out="$(printf '%s' "$SECRET" | tp join TELEPORT_PROXY=new.example.org TELEPORT_JOIN_METHOD=bound_keypair \
+    TELEPORT_TOKEN=robot-lab-1 TELEPORT_REGISTRATION_SECRET=- 2>/dev/null)"; rc=$?
+eq "метка env в домене — код 1" 1 "$rc"
+eq "метка env в домене — JSON result" failed "$(json_get "$out" result)"
+check "метка env в домене — причина" grep -q "TELEPORT_LABELS: ключ 'env' зарезервирован" <<< "$(json_get "$out" reason)"
+untouched "метка env в домене"
+
+echo "== TELEPORT_FORCE и TELEPORT_DEFER — bool до арифметики =="
+PWN_DIR="$(mktemp -d /tmp/pwnXXXXXX)"
+for key in TELEPORT_FORCE TELEPORT_DEFER; do
+    for v in 'a[$(touch PWN)]' 2 yes ' 1' ''; do
+        new_root
+        echo up > "$FAKE/net"; echo join > "$FAKE/agent"
+        pwn="$PWN_DIR/pwn"; rm -f -- "$pwn"
+        out="$(stvor_line "$key=${v//PWN/$pwn}" 2>"$TMP/err")"; rc=$?
+        check_not "$key='$v': команда не выполнена" test -e "$pwn"
+        eq "$key='$v': код 1" 1 "$rc"
+        eq "$key='$v': JSON result" failed "$(json_get "$out" result)"
+        check "$key='$v': причина называет ключ" grep -q "$key" <<< "$(json_get "$out" reason)"
+        check_not "$key='$v': домен не тронут" test -e "$CONF"
+        check_not "$key='$v': агент не тронут" test -s "$FAKE/systemctl.log"
+    done
+done
+rm -r -f -- "$PWN_DIR"; PWN_DIR=""
+new_root
+echo up > "$FAKE/net"; echo join > "$FAKE/agent"
+out="$(stvor_line TELEPORT_FORCE=0 TELEPORT_DEFER=0 2>/dev/null)"; rc=$?
+eq "TELEPORT_FORCE=0 TELEPORT_DEFER=0 — код 0" 0 "$rc"
+eq "TELEPORT_FORCE=0 TELEPORT_DEFER=0 — registered" registered "$(json_get "$out" result)"
+
 echo "== render: без меток агента 3.x, os_logins из дерева расширения =="
 new_root
 echo up > "$FAKE/net"
