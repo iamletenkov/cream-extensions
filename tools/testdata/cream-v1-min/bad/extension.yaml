@@ -1,0 +1,13 @@
+# Deliberately invalid cream/v1 manifest: a layout 2 leftover field (`phase`),
+# a scalar where a list is required and a declared hook without its file.
+# tools/test-cream-validate.sh expects `cream validate` to reject it.
+schema: cream/v1
+name: bad
+version: 1.0.0
+summary: заведомо невалидный манифест cream/v1
+cream: ">=1.0.0"
+phase: build
+platform: {family: deb, arch: amd64}
+hooks:
+  install: {}
+  remove: {}

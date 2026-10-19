@@ -8,7 +8,9 @@ name: CI and Release
 #
 # Job проверок гоняет tools/check.sh — валидацию
 # манифестов extension.yaml (сверки копий lib/ больше нет: копий нет, lib/
-# доставляет в гостя сама сборка).
+# доставляет в гостя сама сборка) и `cream validate` по расширениям cream/v1
+# (tools/cream-validate.sh: cream по пину tools/cream-pin.env в контейнере
+# debian:12; пока пин пуст — пропуск со строкой).
 #
 # Почему это вообще заведено: проверки существовали только как ручные
 # скрипты. Ровно так и разошлись восемь копий get_cloud_user.sh — расхождение
@@ -24,9 +26,11 @@ name: CI and Release
 # Ветки проверяются на pull_request (результат слияния с main), push — только
 # main: там релиз. push во все ветки вместе с pull_request гонял CI дважды на
 # каждый коммит PR. Ветку без PR — черновым PR или вручную (workflow_dispatch).
+# Пилот cream (спека cream §16 шаг 2) живёт в ветке feature/cream-v1-pilot до
+# перевода всего каталога: PR в неё проверяются тем же check.sh.
 on:
   pull_request:
-    branches: [main]
+    branches: [main, feature/cream-v1-pilot]
   push:
     branches: [main]
   workflow_dispatch:
