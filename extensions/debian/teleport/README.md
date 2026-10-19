@@ -210,6 +210,17 @@ merged-usr не годится, нужен `/usr/bin/…`); команда по�
 юниты, которые перезапускаются, пока блокировку держит другой процесс
 (`set-managed` держит её, перезапуская `teleport.service`; спека cream §7.3).
 
+`cream validate` предупреждает (`validate.unit_lock`) о `teleport-join.service`
+(`join-retry`) и `teleport-token.service` (`scrub-token`): их `ExecStart` зовёт
+действие с `lock: exclusive`. Это допустимо: правило ловит юнит, который
+перезапускает держатель блокировки и сам ждёт её, — а эти два никто под
+блокировкой не стартует и не ждёт (`join` включает таймер `--no-block`, а
+`teleport-token.path` срабатывает сам). Им блокировка нужна: тик и стирание
+секрета не должны пересечься с идущим `join`. Пока его держит `join` (до 5 мин),
+они ждут: `--lock-timeout 6m`, `TimeoutStartSec` юнита — с запасом на ожидание
+и само действие. `teleport.service`: `TimeoutStopSec=30s` — restart внутри
+`set-managed` укладывается в 90 с адаптера stvor-agent.
+
 | Путь | Что |
 |---|---|
 | `/opt/cream/ext/teleport/` | дерево расширения: `hooks/`, `actions/` (тонкие входы), `files/teleport.sh` (общая библиотека), `files/os-logins` (метка `os_logins`, её зовёт Teleport) |

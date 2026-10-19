@@ -857,12 +857,19 @@ U="$EXT/files"
 check "служба повтора: после network-online" grep -qx 'After=network-online.target' "$U/teleport-join.service"
 check "служба повтора: Wants network-online" grep -qx 'Wants=network-online.target' "$U/teleport-join.service"
 check "служба повтора: условие — файл ожидания" grep -qx 'ConditionPathExists=/var/lib/cream/ext/teleport/join-pending' "$U/teleport-join.service"
-check "служба повтора: зовёт join-retry через cream" grep -qx 'ExecStart=/usr/bin/cream run teleport join-retry' "$U/teleport-join.service"
+check "служба повтора: зовёт join-retry через cream, ждёт блокировку join (≥ 6m)" \
+    grep -qx 'ExecStart=/usr/bin/cream run --lock-timeout 6m teleport join-retry' "$U/teleport-join.service"
+# The wait for the lock (6 min) plus the action itself (timeout 5m) fit the unit.
+eq "служба повтора: TimeoutStartSec вмещает ожидание и действие" "TimeoutStartSec=12min" \
+    "$(grep '^TimeoutStartSec=' "$U/teleport-join.service")"
 check "служба повтора: при каждой загрузке" grep -qx 'WantedBy=multi-user.target' "$U/teleport-join.service"
 check "таймер: раз в минуту" grep -qx 'OnCalendar=minutely' "$U/teleport-join.timer"
 check "путь файла ожидания — тот же, что в библиотеке" grep -q 'JOIN_PENDING="$STATE/join-pending"' "$EXT/files/teleport.sh"
 check "teleport.service: ExecStartPre — render через cream" grep -qx 'ExecStartPre=/usr/bin/cream run teleport render' "$U/teleport.service"
 check "teleport.service: ExecReload — render через cream" grep -qx 'ExecReload=/usr/bin/cream run teleport render' "$U/teleport.service"
+# A restart inside set-managed: lock ≤ 20 s + restart + confirmation ≤ 30 s
+# within the 90 s of the stvor-agent adapter; the default stop is 90 s alone.
+check "teleport.service: TimeoutStopSec=30s" grep -qx 'TimeoutStopSec=30s' "$U/teleport.service"
 check "teleport-apps.path: apps.d" grep -qx 'PathChanged=/etc/cream/teleport/apps.d' "$U/teleport-apps.path"
 check "teleport-apps.path: command-labels.d" grep -qx 'PathChanged=/etc/cream/teleport/command-labels.d' "$U/teleport-apps.path"
 check "teleport-apps.service: reload-apps" grep -qx 'ExecStart=/usr/bin/cream run teleport reload-apps' "$U/teleport-apps.service"
