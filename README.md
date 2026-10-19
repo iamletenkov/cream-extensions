@@ -5,30 +5,29 @@
 (`cream install`) и в образ, собираемый
 [bisquite](https://github.com/iamletenkov/bisquite) (инструкция `EXTENSION` в VMFILE).
 
+
 ## Структура
 
 ```
 extensions/
-├── debian/                  # для Debian/Ubuntu: cream/v1 (hooks/) и ещё не переведённые layout 2
-│   ├── docker/
-│   ├── teleport/            # cream/v1: узел Teleport (join, render, apps.d, метки)
-│   ├── stvor-agent/         # cream/v1: обёртка пакета stvor-agent (пин по архитектурам)
-│   ├── code-server/
-│   ├── chromium-kiosk/  kiosk/
-│   ├── gnome/  xfce4/  lxde/
-│   ├── x11vnc/  vino-vnc/
-│   ├── network-manager/  nocloud-cidata/  cloud-growroot/
-│   ├── nvidia/  nvidia-container-toolkit/  jetson-stats/
-│   └── can/  firewall/  locale/  rustdesk/   # рабочая машина робота
-└── openwrt/                 # для OpenWrt (конфиги, UPLOAD) — не расширения, см. docs/
-    ├── uci-defaults/
-    └── wrt_cloudinit/
-lib/                         # переходно: общий код layout 2 (bisquite-conf, knobs/); в cream/v1 — библиотеки kind: library
-tools/                       # check.sh, lint-hooks.sh, check-names.sh, live-test.sh, hooktest.sh, new-extension.sh,
-                             #   cream-pin.env (пин cream проверок), validate-extensions.py (layout 2)
-.github/workflows/ci-release.yml  # CI: tools/check.sh на push и PR, выпуск — release-please
+└── debian/                  # для Debian/Ubuntu, все — cream/v1
+    ├── docker/
+    ├── teleport/            # узел Teleport (join, render, apps.d, метки)
+    ├── stvor-agent/         # обёртка пакета stvor-agent (пин по архитектурам)
+    ├── cloud-user/  l4t/    # библиотеки (kind: library) — общий код других расширений
+    ├── code-server/
+    ├── chromium-kiosk/  kiosk/
+    ├── desktop/  gnome/  xfce4/  lxde/
+    ├── x11vnc/  vino-vnc/  selkies/
+    ├── network-manager/  nocloud-cidata/  cloud-growroot/
+    ├── nvidia/  nvidia-container-toolkit/  jetson-stats/
+    └── can/  firewall/  locale/  rustdesk/   # рабочая машина робота
+cream-catalog.yaml           # корень каталога cream: roots, version (ведёт release-please)
+tools/                       # check.sh, cream-validate.sh, lint-hooks.sh, check-names.sh, live-test.sh,
+                             #   hooktest.sh, new-extension.sh, catalog-snapshot.sh, cream-pin.env (пин cream)
+.github/workflows/ci-release.yml  # CI: tools/check.sh на PR и push в main, выпуск — release-please
 .github/workflows/live.yml        # живые прогоны L-расширений: изменённые на PR, все — ночью
-docs/extensions.md           # конвенция целиком: формат cream/v1, линт хуков, пин cream; layout 2 — переходно
+docs/extensions.md           # конвенция целиком: формат cream/v1, линт хуков, пин cream, проверки
 ```
 
 Ubuntu-образы используют расширения из `debian/` (Ubuntu — Debian-совместима).
@@ -78,7 +77,7 @@ cream remove <name>
 ```
 
 - **Настройки** — `config.keys` манифеста; в хук приходят переменными окружения
-  (без префикса `CREAM_` — это окружение cream, и без `BISQUITE_`), секреты — только
+  (по имени расширения, без префикса `CREAM_` — это окружение cream), секреты — только
   в `$CREAM_SECRETS_FILE`, дальше через stdin (`KEY=-`), не через argv.
 - **Донастройка на машине** — хук `configure` на стадии `system`, `early`,
   `cloud-user` или `graphical` (юнит `cream-configure@<name>` ставит cream).
@@ -86,7 +85,7 @@ cream remove <name>
   **`">=1.1.1"`** (в 1.1.0 стадия не стартует при выключенном cloud-init).
 - **Общий код** — библиотеки `kind: library` (`cloud-user` — пользователь
   cloud-init, `l4t`): потребитель объявляет `depends` и зовёт
-  `"${CREAM_ROOT:-}/opt/cream/ext/<lib>/…"`. Копий и `lib/` в расширении нет.
+  `"${CREAM_ROOT:-}/opt/cream/ext/<lib>/…"`. Копий общего кода в расширении нет.
 - **Коды хука:** 10 — нужна перезагрузка, 20 — неприменимо здесь (только `install`);
   `configure` без устройства — предупреждение и 0. `remove` обязателен при
   `targets.live: yes`.
@@ -101,29 +100,14 @@ cream remove <name>
 | состояние | `/var/lib/cream/ext/<name>/` |
 | донастройка на загрузке | `cream-configure@<name>.service` |
 
-### Переходное: layout 2
-
-Ещё не переведённые расширения (без `schema: cream/v1` в манифесте) живут по
-layout 2: `install.sh` + `configure.sh` + `configure-<name>.service`, схема
-`knobs` и `lib/bisquite-conf`, общий код — `lib/` корня, доставляемый сборкой в
-`/opt/bisquite/<name>/lib`, настройки — `/etc/bisquite/<домен>/config`,
-манифест из девяти полей с `layout: 2`. Его описание — разделы «layout 2» в
-[docs/extensions.md](docs/extensions.md); проверяет его
-`tools/validate-extensions.py`. Каталог переводится по плану
-[2026-10-19-cream-v1-migration](docs/plans/2026-10-19-cream-v1-migration.md),
-расширение целиком и с мажором версии; layout 2, `lib/` и валидатор уходят
-в последней задаче плана.
-
-**OpenWrt** (`extensions/openwrt/`) — конфиги для `UPLOAD`, не расширения; на
-cream/v1 не переводятся и уходят из каталога (bisquite берёт их по тегу `v3.3.0`).
-
 ## Проверки
 
 ```bash
-tools/check.sh                # все проверки: манифесты, cream validate, линт хуков, гейт имён, тесты (make test)
-tools/lint-hooks.sh           # линт хуков и действий cream/v1: шапки, --no-block, lock: none, секреты, CREAM_*
-tools/validate-extensions.py  # только манифесты (нужен python3 + PyYAML)
-tools/check-names.sh          # гейт имён bisquite в расширениях cream/v1 (make check-names)
+make ci                       # shellcheck + tools/check.sh — то же, что CI
+tools/check.sh                # cream validate, гейт имён, линт хуков, тесты инструментов и расширений (make test)
+tools/cream-validate.sh       # cream validate --catalog . по корню (make cream-validate)
+tools/lint-hooks.sh           # линт хуков и действий: шапки, --no-block, lock: none, секреты, CREAM_*
+tools/check-names.sh          # прежние имена bisquite по всему репозиторию, кроме истории (make check-names)
 tools/live-test.sh <имя>      # живой прогон настоящим cream в контейнере с systemd (make test-live EXT=<имя>)
 tools/new-extension.sh <имя>  # каркас нового расширения cream/v1
 tools/agent-bump.sh <тег> <SHA256SUMS>  # пин stvor-agent в обёртке stvor-agent (его зовёт agent-bump.yml)
@@ -131,21 +115,15 @@ tools/catalog-snapshot.sh [OUT] # снимок каталога cream (make snap
 tools/test-snapshot.sh          # воспроизводимость и приёмка снимка cream (make snapshot-check)
 ```
 
-Валидатор проверяет, что у каждого каталога с `install.sh` есть манифест, что
-поля заполнены и осмысленны (`layout` — ровно `2`), что каждая способность из `requires` кем-то
-предоставляется, что в графе нет циклов и что `conflicts` симметричны.
+`cream validate --catalog .` проверяет каждый манифест, повторяющиеся имена,
+граф (`depends` на отсутствующее расширение или цикл — ошибка, `requires` без
+поставщика — предупреждение) и сверку юнитов с действиями; cream — по пину
+`tools/cream-pin.env` в контейнере `debian:12`.
 
 **Проверки автоматические.** `tools/check.sh` гоняет GitHub Actions на каждый
-push и pull request — `.github/workflows/ci-release.yml`. Локально перед пушем это
-та же одна команда, и запускать её руками полезно ровно затем, чтобы не узнать
-об ошибке из красного CI:
-
-```bash
-tools/check.sh
-```
-
-Из зависимостей нужен bash и Python 3 с PyYAML (`pip install pyyaml` или
-`apt install python3-yaml`).
+pull request и push в `main` — `.github/workflows/ci-release.yml`. Локально перед
+пушем — `make ci` (его же зовёт pre-push lefthook). Нужны bash, git, Python 3 с
+PyYAML (`apt install python3-yaml`) и docker.
 
 Тесты расширения лежат в его `tests/` и находятся сами: `tools/check.sh` гоняет
 каждый исполняемый `extensions/*/*/tests/test-*.sh` (в снимок каталога `tests/` не
@@ -153,109 +131,28 @@ tools/check.sh
 замком): `make test-live EXT=<имя> [DISTRO=ubuntu-24.04]`, умолчания — в
 `tests/live.env` расширения. Подробно — [docs/extensions.md](docs/extensions.md#проверки).
 
-## Подключение в VMFILE
+## Подключение в образ и на машину
 
-Для расширений `debian/` способ один — `EXTENSION`.
+На живой машине — `cream install <name> [KEY=VALUE…]` из источника, в который
+подключён снимок каталога (см. «Снимок каталога cream»). В образе — инструкция
+bisquite в VMFILE:
 
 ```vmfile
 EXTENSION docker
-EXTENSION core/x11vnc X11VNC_PORT=5901 X11VNC_LISTEN=all
+EXTENSION x11vnc X11VNC_PORT=5901 X11VNC_LISTEN=all
 ```
 
-Форма: `EXTENSION [источник/]имя [КЛЮЧ=ЗНАЧЕНИЕ ...]`. Bisquite разворачивает
-её в одном вызове `virt-customize`: кладёт `lib/` источника в
-`/opt/bisquite/lib/<sha256>/`, копирует каталог расширения в
-`/opt/bisquite/<имя>`, ставит `0755` каждому `*.sh` верхнего уровня, ссылку
-`/opt/bisquite/<имя>/lib` и запускает `install.sh`, положив `КЛЮЧ=ЗНАЧЕНИЕ`
-в его окружение.
-
-**Параметры уезжают в скрипт переменными окружения как есть, без таблицы
-соответствия.** Единственный источник правды о том, какие переменные читает
-расширение, — его собственный `install.sh`; таблица «параметр VMFILE →
-переменная скрипта» устарела бы молча. Поэтому в README каждого расширения
-параметры названы теми же именами, что в коде.
-
-Два свойства, и оба несущие:
-
-- права ставятся опцией `--chmod` инструментами appliance, а не
-  `RUN_COMMAND chmod`: вторая форма поднимает гостя и на чужой архитектуре
-  отказывает;
-- применимость **вычисляется** из пары «архитектура хоста ↔ архитектура
-  образа», а не предполагается. `phase: build` при несовпадении — отказ до
-  сборки, а не тихая подмена на `firstboot`.
-
-Прежняя ручная форма — `COPY_IN <расширение>:/opt/vmsetup/` плюс
-`RUN_COMMAND …/install.sh` — с раскладкой 2 не работает: общий `lib` рядом
-с расширением она не ставит, а юниты смотрят в `/opt/bisquite`.
-
-OpenWrt подключается другой формой — `UPLOAD` конкретных файлов
-по конкретным путям:
-
-```vmfile
-UPLOAD <чекаут>/extensions/openwrt/uci-defaults/80-rootfs-resize:/etc/uci-defaults/80-rootfs-resize
-```
-
-## Доставка в сборку: источники расширений
-
-Сборка в сеть за расширением **не ходит**. `EXTENSION` берёт его из локального
-кеша `<DATA_DIR>/extensions/<источник>/`, а кеш наполняет отдельный явный шаг —
-`bs extension sync` — по объявлению в `<DATA_DIR>/data/extensions.yaml`:
-
-```yaml
-sources:
-  - name: core
-    type: git
-    url: https://github.com/iamletenkov/bisquite-extensions.git
-    ref: v2.0.0                  # ветка, тег или коммит
-  - name: lab
-    type: path
-    path: /srv/lab-extensions    # только абсолютный путь
-```
-
-Источник `core` — этот репозиторий — поставляется с пакетом уже объявленным,
-поэтому первый шаг оператора обычно не «напиши файл», а `bs extension sync`.
-Свой `extensions.yaml` в каталоге данных **замещает** поставляемый целиком,
-а не дополняет его: объявил один свой источник — `core` пропал, допиши его
-руками, если он нужен.
-
-```bash
-bs extension sources     # что объявлено и в каком состоянии кеш
-bs extension sync        # привести кеш в соответствие с объявлением
-bs extension ls          # что в кеше лежит — расширения, а не источники
-bs extension check core/docker   # применимо ли здесь; при отказе код возврата 1
-bs extension new my-ext  # каркас нового расширения (вне кеша — внутри откажет)
-```
-
-Типов источников три: `git` и `path` работают, `oci` отказывает явно —
-не решён вопрос, каким `mediaType` расширения лежат в реестре, а заглушка,
-рапортующая успехом, отложила бы новость до момента, когда `EXTENSION`
-не найдётся в середине сборки.
-
-Имя источника необязательно в ссылке: `EXTENSION docker` ищет по всем
-источникам в порядке объявления и берёт первый, как `PATH`. Затенение
-поставляемого `core` своим источником — рабочий приём, и о нём пишется
-строка в журнал (`extensions.shadowed`), потому что «взяли не то, что
-думали» иначе видно только по содержимому образа.
-
-Прежний способ доставки — `git clone` этого репозитория в контекст сборки —
-остаётся нужен только для файлов OpenWrt, которые `UPLOAD` берёт из чекаута
-рядом с VMFILE:
-
-```yaml
-variables:
-  EXT_REPO: https://github.com/iamletenkov/bisquite-extensions.git
-  EXT_VERSION: v2.0.0
-before_script:
-  - rm -rf bisquite-extensions
-  - git clone --depth 1 --branch "$EXT_VERSION" "$EXT_REPO"
-```
+Форма: `EXTENSION [источник/]имя [КЛЮЧ=ЗНАЧЕНИЕ ...]`; применимость слоя считает
+`cream resolve --phase build`, ставит расширение cream в госте. Параметры — ключи
+`config.keys` манифеста под теми же именами, без таблицы соответствия: README
+каждого расширения называет их именами манифеста. Ручной доставки каталога в
+гостя (`COPY_IN` + запуск скрипта) нет.
 
 ## Версионирование
 
-Версия набора расширений — git-тег этого репозитория. Через `EXTENSION` его
-пинит поле `ref` источника в `extensions.yaml`, файлы OpenWrt через `UPLOAD` —
-тег чекаута (`EXT_VERSION`). Теги — semver, их ставит release-please, руками
-не тегают.
+Версия набора расширений — git-тег этого репозитория и `version` в
+`cream-catalog.yaml`; потребители пинят снимок релиза по sha256. Теги — semver,
+их ставит release-please, руками не тегают.
 
 ### Как выпустить версию
 
@@ -275,9 +172,11 @@ Workflow `CI and Release`, конфиг — `.github/release_please/`:
 4. Тот же прогон запускает в `iamletenkov/bisquite` workflow `extensions-bump.yml`
    (job `dispatch-bisquite`): там открывается PR, поднимающий подмодуль и
    `EXT_VERSION`/`ref` в примерах до нового тега. Токен — секрет
-   `BISQUITE_DISPATCH_TOKEN` этого репозитория: fine-grained PAT только на
+   `BISQUITE_DISPATCH_TOKEN` этого репозитория: fine-grained PAT только на <!-- check-names: allow: имя секрета GitHub -->
    bisquite с правом Actions: Read and write, действует до 16.10.2027 —
    до этой даты перевыпустить, иначе job релиза покраснеет.
+   Пока bisquite не ставит расширения через cream, job выключен: его включает
+   переменная репозитория `BISQUITE_BUMP_ENABLED=true`. <!-- check-names: allow: имя переменной GitHub -->
 
 Пин агента в обёртке `stvor-agent` руками не поднимают: релиз
 `iamletenkov/stvor-agent` запускает здесь `agent-bump.yml` (правки —
@@ -299,9 +198,9 @@ make snapshot-check  # две сборки дают одни байты; cream �
 Снимок собирается из коммита (`REF`, по умолчанию `HEAD`), а не из рабочего
 дерева; `SOURCE_DATE_EPOCH` — время коммита, cream — по пину
 `tools/cream-pin.env` в контейнере `debian:12`, поэтому сборка одного коммита
-воспроизводима побайтно. Пока каталог переходный, в снимок попадают только
-расширения `cream/v1` (без `tests/`), `cream-catalog.yaml`, `LICENSE` и
-`NOTICE`: манифесты layout 2 cream отвергает. Версия каталога —
+воспроизводима побайтно. В снимок попадают `cream-catalog.yaml`, `LICENSE`,
+`NOTICE` и `roots` каталога (все расширения, без `tests/`); `tools/`, `docs/` и
+прочее — нет. Версия каталога —
 `version` в `cream-catalog.yaml`, её поднимает release-please вместе с тегом.
 
 Готовый снимок лежит в релизе `vX.Y.Z`; подключение:
@@ -315,26 +214,18 @@ cream source add cream-extensions \
 Stvor раздаёт тот же файл со своего зеркала (`--archive file://…`) по пину
 sha256. Подробнее — [docs/extensions.md](docs/extensions.md#снимок-каталога-для-cream).
 
-`ref: main` неподвижной точкой не является: ветка мутабельна, а git-тег
-переставляется `git tag -f`. Что фактически легло в кеш, записывает
-`<DATA_DIR>/data/sources.lock`.
-
 ## Зависимости и применимость
 
-Объявлены в `extension.yaml`. Читают их **двое, и по-разному**:
-
-- **bisquite** при разборе `EXTENSION` берёт `name`, `layout`, `family`,
-  `arch` и `phase`; `layout` не `2` — отказ до сборки. `family` сверяется с тем, что отвечает `virt-inspector` о самом
-  образе (`<package_format>`), `arch` и `phase` — с парой архитектур;
-- **`tools/validate-extensions.py`** проверяет `provides`, `requires`
-  и `conflicts` — граф способностей, циклы и симметрию конфликтов.
-
-Топологической сортировки и отказа по конфликту в bisquite **нет**: он эти три
-поля только печатает (`bs extension ls`, `bs extension check`). Порядок слоёв
-по-прежнему держится вниманием автора VMFILE. Коротко, что объявлено:
+Объявлены в `extension.yaml` (спека cream §4): `platform` (`family: deb`, `arch`),
+`targets` (`build`, `live`), `depends` (расширения, которые ставятся раньше,
+с диапазоном версий), `provides`/`requires` (способности), `conflicts` (по имени
+или по способности). Применимость слоя и порядок по `depends` считает
+`cream resolve`; граф целиком проверяет `cream validate --catalog .` при каждом
+`make ci`. Коротко, что объявлено:
 
 - `gnome`, `xfce4`, `lxde` дают `x11-server` + `display-manager` + `desktop-session`
-  и взаимоисключающи;
+  и взаимоисключающи (конфликт по способности `desktop-session`); ручки
+  рабочего стола — домен расширения `desktop`, от которого они зависят;
 - `x11vnc`, `vino-vnc` и `kiosk` требуют `x11-server` и `display-manager` —
   то самое отношение, которое держится только порядком слоёв в VMFILE.
   `x11vnc` и `vino-vnc` дают одну способность `remote-desktop`, но конфликта
@@ -350,8 +241,8 @@ sha256. Подробнее — [docs/extensions.md](docs/extensions.md#сним�
   `gpu-driver-nvidia` и `container-runtime`, регистрирует среду `nvidia`
   в Docker без смены `default-runtime`;
 - рабочая машина робота: `can` (модули CAN под ядро образа, `can-bus`),
-  `firewall` (своя таблица nftables `inet bisquite` или цепочка iptables-legacy
-  `BISQUITE-INPUT` на ядрах без `nft_ct`, Docker не задевает,
+  `firewall` (своя таблица nftables `inet cream` или цепочка iptables-legacy
+  `CREAM-INPUT` на ядрах без `nft_ct`, Docker не задевает,
   `host-firewall`), `locale` (локаль и раскладки, `system-locale`), `rustdesk`
   (`.deb` по sha256, адреса своего сервера — на устройстве, `remote-support`);
   ничего не требуют и ни с чем не конфликтуют;

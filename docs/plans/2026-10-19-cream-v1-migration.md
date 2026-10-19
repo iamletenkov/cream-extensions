@@ -35,7 +35,7 @@
 - [x] Task 25: `l4t-kernel-kvm`
 - [x] Task 26: `sensing-gmsl2-camera` + `can-usb`
 - [x] Task 27: `pixelflux-tegra` + `pixelflux-v4l2m2m`
-- [ ] Task 28: уборка переходного — `lib/`, layout 2 в инструментах, `extensions/openwrt/`, документация
+- [x] Task 28: уборка переходного — `lib/`, layout 2 в инструментах, `extensions/openwrt/`, документация
 - [ ] Task 29: Финальная интеграция + `make ci`, выпуск каталога 5.0.0
 
 Задачи с пометкой **[cream]** исполняются в репозитории `cream`, остальные — в `cream-extensions`.
