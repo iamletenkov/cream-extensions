@@ -889,6 +889,40 @@ check "teleport.service: ExecReload — render через cream" grep -qx 'ExecR
 # A restart inside set-managed: lock ≤ 20 s + restart + confirmation ≤ 30 s
 # within the 90 s of the stvor-agent adapter; the default stop is 90 s alone.
 check "teleport.service: TimeoutStopSec=30s" grep -qx 'TimeoutStopSec=30s' "$U/teleport.service"
+# HUP without /bin/kill: procps is not in minimal images (docker debian-12 of
+# the Stvor gate); systemctl is always there with systemd. --kill-who (not
+# --kill-whom): Ubuntu 22.04 has systemd 249.
+check "teleport.service: HUP через systemctl kill, только главному процессу" \
+    grep -qx 'ExecReload=systemctl kill --kill-who=main --signal=HUP %n' "$U/teleport.service"
+eq "teleport.service: render до HUP" "render HUP" \
+    "$(grep '^ExecReload=' "$U/teleport.service" | sed 's/.*teleport render$/render/; s/.*--signal=HUP.*/HUP/' | tr '\n' ' ' | sed 's/ $//')"
+# Every command an Exec* line of a unit runs exists on the machine: cream, the
+# Teleport binary of the extension, systemctl of systemd, or platform.commands.
+unit_cmds_unknown="$(python3 - "$EXT" <<'PY'
+import glob, os, sys, yaml
+ext = sys.argv[1]
+m = yaml.safe_load(open(os.path.join(ext, "extension.yaml")))
+known = set(m["platform"].get("commands", [])) | {"cream", "teleport", "systemctl"}
+bad = []
+for u in sorted(glob.glob(os.path.join(ext, "files", "teleport*.service"))):
+    for line in open(u):
+        k, _, v = line.strip().partition("=")
+        if k.startswith("Exec") and v:
+            cmd = os.path.basename(v.lstrip("-@:+!").split()[0])
+            if cmd not in known:
+                bad.append(f"{os.path.basename(u)}:{cmd}")
+print(" ".join(bad))
+PY
+)"
+eq "Exec* юнитов зовут только известные команды" "" "$unit_cmds_unknown"
+# validate.unit_lock warns about teleport-join.service (join-retry) and
+# teleport-token.service (scrub-token): exclusive actions from Exec*. The
+# deadlock of §7.3 needs a lock holder that waits for the job of such a unit;
+# here none does — only enable/disable and --no-block starts of the timer.
+# Keep it so: no blocking start/restart/reload of these units anywhere.
+check_not "держатель блокировки не ждёт job юнитов повтора и стирания" \
+    bash -c "grep -hE 'systemctl[^#]*(start|restart|reload|enable --now)[^#]*(JOIN_SERVICE|JOIN_TIMER|teleport-join|teleport-token\.service)' \
+        \"\$1\"/files/teleport.sh \"\$1\"/hooks/* \"\$1\"/actions/* | grep -v -- --no-block" _ "$EXT"
 check "teleport-apps.path: apps.d" grep -qx 'PathChanged=/etc/cream/teleport/apps.d' "$U/teleport-apps.path"
 check "teleport-apps.path: command-labels.d" grep -qx 'PathChanged=/etc/cream/teleport/command-labels.d' "$U/teleport-apps.path"
 check "teleport-apps.service: reload-apps" grep -qx 'ExecStart=/usr/bin/cream run teleport reload-apps' "$U/teleport-apps.service"
