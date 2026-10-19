@@ -1,0 +1,3 @@
+#!/bin/sh
+set -eu
+systemctl disable live-unit-allowed.service || true

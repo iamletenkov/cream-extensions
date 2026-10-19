@@ -333,8 +333,10 @@ cat /sys/bus/usb/devices/*/power/control        # должно быть on
   без эмулятора файла нет), отказ без `scripts/`, `remove` только своего;
   `tests/test-nvidia-jetpack.sh` — сценарии станции (профили, манифесты, шаги) без BSP и платы.
 - **L** — `make test-live EXT=nvidia-jetpack` (`tests/live.env`, `--accept-risk`) на
-  `ubuntu-22.04`: установка, повтор, `--reinstall`, загрузка, `remove`; без прошивки
-  платы и без binfmt хоста.
+  `ubuntu-22.04` и `debian-12`: установка, повтор, `--reinstall`, загрузка, `remove`; без
+  прошивки платы и без binfmt хоста. NFS-сервер в контейнере без `CAP_SYS_ADMIN` не
+  поднимается: `proc-fs-nfsd.mount` и `run-rpc_pipefs.mount` разрешено упасть
+  (`LIVE_FAILED_IGNORE`), раннер печатает их отдельной строкой.
 - **P** — прошивка платы на физической станции по `scripts/README.md`.
 
 ## Переименования 3.0.0
