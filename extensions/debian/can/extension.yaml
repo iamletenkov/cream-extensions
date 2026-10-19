@@ -17,7 +17,7 @@
 # (README, "Jetson / L4T").
 schema: cream/v1
 name: can
-version: 2.0.0
+version: 2.0.1
 summary: Шина CAN — can-utils, модули ядра CAN для ядер машины и их автозагрузка
 cream: ">=1.0.0"
 platform:
@@ -30,6 +30,8 @@ targets:
 # can-bus — can, can_raw, can_dev, vcan, slcan, gs_usb, peak_usb for every
 # kernel (on L4T: can, can_raw, can_dev, vcan and CAN_MODULES_LOAD), candump/cansend.
 provides: [can-bus]
+depends:
+  - {name: apt-guard, version: ">=1.0.0 <2"}
 hooks:
   install: {timeout: 20m}
   apply: {}
