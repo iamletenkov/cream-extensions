@@ -2,7 +2,7 @@
 # Тест линта хуков (tools/lint-hooks.sh): чистая фикстура
 # tools/testdata/lint-hooks/ok проходит; каждая копия, в которой нарушено одно
 # правило, красная с именем правила и file:line; без аргументов линт находит
-# расширения cream/v1 каталога сам и не трогает layout 2.
+# все расширения каталога сам.
 #
 #   tools/test-lint-hooks.sh        код 0 — все проверки прошли
 set -uo pipefail
@@ -33,7 +33,7 @@ expect(){
 
 out="$("$LINT" "$FX" 2>&1)"; rc=$?
 eq "чистая фикстура — код 0" 0 "$rc"
-has "чистая — строка ок" "lint-hooks: ок, расширений cream/v1: 1" "$out"
+has "чистая — строка ок" "lint-hooks: ок, расширений: 1" "$out"
 
 # Header: shebang and `set -euo pipefail` (`set -eu` in sh) before any command.
 v="$(variant no-set)"; sed -i '/^set -euo pipefail$/d' "$v/hooks/install"
@@ -113,16 +113,22 @@ has "оба нарушения видны" "[systemctl-block]" "$out"
 out="$("$LINT" "$TMP/nope" 2>&1)"; rc=$?
 eq "каталог без extension.yaml — код 2" 2 "$rc"
 
-# Discovery: a copy of the linter in a fake repo — cream/v1 is found, layout 2
-# (no `schema: cream/v1`) is not linted.
-mkdir -p "$TMP/repo/tools" "$TMP/repo/extensions/debian/old"
+# Discovery: a copy of the linter in a fake repo — every extension under
+# extensions/ is linted, a manifest without `schema: cream/v1` included (the
+# catalog has one format; cream validate rejects such a manifest anyway).
+mkdir -p "$TMP/repo/tools" "$TMP/repo/extensions/debian/old/hooks"
 cp "$LINT" "$TMP/repo/tools/"
 cp -a "$FX" "$TMP/repo/extensions/debian/ok"
-printf 'layout: 2\nname: old\n' > "$TMP/repo/extensions/debian/old/extension.yaml"
-printf '#!/bin/sh\nsystemctl restart x\n' > "$TMP/repo/extensions/debian/old/knobs.apply"
 out="$("$TMP/repo/tools/lint-hooks.sh" 2>&1)"; rc=$?
-eq "поиск: layout 2 не проверяется — код 0" 0 "$rc"
-has "поиск: одно расширение" "расширений cream/v1: 1" "$out"
+eq "поиск: чистое — код 0" 0 "$rc"
+has "поиск: одно расширение" "расширений: 1" "$out"
+printf 'name: old\n' > "$TMP/repo/extensions/debian/old/extension.yaml"
+printf '#!/bin/sh\nsystemctl restart x\n' > "$TMP/repo/extensions/debian/old/hooks/install"
+chmod +x "$TMP/repo/extensions/debian/old/hooks/install"
+out="$("$TMP/repo/tools/lint-hooks.sh" 2>&1)"; rc=$?
+eq "поиск: без schema тоже проверяется — код 1" 1 "$rc"
+has "поиск: без schema — находка" "extensions/debian/old/hooks/install" "$out"
+rm -r -f -- "$TMP/repo/extensions/debian/old"
 cp -a "$TMP/blocking" "$TMP/repo/extensions/debian/blocking"
 out="$("$TMP/repo/tools/lint-hooks.sh" 2>&1)"; rc=$?
 eq "поиск: плохое найдено — код 1" 1 "$rc"

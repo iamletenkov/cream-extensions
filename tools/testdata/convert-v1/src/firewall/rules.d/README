@@ -1,8 +1,0 @@
-Каталог правил расширения firewall. Читается один набор — по бэкенду службы
-(bisquite-firewall show печатает, какой выбран):
-  nftables — файлы *.nft, по алфавиту, одна транзакция nft;
-  iptables — файлы *.rules (IPv4) и *.rules6 (IPv6), по алфавиту, одна
-             транзакция iptables-legacy-restore на семейство, только для
-             цепочки BISQUITE-INPUT.
-Файлы с другим расширением не читаются. Примеры — в
-/opt/bisquite/firewall/README.md. Применить: sudo systemctl restart bisquite-firewall

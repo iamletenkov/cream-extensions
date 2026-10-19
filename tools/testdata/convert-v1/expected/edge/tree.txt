@@ -1,6 +1,0 @@
-644 README.md
-644 edge-worker.timer
-644 extension.yaml
-755 hooks/configure
-755 hooks/install
-755 hooks/upgrade
