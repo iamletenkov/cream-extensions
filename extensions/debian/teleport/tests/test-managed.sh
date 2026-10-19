@@ -19,7 +19,19 @@ REPO="$(cd "$EXT/../../.." && pwd)"
 FIXTURES="$HERE/fixtures"
 
 TMP="$(mktemp -d)"
-trap 'rm -r -f -- "$TMP"' EXIT
+# kill_helpers <root>: the fake Teleport processes (tp-proc) registered under
+# <root>/proc — real processes of this test, recognised by their command line.
+kill_helpers(){
+    local d pid
+    for d in "$1"/proc/*/; do
+        pid="${d%/}"; pid="${pid##*/}"
+        [[ "$pid" =~ ^[0-9]+$ ]] || continue
+        grep -qa 'tp-proc' "/proc/$pid/cmdline" 2>/dev/null && kill -TERM "$pid" 2>/dev/null
+    done
+    return 0
+}
+cleanup(){ local r; for r in "$TMP"/root.*; do [[ -d "$r" ]] && kill_helpers "$r"; done; rm -r -f -- "$TMP"; }
+trap cleanup EXIT
 
 pass=0; fail=0
 ok(){ pass=$((pass + 1)); }
@@ -48,7 +60,20 @@ eq(){ local what="$1" want="$2" got="$3"; if [[ "$want" == "$got" ]]; then ok; e
 #   *.log           systemctl, cream (with "marker=yes|no": managed-pending at
 #                   the time of the call), sleep
 BASE_PATH="$PATH"
+# spawn_tp: a new fake Teleport process; waits for its pid file, echoes the pid.
+spawn_tp(){
+    local old p
+    old="$(cat "$ROOT/run/teleport.pid" 2>/dev/null)"
+    ( "$FAKE/tp-proc" "$ROOT" </dev/null >/dev/null 2>&1 & )
+    for _ in $(seq 1 200); do
+        p="$(cat "$ROOT/run/teleport.pid" 2>/dev/null)"
+        [[ -n "$p" && "$p" != "$old" && -f "$ROOT/proc/$p/cgroup" ]] && break
+        /usr/bin/sleep 0.02
+    done
+    cat "$ROOT/run/teleport.pid"
+}
 new_root(){
+    [[ -n "${ROOT:-}" && -d "${ROOT:-}/proc" ]] && kill_helpers "$ROOT"
     ROOT="$(mktemp -d "$TMP/root.XXXXXX")"
     FAKE="$ROOT/fake"
     mkdir -p "$ROOT/bin" "$FAKE" "$ROOT/opt/cream/ext" "$ROOT/etc/cream/teleport/apps.d" \
@@ -63,7 +88,25 @@ new_root(){
     echo 100 > "$FAKE/unit.MainPID"
     echo 5000 > "$FAKE/unit.ActiveEnterTimestampMonotonic"
     : > "$FAKE/foreign"
-    mkdir -p "$ROOT/run" "$ROOT/proc/100"; echo 100 > "$ROOT/run/teleport.pid"
+    mkdir -p "$ROOT/run" "$ROOT/proc"
+    # A fake Teleport process: registers itself under $ROOT/proc/<pid> with the
+    # cgroup of teleport.service, writes the pid file (as Teleport does after a
+    # successful start); on HUP logs its pid to hup.log and starts a child the
+    # same way (unless $FAKE/hup-lost) — the graceful restart. It stays alive
+    # after the HUP like a parent draining open sessions.
+    cat > "$FAKE/tp-proc" <<'TPPROC'
+#!/usr/bin/env bash
+R="$1"
+mkdir -p "$R/proc/$$"; echo "0::/system.slice/teleport.service" > "$R/proc/$$/cgroup"
+echo "$$" > "$R/run/teleport.pid.tmp.$$" && mv -f "$R/run/teleport.pid.tmp.$$" "$R/run/teleport.pid"
+hup(){ echo "$$" >> "$R/fake/hup.log"; [[ -e "$R/fake/hup-lost" ]] || ( "$0" "$R" </dev/null >/dev/null 2>&1 & ); }
+trap hup HUP
+trap 'exit 0' TERM
+while [[ -d "$R/fake" ]]; do /usr/bin/sleep 0.2 & wait $!; done
+TPPROC
+    chmod +x "$FAKE/tp-proc"
+    TP_PID="$(spawn_tp)"
+    echo "$TP_PID" > "$FAKE/unit.MainPID"
     cat > "$ROOT/bin/systemctl" <<'EOF'
 #!/usr/bin/env bash
 echo "$*" >> "$FAKE/systemctl.log"
@@ -103,8 +146,9 @@ case "${1:-}" in
             dead) bump InvocationID; bump MainPID; bump ActiveEnterTimestampMonotonic; rm -f "$FAKE/active"; exit 0 ;;
             *) bump InvocationID; bump MainPID; bump ActiveEnterTimestampMonotonic ;;
         esac
-        n=$(( $(cat "$CREAM_ROOT/run/teleport.pid" 2>/dev/null || echo 100) + 500 ))
-        mkdir -p "$CREAM_ROOT/proc/$n"; echo "$n" > "$CREAM_ROOT/run/teleport.pid"
+        old="$(cat "$CREAM_ROOT/run/teleport.pid" 2>/dev/null)"
+        ( "$FAKE/tp-proc" "$CREAM_ROOT" </dev/null >/dev/null 2>&1 & )
+        for _ in $(seq 1 100); do [[ "$(cat "$CREAM_ROOT/run/teleport.pid" 2>/dev/null)" != "$old" ]] && break; /usr/bin/sleep 0.02; done
         : > "$FAKE/states.seq"; echo active > "$FAKE/state.now"
         touch "$FAKE/active" ;;
     stop) rm -f "$FAKE/active" ;;
@@ -150,7 +194,7 @@ last="${!#}"
 if [[ " $* " == *" %u "* ]] && grep -qxF -- "$last" "$FAKE/foreign" 2>/dev/null; then echo 4242; exit 0; fi
 exec /usr/bin/stat "$@"
 EOF
-    printf '#!/bin/sh\necho sleep "$@" >> "$FAKE/sleep.log"\nexit 0\n' > "$ROOT/bin/sleep"
+    printf '#!/bin/sh\necho sleep "$@" >> "$FAKE/sleep.log"\n/usr/bin/sleep 0.02\nexit 0\n' > "$ROOT/bin/sleep"
     chmod +x "$ROOT/bin/"*
     export FAKE CREAM_ROOT="$ROOT" PATH="$ROOT/bin:$BASE_PATH"
     STAGED="$ROOT/opt/cream/ext/teleport"
@@ -589,21 +633,35 @@ skipped "путь не абсолютный" probe8
 mklabel probe9 'command=/usr/bin/../bin/probe'
 skipped "путь с .." probe9
 # The command may not exist yet: cream lays the drop-in of stvor-agent before
-# its install hook unpacks the binary (cream spec §6.5). Teleport runs the
-# command itself every period; what is checked now is that only root can put
-# a file there — the nearest existing directory and the chain above it.
+# its install hook unpacks the binary (cream spec §6.5). Kept only directly in
+# /usr/bin, /usr/sbin, /usr/local/bin with a trusted chain up to /.
 mklabel probe10 'command=/usr/bin/missing'
 tp render 2>"$TMP/err"
-check "команды ещё нет — метка в teleport.yaml" grep -q 'name: "probe10"' "$Y"
-check_not "команды ещё нет — не пропуск" grep -q "пропускаю $CMDS/probe10" "$TMP/err"
+check "команды ещё нет в /usr/bin — метка в teleport.yaml" grep -q 'name: "probe10"' "$Y"
+check_not "команды ещё нет в /usr/bin — не пропуск" grep -q "пропускаю $CMDS/probe10" "$TMP/err"
 rm -f "$CMDS/probe10"
-mkdir -p "$ROOT/opt/open"; chmod 0777 "$ROOT/opt/open"
-mklabel probe10b 'command=/opt/open/sub/missing'
-skipped "команды нет, ближайший каталог с записью всем" probe10b
-rm -r -f "$ROOT/opt/open"
-mkdir -p "$ROOT/opt/lnk-target"; ln -s lnk-target "$ROOT/opt/lnk"
-mklabel probe10c 'command=/opt/lnk/missing'
-skipped "команды нет, каталог — символическая ссылка" probe10c
+mkdir -p "$ROOT/usr/local/bin"; chmod 0755 "$ROOT/usr/local" "$ROOT/usr/local/bin"
+mklabel probe10a 'command=/usr/local/bin/missing'
+tp render 2>"$TMP/err"
+check "команды ещё нет в /usr/local/bin — метка в teleport.yaml" grep -q 'name: "probe10a"' "$Y"
+rm -f "$CMDS/probe10a"
+mkdir -p "$ROOT/opt/vendor"; chmod 0755 "$ROOT/opt" "$ROOT/opt/vendor"
+mklabel probe10b 'command=/opt/vendor/missing'
+skipped "команды нет в /opt/vendor — только /usr/bin, /usr/sbin, /usr/local/bin" probe10b
+mklabel probe10c 'command=/usr/bin/sub/missing'
+skipped "команды нет в подкаталоге /usr/bin" probe10c
+chmod 0775 "$ROOT/usr/bin"
+mklabel probe10d 'command=/usr/bin/missing'
+tp render 2>"$TMP/err"
+check "команды нет, /usr/bin с записью группе — пропуск строкой журнала" grep -q "пропускаю $CMDS/probe10d" "$TMP/err"
+check_not "команды нет, /usr/bin с записью группе — метки нет" grep -q 'name: "probe10d"' "$Y"
+chmod 0755 "$ROOT/usr/bin"; rm -f "$CMDS/probe10d"
+chmod 0777 "$ROOT"
+mklabel probe10e 'command=/usr/bin/missing'
+tp render 2>"$TMP/err"
+check_not "команды нет, корень / с записью всем — метки нет" grep -q 'name: "probe10e"' "$Y"
+chmod 0700 "$ROOT"
+rm -f "$CMDS/probe10e"
 printf '#!/bin/sh\n' > "$ROOT/usr/bin/noexec"; chmod 0644 "$ROOT/usr/bin/noexec"
 mklabel probe11 'command=/usr/bin/noexec'
 skipped "путь не исполняемый" probe11
@@ -753,56 +811,111 @@ check_not "нет соседней копии при CI=1 — красный" en
 check "CI=false — локальный пропуск" env CI=false STVOR_AGENT_DIR="$TMP/none" "$CHK" >/dev/null 2>&1
 
 echo "== reload-apps: drop-in раньше бинаря, HUP во время перезапуска =="
+hups(){ wc -l < "$FAKE/hup.log" 2>/dev/null | tr -d ' ' || echo 0; }
+pidnow(){ cat "$ROOT/run/teleport.pid"; }
+alive(){ grep -qa tp-proc "/proc/$1/cmdline" 2>/dev/null; }
 # The order of `cream install stvor-agent`: cream lays command-labels.d/stvor_agent,
 # teleport-apps.path fires reload-apps, the hook unpacks /usr/bin/stvor-agent later.
 registered
 mklabel stvor_agent 'command=/usr/bin/stvor-agent version --label'
 rm -f "$ROOT/usr/bin/stvor-agent"
+p0="$(pidnow)"
 tp reload-apps 2>"$TMP/err"; rc=$?
 eq "reload-apps — 0" 0 "$rc"
 check "метка stvor_agent в конфиге, хотя бинаря ещё нет" grep -q 'name: "stvor_agent"' "$Y"
-eq "агент перечитал конфиг: новый процесс записал pid" 101 "$(cat "$ROOT/run/teleport.pid")"
-check_not "без перезапуска, если HUP дошёл" grep -q '^restart' "$FAKE/systemctl.log"
+eq "один HUP — процессу из pid-файла" "$p0" "$(cat "$FAKE/hup.log" 2>/dev/null)"
+check "новый процесс записал pid-файл" test "$(pidnow)" != "$p0"
+check_not "без перезапуска" grep -q '^restart' "$FAKE/systemctl.log"
+check_not "без systemctl reload (HUP — встроенным kill)" grep -q '^reload' "$FAKE/systemctl.log"
 
-# HUP while the unit is still activating (a restart in progress) is lost: wait
-# for active, then HUP, and see the new process.
+echo "== reload-apps: конфиг не изменился — HUP нет =="
+: > "$FAKE/hup.log"
+tp reload-apps 2>"$TMP/err"; rc=$?
+eq "без изменений — 0" 0 "$rc"
+eq "без изменений — HUP нет" 0 "$(hups)"
+check_not "без изменений — без перезапуска" grep -q '^restart' "$FAKE/systemctl.log"
+check "без изменений — строка журнала" grep -q 'не изменился' "$TMP/err"
+
+echo "== reload-apps: открытая сессия — старый родитель жив и остаётся MainPID =="
+# After the first HUP the parent drains the open SSH sessions and stays the
+# MainPID; the child already wrote the pid file. A second change: HUP to the
+# child (it is in the cgroup of teleport.service), no restart — the session lives.
+registered
+old_parent="$(pidnow)"
+mklabel stvor_agent 'command=/usr/bin/stvor-agent version --label'
+tp reload-apps 2>/dev/null
+child="$(pidnow)"
+check "первый HUP: появился потомок" test "$child" != "$old_parent"
+check "старый родитель жив (дренирует сессии)" alive "$old_parent"
+eq "MainPID — всё ещё старый родитель" "$old_parent" "$(cat "$FAKE/unit.MainPID")"
+: > "$FAKE/hup.log"; : > "$FAKE/systemctl.log"
+mklabel probe_two 'command=/usr/bin/stvor-agent version'
+tp reload-apps 2>"$TMP/err"; rc=$?
+eq "второй reload-apps — 0" 0 "$rc"
+eq "второй HUP — потомку, не старому родителю" "$child" "$(cat "$FAKE/hup.log" 2>/dev/null)"
+check_not "второй reload-apps — без перезапуска" grep -q '^restart' "$FAKE/systemctl.log"
+check "старый родитель по-прежнему жив" alive "$old_parent"
+rm -f "$CMDS/probe_two"
+
+echo "== reload-apps: HUP во время перезапуска =="
 registered
 mklabel stvor_agent 'command=/usr/bin/stvor-agent version --label'
 printf '%s\n' activating activating active > "$FAKE/states.seq"; echo activating > "$FAKE/state.now"
 tp reload-apps 2>"$TMP/err"; rc=$?
 eq "во время перезапуска — 0" 0 "$rc"
-eq "HUP после выхода в active дошёл" 101 "$(cat "$ROOT/run/teleport.pid")"
-check "ждал active (sleep)" test -s "$FAKE/sleep.log"
+check "ждал выхода из перехода (sleep)" test -s "$FAKE/sleep.log"
+eq "HUP после выхода в active — один" 1 "$(hups)"
+check_not "без перезапуска" grep -q '^restart' "$FAKE/systemctl.log"
 
-# HUP lost anyway — no new pid file: restart with confirmation of a new run.
+echo "== reload-apps: HUP потерян — перезапуск =="
 registered
 mklabel stvor_agent 'command=/usr/bin/stvor-agent version --label'
-echo lost > "$FAKE/reload"
+: > "$FAKE/hup-lost"
 tp reload-apps 2>"$TMP/err"; rc=$?
 eq "HUP потерян — 0 после перезапуска" 0 "$rc"
 check "перезапуск вместо потерянного HUP" grep -qx 'restart teleport.service' "$FAKE/systemctl.log"
 check "строка журнала про перезапуск" grep -q 'перезапуск' "$TMP/err"
-echo fail > "$FAKE/restart"
+registered
+mklabel stvor_agent 'command=/usr/bin/stvor-agent version --label'
+: > "$FAKE/hup-lost"; echo fail > "$FAKE/restart"
 tp reload-apps 2>"$TMP/err"; rc=$?
 check_not "HUP потерян и перезапуск не удался — не 0" test "$rc" -eq 0
-
-# Not ready yet: the pid file names a process that is gone (the previous run).
-registered
-rm -r -f "$ROOT/proc/100"
+check "незавершённое применение помечено" test -e "$STATE/reload-pending"
+rm -f "$FAKE/hup-lost"; echo ok > "$FAKE/restart"; : > "$FAKE/hup.log"
 tp reload-apps 2>"$TMP/err"; rc=$?
-eq "агент не готов — 0" 0 "$rc"
-check "не готов к HUP — перезапуск" grep -qx 'restart teleport.service' "$FAKE/systemctl.log"
-check_not "HUP не готовому не шлётся" grep -q '^reload' "$FAKE/systemctl.log"
+eq "повтор после сбоя — 0" 0 "$rc"
+eq "повтор после сбоя — HUP, хотя конфиг тот же" 1 "$(hups)"
+check_not "пометка снята" test -e "$STATE/reload-pending"
 
-# After a HUP the old process drains and stays the MainPID of the unit while
-# the child already wrote the pid file: a HUP now (ExecReload signals the main
-# process) would hit the old one and be lost — seen live, debian-12 2026-10-19.
+echo "== reload-apps: живого процесса Teleport нет — перезапуск =="
 registered
-mkdir -p "$ROOT/proc/150"; echo 150 > "$ROOT/run/teleport.pid"
+kill_helpers "$ROOT"; /usr/bin/sleep 0.3
+mklabel stvor_agent 'command=/usr/bin/stvor-agent version --label'
 tp reload-apps 2>"$TMP/err"; rc=$?
-eq "старый процесс ещё дренируется — 0" 0 "$rc"
-check_not "HUP старому процессу не шлётся" grep -q '^reload' "$FAKE/systemctl.log"
-check "вместо HUP — перезапуск" grep -qx 'restart teleport.service' "$FAKE/systemctl.log"
+eq "процесса нет — 0" 0 "$rc"
+check "процесса нет — перезапуск" grep -qx 'restart teleport.service' "$FAKE/systemctl.log"
+eq "процесса нет — HUP никому" 0 "$(hups)"
+
+echo "== reload-apps: pid-файла нет — HUP главному процессу =="
+registered
+main="$(cat "$FAKE/unit.MainPID")"
+rm -f "$ROOT/run/teleport.pid"
+mklabel stvor_agent 'command=/usr/bin/stvor-agent version --label'
+tp reload-apps 2>"$TMP/err"; rc=$?
+eq "без pid-файла — 0" 0 "$rc"
+eq "HUP — MainPID" "$main" "$(cat "$FAKE/hup.log" 2>/dev/null)"
+check_not "без перезапуска" grep -q '^restart' "$FAKE/systemctl.log"
+
+echo "== reload-apps: процесс не из teleport.service — не трогается =="
+registered
+p="$(pidnow)"
+echo "0::/user.slice/user-1000.slice" > "$ROOT/proc/$p/cgroup"
+echo 0 > "$FAKE/unit.MainPID"
+mklabel stvor_agent 'command=/usr/bin/stvor-agent version --label'
+tp reload-apps 2>"$TMP/err"; rc=$?
+eq "чужой процесс — 0 после перезапуска" 0 "$rc"
+eq "чужому процессу HUP нет" 0 "$(hups)"
+check "чужой процесс — перезапуск" grep -qx 'restart teleport.service' "$FAKE/systemctl.log"
 
 # A stopped agent only gets the file.
 registered
@@ -811,7 +924,8 @@ mklabel stvor_agent 'command=/usr/bin/stvor-agent version --label'
 tp reload-apps 2>"$TMP/err"; rc=$?
 eq "агент остановлен — 0" 0 "$rc"
 check "агент остановлен — конфиг собран" grep -q 'name: "stvor_agent"' "$Y"
-check_not "агент остановлен — ни reload, ни restart" grep -qE '^(reload|restart)' "$FAKE/systemctl.log"
+check_not "агент остановлен — ни HUP, ни restart" grep -qE '^restart' "$FAKE/systemctl.log"
+eq "агент остановлен — HUP нет" 0 "$(hups)"
 
 echo "== reload-apps — одна сериализованная точка =="
 check "манифест: reload-apps — lock: exclusive" grep -qx '    lock: exclusive' <<< "$(awk '/^  reload-apps:/{f=1; next} f && /^  [a-z]/{exit} f' "$EXT/extension.yaml")"

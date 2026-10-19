@@ -3,9 +3,12 @@ name: teleport
 version: 4.0.2
 summary: Узел Teleport — бинарь, регистрация (join), рендер teleport.yaml, приложения apps.d
 cream: ">=1.0.0"
-# 4.0.2: командная метка попадает в конфиг и до появления команды (drop-in
-#        кладётся раньше бинаря); reload-apps — lock: exclusive, ждёт выхода агента
-#        из перехода, HUP с подтверждением новым pid-файлом, иначе restart.
+# 4.0.2: командная метка попадает в конфиг и до появления команды, если та в
+#        /usr/bin, /usr/sbin или /usr/local/bin (drop-in кладётся раньше бинаря);
+#        reload-apps — lock: exclusive, ждёт выхода агента из перехода, без
+#        изменения teleport.yaml HUP не шлёт, HUP новейшему процессу Teleport из
+#        cgroup юнита с подтверждением новым pid-файлом; restart — только без
+#        живого процесса или без подтверждения.
 # 4.0.1: HUP агенту — `systemctl kill --kill-who=main`, а не /bin/kill (procps нет
 #        в минимальных образах; найдено гейтом Stvor на docker debian-12).
 # 4.0.0: перенос bisquite-teleport-agent 3.x под cream (спека stvor-agent §10):
@@ -132,7 +135,10 @@ actions:
   reload-apps:
     summary: "применить apps.d и command-labels.d: render, HUP с подтверждением или restart (teleport-apps.service)"
     lock: exclusive
-    # settle 30 s + HUP 60 s + restart 30 s
+    # Budget: transition settle ≤ 30 s + wait for a live Teleport ≤ 30 s +
+    # HUP confirmation ≤ 60 s + restart confirmation ≤ 30 s (+ render) ≈ 2.5 min;
+    # 5m leaves twice that. The wait for lock/teleport is the unit's
+    # (--lock-timeout 6m, TimeoutStartSec=12min in teleport-apps.service).
     timeout: 5m
     phases: [live]
   scrub-token:

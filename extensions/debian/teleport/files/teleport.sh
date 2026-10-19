@@ -81,6 +81,9 @@ YAML="$ROOT/etc/teleport.yaml"
 # successful start (a HUP forks a child that writes its own).
 PID_FILE="$ROOT/run/teleport.pid"
 PROC="$ROOT/proc"
+# reload-apps started an apply that did not finish: the next one HUPs even
+# when teleport.yaml did not change.
+RELOAD_PENDING="$STATE/reload-pending"
 DATA="$ROOT/var/lib/teleport"
 ROLLBACK="$STATE/rollback"
 # The path the agent reads (teleport.yaml), and the same file under the root.
@@ -496,22 +499,24 @@ read_cmd_label(){
     # The command may not exist yet: cream lays a drop-in from `files` before
     # the install hook of its extension unpacks the binary (cream spec §6.5),
     # and a render then must not drop the label for good. Teleport runs the
-    # command itself every period. What matters now is who could put a file
-    # there: an existing command — a regular executable with a trusted chain;
-    # a missing one — the nearest existing directory with a trusted chain (no
-    # symlink, root's, no write for group or others), so only root creates it.
+    # command itself every period. A missing command is kept only directly in
+    # a package binary directory — /usr/bin, /usr/sbin, /usr/local/bin — whose
+    # chain up to / is trusted (root's, no write for group or others, no
+    # symlink): only root can put a file there later. Anywhere else the
+    # command must exist now: a regular executable with a trusted chain.
     if [[ -e "$ROOT$path" || -L "$ROOT$path" ]]; then
         if [[ -L "$ROOT$path" || ! -f "$ROOT$path" || ! -x "$ROOT$path" ]]; then
             warn "пропускаю $f: $path — не исполняемый файл"; return 1
         fi
         why="$(trusted_path "$ROOT$path" "$path")" || { warn "пропускаю $f: $why"; return 1; }
     else
-        local near="${path%/*}"
-        while [[ -n "$near" && ! -e "$ROOT$near" && ! -L "$ROOT$near" ]]; do near="${near%/*}"; done
-        if [[ -n "$near" ]]; then
-            [[ -d "$ROOT$near" && ! -L "$ROOT$near" ]] || { warn "пропускаю $f: $near — не каталог"; return 1; }
-            why="$(trusted_path "$ROOT$near" "$near")" || { warn "пропускаю $f: $why"; return 1; }
-        fi
+        case "${path%/*}" in
+            /usr/bin|/usr/sbin|/usr/local/bin) ;;
+            *) warn "пропускаю $f: $path — нет файла (без файла допустимы только /usr/bin, /usr/sbin, /usr/local/bin)"; return 1 ;;
+        esac
+        [[ -d "$ROOT${path%/*}" && ! -L "$ROOT${path%/*}" ]] \
+            || { warn "пропускаю $f: ${path%/*} — не каталог"; return 1; }
+        why="$(trusted_path "$ROOT${path%/*}" "${path%/*}")" || { warn "пропускаю $f: $why"; return 1; }
     fi
     if (( ${#words[@]} - 1 > CMD_ARGS_MAX )); then
         warn "пропускаю $f: больше $CMD_ARGS_MAX аргументов"; return 1
@@ -1569,19 +1574,23 @@ cmd_status(){
     fi
 }
 
-# reload-apps (teleport-apps.service, `cream run` from the stvor-agent wrapper):
-# the one point where a change of apps.d or command-labels.d reaches the agent.
-# lock: exclusive — serialized with join, set-managed, apply and itself; nobody
-# holding the lock waits for teleport-apps.service, so §7.3 does not bite.
-#   1. wait while teleport.service is activating, reloading or deactivating —
-#      a HUP then is lost (a restart in progress already read an older file);
-#   2. render; a stopped agent only gets the file for its next start;
-#   3. HUP (sessions survive) only to a ready agent — its pid file names a live
-#      process that is the MainPID (Teleport writes it after a successful
-#      start); confirmed by a new pid file: the forked child read the new
-#      config and started;
-#   4. not ready, HUP refused or not confirmed in RELOAD_TIMEOUT — restart
-#      with confirmation of a new active run (restart_agent).
+# reload-apps (teleport-apps.service): the one point where a change of apps.d
+# or command-labels.d reaches the agent. lock: exclusive — serialized with
+# join, set-managed, apply and itself; nobody holding the lock waits for
+# teleport-apps.service, so §7.3 does not bite.
+#   1. wait while teleport.service is activating, reloading or deactivating
+#      (a restart in progress already read an older file);
+#   2. render; a stopped agent only gets the file for its next start; an
+#      unchanged teleport.yaml needs no HUP (unless a previous apply did not
+#      finish — the marker reload-pending);
+#   3. HUP (sessions survive) with the bash builtin kill to the live process of
+#      the pid file — the newest Teleport: after a HUP the parent drains open
+#      sessions and stays the MainPID for as long as they last, the child that
+#      wrote the pid file is the one to signal. No pid file — the MainPID. Only
+#      a process in the cgroup of teleport.service is signalled. Confirmed by a
+#      new pid file: the forked child read the new config and started;
+#   4. restart (open sessions drop) only when no live Teleport process is in
+#      the cgroup at all, or the HUP is not confirmed in RELOAD_TIMEOUT.
 unit_state(){ systemctl show -p ActiveState --value teleport.service 2>/dev/null || true; }
 settle_agent(){
     local waited=0
@@ -1594,61 +1603,75 @@ settle_agent(){
         sleep 1; waited=$((waited + 1))
     done
 }
-# agent_pid: the pid of the pid file when it names a live process.
-agent_pid(){
+# teleport_proc <pid>: 0 — a live process in the cgroup of teleport.service.
+teleport_proc(){
+    [[ "$1" =~ ^[1-9][0-9]{0,9}$ && -d "$PROC/$1" ]] || return 1
+    grep -qE '/teleport\.service$' "$PROC/$1/cgroup" 2>/dev/null
+}
+# pidfile_pid: the pid of the pid file when it is a live Teleport process.
+pidfile_pid(){
     local pid=""
     [[ -f "$PID_FILE" && ! -L "$PID_FILE" ]] && pid="$(head -c 32 -- "$PID_FILE" 2>/dev/null | tr -d '[:space:]')"
-    [[ "$pid" =~ ^[1-9][0-9]{0,9}$ && -d "$PROC/$pid" ]] || return 1
+    teleport_proc "$pid" || return 1
     printf '%s\n' "$pid"
 }
-# agent_ready: the pid file names a live process and it is the MainPID of the
-# unit — ExecReload signals the main process. After a HUP the old process
-# drains and stays the MainPID while the child already wrote the pid file; a
-# HUP then hits the old one and is lost (seen live, debian-12, 2026-10-19).
-agent_ready(){
-    local pid main
-    pid="$(agent_pid)" || return 1
+# hup_target: the process a HUP must reach — the pid file, else the MainPID.
+hup_target(){
+    local main
+    pidfile_pid && return 0
     main="$(unit_prop MainPID)"
-    [[ "$main" == "$pid" ]] || return 1
-    printf '%s\n' "$pid"
+    teleport_proc "$main" || return 1
+    printf '%s\n' "$main"
 }
 reload_agent(){
-    local before now waited=0
-    until before="$(agent_ready)"; do
+    local target before now waited=0
+    until target="$(hup_target)"; do
         if (( waited >= RESTART_TIMEOUT )); then
-            log "агент не готов к HUP за ${RESTART_TIMEOUT} с (pid-файл не называет главный процесс) — перезапуск"
+            log "живого процесса Teleport в teleport.service нет — перезапуск"
             restart_agent; return
         fi
         sleep 1; waited=$((waited + 1))
     done
-    waited=0
-    if ! systemctl reload teleport.service >/dev/null 2>&1; then
-        log "teleport.service не принял reload — перезапуск"
+    before="$(pidfile_pid || true)"
+    # The builtin kill: procps is not in minimal images. target is digits only.
+    if ! kill -HUP "$target" 2>/dev/null; then
+        log "HUP процессу $target не доставлен — перезапуск"
         restart_agent; return
     fi
+    waited=0
     while :; do
-        if now="$(agent_pid)" && [[ "$now" != "$before" ]] && agent_active; then
-            log "агент перечитал конфиг (новый процесс $now)"
+        if now="$(pidfile_pid)" && [[ "$now" != "$before" && "$now" != "$target" ]] && agent_active; then
+            log "агент перечитал конфиг (HUP процессу $target, новый процесс $now)"
             return 0
         fi
         (( waited < RELOAD_TIMEOUT )) || break
         sleep 1; waited=$((waited + 1))
     done
-    log "после HUP нового процесса за ${RELOAD_TIMEOUT} с нет — перезапуск"
+    log "после HUP процессу $target нового процесса за ${RELOAD_TIMEOUT} с нет — перезапуск"
     restart_agent
 }
+yaml_sum(){ [[ -f "$YAML" ]] && sha256sum < "$YAML" | cut -c1-64; }
 cmd_reload_apps(){
+    local before
     need_root
     load_conf
     [[ -n "${C[TELEPORT_PROXY]}" ]] || return 0
     if ! has_systemd; then cmd_render; return 0; fi
     settle_agent || log "teleport.service не вышел из перехода за ${RESTART_TIMEOUT} с"
+    before="$(yaml_sum || true)"
     cmd_render
     if ! agent_active; then
+        rm -f -- "$RELOAD_PENDING"
         log "агент не запущен — конфиг применится при старте"
         return 0
     fi
+    if [[ "$(yaml_sum || true)" == "$before" && ! -e "$RELOAD_PENDING" ]]; then
+        log "teleport.yaml не изменился — HUP не нужен"
+        return 0
+    fi
+    : > "$RELOAD_PENDING" || die "не записано $RELOAD_PENDING"
     reload_agent || die "teleport.service не перечитал конфиг: ни HUP, ни перезапуск не подтвердились"
+    rm -f -- "$RELOAD_PENDING"
 }
 
 # ---------------------------------------------------------------------------
