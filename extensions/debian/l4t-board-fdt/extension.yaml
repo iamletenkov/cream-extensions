@@ -1,15 +1,46 @@
+# l4t-board-fdt — chooses the device tree of one Jetson board: the `FDT` line of
+# the `kvm` entry in /boot/extlinux/extlinux.conf. The kernel with KVM and all
+# patched trees (<name>-kvm.dtb) come from l4t-kernel-kvm in the base image;
+# this layer picks one of them in seconds.
+#
+# install — the only hook. Codes: 10 — the line written (applies on reboot);
+#           0 — already this board; 20 — no extlinux.conf (not L4T, ruling R11).
+#           extlinux.conf.cream-orig — the file before the first change made by
+#           cream, taken once and never overwritten (spec cream §6.3).
+# No configure: the tree is part of the image, not a setting of the device.
+# No remove: going back to the vendor tree on a board without a monitor is a
+# manual job (README, «Откат»); `cream remove --forget` drops the record (R9).
+#
+# 2.0.0: cream/v1; backup .cream-orig once instead of .before-board-fdt on
+#        every run; L4T_BOARD is an install parameter; code 10.
+schema: cream/v1
 name: l4t-board-fdt
-version: 1.1.0
-layout: 2
-family: deb
-# Только arm64: L4T существует только под Tegra, а Tegra бывает только arm64.
-arch: [arm64]
-# Только `build`, и по той же причине, что у l4t-kernel-kvm: строка FDT —
-# часть образа, а не настройка устройства. Выбранная на первой загрузке,
-# она давала бы платам разные extlinux.conf при одном теге образа.
-phase: [build]
+version: 2.0.0
+summary: Дерево устройств платы Jetson — строка FDT в записи kvm файла extlinux.conf
+cream: ">=1.0.0"
+platform:
+  family: deb
+  # L4T exists only on Tegra, and Tegra is only arm64.
+  arch: [arm64]
+  commands: [python3]
+targets:
+  build: exec
+  live: confirm
+  live_note: >-
+    меняет дерево устройств, с которым грузится ядро kvm (строка FDT в
+    /boot/extlinux/extlinux.conf); применится после перезагрузки. Неверное
+    дерево модуля даёт плату, которая не находит корень, а плата без монитора
+    чинится только последовательной консолью или прошивкой QSPI
 provides: [l4t-board-selected]
-# То, что объявляет l4t-kernel-kvm. Резолвер сегодня requires не сверяет,
-# но объявление честное: без установленных `-kvm.dtb` выбирать нечего.
+# Declared by l4t-kernel-kvm: without the -kvm trees there is nothing to choose.
 requires: [l4t-custom-kernel]
-conflicts: []
+hooks:
+  install: {timeout: 5m}
+config:
+  keys:
+    L4T_BOARD:
+      type: "re:^[a-z0-9][a-z0-9._-]{0,127}$"
+      default: ""
+      empty: true
+      scope: install
+      description: "имя дерева устройств платы без суффикса -kvm (tegra210-p3448-0000-p3449-0000-a02); обязателен"

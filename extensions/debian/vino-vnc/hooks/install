@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# cream hook `install` of vino-vnc: vino — the VNC server of GNOME, it lives
+# INSIDE the user session. The settings and the system-wide autostart are
+# configure's (files/vino-vnc.sh, before the display manager): the autostart
+# exists only with a password or the explicit VINO_ALLOW_NO_PASSWORD=1. Paths of the machine go under $CREAM_ROOT (hooktest).
+#
+# WHY AN AUTOSTART FILE AND NOT `systemctl --user enable`. The package's user
+# unit vino-server.service has no [Install] section (vino 3.22.0-5ubuntu2.2
+# focal and 3.22.0-6ubuntu5 noble, 2026-09-03): it is D-Bus activated, not
+# autostarted. The package's .desktop lies in /usr/share/applications with
+# NoDisplay=true, not in /etc/xdg/autostart. So a copy goes to
+# /etc/xdg/autostart (system-wide, root's /etc — nothing in a home directory)
+# with X-GNOME-Autostart-enabled=true (written by configure). A copy, not our own file: the binary path
+# differs between releases (focal /usr/lib/vino, noble /usr/libexec).
+#
+# dconf-cli is for `dconf compile` of configure; libglib2.0-bin and dbus stay
+# explicit for the session (gsettings, the bus vino activates on).
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] vino-vnc: $*"; }
+log_warn(){ >&2 echo "[WARN] vino-vnc: $*"; }
+log_error(){ >&2 echo "[ERROR] vino-vnc: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}"
+SRC="$R/usr/share/applications/vino-server.desktop"
+
+apt_retry(){
+    local i
+    for i in 1 2 3; do
+        "$@" && return 0
+        log_warn "попытка $i: $* — не удалась, повтор через 10 с"
+        sleep 10
+    done
+    return 1
+}
+pkg_installed(){ dpkg-query -W -f='${db:Status-Status}\n' "$1" 2>/dev/null | grep -qx installed; }
+
+if [[ ! -s "$STATE/installed" ]] && ! pkg_installed vino; then
+    install -d -m 0755 "$STATE"
+    echo vino > "$STATE/installed"
+fi
+
+export DEBIAN_FRONTEND=noninteractive
+apt_retry apt-get -q update || { log_error "apt-get update не прошёл"; exit 1; }
+apt_retry apt-get -q -y install vino dconf-cli libglib2.0-bin dbus \
+    || { log_error "vino, dconf-cli, libglib2.0-bin, dbus не установились"; exit 1; }
+
+[[ -f "$SRC" ]] || { log_error "нет ${SRC#"$R"} — пакет vino без файла запуска"; exit 1; }
+log_info "готово: порт ${VINO_PORT:-5900}, слушает ${VINO_LISTEN:-localhost}; настройки применит configure до менеджера входа"

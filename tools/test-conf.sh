@@ -438,10 +438,22 @@ stage(){
     ln -sfn "$REPO/lib" "$ROOT/opt/bisquite/$name/lib"
     STAGED="$ROOT/opt/bisquite/$name"
 }
+# layout2 <name>: the extension is still layout 2. A cream/v1 one carries no
+# knobs and no lib/bisquite-conf scripts any more: its section is skipped, out
+# loud (plan 2026-10-19 — Task 28 removes these sections with lib/).
+layout2(){
+    local src
+    src="$(find "$REPO/extensions" -mindepth 2 -maxdepth 2 -type d -name "$1" | head -n 1)"
+    if grep -qE '^schema:[[:space:]]*cream/v1[[:space:]]*$' "$src/extension.yaml" 2>/dev/null; then
+        echo "  пропуск: $1 на cream/v1"
+        return 1
+    fi
+}
 # The --migrate-yaml map exactly as install.sh passes it.
 yaml_map(){ grep -o -- '--migrate-yaml [^ ]*' "$STAGED/install.sh" | head -n 1 | cut -d' ' -f2; }
 
 echo "== домен x11vnc: пароль через хук =="
+if layout2 x11vnc; then
 new_root; stage x11vnc; fake_systemctl
 cat > "$ROOT/bin/x11vnc" <<'EOF'
 #!/usr/bin/env bash
@@ -479,8 +491,10 @@ eq "явный пустой пароль — X11VNC_PASSFILE пуст" "" "$(lib
 check "повторная установка без параметров" \
     bash -c 'set -euo pipefail; source "$1/lib/bisquite-conf"; conf_init x11vnc "$1/knobs" --env' _ "$STAGED"
 eq "повторная установка не стёрла порт, заданный set" 5901 "$(lib conf_get x11vnc X11VNC_PORT)"
+fi
 
 echo "== домен vino: без source, пароль через хук =="
+if layout2 vino-vnc; then
 new_root; stage vino-vnc
 check "conf_init vino с паролем" env VINO_PASSWORD=verylongpass VINO_PORT=5901 \
     bash -c 'set -euo pipefail; source "$1/lib/bisquite-conf"; conf_init vino "$1/knobs" --env 2>/dev/null' _ "$STAGED"
@@ -489,8 +503,10 @@ eq "каталог пароля 0700" 700 "$(stat -c %a "$ROOT/etc/vino")"
 eq "VINO_PASSWORD_FILE" /etc/vino/vnc-password.b64 "$(lib conf_get vino VINO_PASSWORD_FILE)"
 check_not "VINO_PORT=80 — вне диапазона vino" lib conf_validate vino VINO_PORT=80 2>/dev/null
 check_not "configure.sh vino не исполняет файл настроек" grep -qE '^[^#]*(source|\.) +"?\$ENV_FILE' "$STAGED/configure.sh"
+fi
 
 echo "== домен selkies: открытое пространство и объявление для Teleport =="
+if layout2 selkies; then
 new_root; stage selkies
 check "conf_init selkies с SELKIES_*" env SELKIES_PORT=8090 SELKIES_VIDEO_CRF=25 BISQUITE_SELKIES_ALLOW_NO_AUTH=true \
     bash -c 'set -euo pipefail; source "$1/lib/bisquite-conf"; conf_init selkies "$1/knobs" --env' _ "$STAGED"
@@ -502,8 +518,10 @@ check "teleport-app.sh" bash "$STAGED/teleport-app.sh" 2>/dev/null
 eq "объявление с портом из настроек" "URI=http://127.0.0.1:8090" "$(grep URI "$ROOT/etc/cream/teleport/apps.d/selkies.conf")"
 eq "объявление selkies несёт иконку" "ICON=desktop" "$(grep ICON "$ROOT/etc/cream/teleport/apps.d/selkies.conf")"
 check_not "старый путь /etc/bisquite/teleport/apps.d не пишется" test -e "$ROOT/etc/bisquite/teleport/apps.d/selkies.conf"
+fi
 
 echo "== домен desktop: схема из lib, хук находит CLI того же lib =="
+if layout2 gnome; then
 new_root; stage gnome
 check "conf_init desktop через каталог расширения" env DESKTOP_AUTOLOGIN=1 \
     bash -c 'set -euo pipefail; source "$1/lib/bisquite-conf"; conf_init desktop "$1/lib/knobs/desktop" --env' _ "$STAGED"
@@ -512,8 +530,10 @@ eq "хук desktop.apply ведёт в lib/ с bisquite-desktop" "$REPO/lib" \
 check "bisquite-desktop status читает через библиотеку" grep -qx 'DESKTOP_AUTOLOGIN=1' <<< "$(bash "$REPO/lib/bisquite-desktop" status 2>/dev/null)"
 check_not "DESKTOP_AUTOLOGIN=yes — отказ" lib conf_validate desktop DESKTOP_AUTOLOGIN=yes 2>/dev/null
 check_not "DESKTOP_AUTOLOGIN_USER с пробелом — отказ" lib conf_validate desktop "DESKTOP_AUTOLOGIN_USER=a b" 2>/dev/null
+fi
 
 echo "== домен sensing-camera: файл не исполняется =="
+if layout2 sensing-gmsl2-camera; then
 new_root; stage sensing-gmsl2-camera
 check "conf_init sensing-camera" env SENSING_BOOST_CLOCK=0 \
     bash -c 'set -euo pipefail; source "$1/lib/bisquite-conf"; conf_init sensing-camera "$1/knobs" --env' _ "$STAGED"
@@ -523,8 +543,10 @@ printf 'SENSING_BOOST_CLOCK=$(touch %s/pwned)\n' "$ROOT" >> "$(cfg sensing-camer
 bash "$ROOT/ctl" --boost-clock >/dev/null 2>&1; rc=$?
 check "ctl: неверное значение — отказ" test "$rc" -ne 0
 check_not "ctl: \$(…) не исполнен" test -e "$ROOT/pwned"
+fi
 
 echo "== домен code-server: YAML -> KEY=VALUE =="
+if layout2 code-server; then
 new_root; stage code-server
 mkdir -p "$ROOT/etc/bisquite/code-server"
 printf 'USER:\nPASSWORD: none\nPORT: 9002\n# comment\nBIND: 127.0.0.1\nVERSION: 4.135.0\n' > "$ROOT/etc/bisquite/code-server/config.yaml"
@@ -541,8 +563,10 @@ check "teleport-app.sh code-server" bash "$STAGED/teleport-app.sh" 2>/dev/null
 eq "объявление code-server с портом" "URI=https://127.0.0.1:9003" "$(grep URI "$ROOT/etc/cream/teleport/apps.d/code-server.conf")"
 eq "объявление code-server несёт иконку" "ICON=laptop" "$(grep ICON "$ROOT/etc/cream/teleport/apps.d/code-server.conf")"
 check_not "старый путь apps.d code-server не пишется" test -e "$ROOT/etc/bisquite/teleport/apps.d/code-server.conf"
+fi
 
 echo "== домен kiosk: YAML -> KEY=VALUE =="
+if layout2 kiosk; then
 new_root; stage kiosk
 mkdir -p "$ROOT/etc/bisquite/kiosk"
 cat > "$ROOT/etc/bisquite/kiosk/config.yaml" <<'EOF'
@@ -557,8 +581,10 @@ check "миграция config.yaml kiosk" \
     bash -c 'set -euo pipefail; source "$1/lib/bisquite-conf"; conf_init kiosk "$1/knobs" --env --migrate-yaml "$2" 2>/dev/null' _ "$STAGED" "$map"
 eq "URL перенесён" http://192.168.202.78 "$(lib conf_get kiosk KIOSK_URL)"
 eq "флаги с пробелом перенесены" "--disable-pinch --overscroll-history-navigation=0" "$(lib conf_get kiosk KIOSK_CHROMIUM_FLAGS)"
+fi
 
 echo "== домен chromium-kiosk: YAML пакета из ручек =="
+if layout2 chromium-kiosk; then
 new_root; stage chromium-kiosk
 mkdir -p "$ROOT/etc/bisquite/chromium-kiosk"
 cat > "$ROOT/etc/bisquite/chromium-kiosk/config.yaml" <<'EOF'
@@ -607,6 +633,7 @@ print(c["HOME_PAGE"], c["DISPLAY_ROTATION"], ",".join(c["ALLOWED_FEATURES"]),
 EOF
 )"
     eq "config.yml разбирается YAML и несёт ручки" "http://kiosk.local/it's|right|geolocation,mouse-lock|home,reload,back,forward|https://kiosk.local/*,*.example.org|True" "$parsed"
+fi
 fi
 
 echo

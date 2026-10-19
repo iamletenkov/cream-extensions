@@ -25,14 +25,14 @@
 - [ ] Task 15: `code-server`
 - [ ] Task 16: `kiosk` + `chromium-kiosk`
 - [ ] Task 17: `selkies`
-- [ ] Task 18: `x11vnc` + `vino-vnc`
+- [x] Task 18: `x11vnc` + `vino-vnc`
 - [ ] Task 19: `rustdesk` + `jetson-stats`
 - [x] Task 20: `nvidia` + `nvidia-container-toolkit`
 - [x] Task 21: `nvidia-jetpack`
 - [x] Task 22: `cuda-toolkit` + `tensorrt` + `l4t-gstreamer`
 - [x] Task 23: `l4t-opencv` + `l4t-pytorch` + `l4t-tensorflow`
-- [ ] Task 24: `l4t-board-fdt` + `l4t-boot-verify`
-- [ ] Task 25: `l4t-kernel-kvm`
+- [x] Task 24: `l4t-board-fdt` + `l4t-boot-verify`
+- [x] Task 25: `l4t-kernel-kvm`
 - [ ] Task 26: `sensing-gmsl2-camera` + `can-usb`
 - [ ] Task 27: `pixelflux-tegra` + `pixelflux-v4l2m2m`
 - [ ] Task 28: уборка переходного — `lib/`, layout 2 в инструментах, `extensions/openwrt/`, документация
@@ -362,6 +362,16 @@ depends `l4t` (opencv, pytorch), requires `cuda`; `check-system-python.py`, `con
 **Шаги.** Сначала тест: `test-snapshot.sh` собирает снимок из всего корня; `check-names.sh` — по всему репозиторию
 (исключения — CHANGELOG и история в docs/research).
 **Приёмка:** `make ci`; `grep -rn 'layout: 2\|/opt/bisquite\|/etc/bisquite' extensions tools lib` пуст.
+
+**Найдено исполнителями (для Task 28):** `docs/extensions.md:947` — старое имя `bisquite-l4t-boot-verify.service`
+(Task 24 переименовал юнит в `l4t-boot-verify.service`).
+
+**Бэклог после 5.0.0 (найдено в волнах, вне плана):**
+- `l4t-kernel-kvm`: `public_sources.tbz2` NVIDIA скачивается без sha256 — нужны суммы по версиям L4T.
+- `l4t-pytorch`, `l4t-tensorflow`: колёса PyPI — только по `constraints.txt`, без `--require-hashes`.
+- `nvidia-jetpack`: шаг 04 принимает пароль в argv (`-p`) — перевести на файл/stdin; шаг 09 — `chown -R` каталога
+  результатов на оператора, при повторе root пишет в каталог оператора (повышения нет, но стоит писать от оператора).
+- `network-manager`: живой прогон на Ubuntu не идёт в контейнере (polkit/hostnamed без `SYS_ADMIN`) — только debian-12.
 
 ### Task 29: Финальная интеграция + `make ci`, выпуск каталога 5.0.0
 1. Сквозной `make ci` на `main` после всех слияний («зелено у агента» ≠ «зелено в ветке»).

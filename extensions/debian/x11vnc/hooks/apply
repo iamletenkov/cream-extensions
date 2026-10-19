@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# cream hook `apply` of x11vnc (`cream set x11vnc …`): the same as configure
+# without the wait for the user — the password file is rebuilt from the secret
+# and the instance restarted (--no-block: cream set may run inside a boot unit).
+set -euo pipefail
+exec "${CREAM_EXT_DIR:?run by cream}/files/x11vnc.sh" configure

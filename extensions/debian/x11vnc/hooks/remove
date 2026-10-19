@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# cream hook `remove` of x11vnc: the instances off, the password file and the
+# no-password marker gone; the package x11vnc goes only when this install put it
+# on ($CREAM_STATE_DIR/installed). The unit file is removed by cream (`files`).
+set -euo pipefail
+"${CREAM_EXT_DIR:?run by cream}/files/x11vnc.sh" remove
+STATE="${CREAM_STATE_DIR:?run by cream}/installed"
+if [[ -s "$STATE" ]] && grep -qx x11vnc "$STATE"; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get -q -y remove x11vnc || >&2 echo "[WARN] x11vnc: пакет x11vnc не снят"
+fi
+rm -f -- "$STATE"
