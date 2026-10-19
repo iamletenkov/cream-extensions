@@ -1,0 +1,259 @@
+#!/usr/bin/env bash
+# cream hook `install` of docker: Docker CE from Docker's own apt repository.
+#
+# ONE PATH, NOT TWO. This extension used to have a twin (`docker-ce`) on the
+# grounds that get.docker.com was needed for old releases. Measured 2026-09-03,
+# that was wrong twice over:
+#
+#   * the convenience script installs from THIS repository — it only writes a
+#     one-line .list instead of deb822 (getdocker.sh:596,606). There was never
+#     a second source of packages;
+#   * on bionic the script is broken. version_gte() returns true whenever
+#     VERSION is empty (getdocker.sh:230-234), so `docker-model-plugin` is
+#     added unconditionally — and that package does not exist in the bionic
+#     repository for either amd64 or arm64. With `set -e` the build dies.
+#
+# NO BRANCHING ON DISTRIBUTION. Also measured, also contrary to what the
+# earlier scripts assumed:
+#
+#   * deb822 with `Signed-By: <path>` works from apt 1.6.17 (bionic). Only an
+#     *embedded* key needs apt >= 2.4, and nothing here needs one;
+#   * 64-bit Raspberry Pi OS reports ID=debian, so the linux/debian repository
+#     serves it. The raspbian repository is armhf-only and has no trixie;
+#   * `${UBUNTU_CODENAME:-$VERSION_CODENAME}` covers both families in one
+#     expression — that is what Docker's own instructions use;
+#   * the five package names are identical on every target, bionic included.
+#
+# The real branches are HARDWARE traits, and they are orthogonal to the
+# distribution: a Pi 4 running Ubuntu reports ID=ubuntu, and so does a Jetson
+# running JetPack 6. Branching on ID would miss both.
+#
+# The packages this hook installed (not there before) are added to
+# $CREAM_STATE_DIR/packages: `remove` takes away only those. The iptables-raw
+# check and its drop-in for docker.service are `files` of the manifest — cream
+# lays them out before this hook; configure (group docker, Pi cmdline.txt,
+# Jetson restart) is cream-configure@docker, not a unit of this extension.
+set -euo pipefail
+
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+log_info(){ >&2 echo -e "${GREEN}[INFO]${NC} docker: $*"; }
+log_warn(){ >&2 echo -e "${YELLOW}[WARN]${NC} docker: $*"; }
+log_error(){ >&2 echo -e "${RED}[ERROR]${NC} docker: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}/packages"
+
+apt_retry(){
+  local max=5 n=1 d
+  while true; do
+    if "$@"; then return 0; fi
+    if (( n >= max )); then return 1; fi
+    d=$(( n * 2 )); log_warn "apt не отработал, повтор через ${d}s ($n/$max)"
+    sleep "$d"; n=$(( n + 1 ))
+  done
+}
+
+export DEBIAN_FRONTEND=noninteractive
+APT_OPTS=(-q -y -o Dpkg::Options::=--force-confnew)
+
+# is_installed <pkg>: the package is installed (dpkg database).
+is_installed() {
+    [[ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null || true)" == installed ]]
+}
+
+# --- какая это система ------------------------------------------------------
+# /etc/os-release is read as data, not sourced.
+osr() {
+    sed -n "s/^$1=//p" "$R/etc/os-release" 2>/dev/null | head -n1 | sed 's/^"\(.*\)"$/\1/'
+}
+DISTRO_ID="$(osr ID)"
+SUITE="$(osr UBUNTU_CODENAME)"
+SUITE="${SUITE:-$(osr VERSION_CODENAME)}"
+
+case "$DISTRO_ID" in
+    debian|ubuntu) REPO_OS="$DISTRO_ID" ;;
+    *)
+        log_error "расширение docker рассчитано на debian и ubuntu, а здесь ID=$DISTRO_ID"
+        exit 1
+        ;;
+esac
+
+[[ "$SUITE" =~ ^[a-z][a-z0-9-]*$ ]] || { log_error "в /etc/os-release нет VERSION_CODENAME"; exit 1; }
+ARCH="$(dpkg --print-architecture)"
+log_info "система $DISTRO_ID $SUITE ($ARCH) -> репозиторий linux/$REPO_OS"
+
+# --- признаки железа, а не системы ------------------------------------------
+# Raspberry Pi is recognised ONLY for the journal line: the one Pi fix —
+# cgroup_enable=memory in cmdline.txt — lives in hooks/configure, because
+# /boot/firmware is empty inside virt-customize. IS_L4T is live: the NVIDIA
+# repository below depends on it.
+if [[ -f "$R/boot/firmware/cmdline.txt" || -f "$R/etc/rpi-issue" ]]; then
+    log_info "опознан Raspberry Pi"
+fi
+IS_L4T=0
+[[ -f "$R/etc/nv_tegra_release" ]] && IS_L4T=1
+(( IS_L4T )) && log_info "опознан L4T (Jetson)"
+
+# --- убрать конфликтующее ----------------------------------------------------
+# docker.io conflicts with docker-ce directly; docker-cli with docker-ce-cli;
+# docker-compose-v2 is on the list per Docker's own documentation for Ubuntu.
+# A failed removal stays a warning: the package may be half-installed. On a
+# live machine this is what targets.live_note warns about (confirm).
+for pkg in docker.io docker-cli docker-compose docker-compose-v2 docker-doc \
+           docker-buildx podman-docker containerd runc; do
+    if dpkg -l "$pkg" 2>/dev/null | grep -q '^ii'; then
+        log_info "убираю конфликтующий пакет $pkg"
+        apt_retry apt-get "${APT_OPTS[@]}" remove "$pkg" || log_warn "не удалось убрать $pkg"
+    fi
+done
+
+# --- ключ и репозиторий ------------------------------------------------------
+apt_retry apt-get "${APT_OPTS[@]}" update
+apt_retry apt-get "${APT_OPTS[@]}" install ca-certificates curl
+
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+install -m 0755 -d "$R/etc/apt/keyrings" "$R/etc/apt/sources.list.d"
+curl -fsSL --retry 5 --retry-delay 2 "https://download.docker.com/linux/${REPO_OS}/gpg" -o "$tmp"
+install -m 0644 "$tmp" "$R/etc/apt/keyrings/docker.asc"
+
+# The Architectures line is required: Raspberry Pi OS is built with a second
+# architecture added (dpkg --add-architecture in pi-gen), and without it apt
+# would also fetch an index the repository may not have.
+cat > "$R/etc/apt/sources.list.d/docker.sources" <<SOURCES
+Types: deb
+URIs: https://download.docker.com/linux/${REPO_OS}
+Suites: ${SUITE}
+Components: stable
+Architectures: ${ARCH}
+Signed-By: /etc/apt/keyrings/docker.asc
+SOURCES
+log_info "репозиторий прописан"
+
+apt_retry apt-get "${APT_OPTS[@]}" update
+
+# --- гейт: есть ли пакет для этой цели ---------------------------------------
+# Ask the repository itself instead of a table of supported suites: a table
+# would go stale silently. It also catches a typo in the codename and an
+# apt-get update that silently did nothing.
+CANDIDATE="$(apt-cache policy docker-ce 2>/dev/null | awk '/Candidate:/{print $2}')"
+if [[ -z "$CANDIDATE" || "$CANDIDATE" == "(none)" ]]; then
+    log_error "в репозитории Docker нет пакетов для ${REPO_OS}/${SUITE} (${ARCH})"
+    log_error "отката на дистрибутивный docker.io НЕТ намеренно: он тихо подменил"
+    log_error "бы версию движка, и на флот уехали бы разные образы из одного VMFILE"
+    log_error "нужен именно docker.io — это отдельное расширение под своим именем"
+    exit 1
+fi
+log_info "кандидат docker-ce: $CANDIDATE"
+
+# Having a package and having a fresh one are different questions: the bionic
+# repository exists but froze in June 2023 (docker-ce 24.0.2 vs 29.7.2 on
+# noble), and that has to be said out loud.
+case "$SUITE" in
+    trusty|xenial|bionic|focal|stretch|buster)
+        log_warn "сюита ${SUITE} в репозитории Docker заморожена — ставится ${CANDIDATE}"
+        log_warn "это потолок цели, а не выбор способа установки"
+        ;;
+esac
+
+# --- пакеты ------------------------------------------------------------------
+# Exactly five and nothing more. docker-model-plugin is not asked for on
+# purpose: old suites lack it, and that is where get.docker.com breaks.
+packages=(docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin)
+(( IS_L4T )) && packages+=(nvidia-container-toolkit)
+fresh=()
+for p in "${packages[@]}"; do
+    is_installed "$p" || fresh+=("$p")
+done
+
+# On a live machine postinst starts docker.service right away: reload first so
+# that the drop-in cream has just laid out (files) is already in effect. In
+# build there is no systemd, and the daemon does not start there anyway.
+if [[ "${CREAM_PHASE:-}" == live ]]; then
+    systemctl daemon-reload || log_warn "systemctl daemon-reload не прошёл"
+fi
+
+apt_retry apt-get "${APT_OPTS[@]}" install \
+    docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+log_info "Docker CE установлен"
+
+# The packaging enables the units itself (measured in debian:13: postinst
+# creates the symlinks even with policy-rc.d in place). The line stays as a
+# safety net for a packaging that does not, and so is not a failure.
+systemctl enable docker.service containerd.service 2>/dev/null || \
+    log_info "юниты уже включены упаковкой"
+
+# --- L4T: среда выполнения NVIDIA --------------------------------------------
+# From the Jetson repository, not the generic nvidia.github.io: the
+# nvidia-container-csv-* packages are published ONLY there, and without them a
+# container does not see the host's CUDA/cuDNN/TensorRT. nvidia-docker2
+# declares `Depends: docker-ce | docker-ee | docker.io`, so Docker CE above
+# satisfies it.
+if (( IS_L4T )); then
+    L4T_REL="$(awk 'NR==1{gsub(/[^0-9]/,"",$2); print $2}' "$R/etc/nv_tegra_release" 2>/dev/null || true)"
+    L4T_REV="$(awk -F'REVISION: ' 'NR==1{split($2,a,","); print a[1]}' "$R/etc/nv_tegra_release" 2>/dev/null | tr -d ' ' || true)"
+    if [[ -n "$L4T_REL" && -n "$L4T_REV" ]]; then
+        L4T_SUITE="r${L4T_REL}.${L4T_REV%%.*}"
+
+        # OUR OWN SOURCE ONLY WHEN THERE IS NONE — a fix of a breaking defect.
+        # Vendor L4T images carry the repository themselves
+        # (nvidia-l4t-apt-source.list, key in the shared trusted.gpg.d, i.e.
+        # WITHOUT Signed-By). Ours pointed at the same URI WITH Signed-By, and
+        # apt refused the whole source list ("Conflicting values set for option
+        # Signed-By"), breaking every later build layer (measured 2026-09-04 on
+        # a Jetson Nano: the build died three layers later in vino-vnc).
+        # Only uncommented entries, both one-line and deb822.
+        if grep -rqsE '^[[:space:]]*deb[[:space:]].*repo\.download\.nvidia\.com/jetson' \
+                "$R/etc/apt/sources.list" "$R/etc/apt/sources.list.d/" 2>/dev/null \
+            || grep -rqsE '^[[:space:]]*URIs:.*repo\.download\.nvidia\.com/jetson' \
+                --exclude=nvidia-jetson.sources "$R/etc/apt/sources.list.d/" 2>/dev/null; then
+            log_info "репозиторий NVIDIA уже подключён в образе — свой не добавляю"
+            # Drop ours left from an earlier build, or the conflict survives the fix.
+            rm -f "$R/etc/apt/sources.list.d/nvidia-jetson.sources" "$R/etc/apt/keyrings/nvidia-jetson.asc"
+        else
+            log_info "L4T $L4T_SUITE — подключаю репозиторий NVIDIA"
+            if curl -fsSL --retry 5 --retry-delay 2 \
+                    "https://repo.download.nvidia.com/jetson/jetson-ota-public.asc" -o "$tmp"; then
+                install -m 0644 "$tmp" "$R/etc/apt/keyrings/nvidia-jetson.asc"
+            else
+                log_warn "ключ NVIDIA не скачался"
+            fi
+            cat > "$R/etc/apt/sources.list.d/nvidia-jetson.sources" <<NVSOURCES
+Types: deb
+URIs: https://repo.download.nvidia.com/jetson/common
+Suites: ${L4T_SUITE}
+Components: main
+Architectures: arm64
+Signed-By: /etc/apt/keyrings/nvidia-jetson.asc
+NVSOURCES
+        fi
+        apt_retry apt-get "${APT_OPTS[@]}" update || log_warn "индекс NVIDIA не обновился"
+        if apt_retry apt-get "${APT_OPTS[@]}" install nvidia-container-toolkit; then
+            # Only edits /etc/docker/daemon.json; the daemon restart is in
+            # hooks/configure (systemd does not run in build).
+            if nvidia-ctk runtime configure --runtime=docker; then
+                log_info "среда выполнения NVIDIA настроена"
+            else
+                log_warn "nvidia-ctk не настроил среду выполнения"
+            fi
+        else
+            log_warn "nvidia-container-toolkit не установился — GPU в контейнерах не будет"
+        fi
+    else
+        log_warn "/etc/nv_tegra_release не разобрался — репозиторий NVIDIA пропущен"
+    fi
+fi
+
+# --- запись своих пакетов ------------------------------------------------------
+# Union with earlier installs; only those that are really installed now.
+ours=()
+for p in "${fresh[@]}"; do
+    is_installed "$p" && ours+=("$p")
+done
+if (( ${#ours[@]} )) || [[ -f "$STATE" ]]; then
+    install -d -m 0755 "$(dirname "$STATE")"
+    { cat "$STATE" 2>/dev/null || true; printf '%s\n' "${ours[@]}"; } | sed '/^$/d' | LC_ALL=C sort -u > "$STATE.new"
+    mv -f "$STATE.new" "$STATE"
+fi
+
+log_info "установка docker завершена"

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Перед стартом dockerd: умеет ли ядро таблицу iptables raw.
 #
 # Docker 28+ ставит в raw/PREROUTING правило DROP на пакеты, адресованные
@@ -23,8 +23,8 @@
 # Файл окружения пишется в /run: он производный, и оставлять его
 # на диске значило бы пережить смену ядра старым ответом.
 set -u
-ENV_DIR=/run/bisquite-docker
-ENV_FILE="$ENV_DIR/iptables-raw.env"
+ENV_DIR=/run/docker-iptables-raw
+ENV_FILE="$ENV_DIR/env"
 mkdir -p "$ENV_DIR"
 
 # Модуль мог быть просто не загружен — это нормальный путь, а не обход.

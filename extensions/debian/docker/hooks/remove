@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# cream hook `remove` of docker: removes the packages `install` put on (the
+# record in $CREAM_STATE_DIR/packages; a Docker that was there before cream
+# stays), then the Docker source and key and our NVIDIA source and key, and
+# refreshes the apt lists. cream itself takes away the `files` (iptables-raw
+# check and drop-in) and cream-configure@docker.
+#
+# apt-get remove, not purge: /var/lib/docker (images, volumes) and
+# /etc/docker/daemon.json stay. What is NOT undone, on purpose: the competing
+# packages install took away (docker.io & co.) are not put back; group docker
+# membership and cgroup_enable=memory in the Pi cmdline.txt stay (harmless
+# without docker). A repeat finds nothing and exits 0.
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] docker: $*"; }
+log_error(){ >&2 echo "[ERROR] docker: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}"
+
+export DEBIAN_FRONTEND=noninteractive
+ours=()
+if [[ -f "$STATE/packages" ]]; then
+    mapfile -t ours < <(sed '/^$/d' "$STATE/packages")
+fi
+if (( ${#ours[@]} )); then
+    apt-get -q -y remove "${ours[@]}" || { log_error "apt-get remove ${ours[*]} не прошёл"; exit 1; }
+    log_info "удалены: ${ours[*]} (данные /var/lib/docker и /etc/docker оставлены)"
+else
+    log_info "своих пакетов нет — Docker не трогаю"
+fi
+
+had_source=""
+for f in "$R/etc/apt/sources.list.d/docker.sources" "$R/etc/apt/sources.list.d/nvidia-jetson.sources"; do
+    [[ -e "$f" ]] && had_source=1
+done
+rm -f -- "$R/etc/apt/sources.list.d/docker.sources" "$R/etc/apt/keyrings/docker.asc" \
+    "$R/etc/apt/sources.list.d/nvidia-jetson.sources" "$R/etc/apt/keyrings/nvidia-jetson.asc"
+# Lists of the removed sources stay until the next update; refresh now.
+if [[ -n "$had_source" ]]; then
+    apt-get -q update || log_error "apt-get update после снятия источника не прошёл (не критично)"
+fi
+rm -f -- "$STATE/packages" "$STATE/daemon-json.sha256"
