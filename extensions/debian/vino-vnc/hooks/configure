@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# cream hook `configure` of vino-vnc: stage system, after cloud-init.service and
+# before the display manager (plan ruling R5) — every boot, after install and
+# after `cream set vino-vnc …` (no own apply: cream restarts the configure unit).
+# The system dconf databases of vino: files/vino-vnc.sh.
+set -euo pipefail
+exec "${CREAM_EXT_DIR:?run by cream}/files/vino-vnc.sh" configure
