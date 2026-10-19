@@ -46,7 +46,9 @@ tr "a-z" "A-Z"'
     ht_fake getent '[[ "$1" == passwd && "$2" == alice ]] && echo "alice:x:1000:1000::/home/alice:/bin/bash"'
     ht_fake id '[[ "${*: -1}" == alice ]] || exit 1; echo 1000'
     ht_fake chown
-    ht_fake apt-get
+    ht_fake apt-get 'if [[ "$1" == -s ]]; then v=Remv; [[ "$2" == purge ]] && v=Purg
+    for a in "${@:3}"; do echo "$v $a [1.0]"; done; cat "$FAKE/sim-extra" 2>/dev/null; exit 0; fi
+exit 0'
     ht_fake dpkg-query 'exit 1'
     ht_fake systemctl '
 wants="'"$WANTS"'"
@@ -68,10 +70,10 @@ mode_of() { stat -c %a "$1"; }
 echo "== манифест =="
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "мажор 5" 5.0.0 "$(mf 'm["version"]')"
+eq "мажор 5" 5.0.1 "$(mf 'm["version"]')"
 eq "cream >= 1.1.0 (стадия graphical)" '>=1.1.0' "$(mf 'm["cream"]')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
-eq "depends cloud-user" cloud-user "$(mf '",".join(d["name"] for d in m["depends"])')"
+eq "depends cloud-user, apt-guard" cloud-user,apt-guard "$(mf '",".join(d["name"] for d in m["depends"])')"
 eq "requires" "['x11-server', 'display-manager']" "$(mf 'm["requires"]')"
 eq "хуки" "['apply', 'configure', 'install', 'remove']" "$(mf 'sorted(m["hooks"])')"
 eq "стадия graphical" graphical "$(mf 'm["hooks"]["configure"]["stage"]')"
@@ -272,5 +274,16 @@ chmod 0000 "$PF"
 if [[ "$(id -u)" != 0 ]]; then
     eq "файл не читается — отказ" "refuse" "$(wrap "$PF" "$NOPW" | tail -n1)"
 fi
+
+echo "== remove: симуляция снимает чужой пакет — отказ =="
+fresh
+mkdir -p "$STATE" "$ROOT/etc/x11vnc"; echo x11vnc > "$STATE/installed"; printf 'secret01' > "$PF"
+echo 'Remv x11vnc-data [0.9.16-9]' > "$FAKE/sim-extra"
+ht_hook remove; eq "симуляция снимает чужой пакет — 1" 1 "$?"
+check "симуляция спрошена" ht_called '^apt-get -s remove x11vnc$'
+check "чужой пакет назван" grep -q 'x11vnc-data' "$ROOT/out"
+check_not "ничего не снято" ht_called '^apt-get -q -y remove'
+check "файл пароля на месте" test -e "$PF"
+check "запись осталась" test -s "$STATE/installed"
 
 ht_done

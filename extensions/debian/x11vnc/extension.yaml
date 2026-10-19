@@ -13,7 +13,7 @@
 # remove    — instances off, password file gone, x11vnc only when ours.
 schema: cream/v1
 name: x11vnc
-version: 5.0.0
+version: 5.0.1
 summary: VNC к рабочему столу X11 пользователя cloud-init — x11vnc@<пользователь>, по умолчанию только петля
 cream: ">=1.1.0"
 platform:
@@ -29,6 +29,7 @@ provides: [remote-desktop]
 requires: [x11-server, display-manager]
 depends:
   - {name: cloud-user, version: ">=1.0.0 <2"}
+  - {name: apt-guard, version: ">=1.0.0 <2"}
 hooks:
   install: {timeout: 15m}
   configure:
