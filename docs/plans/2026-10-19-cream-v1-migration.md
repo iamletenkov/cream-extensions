@@ -365,6 +365,8 @@ depends `l4t` (opencv, pytorch), requires `cuda`; `check-system-python.py`, `con
 
 **Найдено исполнителями (для Task 28):** `docs/extensions.md:947` — старое имя `bisquite-l4t-boot-verify.service`
 (Task 24 переименовал юнит в `l4t-boot-verify.service`).
+`tools/check-names.sh` читает и двоичные файлы расширений (awk: «Invalid multibyte data» на
+`wallpaper/images/*.jpg`) — пропускать не-текст (найдено в Task 14).
 
 **Бэклог после 5.0.0 (найдено в волнах, вне плана):**
 - `l4t-kernel-kvm`: `public_sources.tbz2` NVIDIA скачивается без sha256 — нужны суммы по версиям L4T.
