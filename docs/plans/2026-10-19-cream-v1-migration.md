@@ -32,7 +32,7 @@
 - [ ] Task 22: `cuda-toolkit` + `tensorrt` + `l4t-gstreamer`
 - [ ] Task 23: `l4t-opencv` + `l4t-pytorch` + `l4t-tensorflow`
 - [x] Task 24: `l4t-board-fdt` + `l4t-boot-verify`
-- [ ] Task 25: `l4t-kernel-kvm`
+- [x] Task 25: `l4t-kernel-kvm`
 - [ ] Task 26: `sensing-gmsl2-camera` + `can-usb`
 - [ ] Task 27: `pixelflux-tegra` + `pixelflux-v4l2m2m`
 - [ ] Task 28: уборка переходного — `lib/`, layout 2 в инструментах, `extensions/openwrt/`, документация
