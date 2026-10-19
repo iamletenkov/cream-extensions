@@ -14,7 +14,7 @@
 #           source and the key.
 schema: cream/v1
 name: nvidia-container-toolkit
-version: 2.0.0
+version: 2.0.1
 summary: NVIDIA Container Toolkit для Docker — среда выполнения nvidia без смены default-runtime
 cream: ">=1.0.0"
 platform:
@@ -38,6 +38,8 @@ provides: [nvidia-container-runtime]
 # dockerd and merges into its daemon.json. gpu-driver-nvidia — the driver
 # (extension nvidia); its `skipped` record (no kernel/GPU) is a provider too.
 requires: [container-runtime, gpu-driver-nvidia]
+depends:
+  - {name: apt-guard, version: ">=1.0.0 <2"}
 hooks:
   install: {timeout: 20m}
   remove: {timeout: 10m}
