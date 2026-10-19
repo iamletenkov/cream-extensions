@@ -963,10 +963,23 @@ bs extension new <имя> [--path DIR] [--family deb] [--arch amd64,arm64]
 ## Проверки
 
 ```bash
-tools/check.sh                # всё сразу: валидатор и тесты библиотеки настроек
-tools/validate-extensions.py  # манифесты, схемы, обращение с файлами настроек
+tools/check.sh                # всё сразу: валидаторы и тесты
+tools/validate-extensions.py  # манифесты layout 2, схемы, обращение с файлами настроек
+tools/cream-validate.sh       # cream validate по расширениям cream/v1 (make cream-validate)
 tools/test-conf.sh            # lib/bisquite-conf и домены на подменённом корне
 ```
+
+Переходный каталог (пилот cream): манифест со строкой `schema: cream/v1`
+`validate-extensions.py` не разбирает по правилам layout 2 — он проверяет только
+схему (ровно `cream/v1`), `name` = имя каталога и `provides`-список, а способности
+и имя такого расширения засчитывает соседям layout 2. Остальное — `cream validate`:
+`tools/cream-validate.sh` собирает расширения `cream/v1` во временный каталог и
+гоняет `cream validate --catalog` в контейнере `debian:12`. cream берётся по пину
+`tools/cream-pin.env` (версия и sha256 `cream_<v>_amd64.deb`); пока пин пуст —
+пропуск со строкой «cream/v1 пропущен: пин cream не задан». Локально без релиза —
+`CREAM_DEB=<путь к .deb> tools/cream-validate.sh [каталог…]` (пин не проверяется,
+об этом печатается предупреждение). Фикстура инструментов —
+`tools/testdata/cream-v1-min/` (`ok` и заведомо невалидный `bad`).
 
 `tools/validate-extensions.py` проверяет:
 
