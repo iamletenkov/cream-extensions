@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# cream hook `remove` of the lint fixture.
+set -euo pipefail
+rm -f -- "${CREAM_ROOT:-}/opt/ok/marker"

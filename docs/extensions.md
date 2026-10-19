@@ -1,8 +1,9 @@
 # Конвенция расширений
 
-Документ описывает, как устроено расширение bisquite, что значит каждое поле
-манифеста `extension.yaml`, как добавить новое расширение, где расширение
-лежит в госте и как сборка доставляет общий код из `lib/`.
+Документ описывает, как устроено расширение каталога: целевой формат
+**cream/v1** (раздел «Формат cream/v1» — с него начинают новое расширение) и
+переходный layout 2 ещё не переведённых расширений — что значит каждое поле его
+манифеста, где оно лежит в госте и как сборка доставляет общий код из `lib/`.
 
 Спека — `docs/specs/2026-09-02-extensions-system.md` основного репозитория.
 Оба её этапа закрыты: конвенция и проверки живут здесь, в подмодуле,
@@ -13,17 +14,142 @@
 
 ## Содержание
 
-- [Что такое расширение](#что-такое-расширение)
+- [Формат cream/v1](#формат-creamv1) — целевая конвенция, линт хуков, пин cream
+- [Что такое расширение](#что-такое-расширение) — layout 2
 - [Как расширение подключается](#как-расширение-подключается)
-- [Две фазы: сборка и первый запуск](#две-фазы-сборка-и-первый-запуск)
-- [Где живут параметры времени выполнения](#где-живут-параметры-времени-выполнения)
-- [Библиотека настроек `bisquite-conf`](#библиотека-настроек-bisquite-conf)
-- [Манифест `extension.yaml`](#манифест-extensionyaml)
+- [Две фазы: сборка и первый запуск](#две-фазы-сборка-и-первый-запуск) — layout 2
+- [Где живут параметры времени выполнения](#где-живут-параметры-времени-выполнения) — layout 2
+- [Библиотека настроек `bisquite-conf`](#библиотека-настроек-bisquite-conf) — layout 2
+- [Манифест `extension.yaml`](#манифест-extensionyaml) — layout 2
 - [Словарь способностей](#словарь-способностей)
-- [Раскладка в госте и общий код `lib/`](#раскладка-в-госте-и-общий-код-lib)
+- [Раскладка в госте и общий код `lib/`](#раскладка-в-госте-и-общий-код-lib) — layout 2
 - [Проверки](#проверки)
 - [Как добавить расширение](#как-добавить-расширение)
 - [Что осталось незакрытым](#что-осталось-незакрытым)
+
+## Формат cream/v1
+
+Целевая конвенция каталога. Формат задаёт cream — спека
+`cream:docs/specs/2026-10-18-cream-core.md` (§4 манифест, §5 раскладка, §6 хуки,
+§7 действия, §8 настройки) и справочник `cream:docs/cli.md`; здесь — то, что
+каталог добавляет к ней сам, и проверки, которые это держат.
+
+> **Переходное состояние.** Каталог переводится на cream/v1 по плану
+> [2026-10-19-cream-v1-migration](plans/2026-10-19-cream-v1-migration.md): расширение
+> переводится целиком, с мажором версии. Разделы, помеченные в содержании
+> «layout 2» (`install.sh`, `configure.sh`, `knobs`, `lib/bisquite-conf`,
+> `/opt/bisquite`, девять полей манифеста), действуют для ещё не переведённых
+> расширений и уходят из документа вместе с `lib/` и `validate-extensions.py`
+> (Task 28 плана). Новое расширение пишется только в cream/v1.
+
+### Раскладка расширения
+
+```
+<имя>/
+├── extension.yaml      # schema: cream/v1; name = имя каталога
+├── hooks/              # install (обязателен, кроме kind: library), upgrade, configure,
+│                       # apply, secret, remove, check — только объявленные в манифесте
+├── actions/<действие>  # cream run <имя> <действие> — вместо самописных CLI (Р7)
+├── files/…             # юниты, правила udev, шаблоны; раскладывает cream (поле files)
+├── tests/              # H-тесты и live.env — в снимок каталога не попадают
+└── README.md
+```
+
+Файлы `hooks/*` и `actions/*` исполняемые. Каталог не несёт копий чужого кода и
+не ссылается на `lib/` корня: общий код — **библиотека**, отдельное расширение
+`kind: library` (`cloud-user`, `l4t`), которое потребитель объявляет в `depends`
+и зовёт по стабильному пути `"${CREAM_ROOT:-}/opt/cream/ext/<библиотека>/…"`.
+
+### Раскладка в госте
+
+| Что | Где |
+|---|---|
+| код и данные расширения (копия каталога без `tests/`) | `/opt/cream/ext/<имя>/` |
+| настройки домена (`config`, `secrets` 0600, `apps.d` у `teleport`) | `/etc/cream/<имя>/` |
+| состояние расширения | `/var/lib/cream/ext/<имя>/` |
+| юнит донастройки | `cream-configure@<имя>.service` (ставит cream; своих `configure-<имя>.service` нет) |
+
+Префикс `cream-` в именах юнитов и путях `files` зарезервирован за cream: юниты
+расширения называются по расширению (`teleport-join.timer`).
+
+### Хуки: окружение и коды
+
+cream зовёт хук с очищенным окружением: `PATH`, `LANG=C.UTF-8`, `CREAM_*`
+(`CREAM_PHASE`, `CREAM_EXT`, `CREAM_EXT_DIR`, `CREAM_ETC_DIR`, `CREAM_STATE_DIR`,
+`CREAM_ROOT`, `CREAM_CONFIG_FILE`, `CREAM_SECRETS_FILE`, `CREAM_REASON`,
+`CREAM_CHANGED_KEYS`, `CREAM_LOCK_FD`, `CREAM_LOCK_MODE`; у действий ещё
+`CREAM_ACTION`, `CREAM_OUTPUT`) и все **несекретные** ключи домена под их
+именами. Отсюда правила каталога:
+
+- **Ключи — без префикса `CREAM_` и без `BISQUITE_`** (Р8): `SELKIES_ALLOW_NO_AUTH`, а
+  не `BISQUITE_SELKIES_ALLOW_NO_AUTH`. `CREAM_*` хук только читает: не присваивает
+  и не выдумывает новых имён.
+- **Секрет** читается из `$CREAM_SECRETS_FILE` (или `cream config get --secret`) и
+  передаётся дальше через stdin (`cream set <имя> KEY=-`), никогда через argv.
+- **Коды:** 0 — успех, 10 — нужна перезагрузка, 20 — «здесь неприменимо» (нет
+  устройства, ядра, GPU, L4T) — **только из `install`** (Р11). `configure` без
+  устройства или менеджера входа пишет предупреждение в stderr и выходит 0.
+- **`systemctl` в `apply`, `configure`, `secret` — только с `--no-block`**: `cream set`
+  бывает внутри загрузочного юнита, и блокирующий restart ждал бы сам себя.
+- **Действие с `lock: none`** только читает домен — `cream set` из него запрещён;
+  действие, которое зовут из `Exec*` юнита, объявляется `lock: none` (§7.3).
+- **`remove`** обязателен при `targets.live: yes` (Р9); `upgrade` не пишем (Р10).
+- Идемпотентность: повторный `install` и `install --reinstall` не меняют ни одного
+  файла (проверяет L).
+
+### Стадии configure и версия cream
+
+| Стадия | Когда | `cream:` манифеста |
+|---|---|---|
+| `system` | `multi-user.target` (+ свои `after`/`before`) | `">=1.0.0"` |
+| `early` | `sysinit.target`, до сети | `">=1.1.0"` |
+| `graphical` | после `multi-user.target` и `display-manager.service` | `">=1.1.0"` |
+| `cloud-user` | после `cloud-final.service`, без cloud-init — `multi-user.target` | **`">=1.1.1"`** |
+
+`cloud-user` требует 1.1.1, а не 1.1.0: в cream 1.1.0 эта стадия не запускается,
+когда cloud-init на машине выключен; исправление — cream 1.1.1. Расширение со
+стадией `cloud-user` выходит в каталоге только с `cream: ">=1.1.1"` (рулинг Р14
+плана); `tools/lint-hooks.sh` отказывает манифесту, где это не так, а
+`tools/convert-v1.py` и `tools/new-extension.sh` ставят нужную версию сами.
+Пока пин проверок (`tools/cream-pin.env`) — 1.1.0, `cream validate` откладывает
+такое расширение как неприменимое этим cream (`catalog.cream_newer`, не ошибка);
+подъём пина до 1.1.1 — одна правка `tools/cream-pin.env`.
+
+### Пин cream
+
+`tools/cream-pin.env` — единственное место версии cream для проверок каталога:
+`cream validate` (`tools/cream-validate.sh`), снимок (`tools/cream-deb.sh`), живые
+прогоны (`tools/live-test.sh`). В нём `CREAM_VERSION`, `CREAM_SHA256`
+(`cream_<v>_amd64.deb` — его гоняют инструменты) и `CREAM_SHA256_ARM64` (для
+учёта); суммы — из `SHA256SUMS` релиза
+(`gh release download v<v> -R iamletenkov/cream -p SHA256SUMS`). Поднять cream —
+поправить три строки и прогнать `make ci`, `make cream-validate`; изменение пина
+CI считает изменением всех L-расширений (`tools/live-matrix.sh`).
+
+### Линт хуков: `tools/lint-hooks.sh`
+
+Входит в `make test` (`tools/check.sh`); правила перенесены из
+`validate-extensions.py` и дополнены конвенцией. Каждая находка печатается как
+`файл:строка: [правило] текст`.
+
+| Правило | Что проверяет |
+|---|---|
+| `header` | `hooks/*`, `actions/*`: shebang bash или sh, первая команда — `set -euo pipefail` (`set -eu` в sh) |
+| `exec` | бит исполнения у `hooks/*` и `actions/*` |
+| `hook-name` | имя хука из набора cream: `install upgrade configure apply secret remove check` |
+| `systemctl-block` | блокирующий `systemctl start/restart/…` без `--no-block` в `apply`, `configure`, `secret` |
+| `lock-none-set` | `cream set` / `cream config set` в действии с `lock: none` |
+| `source-lib` | `source`/`.` пути `lib/` — общего кода layout 2 больше нет |
+| `secret-argv` | секретный ключ (`config.keys.*.secret`, `params.*.secret: true`) в argv cream не как `KEY=-` |
+| `cream-env` | присваивание `CREAM_*` или имя `CREAM_*`, которого cream не задаёт (опечатка) |
+| `stage-cream` | `hooks.configure.stage: cloud-user` при `cream:` ниже `">=1.1.1"` |
+
+Комментарии и `tests/` не проверяются. Рядом — `make lint`: скрипты расширений
+cream/v1 (хуки, действия, `files/`, `tests/`) проходят shellcheck на уровне
+`warning`, остальной репозиторий — на уровне `error` (`tools/lint.sh`). Имена
+layout 2 (`/opt/bisquite`, `bisquite-conf`, `BISQUITE_`, `inet bisquite`, …) ловит
+гейт `tools/check-names.sh`; слово `bisquite` как имя сборщика (`EXTENSION` в
+README) разрешено.
 
 ## Что такое расширение
 
@@ -950,27 +1076,33 @@ apt-репозиторий, — на том основании, что стар�
 ## Новое расширение: каркас
 
 ```bash
-tools/new-extension.sh <имя> [--family deb|openwrt] [--arch amd64,arm64]
-                             [--no-firstboot] [--no-shared-user]
+tools/new-extension.sh <имя> [--stage system|early|cloud-user|graphical]
+                             [--live yes|confirm|no] [--cloud-user] [--library]
+                             [--arch amd64,arm64]
 ```
 
-Кладёт скелет с манифестом `layout: 2`, юнитом
-`ExecStart=/opt/bisquite/<имя>/configure.sh` и — если расширению нужен общий
-resolve пользователя cloud-init — вызовом `"$SCRIPT_DIR/lib/get_cloud_user.sh"`
-в `configure.sh`. Регистрировать ничего не надо: `lib/` доставляет сборка.
+Кладёт скелет **cream/v1** в `extensions/debian/<имя>/`: манифест
+(`schema: cream/v1`, `cream:` по стадии — `cloud-user` получает `">=1.1.1"`,
+`early`/`graphical` — `">=1.1.0"`), хуки `install` и `remove` (Р9), при `--stage` —
+`configure` нужной стадии, пример ключа домена `<ИМЯ>_EXAMPLE`, H-тест
+`tests/test-<имя>.sh` на `tools/hooktest.sh` и README с таблицей ключей.
+`--cloud-user` объявляет `depends` на библиотеку `cloud-user` и зовёт
+`"${CREAM_ROOT:-}/opt/cream/ext/cloud-user/get_cloud_user.sh"` из `configure`;
+`--library` даёт `kind: library` без хуков. `tests/live.env` каркас не кладёт:
+с ним расширение попадает в живые прогоны CI, и заводит его автор, когда
+`install` делает настоящую работу.
 
-Сгенерированное проходит `tools/check.sh` сразу, но манифест намеренно
-пустой: `provides` и `requires` заполняет автор, **выводя их из кода** —
-из того, что `install.sh` реально ставит и что требуют юниты. Заполненные
-за автора способности выглядели бы обдуманными и пережили бы ревью.
-
-Каркас не создаёт `configure.sh` при `--no-firstboot`: расширение без фазы
-первой загрузки — законный случай (так устроен `nvidia`), и пустой скрипт
-там был бы обещанием, которого никто не держит.
+Скелет сразу проходит `tools/lint-hooks.sh`, гейт имён, shellcheck уровня
+`warning`, свой H-тест и `cream validate` по пину — это держит
+`tools/test-new-extension.sh` (в `make test`). Манифест намеренно пустой там, где
+знает только автор: `provides` и `requires` заполняются **по коду** — из того,
+что хуки реально ставят и что требуют юниты. Заполненные за автора способности
+выглядели бы обдуманными и пережили бы ревью.
 
 ### `bs extension new` — и когда он вместо скрипта
 
-Команда в bisquite появилась и кладёт ту же раскладку:
+Команда в bisquite кладёт раскладку **layout 2** (под cream/v1 её переводит план
+bisquite; до тех пор для этого каталога — только `tools/new-extension.sh`):
 
 ```bash
 bs extension new <имя> [--path DIR] [--family deb] [--arch amd64,arm64]
@@ -991,7 +1123,9 @@ bs extension new <имя> [--path DIR] [--family deb] [--arch amd64,arm64]
 ## Проверки
 
 ```bash
-tools/check.sh                # всё сразу: валидаторы и тесты
+tools/check.sh                # всё сразу: валидаторы и тесты (make test)
+tools/lint.sh                 # shellcheck: cream/v1 — warning, остальное — error (make lint)
+tools/lint-hooks.sh           # линт хуков и действий cream/v1 (см. «Формат cream/v1»)
 tools/validate-extensions.py  # манифесты layout 2, схемы, обращение с файлами настроек
 tools/cream-validate.sh       # cream validate по расширениям cream/v1 (make cream-validate)
 tools/test-conf.sh            # lib/bisquite-conf и домены на подменённом корне
@@ -1003,7 +1137,7 @@ tools/live-test.sh <имя>      # живой прогон настоящим cr
 
 Три уровня (план [2026-10-19-cream-v1-migration](plans/2026-10-19-cream-v1-migration.md), колонка «тесты»):
 
-- **V** — `cream validate` (`make cream-validate`) и гейт имён `tools/check-names.sh`: в расширении
+- **V** — `cream validate` (`make cream-validate`), линт хуков `tools/lint-hooks.sh` и гейт имён `tools/check-names.sh`: в расширении
   `cream/v1` нет `/opt/bisquite`, `/etc/bisquite`, `bisquite-conf`, `BISQUITE_`, `inet bisquite`,
   `lib/get_cloud_user` и прочих имён layout 2 (список — в скрипте). Слово `bisquite` как имя сборщика
   можно. Таблицу переименований в README оборачивают `<!-- check-names: off -->` … `<!-- check-names: on -->`,
@@ -1038,7 +1172,9 @@ tools/live-test.sh <имя>      # живой прогон настоящим cr
 и имя такого расширения засчитывает соседям layout 2. Остальное — `cream validate`:
 `tools/cream-validate.sh` собирает расширения `cream/v1` во временный каталог и
 гоняет `cream validate --catalog` в контейнере `debian:12`. cream берётся по пину
-`tools/cream-pin.env` (версия и sha256 `cream_<v>_amd64.deb`); пока пин пуст —
+`tools/cream-pin.env` (версия и sha256 `cream_<v>_amd64.deb`, см. «Пин cream»); с
+1.1.0 проверяется и граф: `depends` на библиотеку требует её в том же наборе
+каталогов. Пока пин пуст —
 пропуск со строкой «cream/v1 пропущен: пин cream не задан». Локально без релиза —
 `CREAM_DEB=<путь к .deb> tools/cream-validate.sh [каталог…]` (пин не проверяется,
 об этом печатается предупреждение). Фикстура инструментов —
@@ -1122,28 +1258,22 @@ FAIL: extensions/debian/x11vnc: `requires: nonexistent-capability` — эту с
 
 ## Как добавить расширение
 
-1. Создай `extensions/<группа>/<имя>/` с `install.sh` — идемпотентным,
-   запускаемым от root внутри гостя, читающим параметры из окружения.
-   Настройки, которые меняют на устройстве, объяви схемой `knobs`, а файл
-   заводи вызовом `conf_init` (см. «Библиотека настроек `bisquite-conf`»).
-2. Нужна донастройка на устройстве — добавь `configure.sh` и
-   `configure-<имя>.service`, а `install.sh` пусть кладёт юнит в
-   `/etc/systemd/system/` и делает `systemctl enable`. Учитывай, что путь
-   в `ExecStart` — это путь **в госте**: `/opt/bisquite/<имя>/configure.sh`.
-   Настройки устройства клади в `/etc/bisquite/<имя>/`, состояние —
-   в `/var/lib/bisquite/<имя>/`.
-3. Нужен `get_cloud_user.sh` или другой общий код — зови его как
-   `"$SCRIPT_DIR/lib/get_cloud_user.sh"` и не копируй в каталог расширения.
-4. Напиши `extension.yaml` с `layout: 2`. `provides` и `requires` выводи из кода: что
-   реально ставится и на что реально опираются юниты. Не изобретай
-   зависимостей, которых в коде нет.
-5. Прогони `tools/check.sh`.
-6. Напиши `README.md` расширения: что делает в каждой фазе, **таблицу
-   параметров** (переменных окружения), которые читает `install.sh`, и
-   подключение через `EXTENSION`. Таблица параметров — не
-   вежливость: VMFILE передаёт их именами скрипта, и другого справочника
-   у автора VMFILE нет.
-7. Поставь тег репозитория — он же `ref` источника в `extensions.yaml`.
+1. `tools/new-extension.sh <имя> [ключи]` — скелет cream/v1 (не копия соседа).
+2. Тест первым: в `tests/test-<имя>.sh` — проверки поведения хуков на
+   подменённом корне (`tools/hooktest.sh`), красные до правки хука.
+3. Хуки — по «Формату cream/v1»: `install` идемпотентный, ключи из окружения,
+   секреты из `$CREAM_SECRETS_FILE`, `remove` снимает только своё, `configure` без
+   устройства — предупреждение и 0. Юниты и правила — через `files:` манифеста,
+   CLI для человека — действия (`cream run <имя> …`). Общий код — библиотека в
+   `depends`. Скачанное — по пину версии и sha256.
+4. `extension.yaml`: `summary`, `provides`/`requires` **по коду**, `config.keys`
+   (без `CREAM_`/`BISQUITE_`), `targets.live` (`confirm`/`no` — с `live_note`),
+   `cream:` по стадии.
+5. `README.md` расширения: что делает, `cream install/set/run`, **таблица ключей**
+   домена — у автора VMFILE (`EXTENSION <имя> KEY=VALUE`) другого справочника нет.
+6. `make ci` (линт, `tools/lint-hooks.sh`, гейт имён, тесты), `make cream-validate`;
+   L-расширение — `tests/live.env` и `make test-live EXT=<имя>`.
+7. Выпуск — release-please (тег каталога — `ref` источника), не руками.
 
 ## Что осталось незакрытым
 

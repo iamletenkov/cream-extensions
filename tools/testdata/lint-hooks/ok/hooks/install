@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# cream hook `install` of the lint fixture.
+set -euo pipefail
+# shellcheck source=../files/helper.sh
+. "${CREAM_EXT_DIR}/files/helper.sh"
+install -d -m 0755 "${CREAM_ROOT:-}/opt/ok"
+echo "port ${OK_PORT:-8080}, state ${CREAM_STATE_DIR}" >&2

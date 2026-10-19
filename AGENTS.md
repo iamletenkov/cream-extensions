@@ -1,12 +1,12 @@
 # cream-extensions — регламент для агентов и людей
 
-**cream-extensions** (бывший bisquite-extensions) — каталог расширений провизии: каталог `extensions/<семейство>/<имя>/` с манифестом `extension.yaml`, `install.sh` (фаза build) и при нужде `configure.sh` (донастройка на машине). Общий код — `lib/` (библиотека настроек `bisquite-conf`, схемы `knobs/`). Конвенция целиком — [docs/extensions.md](docs/extensions.md). Лицензия PolyForm Noncommercial (не менять без решения владельца).
+**cream-extensions** (бывший bisquite-extensions) — каталог расширений провизии формата **cream/v1**: `extensions/<семейство>/<имя>/` с манифестом `extension.yaml` (`schema: cream/v1`), хуками `hooks/` (`install`, `configure`, `apply`, `remove`, …), действиями `actions/` и файлами `files/`; ставит и настраивает их cream. Каталог переводится с layout 2 (`install.sh`, `configure.sh`, `lib/`) по плану [2026-10-19-cream-v1-migration](docs/plans/2026-10-19-cream-v1-migration.md); непереведённые расширения — переходное состояние. Конвенция целиком — [docs/extensions.md](docs/extensions.md). Лицензия PolyForm Noncommercial (не менять без решения владельца).
 
 Состояние работ — [docs/STATUS.md](docs/STATUS.md).
 
 ## Место в экосистеме
 - **bisquite** — собирает образы ВМ, подключает расширения инструкцией `EXTENSION` и поднимает их версию после релиза этого репозитория.
-- **cream** — новый исполнитель расширений (Go): формат `extension.yaml`, жизненный цикл и `cream set/show` переезжают под него по спеке cream. До неё действует текущий формат; имена `bisquite-*`, пути `/opt/bisquite`, `/etc/bisquite` не меняются.
+- **cream** — новый исполнитель расширений (Go): формат `extension.yaml` (cream/v1), жизненный цикл, `cream set/show`, действия. Пин версии для проверок — `tools/cream-pin.env`. В cream/v1-расширениях имён `bisquite-*` и путей `/opt/bisquite`, `/etc/bisquite` нет (гейт `tools/check-names.sh`).
 - **stvor-agent** — агент портала Stvor на машине; ставится обёрткой `stvor-agent` (`cream/v1`) по пину версии и sha256 на архитектуру.
 - **Stvor** — приватный портал (identity & access hub).
 
@@ -15,10 +15,10 @@
 
 ## Карта репозитория
 ```
-extensions/debian/   — расширения для Debian/Ubuntu (install.sh, configure.sh, extension.yaml)
+extensions/debian/   — расширения для Debian/Ubuntu: cream/v1 (extension.yaml, hooks/, actions/, files/, tests/); переходно — ещё layout 2
 extensions/openwrt/  — конфиги OpenWrt (не расширения, см. docs/)
-lib/                 — общий код, доставляется в гостя сборкой (/opt/bisquite/<имя>/lib)
-tools/               — check.sh (валидация + тесты), check-names.sh, hooktest.sh (H), live-test.sh (L), lint.sh, new-extension.sh, agent-bump.sh
+lib/                 — переходно: общий код layout 2 (уходит в Task 28 плана 2026-10-19); в cream/v1 общий код — библиотеки kind: library
+tools/               — check.sh (валидация + тесты), check-names.sh, lint-hooks.sh, hooktest.sh (H), live-test.sh (L), lint.sh, new-extension.sh, cream-pin.env, agent-bump.sh
 docs/                — README.md (индекс), STATUS.md, extensions.md, adr/, specs/, plans/, research/
 .claude/             — агенты, skills, правила, хуки Claude Code
 .github/             — CI (check.sh, shellcheck), release-please, подъём пина агента

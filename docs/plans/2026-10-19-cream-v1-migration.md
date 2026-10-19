@@ -14,7 +14,7 @@
 - [x] Task 4: [cream] статическая проверка графа в `cream validate --catalog` и выпуск cream 1.1.0
 - [x] Task 5: библиотека `cloud-user` (`kind: library`) + `yq`
 - [x] Task 6: библиотека `l4t` (`kind: library`) + `btop` + `firefox`
-- [ ] Task 7: пин cream 1.1.0, линт хуков вместо `validate-extensions.py`, конвенция cream/v1 в документации и `new-extension.sh`
+- [x] Task 7: пин cream 1.1.0, линт хуков вместо `validate-extensions.py`, конвенция cream/v1 в документации и `new-extension.sh`
 - [x] Task 8: `docker`
 - [ ] Task 9: `locale` + `can`
 - [ ] Task 10: `firewall` (стадия `early`, `inet cream`, `CREAM-INPUT`, CLI → действия)
@@ -63,6 +63,7 @@
 | Р10 | `upgrade`-хуков не пишем: без них cream зовёт `install` с `CREAM_PREV_VERSION`, а install идемпотентен | машин с прежней версией нет |
 | Р11 | Перезагрузка — код 10. Код 20 («нет устройства/ядра/GPU/L4T», §6.2) возвращает **только хук `install`**; `configure` при отсутствии DM, кодера или устройства пишет предупреждение в stderr и выходит 0 (рулинг контроллера, без изменений в cream) | сбой configure на загрузке — `failed`-юнит без пользы; L ждёт 20 только от install (`--expect-skip`) |
 | Р12 | Release PR release-please **не сливается** до Task 29; коммиты расширений — `feat(<ext>)!:` с `BREAKING CHANGE:`; Task 29 добавляет `Release-As: 5.0.0` | один мажор каталога, без промежуточных выпусков смешанного каталога |
+| Р14 | Расширение со стадией `cloud-user` выпускается в каталоге **только с `cream: ">=1.1.1"`**; проставляют исполнители волн, использующих `cloud-user` (Task 14 `wallpaper`, 15 `code-server`, 19 `jetson-stats` и любые другие с этой стадией). `tools/lint-hooks.sh` (правило `stage-cream`) отказывает манифесту с меньшей версией; `convert-v1.py` и `new-extension.sh` ставят `>=1.1.1` сами. Пин проверок — 1.1.0 (Task 7), пока 1.1.1 не выпущен: `cream validate` откладывает такие расширения как неприменимые (`catalog.cream_newer`, не ошибка), поэтому их L-прогон и слияние ждут подъёма пина до 1.1.1 — одной правки `tools/cream-pin.env` (версия и две суммы из `SHA256SUMS`) | в cream 1.1.0 стадия `cloud-user` не запускается при выключенном cloud-init (найдено после выпуска 1.1.0); исправление — cream 1.1.1 |
 | Р13 | Тесты расширения живут в `extensions/debian/<ext>/tests/*.sh` (снимок их не берёт), `tools/test-<ext>.sh` переезжают туда в Task 3 | у файла один владелец; `tools/check.sh` их находит сам — исполнители волн его не трогают |
 
 ## Группы, решения и проверки по расширениям
@@ -136,7 +137,7 @@ P — живая проверка **ожидает** (плата Jetson/ВМ с 
 3. Удалить `configure-<ext>.service` и прочие самописные configure-юниты; `source …/lib/bisquite-conf` и `conf_*` →
    ключи из окружения хука, в юнитах — `EnvironmentFile=/etc/cream/<ext>/config` (+ `-/etc/cream/<ext>/secrets`);
    `lib/get_cloud_user.sh` → `"${CREAM_ROOT:-}/opt/cream/ext/cloud-user/get_cloud_user.sh"`.
-4. Мажор версии, `cream: ">=1.0.0"` или `">=1.1.0"`; README расширения: `cream install/set/run`, пути, переименованные ключи (Р8).
+4. Мажор версии, `cream: ">=1.0.0"`, `">=1.1.0"` (`early`, `graphical`) или `">=1.1.1"` (`cloud-user`, Р14); README расширения: `cream install/set/run`, пути, переименованные ключи (Р8).
 5. Проверки (одна тяжёлая за раз на хосте): `make cream-validate`, `make test`, `make test-live EXT=<ext>` (если L),
    `make lint`. Гейт имён (Task 3) для расширения зелёный.
 6. Коммит целыми файлами (`git add <пути>`), `feat(<ext>)!: …` + `BREAKING CHANGE:`; чекбокс задачи — в том же коммите.
@@ -242,9 +243,15 @@ P — живая проверка **ожидает** (плата Jetson/ВМ с 
 `btop`, `firefox` — простые, `remove`-хуки. **Приёмка:** V, H; L для `btop`, `firefox`.
 
 ### Task 7: пин cream 1.1.0, линт хуков, конвенция (владелец общих файлов волны 3)
-**Файлы:** `tools/cream-pin.env`, `tools/lint-hooks.sh` (новый), `tools/check.sh` (подключение), `docs/extensions.md`,
+**Файлы:** `tools/cream-pin.env`, `tools/lint-hooks.sh` (новый, + `tools/test-lint-hooks.sh`, `tools/testdata/lint-hooks/`),
+`tools/lint.sh` (shellcheck cream/v1 на уровне `warning`), `tools/check.sh` (подключение), `docs/extensions.md`,
 `README.md` (разделы «Конвенция», «Раскладка» — под cream/v1, переходная пометка про layout 2), `tools/new-extension.sh`
-(+ `.claude/skills/new-extension`), `AGENTS.md` (карта: `lib/` уходит).
+(+ `tools/test-new-extension.sh`, `.claude/skills/new-extension`), `AGENTS.md` (карта: `lib/` уходит),
+`tools/convert-v1.py` и `tools/test-convert-v1.sh` (`cloud-user` → `>=1.1.1`, граф 1.1.0: библиотеки в наборе проверки).
+**Итог.** Пин — 1.1.0 (суммы сверены с `SHA256SUMS` релиза `v1.1.0`), `CREAM_SHA256_ARM64` — для учёта; рулинг Р14.
+Правила `lint-hooks.sh`: `header`, `exec`, `hook-name`, `systemctl-block`, `lock-none-set`, `source-lib`, `secret-argv`,
+`cream-env` (присваивание и неизвестные имена `CREAM_*`), `stage-cream`. `validate-extensions.py` остаётся для layout 2
+до Task 28.
 **Шаги.** Тест первым для `lint-hooks.sh` (фикстуры-нарушители): `systemctl` без `--no-block` в `hooks/apply` и `hooks/configure`;
 `cream set` в действиях с `lock: none`; `source` библиотек `lib/`; секрет в argv. Эти правила переносятся из
 `validate-extensions.py` до его удаления. `new-extension.sh` генерирует cream/v1-скелет; тест на скелет — `cream validate`.
@@ -373,6 +380,7 @@ depends `l4t` (opencv, pytorch), requires `cuda`; `check-system-python.py`, `con
 | **1.1.0** | стадии configure `early`, `cloud-user`, `graphical` (§6.4), отказ «нужен cream >= 1.1.0» для них в 1.0-манифесте | `firewall`; `code-server`, `wallpaper`, `jetson-stats`; `kiosk`, `selkies`, `x11vnc`, `pixelflux-*` | 1 |
 | **1.1.0** | статическая проверка графа в `cream validate --catalog` (depends — ошибка, requires/conflicts — предупреждение) | замена проверки графа из удаляемого `validate-extensions.py` | 4 |
 | 1.1.0 (спека) | правка §4.5/§6.4: `desktop` (и `vino-vnc`) — `system` + `before` DM | `desktop`, автологин | 1 |
+| **1.1.1** | исправление: стадия `cloud-user` запускается и при выключенном cloud-init (Р14) | `code-server`, `wallpaper`, `jetson-stats` | вне плана (cream), подъём пина — одна правка `tools/cream-pin.env` |
 | **1.1.0** | аддитивный `cream resolve --installed <файл реестра>`: резолв слоя с учётом расширений базы `FROM` (из плана bisquite) | bisquite (`EXTENSION` поверх базового образа) | 1 (вместе со стадиями) или соседняя задача cream той же волны; владелец — исполнитель Task 1, приёмка — контроллер плана bisquite |
 
 **Сознательно не нужно** (перевод обходится без ожидания): `hooks.secret`/`secret: hook` (Р4), `hooks.check` и

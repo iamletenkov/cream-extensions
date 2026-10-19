@@ -4,7 +4,7 @@ schema: cream/v1
 name: code-server
 version: 5.0.0
 summary: "code-server в образе"
-cream: ">=1.1.0"
+cream: ">=1.1.1"
 platform:
   family: deb
   arch: [amd64, arm64]

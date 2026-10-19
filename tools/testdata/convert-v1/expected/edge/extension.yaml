@@ -4,7 +4,7 @@ schema: cream/v1
 name: edge
 version: 1.0.0
 summary: "Синтетика для конвертера"
-cream: ">=1.1.0"
+cream: ">=1.1.1"
 platform:
   family: deb
   arch: [amd64]

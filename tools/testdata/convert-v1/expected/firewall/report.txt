@@ -9,7 +9,7 @@ convert-v1: firewall 1.2.0 → 2.0.0 (черновик cream/v1)
   - targets.live: confirm — по таблице плана; live_note — черновик, проверь текст
   - hooks.configure: юнит даёт early after [nftables.service], по плану early — взято из плана
   - hooks.configure: bisquite-firewall.service: WantedBy sysinit.target, отброшено local-fs.target network-pre.target
-  - cream: ">=1.1.0" — стадия early: нужен cream >=1.1.0 (cream 1.0 откажет)
+  - cream: ">=1.1.0" — стадия early: нужен cream >=1.1.0 (cream старше откажет)
   - hooks.install: явный timeout рекомендован (§6.1)
   - hooks.remove: по возможности, иначе README описывает `cream remove --forget` (Р9)
   - коды выхода: перезагрузка — 10; «нет устройства/ядра/GPU» — 20 только в install (Р11)

@@ -10,7 +10,7 @@ convert-v1: x11vnc 4.0.0 → 5.0.0 (черновик cream/v1)
   - targets.live: yes — по таблице плана
   - hooks.configure: юнит даёт graphical, по плану graphical after [display-manager.service] — взято из плана
   - hooks.configure: configure-x11vnc.service: WantedBy graphical.target, отброшено display-manager.service graphical.target lightdm.service, Requires display-manager.service — не переносится
-  - cream: ">=1.1.0" — стадия graphical: нужен cream >=1.1.0 (cream 1.0 откажет)
+  - cream: ">=1.1.0" — стадия graphical: нужен cream >=1.1.0 (cream старше откажет)
   - files: юниты x11vnc@.service раскладывает cream — убрать их `install -m`/`ln -s` из hooks/install
   - config.keys: X11VNC_PASSWORD — secret:hook → secret: file (Р4); производный файл строит hooks/configure из CREAM_SECRETS_FILE, knobs.secret и производные readonly-ключи — убрать
   - config.keys: X11VNC_PASSFILE — readonly; кто пишет его теперь (хук, действие)?

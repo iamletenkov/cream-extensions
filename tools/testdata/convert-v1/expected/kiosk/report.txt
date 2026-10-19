@@ -8,7 +8,7 @@ convert-v1: kiosk 3.0.0 → 4.0.0 (черновик cream/v1)
 проверить руками:
   - targets.live: confirm — по таблице плана; live_note — черновик, проверь текст
   - hooks.configure: configure-kiosk.service: WantedBy graphical.target, отброшено display-manager.service gdm.service gdm3.service graphical.target lightdm.service
-  - cream: ">=1.1.0" — стадия graphical: нужен cream >=1.1.0 (cream 1.0 откажет)
+  - cream: ">=1.1.0" — стадия graphical: нужен cream >=1.1.0 (cream старше откажет)
   - files: юниты kiosk-chromium@.service раскладывает cream — убрать их `install -m`/`ln -s` из hooks/install
   - depends: cloud-user — по общему коду; укажи диапазон версий
   - conflicts.extensions: перенесены по именам; взаимоисключение по способности — conflicts.capabilities

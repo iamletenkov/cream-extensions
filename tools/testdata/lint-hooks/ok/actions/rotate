@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Action `rotate` (lock: exclusive): the secret goes through stdin, not argv.
+set -euo pipefail
+head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n' | cream set ok OK_TOKEN=-
