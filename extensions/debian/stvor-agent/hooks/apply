@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# cream hook `apply` of stvor-agent; the logic is in files/agent.sh.
+set -euo pipefail
+# shellcheck source=../files/agent.sh
+source "${CREAM_EXT_DIR:?run by cream}/files/agent.sh"
+sa_hook_apply
