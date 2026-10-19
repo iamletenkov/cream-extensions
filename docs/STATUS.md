@@ -2,7 +2,7 @@
 
 **Фаза:** перевод каталога на cream/v1 по плану
 [2026-10-19-cream-v1-migration](plans/2026-10-19-cream-v1-migration.md) — задачи 1–28 закрыты,
-впереди Task 29 (финальная интеграция, выпуск 5.0.0). Набор расширений в `main` — 4.0.0.
+Task 29 (финальная интеграция) — PR выпуска 5.0.0 открыт. Набор расширений в `main` — 4.0.0.
 
 ## Сделано
 - Все 44 расширения — cream/v1 (`/opt/cream/ext`, `/etc/cream`, `/var/lib/cream/ext`);
@@ -14,11 +14,23 @@
   docs/plans), двоичные файлы пропускает.
 
 ## Дальше
-1. Task 29: сквозной `make ci` после слияний, `make snapshot-check`, ночной live по всем
-   L-расширениям, сводка P-проверок (ждут плат и bisquite), Release PR 5.0.0.
-2. Бэклог после 5.0.0 — в плане (раздел «Бэклог после 5.0.0»).
+1. Task 29: PR каталога 5.0.0 (`feat!:`, `Release-As: 5.0.0`) — слияние и выпуск решает владелец;
+   автоподъём пина каталога в bisquite не включать до плана bisquite.
+2. Бэклог после 5.0.0 — раздел «Бэклог после 5.0.0» плана
+   [2026-10-19-cream-v1-migration](plans/2026-10-19-cream-v1-migration.md).
 3. Разгрести предупреждения shellcheck вне расширений (планка `make lint` — error).
 
+## Ждут живой проверки (P: платы и bisquite)
+V и H пройдены у всех; живой проверки на железе или в сборке ещё не было.
+- Сборка образа через bisquite (после плана bisquite; владелец): `cloud-growroot`,
+  `nocloud-cidata`, `l4t-kernel-kvm`.
+- Плата Jetson вручную по README (владелец): `jetson-stats`, `cuda-toolkit`, `tensorrt`,
+  `l4t-gstreamer`, `l4t-opencv`, `l4t-pytorch`, `l4t-tensorflow`, `l4t-board-fdt`,
+  `l4t-boot-verify`, `pixelflux-tegra`, `pixelflux-v4l2m2m`.
+- Плата Jetson с камерами Sensing GMSL2 (владелец): `sensing-gmsl2-camera`, `can-usb`.
+- ВМ с GPU NVIDIA (владелец): `nvidia`, `nvidia-container-toolkit`.
+- ПК-станция с платой в режиме прошивки (владелец): `nvidia-jetpack`.
+
 ## Сломано
-- `cream validate` предупреждает `validate.unit_lock` у `teleport` (2 юнита на пине cream 1.1.1) —
-  ожидаемо, правит параллельная задача по `teleport`.
+- `cream validate` предупреждает `validate.unit_lock` у `teleport` (3 юнита на пине cream 1.1.1) —
+  предупреждение, не ошибка; разобрать после 5.0.0 (в бэклоге плана).
