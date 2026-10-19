@@ -15,6 +15,9 @@
 #   render                        /etc/teleport.yaml (ExecStartPre/ExecReload)
 #   reload-apps                   teleport-apps.service: reload or render
 #   status                        what is configured and registered, as text
+#   set-managed k=v…              the full set of managed labels (stvor-agent);
+#                                 restart only when the config changed; JSON
+#   managed-status                managed labels, marker, registration; JSON
 #
 # Moved from bisquite-teleport-agent 3.x (src/bisquite-teleport) with the
 # paths, unit names and variables of cream (spec stvor-agent §10.1):
@@ -43,6 +46,14 @@
 #   NAME=code-server
 #   URI=https://127.0.0.1:9002      loopback only
 #   ICON=mcpVscode                  icon name in the proxy's web UI
+#
+# Managed labels (spec stvor-agent §10.3): TELEPORT_MANAGED_LABELS, readonly,
+# written only by set-managed — the labels of one external manager (the agent
+# of the portal: env, space). They win over TELEPORT_LABELS key by key; a
+# managed env wins over TELEPORT_ENV. Command labels — files
+# /etc/cream/teleport/command-labels.d/<key> of other extensions, one line
+# `command=<absolute path> [arg…]`: Teleport runs the command every 5 min and
+# publishes its output as the node label <key> (like os_logins).
 #
 # ACCESS IS GRANTED BY THE OPERATOR ONLY. Cluster roles match node labels (env,
 # app) against user traits. An app gets the node labels plus app=<name>; the
@@ -85,7 +96,7 @@ JOIN_TIMEOUT=120
 # config.keys of extension.yaml (tests/test-join.sh compares them).
 KEYS=(TELEPORT_PROXY TELEPORT_JOIN_METHOD TELEPORT_TOKEN TELEPORT_CA_PIN TELEPORT_ENV
       TELEPORT_NODENAME TELEPORT_LABELS TELEPORT_APPS TELEPORT_APPS_DISABLE
-      TELEPORT_APPS_ICONS TELEPORT_APPS_DISCOVERY TELEPORT_OS_LOGINS)
+      TELEPORT_APPS_ICONS TELEPORT_APPS_DISCOVERY TELEPORT_OS_LOGINS TELEPORT_MANAGED_LABELS)
 declare -A KEY_TYPE=(
     [TELEPORT_PROXY]='re:^[a-z0-9][a-z0-9.-]{0,252}(:[0-9]{1,5})?$'
     [TELEPORT_JOIN_METHOD]='enum:token,bound_keypair'
@@ -99,6 +110,7 @@ declare -A KEY_TYPE=(
     [TELEPORT_APPS_ICONS]='list:re:^[a-z0-9][a-z0-9-]{0,62}=[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
     [TELEPORT_APPS_DISCOVERY]=bool
     [TELEPORT_OS_LOGINS]=bool
+    [TELEPORT_MANAGED_LABELS]='list:re:^[a-z][a-z0-9_]{0,62}=[a-z0-9][a-z0-9._-]{0,62}$'
 )
 # Keys with a non-empty default; the others default to empty (empty: true).
 declare -A KEY_DEFAULT=([TELEPORT_JOIN_METHOD]=token [TELEPORT_APPS_DISCOVERY]=1 [TELEPORT_OS_LOGINS]=1)
@@ -118,6 +130,21 @@ RE_REG_SECRET='^[[:graph:]]{8,1024}$'
 RE_JOIN_TOKEN='^[A-Za-z0-9._-]{8,256}$'
 RE_VERSION='^[0-9]+\.[0-9]+\.[0-9]+$'
 
+# Managed labels: at most 16, keys not reserved (as in TELEPORT_LABELS; the
+# key alphabet already has no `.` of teleport.icon). managed-pending: a
+# restart with them is owed — written before the knob, removed only by a
+# confirmed restart (or when nothing is to restart).
+MANAGED_MAX=16
+MANAGED_PENDING="$STATE/managed-pending"
+# The wait for a new run of teleport.service after the restart, s.
+RESTART_TIMEOUT=30
+# Command labels: at most 8 files, 8 arguments each; no shell is involved.
+CMD_LABELS_MAX=8
+CMD_ARGS_MAX=8
+RE_CMD_KEY='^[a-z][a-z0-9_]{0,62}$'
+RE_CMD_PATH='^/[A-Za-z0-9._+/-]{1,255}$'
+RE_CMD_ARG='^[A-Za-z0-9._=-]{1,255}$'
+
 # A join that waits for the network or the proxy. join-pending exists while it
 # waits (`since=`, `attempts=`, `last=`, `error=`) and is the condition of the
 # retry service; join-refused holds the cluster's refusal (`at=`, `reason=`,
@@ -130,7 +157,16 @@ PATH_UNITS=(teleport-apps.path teleport-token.path)
 
 log(){ >&2 echo "teleport: $*"; }
 warn(){ log "ВНИМАНИЕ: $*"; }
-die(){ log "ОШИБКА: $*"; exit 1; }
+# Actions with `output: json` print exactly one object on every exit (cream
+# turns a missing one into code 76): DIE_JSON names the function that prints
+# it, DIE_CODE is the exit code of a failure. Only the main shell prints: a die
+# inside $(…) ends that subshell, and the caller handles its status.
+DIE_JSON=""; DIE_CODE=1
+die(){
+    log "ОШИБКА: $*"
+    if [[ -n "$DIE_JSON" && "$BASHPID" == "$$" ]]; then "$DIE_JSON" "$*"; fi
+    exit "$DIE_CODE"
+}
 
 need_root(){ [[ -n "$ROOT" || "$(id -u)" -eq 0 ]] || die "нужен root (sudo)"; }
 # systemd is PID 1 (sd_booted): the marker under the root. A build root (an
@@ -203,14 +239,41 @@ load_conf(){
 
 # Every value is checked before it lands in YAML.
 conf_check(){
-    local k bad=0
+    local k bad=0 why
     for k in "${KEYS[@]}"; do
         if ! check_value "$k" "${C[$k]}"; then
             log "ОШИБКА: $k в $CONF не подходит под тип ${KEY_TYPE[$k]}"; bad=1
         fi
     done
+    if (( ! bad )) && ! why="$(managed_problem "${C[TELEPORT_MANAGED_LABELS]}")"; then
+        log "ОШИБКА: TELEPORT_MANAGED_LABELS в $CONF: $why"; bad=1
+    fi
     (( ! bad ))
 }
+
+managed_reserved(){
+    case "$1" in app|os_logins|teleport.icon) return 0 ;; esac
+    return 1
+}
+
+# managed_problem <list> — echo what is wrong beyond the type and return 1:
+# too many, a key twice, a reserved key. Return 0 silently when fine.
+managed_problem(){
+    local item k n=0
+    local -A seen=()
+    while IFS= read -r item; do
+        k="${item%%=*}"; n=$((n + 1))
+        if managed_reserved "$k"; then echo "ключ '$k' зарезервирован"; return 1; fi
+        if [[ -n "${seen[$k]+x}" ]]; then echo "ключ '$k' задан дважды"; return 1; fi
+        seen[$k]=1
+    done < <(split_list "$1")
+    if (( n > MANAGED_MAX )); then echo "больше $MANAGED_MAX меток"; return 1; fi
+    return 0
+}
+
+# sorted_list <list> — the same items sorted, space-separated: the stored form
+# of the managed labels (a set, so the comparison ignores the order).
+sorted_list(){ split_list "$1" | LC_ALL=C sort | paste -s -d ' ' -; }
 
 # Write through cream: validation, an atomic write, readonly keys allowed —
 # this extension is their owner. No apply hook: the caller renders itself.
@@ -321,12 +384,111 @@ collect_apps(){
     done
 }
 
+# The static labels of the node and of every app: TELEPORT_LABELS, over them
+# TELEPORT_MANAGED_LABELS (the managed one wins by key), then env — the
+# managed env if set, else TELEPORT_ENV. env never comes from TELEPORT_LABELS:
+# it is the access decision. Sorted by key.
 node_labels(){
     local -A l=() ; local item k
     while IFS= read -r item; do l[${item%%=*}]="${item#*=}"; done < <(split_list "${C[TELEPORT_LABELS]}")
-    # env last and never from TELEPORT_LABELS: it is the access decision.
-    [[ -n "${C[TELEPORT_ENV]}" ]] && l[env]="${C[TELEPORT_ENV]}"
-    for k in $(printf '%s\n' "${!l[@]}" | sort); do printf '%s\t%s\n' "$k" "${l[$k]}"; done
+    while IFS= read -r item; do l[${item%%=*}]="${item#*=}"; done < <(split_list "${C[TELEPORT_MANAGED_LABELS]}")
+    [[ -z "${l[env]:-}" && -n "${C[TELEPORT_ENV]}" ]] && l[env]="${C[TELEPORT_ENV]}"
+    for k in $(printf '%s\n' "${!l[@]}" | LC_ALL=C sort); do printf '%s\t%s\n' "$k" "${l[$k]}"; done
+}
+
+# Operator values the managed labels override: "key<TAB>operator<TAB>managed".
+overridden_labels(){
+    local -A m=() ; local item k
+    while IFS= read -r item; do m[${item%%=*}]="${item#*=}"; done < <(split_list "${C[TELEPORT_MANAGED_LABELS]}")
+    while IFS= read -r item; do
+        k="${item%%=*}"
+        [[ -n "${m[$k]+x}" ]] && printf '%s\t%s\t%s\n' "$k" "${item#*=}" "${m[$k]}"
+    done < <(split_list "${C[TELEPORT_LABELS]}")
+    if [[ -n "${C[TELEPORT_ENV]}" && -n "${m[env]+x}" ]]; then
+        printf '%s\t%s\t%s\n' env "${C[TELEPORT_ENV]}" "${m[env]}"
+    fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Командные метки: /etc/cream/teleport/command-labels.d/<ключ>
+# Выход: строки "ключ<TAB>файл<TAB>путь<TAB>аргументы через пробел", пропуски —
+# в stderr. Файл кладёт другое расширение (files своего манифеста).
+# ---------------------------------------------------------------------------
+# The owner a file must have: root on a machine; under a scratch root (tests,
+# fixtures) — whoever runs this, the "root" of that tree.
+expected_uid(){ if [[ -n "$ROOT" ]]; then id -u; else echo 0; fi; }
+
+# trusted_file <path> <what> — owned by the expected uid, no write for group or
+# others; symlinks are followed (a link to a user's file is that file). Echo
+# the reason and return 1 otherwise.
+trusted_file(){
+    local owner mode
+    owner="$(stat -L -c %u -- "$1" 2>/dev/null)"; mode="$(stat -L -c %a -- "$1" 2>/dev/null)"
+    if [[ ! "$owner" =~ ^[0-9]+$ || ! "$mode" =~ ^[0-7]{3,4}$ ]]; then echo "$2: владелец и права не прочитаны"; return 1; fi
+    if [[ "$owner" != "$(expected_uid)" ]]; then echo "$2: владелец не root"; return 1; fi
+    if (( (8#$mode & 8#022) != 0 )); then echo "$2: права $mode, запись группе или всем"; return 1; fi
+    return 0
+}
+
+# read_cmd_label <file> <taken keys, "|k1|k2|"> — one checked line or 1.
+read_cmd_label(){
+    local f="$1" taken="$2" key line="" l n=0 path why arg
+    local -a words
+    key="${f##*/}"
+    if [[ -L "$f" || ! -f "$f" ]]; then warn "пропускаю $f: не обычный файл"; return 1; fi
+    [[ "$key" =~ $RE_CMD_KEY ]] || { warn "пропускаю $f: имя файла — ключ метки ^[a-z][a-z0-9_]{0,62}\$"; return 1; }
+    case "$key" in
+        env|space|app|os_logins)
+            warn "пропускаю $f: ключ '$key' зарезервирован"; return 1 ;;
+    esac
+    # Teleport and Stvor put command labels over the static ones: a command
+    # label of a static key could replace space.
+    if [[ "$taken" == *"|$key|"* ]]; then
+        warn "пропускаю $f: ключ '$key' уже задан статической меткой (TELEPORT_LABELS или управляемой)"; return 1
+    fi
+    why="$(trusted_file "$f" "файл")" || { warn "пропускаю $f: $why"; return 1; }
+    if (( $(stat -c %s -- "$f") > 4096 )); then warn "пропускаю $f: больше 4 КиБ"; return 1; fi
+    while IFS= read -r l || [[ -n "$l" ]]; do
+        [[ -z "$l" ]] && continue
+        n=$((n + 1)); line="$l"
+    done < "$f"
+    if (( n != 1 )) || [[ ! "$line" =~ ^command=(.+)$ ]]; then
+        warn "пропускаю $f: ожидали одну строку command=<путь> [аргумент…]"; return 1
+    fi
+    read -r -a words <<< "${BASH_REMATCH[1]}"
+    path="${words[0]:-}"
+    if [[ ! "$path" =~ $RE_CMD_PATH || "/$path/" == */../* || "/$path/" == */./* ]]; then
+        warn "пропускаю $f: путь — абсолютный, знаки [A-Za-z0-9._+/-], без . и .."; return 1
+    fi
+    if [[ ! -f "$ROOT$path" || ! -x "$ROOT$path" ]]; then
+        warn "пропускаю $f: $path — не исполняемый файл"; return 1
+    fi
+    why="$(trusted_file "$ROOT$path" "$path")" || { warn "пропускаю $f: $why"; return 1; }
+    if (( ${#words[@]} - 1 > CMD_ARGS_MAX )); then
+        warn "пропускаю $f: больше $CMD_ARGS_MAX аргументов"; return 1
+    fi
+    for arg in "${words[@]:1}"; do
+        [[ "$arg" =~ $RE_CMD_ARG ]] || { warn "пропускаю $f: аргумент не из [A-Za-z0-9._=-]"; return 1; }
+    done
+    printf '%s\t%s\t%s\t%s\n' "$key" "$f" "$path" "${words[*]:1}"
+}
+
+collect_cmd_labels(){
+    local f line n=0 taken="|" item why
+    [[ -d "$CMD_LABELS_DIR" ]] || return 0
+    if [[ -L "$CMD_LABELS_DIR" ]]; then warn "пропускаю $CMD_LABELS_DIR: символическая ссылка"; return 0; fi
+    why="$(trusted_file "$CMD_LABELS_DIR" "каталог")" || { warn "пропускаю $CMD_LABELS_DIR: $why"; return 0; }
+    while IFS= read -r item; do taken+="${item%%=*}|"; done \
+        < <(split_list "${C[TELEPORT_LABELS]}"; split_list "${C[TELEPORT_MANAGED_LABELS]}")
+    for f in "$CMD_LABELS_DIR"/*; do
+        [[ -e "$f" || -L "$f" ]] || continue
+        if (( n >= CMD_LABELS_MAX )); then
+            warn "пропускаю $f: в $CMD_LABELS_DIR не больше $CMD_LABELS_MAX командных меток"; continue
+        fi
+        line="$(read_cmd_label "$f" "$taken")" || continue
+        printf '%s\n' "$line"; n=$((n + 1))
+    done
 }
 
 # ---------------------------------------------------------------------------
@@ -335,15 +497,23 @@ node_labels(){
 cmd_render(){
     need_root
     load_conf
+    render_file "$YAML"
+}
+
+# render_file <file> — teleport.yaml from C (loaded by the caller), apps.d and
+# command-labels.d, atomically into <file> (0600). Every check (and so every
+# die) comes before anything is written.
+render_file(){
     conf_check || die "в $CONF неверные значения — cream show teleport"
     check_labels "${C[TELEPORT_LABELS]}"
     [[ -n "${C[TELEPORT_PROXY]}" ]] || die "TELEPORT_PROXY не задан — сначала cream run teleport join"
-    local node proxy host apps labels tmp name uri icon first=""
-    node="$(nodename)"
+    local node proxy host apps labels cmds name uri icon first="" key path args a
+    node="$(nodename)" || exit 1
     proxy="$(proxy_with_port "${C[TELEPORT_PROXY]}")"
     host="$(proxy_host "$proxy")"
     labels="$(node_labels)"
     apps="$(collect_apps)"
+    cmds="$(collect_cmd_labels)"
     if [[ -s "$REG_SECRET" ]]; then
         first="$(< "$REG_SECRET")"
         # A token lands in YAML in double quotes: its alphabet is checked again.
@@ -352,9 +522,10 @@ cmd_render(){
         fi
     fi
 
-    install -d -m 0755 "$(dirname "$YAML")" || die "не создать $(dirname "$YAML")"
-    tmp="$(mktemp "$(dirname "$YAML")/.teleport.yaml.XXXXXX")" || die "не создать файл рядом с $YAML"
-    chmod 0600 "$tmp"
+    local dest="$1" tmp
+    install -d -m 0755 "$(dirname "$dest")" || die "не создать $(dirname "$dest")"
+    # mktemp creates the file 0600: the first-join secret may be in it.
+    tmp="$(mktemp "$(dirname "$dest")/.teleport.yaml.XXXXXX")" || die "не создать файл рядом с $dest"
     {
         echo "# Сгенерирован cream run teleport render из /etc/cream/teleport. Не править:"
         echo "# перезаписывается на каждом старте teleport.service."
@@ -395,14 +566,24 @@ cmd_render(){
         echo "  listen_addr: 127.0.0.1:3022"
         echo "  labels:"
         while IFS=$'\t' read -r k v; do [[ -n "$k" ]] && echo "    \"$k\": \"$v\""; done <<< "$labels"
-        # Dynamic label: the agent runs the command every period and puts its
-        # trimmed stdout into the label. Node only — apps do not get it.
-        if [[ "${C[TELEPORT_OS_LOGINS]}" == 1 ]]; then
+        # Dynamic labels: the agent runs the command every period and puts
+        # its trimmed stdout into the label. Node only — apps do not get them.
+        if [[ "${C[TELEPORT_OS_LOGINS]}" == 1 || -n "$cmds" ]]; then
             echo "  commands:"
+        fi
+        if [[ "${C[TELEPORT_OS_LOGINS]}" == 1 ]]; then
             echo "    - name: \"os_logins\""
             echo "      command: [\"$OS_LOGINS_CMD\"]"
             echo "      period: 5m0s"
         fi
+        while IFS=$'\t' read -r key _ path args; do
+            [[ -n "$key" ]] || continue
+            a="\"$path\""
+            for name in $args; do a+=", \"$name\""; done
+            echo "    - name: \"$key\""
+            echo "      command: [$a]"
+            echo "      period: 5m0s"
+        done <<< "$cmds"
         if [[ -n "$apps" ]]; then
             echo "app_service:"
             echo "  enabled: yes"
@@ -440,7 +621,7 @@ cmd_render(){
         echo "proxy_service:"
         echo "  enabled: no"
     } > "$tmp"
-    mv -f "$tmp" "$YAML"
+    mv -f -- "$tmp" "$dest"
 }
 
 # ---------------------------------------------------------------------------
@@ -785,6 +966,8 @@ emit_join(){
     printf '{"result":%s,"joined":%s,"pending":%s,"refused":%s,"reason":%s}\n' \
         "$(json_str "$J_RESULT")" "$j" "$p" "$r" "$(json_str "$J_REASON")"
 }
+# die inside join: the JSON of a failure (DIE_JSON).
+join_die_json(){ J_RESULT=failed; J_REASON="$1"; emit_join; }
 # A final failure of join after the work began: the JSON first, then code 1.
 join_fail(){ # join_fail <result> <reason> <message>
     J_RESULT="$1"; J_REASON="$2"
@@ -804,7 +987,8 @@ cmd_join(){
     for pair in "$@"; do
         [[ "$pair" == *=* ]] || die "ожидали KEY=VALUE, получили '$pair'"
         key="${pair%%=*}"; val="${pair#*=}"
-        if [[ -z "${KEY_TYPE[$key]+x}" && "$JOIN_ONLY_KEYS" != *" $key "* ]]; then
+        if [[ -z "${KEY_TYPE[$key]+x}" && "$JOIN_ONLY_KEYS" != *" $key "* ]] \
+           || [[ "$key" == TELEPORT_MANAGED_LABELS ]]; then
             die "join не принимает $key"
         fi
         [[ -z "${N[$key]+x}" ]] || die "ключ $key задан дважды"
@@ -1067,15 +1251,178 @@ leave_wipe(){
     [[ -d "$DATA" ]] && find "$DATA" -mindepth 1 -maxdepth 1 -exec rm -r -f -- {} +
     rm -f -- "$YAML"
     rm -r -f -- "$ROLLBACK"
-    rm -f -- "$REG_SECRET" "$JOIN_PENDING" "$JOIN_REFUSED"
+    rm -f -- "$REG_SECRET" "$JOIN_PENDING" "$JOIN_REFUSED" "$MANAGED_PENDING"
 }
 
+leave_die_json(){ printf '{"result":"failed","reason":%s}\n' "$(json_str "$1")"; }
+
+# The managed labels go too: the next registration may be another robot.
 cmd_leave(){
+    DIE_JSON=leave_die_json
     need_root
     leave_wipe
-    save_conf TELEPORT_PROXY= TELEPORT_TOKEN= TELEPORT_CA_PIN= TELEPORT_JOIN_METHOD=token
-    log "отключено: агент выключен, состояние стёрто. Запись ноды в кластере исчезнет по истечении heartbeat или удаляется в админке."
+    save_conf TELEPORT_PROXY= TELEPORT_TOKEN= TELEPORT_CA_PIN= TELEPORT_JOIN_METHOD=token TELEPORT_MANAGED_LABELS=
+    log "отключено: агент выключен, состояние и управляемые метки стёрты. Запись ноды в кластере исчезнет по истечении heartbeat или удаляется в админке."
     printf '{"result":"left"}\n'
+}
+
+# ---------------------------------------------------------------------------
+# Управляемые метки: set-managed, managed-status (контракт stvor-agent §5.7)
+# ---------------------------------------------------------------------------
+# The object of schema 1; set-managed adds "result" last. Values are printed
+# only after the type check (their alphabet needs no escaping).
+managed_json(){
+    local item out=""
+    while IFS= read -r item; do
+        out+="${out:+,}\"${item%%=*}\":\"${item#*=}\""
+    done < <(split_list "${C[TELEPORT_MANAGED_LABELS]}")
+    printf '{%s}' "$out"
+}
+emit_managed(){ # emit_managed [result]
+    local pend=false reg=false act=false
+    [[ -f "$MANAGED_PENDING" ]] && pend=true
+    joined && reg=true
+    agent_active && act=true
+    printf '{"schema":1,"managed":%s,"pending":%s,"joined":%s,"active":%s%s}\n' \
+        "$(managed_json)" "$pend" "$reg" "$act" "${1:+,\"result\":\"$1\"}"
+}
+# A failure: an object without the state (it may be what failed).
+managed_die_json(){ printf '{"schema":1,"error":%s}\n' "$(json_str "$1")"; }
+# set-managed: a refused input — the object, code 2, nothing touched.
+managed_input(){
+    log "ОШИБКА: set-managed: $1"
+    managed_die_json "$1"
+    exit 2
+}
+
+# Restart, not reload: on HUP Teleport keeps the open SSH sessions of people
+# of the old labels while the apps already answer by the new ones. One
+# restart moves the node and every app together. Success is a restart systemd
+# accepted AND a new run of the unit that is active — an agent that stayed
+# active through a failed restart still runs the old teleport.yaml. A new run
+# is a changed InvocationID, MainPID or ActiveEnterTimestampMonotonic
+# (whichever this systemd reports; an empty or zero value is no evidence).
+unit_prop(){ systemctl show -p "$1" --value teleport.service 2>/dev/null || true; }
+unit_run(){
+    local p v out=""
+    for p in InvocationID MainPID ActiveEnterTimestampMonotonic; do
+        v="$(unit_prop "$p")"
+        [[ "$v" == 0 ]] && v=""
+        out+="$v|"
+    done
+    printf '%s' "$out"
+}
+new_run(){ # new_run <before> <now> — some field present now and changed
+    local -a b n
+    local i
+    IFS='|' read -r -a b <<< "$1"
+    IFS='|' read -r -a n <<< "$2"
+    for i in 0 1 2; do
+        [[ -n "${n[i]:-}" && "${n[i]:-}" != "${b[i]:-}" ]] && return 0
+    done
+    return 1
+}
+restart_agent(){
+    local waited=0 before now
+    before="$(unit_run)"
+    systemctl restart teleport.service >/dev/null 2>&1 || return 1
+    while :; do
+        now="$(unit_run)"
+        if new_run "$before" "$now" && agent_active; then
+            return 0
+        fi
+        (( waited < RESTART_TIMEOUT )) || return 1
+        sleep 1; waited=$((waited + 1))
+    done
+}
+
+# set-managed k=v… — the full set (a replacement: no args = no managed
+# labels). Exit 0 — applied | unchanged | deferred, 1 — unconfirmed (the
+# marker stays), 2 — refused input, 3 — another failure; one JSON object in
+# stdout on each of them. cream holds lock/teleport; the knob is written by the
+# nested `cream set --no-apply` (no apply hook: its HUP is not the restart).
+cmd_set_managed(){
+    DIE_JSON=managed_die_json; DIE_CODE=3
+    need_root
+    local pair key item_re new="" old changed=0 had_marker=0 why="" cand result
+    local -A seen=()
+    item_re="${KEY_TYPE[TELEPORT_MANAGED_LABELS]#list:re:}"
+    for pair in "$@"; do
+        # The value is not echoed: it is external input; the key is, once checked.
+        if [[ "$pair" == *[[:cntrl:]]* || ! "$pair" =~ $item_re ]]; then
+            managed_input "метка не по типу TELEPORT_MANAGED_LABELS: ключ ^[a-z][a-z0-9_]{0,62}\$, значение ^[a-z0-9][a-z0-9._-]{0,62}\$"
+        fi
+        key="${pair%%=*}"
+        managed_reserved "$key" && managed_input "ключ '$key' зарезервирован"
+        [[ -z "${seen[$key]+x}" ]] || managed_input "ключ '$key' задан дважды"
+        seen[$key]=1
+        new+="${new:+ }$pair"
+    done
+    (( ${#seen[@]} <= MANAGED_MAX )) || managed_input "больше $MANAGED_MAX управляемых меток"
+    new="$(sorted_list "$new")"
+
+    load_conf
+    conf_check || die "в $CONF неверные значения — cream show teleport"
+    old="$(sorted_list "${C[TELEPORT_MANAGED_LABELS]}")"
+    [[ "$new" != "$old" ]] && changed=1
+
+    # Not registered (or no systemd — an image): the knob only; join renders it.
+    if ! has_systemd || ! joined || [[ -z "${C[TELEPORT_PROXY]}" ]]; then
+        (( changed )) && save_conf "TELEPORT_MANAGED_LABELS=$new"
+        C[TELEPORT_MANAGED_LABELS]="$new"
+        rm -f -- "$MANAGED_PENDING"
+        if has_systemd; then
+            log "узел не зарегистрирован — управляемые метки записаны, применятся при регистрации"
+        else
+            log "systemd не запущен — управляемые метки записаны, применятся при старте агента"
+        fi
+        emit_managed deferred
+        return 0
+    fi
+
+    # Before the write: whatever happens after it, the restart is owed.
+    [[ -f "$MANAGED_PENDING" ]] && had_marker=1
+    write_state "$MANAGED_PENDING" "since=$(now_epoch)" || die "не записан $MANAGED_PENDING"
+    (( changed )) && save_conf "TELEPORT_MANAGED_LABELS=$new"
+    C[TELEPORT_MANAGED_LABELS]="$new"
+    cand="$(dirname "$YAML")/.teleport.yaml.candidate"
+    render_file "$cand"
+    if ! cmp -s -- "$cand" "$YAML"; then why="итоговый конфиг изменился"
+    elif (( had_marker )); then why="прошлый перезапуск не подтверждён (managed-pending)"
+    elif ! agent_active; then why="агент не активен"
+    fi
+    if [[ -z "$why" ]]; then
+        # teleport.yaml already says this: no restart, nothing to owe.
+        rm -f -- "$cand" "$MANAGED_PENDING"
+        if (( changed )); then result=applied; else result=unchanged; fi
+        log "управляемые метки: ${new:-—} — итоговый конфиг тот же, перезапуск не нужен ($result)"
+        emit_managed "$result"
+        return 0
+    fi
+    mv -f -- "$cand" "$YAML"
+    log "перезапуск агента с управляемыми метками ${new:-—}: $why"
+    if ! restart_agent; then
+        log "ОШИБКА: агент не подтвердил перезапуск за ${RESTART_TIMEOUT} с — маркер managed-pending остаётся, следующий set-managed перезапустит снова; journalctl -u teleport"
+        emit_managed unconfirmed
+        return 1
+    fi
+    rm -f -- "$MANAGED_PENDING"
+    log "агент перезапущен: узел и приложения — с новыми метками"
+    emit_managed applied
+    return 0
+}
+
+# managed-status — reads only (lock: none): the knob, the marker, the
+# registration and the unit. A knob out of type is an error (code 3), not a
+# state: the agent must not act on it.
+cmd_managed_status(){
+    DIE_JSON=managed_die_json; DIE_CODE=3
+    local why
+    load_conf
+    check_value TELEPORT_MANAGED_LABELS "${C[TELEPORT_MANAGED_LABELS]}" \
+        || die "TELEPORT_MANAGED_LABELS в $CONF не подходит под тип"
+    why="$(managed_problem "${C[TELEPORT_MANAGED_LABELS]}")" || die "TELEPORT_MANAGED_LABELS в $CONF: $why"
+    emit_managed
 }
 
 fmt_time(){ date -d "@$1" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || printf '%s' "$1"; }
@@ -1129,6 +1476,22 @@ cmd_status(){
         node="$(nodename 2>/dev/null || echo '?')"
         echo "Нода: $node, метки: $(node_labels | tr '\t\n' '= ' )"
     fi
+    echo "Управляемые метки: ${C[TELEPORT_MANAGED_LABELS]:-—}"
+    [[ -f "$MANAGED_PENDING" ]] && echo "  перезапуск с ними не подтверждён (managed-pending) — повторит следующий set-managed"
+    local ok ov mv src icon
+    while IFS=$'\t' read -r k ov mv; do
+        [[ -n "$k" ]] && echo "  $k=$ov оператора — перекрыто управляемой меткой ($k=$mv)"
+    done <<< "$(overridden_labels)"
+    echo "Командные метки:"
+    ok=0
+    if [[ "${C[TELEPORT_OS_LOGINS]}" == 1 ]]; then
+        printf '  %-16s %s  (TELEPORT_OS_LOGINS)\n' os_logins "$OS_LOGINS_CMD"; ok=1
+    fi
+    while IFS=$'\t' read -r k src v icon; do
+        [[ -n "$k" ]] || continue
+        printf '  %-16s %s  (%s)\n' "$k" "$v${icon:+ $icon}" "$src"; ok=1
+    done <<< "$(collect_cmd_labels)"
+    (( ok )) || echo "  —"
     echo
     echo "Приложения:"
     local out src icon; out="$(collect_apps)"
@@ -1296,12 +1659,15 @@ hook_remove(){
 case "${1:-}" in
     join)
         shift
+        DIE_JSON=join_die_json
         cmd_join "$@"; rc=$?
         emit_join
         exit "$rc" ;;
     join-retry) cmd_join_retry ;;
     leave) cmd_leave ;;
     status) cmd_status ;;
+    set-managed) shift; cmd_set_managed "$@" ;;
+    managed-status) cmd_managed_status ;;
     render) cmd_render ;;
     reload-apps) cmd_reload_apps ;;
     # The token path unit: the agent registered — on its own, too, while the
@@ -1313,5 +1679,5 @@ case "${1:-}" in
     hook-upgrade) hook_install upgrade ;;
     hook-remove) hook_remove ;;
     hook-apply) cmd_apply ;;
-    *) die "неизвестная команда '${1:-}' (join|join-retry|leave|status|render|reload-apps|scrub-token|hook-*)" ;;
+    *) die "неизвестная команда '${1:-}' (join|join-retry|leave|status|set-managed|managed-status|render|reload-apps|scrub-token|hook-*)" ;;
 esac

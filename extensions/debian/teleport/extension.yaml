@@ -8,7 +8,10 @@ cream: ">=1.0.0"
 #        пути /etc/cream/teleport, /var/lib/cream/ext/teleport; метки
 #        managed_by и bisquite_agent_version не ставятся; списки ручек —
 #        через пробел; секрет первого входа — единственный секретный параметр
-#        join (рулинг РТ1). Управляемые и командные метки — следующей задачей.
+#        join (рулинг РТ1); управляемые метки TELEPORT_MANAGED_LABELS (действия
+#        set-managed, managed-status — контракт stvor-agent, схема 1) и командные
+#        метки command-labels.d. Интерфейс управляемых меток — мажор расширения:
+#        его несовместимое изменение — teleport 5.0.0.
 platform:
   family: deb
   # Teleport публикует тарбол для amd64 и arm64; arm64 проверен на AGX Orin.
@@ -63,6 +66,11 @@ config:
                               description: "0 — не читать объявления /etc/cream/teleport/apps.d"}
     TELEPORT_OS_LOGINS: {type: bool, default: "1",
                          description: "динамическая метка ноды os_logins (root и uid >= 1000 с shell); 0 — нет"}
+    # Метки внешнего управляющего (stvor-agent): пишет только set-managed, не больше 16,
+    # app, os_logins зарезервированы; перекрывают TELEPORT_LABELS по ключу, env — TELEPORT_ENV.
+    TELEPORT_MANAGED_LABELS: {type: 'list:re:^[a-z][a-z0-9_]{0,62}=[a-z0-9][a-z0-9._-]{0,62}$', default: "", empty: true,
+                              readonly: true,
+                              description: "управляемые метки ключ=значение через пробел; пишет только set-managed"}
 actions:
   join:
     summary: "регистрация узла; секрет первого входа — TELEPORT_REGISTRATION_SECRET=- (stdin)"
@@ -91,12 +99,25 @@ actions:
     timeout: 5m
     phases: [live]
   leave:
-    summary: "отключить узел: агент выключен, регистрация и секрет стёрты"
+    summary: "отключить узел: агент выключен, регистрация, секрет и управляемые метки стёрты"
     lock: exclusive
     output: json
     phases: [live]
+  set-managed:
+    summary: "полный набор управляемых меток k=v…; restart только при изменении конфига; JSON схемы 1"
+    args: free
+    lock: exclusive
+    # ожидание блокировки у вызывающего + restart с подтверждением <= 30 с
+    timeout: 3m
+    output: json
+    phases: [live]
+  managed-status:
+    summary: "управляемые метки, маркер managed-pending, регистрация, агент — JSON схемы 1"
+    lock: none
+    output: json
+    phases: [live]
   status:
-    summary: "регистрация, служба, ручки, приложения — текстом"
+    summary: "регистрация, служба, ручки, приложения, управляемые и командные метки — текстом"
     lock: none
     phases: [live]
   render:
