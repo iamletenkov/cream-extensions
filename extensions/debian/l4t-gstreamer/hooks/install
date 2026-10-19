@@ -1,20 +1,31 @@
 #!/usr/bin/env bash
-# GStreamer для Jetson: аппаратные плагины NVIDIA плюс тот набор убунтовского
-# GStreamer, который нужен роботу — камеры, RTSP, WebRTC, запись, Python.
+# cream hook `install` of l4t-gstreamer: the NVIDIA hardware plugins plus the
+# part of Ubuntu GStreamer a robot needs — cameras, RTSP, WebRTC, recording,
+# Python.
 #
-# ПОЧЕМУ РАСШИРЕНИЕ, КОГДА ПОЛОВИНА УЖЕ БЫЛА В ОБРАЗЕ. В рабочей станции
-# (тогда jetson-orin-workstation) убунтовский GStreamer приехал СЛУЧАЙНО — как
-# зависимости GNOME и dev-пакетов из списка утилит. Безголовый робот поверх
-# тогдашним jetson-orin-camera его бы не получил, а зависеть от того, что тянет
-# рабочий стол, свойству «на роботе есть видео» нельзя. Замер на плате
-# 2026-09-14: при всём этом не было ни nvidia-l4t-gstreamer (нет
-# nvv4l2h264enc — аппаратного кодека), ни gstreamer1.0-nice (webrtcbin
-# регистрируется, но на первом соединении падает — ICE ему нечем делать).
+# WHY AN EXTENSION WHEN HALF WAS ALREADY IN THE IMAGE. On the workstation image
+# Ubuntu GStreamer arrived BY ACCIDENT — as dependencies of GNOME and dev
+# packages. A headless robot would not get it, and "the robot has video" must
+# not depend on what the desktop pulls. Measured on a board 2026-09-14: there
+# was neither nvidia-l4t-gstreamer (no nvv4l2h264enc — the hardware encoder)
+# nor gstreamer1.0-nice (webrtcbin registers but fails on the first
+# connection — nothing to do ICE with).
 #
-# Проверено на той же плате после установки ровно этого набора:
-#   videotestsrc 1080p        → nvvidconv → nvv4l2h264enc → mp4, 10 с
-#   ximagesrc рабочего стола  → nvvidconv → nvv4l2h264enc, 3840×2160
-#   v4l2src камеры Sensing    → nvvidconv → nvv4l2h265enc, 1920×1080
+# Checked on the same board after installing exactly this set:
+#   videotestsrc 1080p        → nvvidconv → nvv4l2h264enc → mp4, 10 s
+#   ximagesrc of the desktop  → nvvidconv → nvv4l2h264enc, 3840×2160
+#   v4l2src of a Sensing cam  → nvvidconv → nvv4l2h265enc, 1920×1080
+#
+# Key (hook environment, scope install):
+#   GSTREAMER_DEV   1 (default) — headers and .pc for building own GStreamer
+#                   applications and the Jetson Multimedia API; 0 — without them
+#
+# Branch: l4t_major of the library l4t (/etc/nv_tegra_release read as data).
+# Package versions from dpkg are external input: checked against the Debian
+# version alphabet before they reach an apt argument or the log.
+#
+# Exit codes (spec §6.2, ruling R11): 20 — not a Jetson (no
+# /etc/nv_tegra_release), before apt touches anything; 1 — failure; 0 — done.
 set -euo pipefail
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
@@ -22,12 +33,13 @@ log_info(){ >&2 echo -e "${GREEN}[INFO]${NC} l4t-gstreamer: $*"; }
 log_warn(){ >&2 echo -e "${YELLOW}[WARN]${NC} l4t-gstreamer: $*"; }
 log_error(){ >&2 echo -e "${RED}[ERROR]${NC} l4t-gstreamer: $*"; }
 
-# Заголовки и .pc для сборки своих приложений на GStreamer (C/C++, а также
-# OpenCV из исходников с -DWITH_GSTREAMER=ON) и Jetson Multimedia API.
-# Роботу в поле не нужны — 0 их снимает.
-GSTREAMER_DEV="${GSTREAMER_DEV:-1}"
-if [[ "$GSTREAMER_DEV" != 0 && "$GSTREAMER_DEV" != 1 ]]; then
-    log_error "GSTREAMER_DEV='$GSTREAMER_DEV': только 0 или 1"
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}"
+
+# Local name on purpose: the default is never assigned to the exported key.
+DEV="${GSTREAMER_DEV:-1}"
+if [[ "$DEV" != 0 && "$DEV" != 1 ]]; then
+    log_error "GSTREAMER_DEV: только 0 или 1"
     exit 1
 fi
 
@@ -41,37 +53,66 @@ apt_retry(){
     done
 }
 
+# put_file MODE DEST: stdin into DEST through a temporary file in the same
+# directory and a rename — a symlink at DEST is replaced, never followed.
+put_file(){
+    local mode="$1" dest="$2" tmp
+    tmp="$(mktemp "$(dirname "$dest")/.l4t-gstreamer.XXXXXX")"
+    cat > "$tmp"
+    chmod "$mode" "$tmp"
+    mv -f -T -- "$tmp" "$dest"
+}
+
+is_installed(){
+    [[ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null || true)" == installed ]]
+}
+
+# pkg_version PKG: the installed version, empty when the package is absent or
+# its version is not a Debian version (external input never goes further).
+pkg_version(){
+    local v
+    v="$(dpkg-query -W -f='${Version}' "$1" 2>/dev/null || true)"
+    [[ "$v" =~ ^[0-9][0-9A-Za-z.+~:-]*$ ]] || v=""
+    printf '%s' "$v"
+}
+
+# The first line of a file as data for the log: printable characters only
+# (log_* print with `echo -e`, so backslashes go too).
+first_line(){ head -n 1 -- "$1" | tr -cd '[:print:]' | tr -d '\\'; }
+
 export DEBIAN_FRONTEND=noninteractive
 APT_OPTS=(-q -y -o Dpkg::Options::=--force-confnew)
 
-if [[ ! -f /etc/nv_tegra_release ]]; then
-    log_error "в образе нет /etc/nv_tegra_release — это не образ NVIDIA Jetson (L4T)"
-    exit 1
+TEGRA_RELEASE="$R/etc/nv_tegra_release"
+if [[ ! -f "$TEGRA_RELEASE" ]]; then
+    log_warn "нет /etc/nv_tegra_release — это не NVIDIA Jetson (L4T): плагины NVIDIA ставить неоткуда"
+    exit 20
 fi
-log_info "L4T: $(head -n 1 /etc/nv_tegra_release)"
+log_info "L4T: $(first_line "$TEGRA_RELEASE")"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-[[ -f "$SCRIPT_DIR/lib/l4t" ]] || { log_error "рядом нет lib/l4t — сборка не доставила lib/ источника"; exit 1; }
+L4T_LIB="$R/opt/cream/ext/l4t/l4t.sh"
+[[ -f "$L4T_LIB" ]] || { log_error "нет библиотеки l4t ($L4T_LIB) — cream ставит её по depends"; exit 1; }
 # shellcheck source=/dev/null
-source "$SCRIPT_DIR/lib/l4t"
+source "$L4T_LIB"
 
-# ВЕТКА R32 (Jetson Nano, JetPack 4.6): ПРОВЕРИТЬ, А НЕ СТАВИТЬ.
+GST_DIR="$R/usr/lib/aarch64-linux-gnu/gstreamer-1.0"
+
+# R32 BRANCH (Jetson Nano, JetPack 4.6): CHECK, DO NOT INSTALL.
 #
-# Репозитории NVIDIA в образе Q-engineering отключены («disabled on upgrade
-# to focal»), а собраны под bionic — включать их на focal нельзя. Плагины
-# при этом в образе уже есть и работают (замер на живом Nano 2026-09-15:
-# nvv4l2h264enc/h265enc, nvv4l2decoder, nvarguscamerasrc, пакет
-# nvidia-l4t-gstreamer 32.6.1). Поэтому ветка сверяет то, ради чего
-# расширение существует, и отказывает громко, если этого нет.
+# The NVIDIA repositories in the Q-engineering image are disabled ("disabled on
+# upgrade to focal") and built for bionic — enabling them on focal is wrong.
+# The plugins are in the image and work (measured on a live Nano 2026-09-15:
+# nvv4l2h264enc/h265enc, nvv4l2decoder, nvarguscamerasrc, package
+# nvidia-l4t-gstreamer 32.6.1). So the branch checks what the extension exists
+# for and refuses loudly when it is absent.
 #
-# Ревизия сравнивается по версии до дефиса: у пакетов R32 суффикс — дата
-# сборки, и у одного стека он разный (на Nano core 32.6.1-20210726122000,
-# gstreamer 32.6.1-20210916211029).
+# The revision is compared up to the dash: R32 package suffixes are build
+# dates, different within one stack (on a Nano core 32.6.1-20210726122000,
+# gstreamer 32.6.1-20210916211029). String comparison, no arithmetic.
 r32_verify(){
     local core gst missing=() so
-    local gst_dir=/usr/lib/aarch64-linux-gnu/gstreamer-1.0
-    core="$(dpkg-query -W -f='${Version}' nvidia-l4t-core 2>/dev/null || true)"
-    gst="$(dpkg-query -W -f='${Version}' nvidia-l4t-gstreamer 2>/dev/null || true)"
+    core="$(pkg_version nvidia-l4t-core)"
+    gst="$(pkg_version nvidia-l4t-gstreamer)"
     if [[ -z "$core" || -z "$gst" ]]; then
         log_error "нет пакета nvidia-l4t-core или nvidia-l4t-gstreamer (core='$core', gstreamer='$gst')"
         log_error "ветка R32 ничего не ставит: плагины NVIDIA обязаны быть в базовом образе"
@@ -81,17 +122,17 @@ r32_verify(){
         log_error "nvidia-l4t-gstreamer $gst не той ревизии, что nvidia-l4t-core $core"
         return 1
     fi
-    # Файлами, а не gst-inspect-1.0 — довод тот же, что в конце ветки r36.
+    # By files, not gst-inspect-1.0 — the same reason as at the end of the R36 branch.
     for so in libgstnvvideo4linux2 libgstnvvidconv libgstnvarguscamerasrc; do
-        [[ -f "$gst_dir/$so.so" ]] || missing+=("$so")
+        [[ -f "$GST_DIR/$so.so" ]] || missing+=("$so")
     done
     if (( ${#missing[@]} )); then
         log_error "не хватает плагинов NVIDIA: ${missing[*]}"
         return 1
     fi
-    # WebRTC без libnice соединения не устанавливает; в образе Q-engineering
-    # его нет. Не отказ: ставить на R32 нечем, а камеры и кодек работают.
-    [[ -f "$gst_dir/libgstnice.so" ]] || log_warn "нет libgstnice.so: webrtcbin не установит соединение (ICE)"
+    # WebRTC does not connect without libnice; the Q-engineering image lacks it.
+    # Not a refusal: nothing to install it from on R32, cameras and the encoder work.
+    [[ -f "$GST_DIR/libgstnice.so" ]] || log_warn "нет libgstnice.so: webrtcbin не установит соединение (ICE)"
     log_info "готово (R32): nvidia-l4t-gstreamer $gst, плагины NVIDIA на месте, ничего не ставилось"
 }
 
@@ -100,21 +141,18 @@ if [[ "$(l4t_major || true)" == 32 ]]; then
     exit 0
 fi
 
-# ВЕРСИЯ ПЛАГИНОВ NVIDIA — ПО ВЕРСИИ СТЕКА, А НЕ ПО КАНДИДАТУ APT.
+# NVIDIA PLUGIN VERSION — BY THE STACK VERSION, NOT BY THE APT CANDIDATE.
 #
-# Репозиторий r36.4 публикует обновления одной веткой: на 2026-09-14
-# кандидат nvidia-l4t-gstreamer — 36.4.7, а стек в образе — 36.4.3.
-# Зависимости у пакета мягкие (`nvidia-l4t-multimedia (>= 36.3.0)`),
-# поэтому apt без возражений поставил бы плагин 36.4.7 поверх
-# libnvbufsurface 36.4.3 — и ни одна проверка это не заметит, пока
-# не разойдётся ABI. Берём ровно версию nvidia-l4t-core: она в том же
-# репозитории есть (замер: 36.4.0, 36.4.3, 36.4.4, 36.4.7).
-#
-# Нет такой версии — отказ, а не откат на кандидата: смешанный стек
-# хуже громкой ошибки на сборке.
-L4T_VERSION="$(dpkg-query -W -f='${Version}' nvidia-l4t-core 2>/dev/null || true)"
+# The r36.4 repository publishes updates in one branch: on 2026-09-14 the
+# candidate of nvidia-l4t-gstreamer was 36.4.7 while the image stack was
+# 36.4.3. The package dependencies are soft (`nvidia-l4t-multimedia
+# (>= 36.3.0)`), so apt would happily put plugin 36.4.7 over libnvbufsurface
+# 36.4.3 — and nothing notices until the ABI diverges. Take exactly the version
+# of nvidia-l4t-core: the repository has it (measured: 36.4.0, 36.4.3, 36.4.4,
+# 36.4.7). No such version — a refusal, never a fallback to the candidate.
+L4T_VERSION="$(pkg_version nvidia-l4t-core)"
 if [[ -z "$L4T_VERSION" ]]; then
-    log_error "nvidia-l4t-core не установлен — не с чем сверять версию плагинов"
+    log_error "nvidia-l4t-core не установлен или его версия не разобрана — не с чем сверять версию плагинов"
     exit 1
 fi
 log_info "стек L4T: $L4T_VERSION"
@@ -122,22 +160,20 @@ log_info "стек L4T: $L4T_VERSION"
 log_info "apt-get update"
 apt_retry apt-get update -q || exit 1
 
-# Список версий — в переменную, и grep по herestring: `… | grep -q` под
-# pipefail роняет конвейер по SIGPIPE, и проверка врёт (на этом уже
-# дважды падала сборка — gnome и tensorrt).
+# The version list into a variable and grep on a herestring: `… | grep -q`
+# under pipefail fails on SIGPIPE and the check lies.
 AVAILABLE="$(apt-cache madison nvidia-l4t-gstreamer | awk '{print $3}')"
 if ! grep -qxF "$L4T_VERSION" <<<"$AVAILABLE"; then
     log_error "в репозитории нет nvidia-l4t-gstreamer=$L4T_VERSION"
-    log_error "есть: $(paste -sd' ' <<<"$AVAILABLE")"
+    log_error "есть: $(paste -sd' ' <<<"$AVAILABLE" | tr -cd '[:print:]' | tr -d '\\')"
     exit 1
 fi
 
 PKGS=(
     "nvidia-l4t-gstreamer=$L4T_VERSION"
 
-    # Ядро и базовые плагины. gstreamer1.0-libav — программные декодеры
-    # (avdec_h264 и пр.) на случай потока, который аппаратный декодер
-    # не берёт.
+    # Core and base plugins. gstreamer1.0-libav — software decoders (avdec_h264
+    # etc.) for a stream the hardware decoder does not take.
     gstreamer1.0-tools
     gstreamer1.0-plugins-base
     gstreamer1.0-plugins-good
@@ -145,61 +181,73 @@ PKGS=(
     gstreamer1.0-plugins-ugly
     gstreamer1.0-libav
 
-    # Вывод и захват экрана: ximagesrc (x), glimagesink (gl).
+    # Display output and screen capture: ximagesrc (x), glimagesink (gl).
     gstreamer1.0-x
     gstreamer1.0-gl
 
-    # Звук — для записи и WebRTC с микрофона.
+    # Sound — for recording and WebRTC with a microphone.
     gstreamer1.0-alsa
     gstreamer1.0-pulseaudio
 
-    # RTSP: клиент (rtspsrc) есть в good, а СЕРВЕР — отдельная библиотека.
-    # Раздавать камеры по RTSP — самый частый способ отдать видео с робота.
+    # RTSP: the client (rtspsrc) is in good, the SERVER is a separate library —
+    # the most common way to serve cameras from a robot.
     gstreamer1.0-rtsp
     libgstrtspserver-1.0-0
     gir1.2-gst-rtsp-server-1.0
 
-    # WebRTC (webrtcbin в bad) без libnice не устанавливает соединение:
-    # элемент регистрируется, gst-inspect его показывает, а падает он уже
-    # на ICE. Нужен и Selkies, и любому своему WebRTC-стримеру.
+    # WebRTC (webrtcbin in bad) does not connect without libnice: the element
+    # registers, gst-inspect shows it, and it fails on ICE. Needed by Selkies
+    # and any own WebRTC streamer.
     gstreamer1.0-nice
 
-    # Python-конвейеры: Gst, GstWebRTC/GstSdp (из plugins-bad), GstRtspServer.
+    # Python pipelines: Gst, GstWebRTC/GstSdp (plugins-bad), GstRtspServer.
     python3-gi
     python3-gst-1.0
     gir1.2-gstreamer-1.0
     gir1.2-gst-plugins-base-1.0
     gir1.2-gst-plugins-bad-1.0
 
-    # v4l2-ctl: форматы и контролы камер, без него отладка v4l2src вслепую.
+    # v4l2-ctl: camera formats and controls; v4l2src debugging is blind without it.
     v4l-utils
 )
-if [[ "$GSTREAMER_DEV" == 1 ]]; then
+if [[ "$DEV" == 1 ]]; then
     PKGS+=(
         libgstreamer1.0-dev
         libgstreamer-plugins-base1.0-dev
         libgstreamer-plugins-bad1.0-dev
         libgstrtspserver-1.0-dev
-        # Jetson Multimedia API — заголовки и примеры прямой работы
-        # с аппаратным кодеком мимо GStreamer. Версия — та же, что у стека.
+        # Jetson Multimedia API — headers and samples for the hardware codec
+        # past GStreamer. Same version as the stack.
         "nvidia-l4t-jetson-multimedia-api=$L4T_VERSION"
     )
 fi
 
-log_info "ставлю ${#PKGS[@]} пакетов (dev: $GSTREAMER_DEV)"
+new=()
+for p in "${PKGS[@]}"; do
+    is_installed "${p%%=*}" || new+=("${p%%=*}")
+done
+
+log_info "ставлю ${#PKGS[@]} пакетов (dev: $DEV)"
 apt_retry apt-get install "${APT_OPTS[@]}" "${PKGS[@]}" || {
     log_error "установка не прошла"
     exit 1
 }
 
-# ПРОВЕРКА ФАЙЛАМИ, А НЕ gst-inspect-1.0.
+# What `remove` may take away: only what was not there before cream. A repeat
+# (--reinstall) adds nothing and keeps the first record.
+if (( ${#new[@]} )); then
+    install -d -m 0755 "$STATE"
+    { if [[ -f "$STATE/packages" && ! -L "$STATE/packages" ]]; then cat "$STATE/packages"; fi
+      printf '%s\n' "${new[@]}"; } | sed '/^$/d' | sort -u | put_file 0644 "$STATE/packages"
+fi
+
+# CHECK BY FILES, NOT gst-inspect-1.0.
 #
-# Внутри virt-customize гость не загружен: нет /dev/nvhost-*, нет
-# /dev/v4l2-nvenc, и плагины NVIDIA при сканировании реестра отваливаются
-# по причинам, которых на плате не будет. gst-inspect здесь дал бы ложный
-# отказ. Проверяем, что на месте именно те плагины, ради которых
-# расширение существует, и что версия стека не уползла.
-GST_DIR=/usr/lib/aarch64-linux-gnu/gstreamer-1.0
+# Inside virt-customize the guest is not booted: no /dev/nvhost-*, no
+# /dev/v4l2-nvenc, and the NVIDIA plugins drop out of the registry scan for
+# reasons a board will not have — gst-inspect would give a false refusal.
+# Check that exactly the plugins this extension exists for are in place and
+# that the stack version did not move.
 missing=()
 for so in libgstnvvideo4linux2 libgstnvvidconv libgstnvarguscamerasrc \
           libgstnvv4l2camerasrc libgstnvcompositor libgstnvjpeg \
@@ -211,10 +259,10 @@ if (( ${#missing[@]} )); then
     exit 1
 fi
 
-AFTER="$(dpkg-query -W -f='${Version}' nvidia-l4t-core)"
+AFTER="$(pkg_version nvidia-l4t-core)"
 if [[ "$AFTER" != "$L4T_VERSION" ]]; then
-    log_error "стек L4T сдвинулся при установке: $L4T_VERSION → $AFTER"
+    log_error "стек L4T сдвинулся при установке: $L4T_VERSION → ${AFTER:-?}"
     exit 1
 fi
 
-log_info "готово: nvidia-l4t-gstreamer $L4T_VERSION, GStreamer $(dpkg-query -W -f='${Version}' libgstreamer1.0-0)"
+log_info "готово: nvidia-l4t-gstreamer $L4T_VERSION, GStreamer $(pkg_version libgstreamer1.0-0)"
