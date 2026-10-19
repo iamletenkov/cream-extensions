@@ -21,6 +21,16 @@
 # it `nvcc` is not in PATH for anyone, root included. The setting goes to
 # /etc/profile.d — system-wide, never into a home directory.
 #
+# R32 BRANCH (Jetson Nano, JetPack 4.6, Ubuntu 18.04/20.04): CUDA 10.2.
+# jetson/common carries `cuda-toolkit-10-2` (10.2.460 in r32.6/r32.7) — not
+# `cuda-toolkit`. Vendor images (Q-engineering) already have CUDA 10.2 in
+# /usr/local/cuda-10.2 and comment NVIDIA's source lines out; then nothing is
+# installed: the profile is written and the extension only provides `cuda`.
+# Without CUDA and without an active jetson/common line the hook adds its own
+# source for the release branch r32.<REVISION major>, signed by the NVIDIA
+# Jetson OTA key shipped in files/ and checked by sha256 before use; remove
+# takes the source and the key away again.
+#
 # Exit codes (spec §6.2, ruling R11): 20 — not a Jetson (no
 # /etc/nv_tegra_release), before apt touches anything; 1 — failure; 0 — done.
 set -euo pipefail
@@ -74,33 +84,93 @@ if [[ ! -f "$TEGRA_RELEASE" ]]; then
 fi
 log_info "L4T: $(first_line "$TEGRA_RELEASE")"
 
-SOURCE_LIST="$R/etc/apt/sources.list.d/nvidia-l4t-apt-source.list"
-if [[ ! -f "$SOURCE_LIST" ]]; then
+# "# R32 (release), REVISION: 6.1, ..." -> "32 6"; empty when unparsable.
+# Both numbers stay strings: an external file never goes to arithmetic.
+read -r L4T_MAJOR L4T_REV < <(sed -n '1s/^# R\([0-9]\{1,3\}\) (release), REVISION: \([0-9]\{1,3\}\)\..*/\1 \2/p' \
+    "$TEGRA_RELEASE") || true
+
+install -d -m 0755 "$STATE"
+record_state(){ printf '%s\n' "$2" | put_file 0644 "$STATE/$1"; }
+
+# /usr/local/cuda -> cuda-10.2 when the layout lacks the link; recorded so that
+# remove takes only a link this hook made.
+r32_link(){
+    if [[ ! -e "$R/usr/local/cuda" && ! -L "$R/usr/local/cuda" ]]; then
+        ln -s cuda-10.2 "$R/usr/local/cuda"
+        record_state link cuda-10.2
+        log_info "ссылка /usr/local/cuda -> cuda-10.2"
+    fi
+}
+
+# Is jetson/common already an active apt source (an uncommented deb line)?
+jetson_common_active(){
+    local f
+    for f in "$R/etc/apt/sources.list" "$R"/etc/apt/sources.list.d/*.list; do
+        [[ -f "$f" ]] || continue
+        grep -Eq '^[[:space:]]*deb[[:space:]].*repo\.download\.nvidia\.com/jetson/common[[:space:]]' "$f" && return 0
+    done
+    return 1
+}
+
+# The NVIDIA Jetson OTA key (repo.download.nvidia.com/jetson/jetson-ota-public.asc,
+# fingerprint 3C6D1FF3100C8C3ABB0869C0E6543461A9996195) pinned by sha256.
+JETSON_OTA_PIN_SHA256=576f852981855e5c6cfb9b625ffb51b984ca451f1181b2e70435b005034fad55
+OWN_LIST="$R/etc/apt/sources.list.d/cream-cuda-toolkit.list"
+OWN_KEY_DST=/usr/share/keyrings/cream-cuda-toolkit-jetson.asc
+
+PKGS=(cuda-toolkit)
+if [[ "${L4T_MAJOR:-}" == 32 ]]; then
+    PKGS=(cuda-toolkit-10-2)
+    if [[ -x "$R/usr/local/cuda-10.2/bin/nvcc" ]]; then
+        log_info "R32: CUDA 10.2 уже в образе (/usr/local/cuda-10.2) — ничего не ставлю"
+        PKGS=()
+        r32_link
+    elif ! jetson_common_active; then
+        case "${L4T_REV:-}" in
+            4|5|6|7) branch="r32.$L4T_REV" ;;
+            *) log_error "R32: ревизия L4T не из r32.4…r32.7 — ветку jetson/common выбрать не из чего"
+               exit 1 ;;
+        esac
+        key_src="${CREAM_EXT_DIR:-.}/files/jetson-ota-public.asc"
+        if [[ ! -f "$key_src" ]] \
+            || [[ "$(sha256sum < "$key_src" | cut -d' ' -f1)" != "$JETSON_OTA_PIN_SHA256" ]]; then
+            log_error "ключ NVIDIA files/jetson-ota-public.asc не сошёлся с пином sha256 — источник не подключаю"
+            exit 1
+        fi
+        install -d -m 0755 "$R/usr/share/keyrings" "$R/etc/apt/sources.list.d"
+        put_file 0644 "$R$OWN_KEY_DST" < "$key_src"
+        printf 'deb [signed-by=%s] https://repo.download.nvidia.com/jetson/common %s main\n' \
+            "$OWN_KEY_DST" "$branch" | put_file 0644 "$OWN_LIST"
+        record_state source "$branch"
+        log_info "R32: источник jetson/common $branch (ключ NVIDIA по sha256)"
+    fi
+elif [[ ! -f "$R/etc/apt/sources.list.d/nvidia-l4t-apt-source.list" ]]; then
     log_error "нет /etc/apt/sources.list.d/nvidia-l4t-apt-source.list — источник jetson/common не подключён"
     log_error "проверь, что nvidia-jetpack (шаг сборки базового образа L4T) применён к этому дереву"
     exit 1
 fi
 
 # --- 2. Packages -------------------------------------------------------------
-PKGS=(cuda-toolkit)
 new=()
 for p in "${PKGS[@]}"; do
     is_installed "$p" || new+=("$p")
 done
 
-log_info "apt-get update"
-apt_retry apt-get update -q || exit 1
+if (( ${#PKGS[@]} )); then
+    log_info "apt-get update"
+    apt_retry apt-get update -q || exit 1
 
-log_info "ставлю cuda-toolkit (может занять несколько минут — набор большой)"
-apt_retry apt-get install "${APT_OPTS[@]}" "${PKGS[@]}" || {
-    log_error "cuda-toolkit не установился"
-    exit 1
-}
+    log_info "ставлю ${PKGS[*]} (может занять несколько минут — набор большой)"
+    apt_retry apt-get install "${APT_OPTS[@]}" "${PKGS[@]}" || {
+        log_error "${PKGS[*]} не установился"
+        exit 1
+    }
+    [[ "${L4T_MAJOR:-}" == 32 ]] && r32_link
+fi
 
 # What `remove` may take away: only what was not there before cream. A repeat
 # (--reinstall) adds nothing and keeps the first record.
 if (( ${#new[@]} )); then
-    install -d -m 0755 "$STATE"
     { if [[ -f "$STATE/packages" && ! -L "$STATE/packages" ]]; then cat "$STATE/packages"; fi
       printf '%s\n' "${new[@]}"; } | sed '/^$/d' | sort -u | put_file 0644 "$STATE/packages"
 fi

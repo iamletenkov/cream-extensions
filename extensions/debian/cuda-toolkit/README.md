@@ -2,7 +2,8 @@
 
 Ставит CUDA Toolkit (`nvcc`, библиотеки, заголовки) на Jetson из
 apt-репозитория `jetson/common`, который уже подключён базовым образом L4T —
-собственного источника пакетов расширение не заводит.
+собственного источника пакетов расширение не заводит (исключение — R32 с
+закомментированным источником вендора, см. 2.1.0).
 
 ```
 EXTENSION cuda-toolkit          # образ bisquite (основной путь)
@@ -10,6 +11,17 @@ sudo cream install cuda-toolkit # живая плата Jetson
 sudo cream remove cuda-toolkit
 ```
 
+> **2.1.0 — Jetson Nano (L4T R32, JetPack 4.6, Ubuntu 18.04/20.04).** На R32
+> ставится `cuda-toolkit-10-2` (CUDA 10.2) — способность `cuda` теперь есть и у
+> Nano (её требует `l4t-pytorch`). CUDA 10.2 уже в образе вендора
+> (`/usr/local/cuda-10.2/bin/nvcc`, образ Q-engineering) — apt не зовётся,
+> пишется только профиль (и ссылка `/usr/local/cuda`, если её нет). Нет CUDA и
+> нет активной строки `jetson/common` (вендор её закомментировал) — расширение
+> заводит свой источник `/etc/apt/sources.list.d/cream-cuda-toolkit.list` на
+> ветку `r32.<ревизия>` (r32.4…r32.7) с `signed-by` ключом NVIDIA Jetson OTA из
+> `files/jetson-ota-public.asc`; ключ до использования сверяется с пином sha256
+> в хуке. `remove` снимает свои пакеты, источник, ключ и свою ссылку.
+>
 > **2.0.0 — cream/v1.** `install.sh` стал хуком `hooks/install`, появился хук `remove`;
 > расширение ставится и при сборке (`targets.build: exec`), и на живую плату
 > (`live: yes`). Каталог в госте — `/opt/cream/ext/cuda-toolkit/`. Нет
