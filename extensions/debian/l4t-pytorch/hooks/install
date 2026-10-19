@@ -1,30 +1,39 @@
 #!/usr/bin/env bash
-# PyTorch и torchvision с CUDA для Jetson (JetPack 6, L4T 36.4).
+# cream hook `install` of l4t-pytorch: PyTorch and torchvision with CUDA for
+# Jetson (JetPack 6, L4T 36.4).
 #
-# ЧТО СТАВИТСЯ И ОТКУДА — всё с CDN NVIDIA, GitHub и PyPI:
+# WHAT AND FROM WHERE — NVIDIA CDN, GitHub and PyPI:
 #
-#   torch 2.5.0 nv24.08   колесо NVIDIA для JetPack 6.1, работает и на 6.2
-#                         (тот же CUDA 12.6); проверено на плате с GPU
+#   torch 2.5.0 nv24.08   NVIDIA wheel for JetPack 6.1, works on 6.2 too
+#                         (same CUDA 12.6); checked on a board with a GPU
 #   cuDNN 9.3             apt, jetson/common (libcudnn9-cuda-12)
-#   cuSPARSELt 0.6.2.3    архив NVIDIA redist, сборка linux-aarch64
+#   cuSPARSELt 0.6.2.3    NVIDIA redist archive, linux-aarch64
 #   numpy 1.26.4          PyPI
-#   torchvision 0.20.0    ИСХОДНИКИ с GitHub, сборка с CUDA здесь же
+#   torchvision 0.20.0    SOURCE from GitHub, built here with CUDA
 #
-# ПОЧЕМУ НЕ НОВЕЕ. torch 2.8–2.10 и готовый torchvision под Jetson есть
-# только в индексе jetson-ai-lab (pypi.jetson-ai-lab.io), а из сети сборки
-# он файлы не отдаёт: замер 2026-09-14 — каждая загрузка обрывается на
-# 15 865 байтах при 25 Б/с, сама страница индекса при этом отвечает.
-# Расширение, которое через раз висит на сборке, хуже старой версии.
-# 2.5.0 nv24.08 — последнее, что NVIDIA публикует на своём CDN
-# (developer.download.nvidia.com/compute/redist/jp/v61/pytorch/;
-# каталога v62 нет вовсе).
+# WHY NOT NEWER. torch 2.8–2.10 and a ready torchvision for Jetson exist only
+# in the jetson-ai-lab index, which does not serve files to the build network
+# (measured 2026-09-14: every download breaks at 15 865 bytes at 25 B/s).
+# 2.5.0 nv24.08 is the last NVIDIA publishes on its CDN (jp/v61; there is no
+# v62 directory).
 #
-# ПОЧЕМУ torchvision ИЗ ИСХОДНИКОВ. NVIDIA его под JetPack 6 не публикует,
-# а колесо с PyPI собрано под PyPI-torch: его C++-операции (nms,
-# roi_align, декодеры) с torch от NVIDIA по ABI несовместимы. Сборка на
-# самой плате (12 ядер) — 128 с, колесо 1.4 МБ, и nms идёт на cuda:0.
-# Внутри virt-customize ресурсы задаёт `bs image build --smp/--memsize`,
-# см. README.
+# WHY torchvision FROM SOURCE. NVIDIA does not publish it for JetPack 6, and
+# the PyPI wheel is built against PyPI torch: its C++ ops (nms, roi_align,
+# decoders) are ABI-incompatible with NVIDIA torch. Built on the board itself
+# (12 cores) — 128 s, a 1.4 MB wheel, nms runs on cuda:0.
+#
+# pip (ruling of the plan for Task 23): always with constraints.txt of the
+# extension tree; downloads of NVIDIA are checked by sha256, torchvision by the
+# commit of its tag. pip runs as root and installs into /usr/local, with HOME
+# in the temporary directory and no pip configuration: nothing lands in the
+# home directory of root. What pip put on is recorded for `remove`
+# (pip-owned.py). check-system-python.py guards the system Python at the end.
+#
+# Key (hook environment, scope install):
+#   TORCH_CUDA_ARCH_LIST   compute architectures of the torchvision build, 8.7
+#
+# Exit codes (spec §6.2, ruling R11): 20 — not a Jetson (no
+# /etc/nv_tegra_release), before apt touches anything; 1 — failure; 0 — done.
 set -euo pipefail
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
@@ -32,7 +41,9 @@ log_info(){ >&2 echo -e "${GREEN}[INFO]${NC} l4t-pytorch: $*"; }
 log_warn(){ >&2 echo -e "${YELLOW}[WARN]${NC} l4t-pytorch: $*"; }
 log_error(){ >&2 echo -e "${RED}[ERROR]${NC} l4t-pytorch: $*"; }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}"
+EXT_DIR="${CREAM_EXT_DIR:?run by cream}"
 
 TORCH_WHEEL="torch-2.5.0a0+872d972e41.nv24.08.17622132-cp310-cp310-linux_aarch64.whl"
 TORCH_URL="https://developer.download.nvidia.com/compute/redist/jp/v61/pytorch/${TORCH_WHEEL}"
@@ -44,12 +55,16 @@ CUSPARSELT_DIR=/usr/local/cusparselt
 
 TORCHVISION_REPO="https://github.com/pytorch/vision.git"
 TORCHVISION_TAG="v0.20.0"
-# Тег сверяется с коммитом: тег в чужом репозитории можно передвинуть,
-# а сборка с CUDA длинная, и собрать не то — дорогая ошибка.
+# The tag is checked against the commit: a tag in someone else's repository
+# can move, and a long CUDA build of the wrong thing is an expensive mistake.
 TORCHVISION_COMMIT="afc54f754c734d903a06194e416495e20d920ff6"
-# 8.7 — Ampere в Orin (Orin Nano, NX, AGX). Другой вычислительной
-# архитектуры JetPack 6 не поддерживает: Xavier (7.2) остался на JetPack 5.
-TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-8.7}"
+
+# Local name on purpose: the default is never assigned to the exported key.
+ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-8.7}"
+if [[ ! "$ARCH_LIST" =~ ^[0-9]+\.[0-9]+(\+PTX)?(\;[0-9]+\.[0-9]+(\+PTX)?)*$ ]]; then
+    log_error "TORCH_CUDA_ARCH_LIST: ждали вида 8.7 или 7.2;8.7"
+    exit 1
+fi
 
 apt_retry(){
     local max=5 n=1 d
@@ -61,154 +76,211 @@ apt_retry(){
     done
 }
 
+# put_file MODE DEST: stdin into DEST through a temporary file in the same
+# directory and a rename — a symlink at DEST is replaced, never followed.
+put_file(){
+    local mode="$1" dest="$2" tmp
+    tmp="$(mktemp "$(dirname "$dest")/.l4t-pytorch.XXXXXX")"
+    cat > "$tmp"
+    chmod "$mode" "$tmp"
+    mv -f -T -- "$tmp" "$dest"
+}
+
+# record FILE NAME…: add names to a record of $STATE, keeping the old ones.
+record(){
+    local file="$STATE/$1"; shift
+    (( $# )) || return 0
+    install -d -m 0755 "$STATE"
+    { if [[ -f "$file" && ! -L "$file" ]]; then cat "$file"; fi
+      printf '%s\n' "$@"; } | sed '/^$/d' | sort -u | put_file 0644 "$file"
+}
+
+is_installed(){
+    [[ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null || true)" == installed ]]
+}
+
+first_line(){ head -n 1 | tr -cd '[:print:]' | tr -d '\\'; }
+
 export DEBIAN_FRONTEND=noninteractive
 APT_OPTS=(-q -y -o Dpkg::Options::=--force-confnew)
 
-if [[ ! -f /etc/nv_tegra_release ]]; then
-    log_error "в образе нет /etc/nv_tegra_release — это не образ NVIDIA Jetson (L4T)"
-    exit 1
+TEGRA_RELEASE="$R/etc/nv_tegra_release"
+if [[ ! -f "$TEGRA_RELEASE" ]]; then
+    log_warn "нет /etc/nv_tegra_release — это не NVIDIA Jetson (L4T): колесо torch NVIDIA не встанет"
+    exit 20
 fi
+log_info "L4T: $(first_line < "$TEGRA_RELEASE")"
 
-[[ -f "$SCRIPT_DIR/lib/l4t" ]] || { log_error "рядом нет lib/l4t — сборка не доставила lib/ источника"; exit 1; }
+L4T_LIB="$R/opt/cream/ext/l4t/l4t.sh"
+[[ -f "$L4T_LIB" ]] || { log_error "нет библиотеки l4t ($L4T_LIB) — cream ставит её по depends"; exit 1; }
 # shellcheck source=/dev/null
-source "$SCRIPT_DIR/lib/l4t"
+source "$L4T_LIB"
 
-# ВЕТКА R32 (Jetson Nano, JetPack 4.6): ПРОВЕРИТЬ И ЗАКРЕПИТЬ.
+# R32 BRANCH (Jetson Nano, JetPack 4.6): CHECK AND PIN.
 #
-# В образе Q-engineering PyTorch 1.13 и torchvision 0.14 уже собраны
-# с CUDA 10.2 под Python 3.8 (замер на живом Nano 2026-09-15). Колёс под
-# Maxwell и 3.8 NVIDIA не публикует, сборка на месте — часы; всё, что
-# ниже (колесо 2.5.0, cuSPARSELt, torchvision из исходников), — только r36.
-#
-# torch.cuda.is_available() не проверяется: GPU в appliance нет. Проверяются
-# импорт, версия и то, что torch собран с CUDA (torch.version.cuda).
-#
-# OPENBLAS_CORETYPE=ARMV8 — тот же способ, что у l4t-opencv (lib/l4t):
-# без него `import torch` на Cortex-A57 падает `Illegal instruction`.
+# PyTorch 1.13 and torchvision 0.14 are already built with CUDA 10.2 for
+# Python 3.8 in the Q-engineering image (measured on a live Nano 2026-09-15).
+# NVIDIA publishes no wheels for Maxwell and 3.8; everything below is R36 only.
+# torch.cuda.is_available() is not checked (no GPU in the appliance): the
+# import, the versions and torch.version.cuda are.
+# OPENBLAS_CORETYPE=ARMV8 — the same way as l4t-opencv (library l4t).
 r32_verify(){
     l4t_openblas_pin l4t-pytorch || { log_error "OPENBLAS_CORETYPE не записан"; return 1; }
+    record openblas yes
     l4t_openblas_check 'import numpy, torch, torchvision
 assert torch.version.cuda, "torch собран без CUDA"
 print(f"torch {torch.__version__} (CUDA {torch.version.cuda}), torchvision {torchvision.__version__}, numpy {numpy.__version__}")' || return 1
     log_info "готово (R32): ничего не ставилось"
 }
 
+# String comparison: the major of an external file never goes to arithmetic.
 if [[ "$(l4t_major || true)" == 32 ]]; then
     r32_verify || exit 1
     exit 0
 fi
-if [[ ! -x /usr/local/cuda/bin/nvcc ]]; then
-    log_error "нет /usr/local/cuda/bin/nvcc — поставь EXTENSION cuda-toolkit раньше этого"
+
+if [[ ! -x "$R/usr/local/cuda/bin/nvcc" ]]; then
+    log_error "нет /usr/local/cuda/bin/nvcc — поставь cuda-toolkit раньше этого (requires: cuda)"
     exit 1
 fi
-PYVER="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+PYVER="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' | first_line)"
 if [[ "$PYVER" != "3.10" ]]; then
     log_error "Python $PYVER, а колесо torch собрано под 3.10 (cp310) — это не jammy/L4T 36?"
     exit 1
 fi
 
-WORK="$(mktemp -d /var/tmp/l4t-pytorch.XXXXXX)"
-trap 'rm -rf "$WORK"' EXIT
+install -d -m 0755 "$R/var/tmp"
+WORK="$(mktemp -d "$R/var/tmp/l4t-pytorch.XXXXXX")"
+install -d -m 0700 "$WORK/home"
+PIP_ENV=(env HOME="$WORK/home" PIP_CONFIG_FILE=/dev/null PIP_NO_CACHE_DIR=1 PIP_USER=0
+    PIP_DISABLE_PIP_VERSION_CHECK=1 PYTHONNOUSERSITE=1)
+PIP=("${PIP_ENV[@]}" python3 -m pip install --no-cache-dir --constraint "$EXT_DIR/constraints.txt")
 
-# --- 1. Системные библиотеки ------------------------------------------------
-#
-# Список — по ldd libtorch_cpu.so и libtorch_cuda.so на плате: всё, что
-# не из CUDA и не из самого колеса. libcusparseLt в apt нет — ниже.
-# Остальное — для сборки torchvision: jpeg/png для torchvision.io,
-# ninja ускоряет сборку расширений, git — для исходников.
+# On any exit: record what pip put into /usr/local (also after a failure
+# half-way — remove must find it), then drop the temporary directory.
+finish(){
+    local rc=$?
+    if [[ -f "$WORK/pip-before" ]] && python3 "$EXT_DIR/pip-owned.py" list > "$WORK/pip-after"; then
+        mapfile -t added < <(comm -13 <(sort "$WORK/pip-before") <(sort "$WORK/pip-after"))
+        record pip "${added[@]}" || rc=1
+    fi
+    rm -r -f -- "$WORK"
+    exit "$rc"
+}
+trap finish EXIT
+
+# --- 1. System libraries --------------------------------------------------------
+# The list is from ldd of libtorch_cpu.so and libtorch_cuda.so on a board:
+# everything not from CUDA and not from the wheel. libcusparseLt is not in apt
+# (below). The rest builds torchvision: jpeg/png for torchvision.io, ninja for
+# the extensions, git for the source.
+PKGS=(libcudnn9-cuda-12 libopenblas0-pthread libgomp1 libgfortran5
+    python3-pip python3-dev git ninja-build libjpeg-dev libpng-dev zlib1g-dev)
+new=()
+for p in "${PKGS[@]}"; do
+    is_installed "$p" || new+=("$p")
+done
 log_info "apt: cuDNN 9 и системные библиотеки torch"
 apt_retry apt-get update -q || exit 1
-apt_retry apt-get install "${APT_OPTS[@]}" \
-    libcudnn9-cuda-12 \
-    libopenblas0-pthread libgomp1 libgfortran5 \
-    python3-pip python3-dev git ninja-build \
-    libjpeg-dev libpng-dev zlib1g-dev || {
+apt_retry apt-get install "${APT_OPTS[@]}" "${PKGS[@]}" || {
     log_error "apt не поставил зависимости"
     exit 1
 }
+record packages "${new[@]}"
 
-# --- 2. cuSPARSELt ------------------------------------------------------------
+python3 "$EXT_DIR/pip-owned.py" list > "$WORK/pip-before"
+
+# --- 2. cuSPARSELt --------------------------------------------------------------
+# Unpacked beside the target and swapped in by a rename: a half-unpacked
+# directory never becomes the live one.
 log_info "cuSPARSELt 0.6.2.3"
 apt_retry curl -fsSL --max-time 600 -o "$WORK/cusparselt.tar.xz" "$CUSPARSELT_URL" || exit 1
 echo "$CUSPARSELT_SHA256  $WORK/cusparselt.tar.xz" | sha256sum -c --quiet - || {
     log_error "контрольная сумма cuSPARSELt не совпала"
     exit 1
 }
-rm -rf "$CUSPARSELT_DIR"
-install -d "$CUSPARSELT_DIR"
-tar -xJf "$WORK/cusparselt.tar.xz" -C "$CUSPARSELT_DIR" --strip-components=1
-echo "$CUSPARSELT_DIR/lib" > /etc/ld.so.conf.d/cusparselt.conf
+install -d -m 0755 "$R/usr/local" "$R/etc/ld.so.conf.d"
+unpack="$(mktemp -d "$R/usr/local/.cusparselt.XXXXXX")"
+tar -xJf "$WORK/cusparselt.tar.xz" -C "$unpack" --strip-components=1 --no-same-owner || {
+    rm -r -f -- "$unpack"; log_error "архив cuSPARSELt не распаковался"; exit 1
+}
+chmod 0755 "$unpack"
+rm -r -f -- "$R$CUSPARSELT_DIR"
+mv -T -- "$unpack" "$R$CUSPARSELT_DIR"
+printf '%s\n' "$CUSPARSELT_DIR/lib" | put_file 0644 "$R/etc/ld.so.conf.d/cusparselt.conf"
+record cusparselt yes
 ldconfig
 
-# --- 3. numpy 1.26.4 и torch --------------------------------------------------
+# --- 3. numpy 1.26.4 and torch ----------------------------------------------------
 #
-# NUMPY НЕ СИСТЕМНЫЙ, И ЭТО НЕ ВКУС. torch nv24.08 собран под C-API numpy
-# 0x10 (ветка 1.23+), а в jammy numpy 1.21.5 (0xe). С системным numpy
-# torch импортируется и считает на GPU, но любой мост torch↔numpy падает:
-# `RuntimeError: Numpy is not available` (замер на плате).
-#
-# 1.26.4 — последняя 1.x: модули apt, собранные под 1.21, с ней работают
-# (проверено: Gst, jtop, tensorrt, cv2 4.8.0), а 2.x их бы сломала.
-# Ставится в /usr/local и перекрывает системный для всех, кто импортирует
-# numpy из Python 3.10, — это и есть цель.
+# NUMPY IS NOT THE SYSTEM ONE, AND NOT BY TASTE. torch nv24.08 is built for the
+# numpy C-API 0x10 (1.23+), jammy has 1.21.5 (0xe): with it torch imports and
+# computes on the GPU, but every torch↔numpy bridge fails with
+# `RuntimeError: Numpy is not available` (measured on a board). 1.26.4 is the
+# last 1.x: apt modules built for 1.21 work with it (checked: Gst, jtop,
+# tensorrt, cv2 4.8.0), 2.x would break them. It goes to /usr/local and
+# overrides the system one for every Python 3.10 user — that is the goal.
 log_info "колесо torch (NVIDIA, 769 МБ)"
 apt_retry curl -fsSL --max-time 1800 -o "$WORK/$TORCH_WHEEL" "$TORCH_URL" || exit 1
 echo "$TORCH_SHA256  $WORK/$TORCH_WHEEL" | sha256sum -c --quiet - || {
     log_error "контрольная сумма колеса torch не совпала"
     exit 1
 }
-
-PIP=(python3 -m pip install --no-cache-dir --constraint "$SCRIPT_DIR/constraints.txt")
-# scipy — вместе с numpy, см. constraints.txt.
+# scipy goes with numpy, see constraints.txt.
 log_info "pip: numpy, scipy, torch"
 apt_retry "${PIP[@]}" numpy scipy "$WORK/$TORCH_WHEEL" || {
     log_error "pip не поставил torch"
     exit 1
 }
 
-# --- 4. torchvision из исходников -------------------------------------------
+# --- 4. torchvision from source -------------------------------------------------
 log_info "torchvision $TORCHVISION_TAG: исходники"
 apt_retry git clone -q --depth 1 --branch "$TORCHVISION_TAG" "$TORCHVISION_REPO" "$WORK/vision" || exit 1
-got="$(git -C "$WORK/vision" rev-parse HEAD)"
+got="$(git -C "$WORK/vision" rev-parse HEAD | first_line)"
 if [[ "$got" != "$TORCHVISION_COMMIT" ]]; then
     log_error "тег $TORCHVISION_TAG указывает на $got, ожидали $TORCHVISION_COMMIT"
     exit 1
 fi
 
-# Число параллельных компиляций — по памяти, а не по ядрам. Файл CUDA
-# у nvcc съедает до ~1.5 ГБ, а в appliance virt-customize памяти столько,
-# сколько дали `--memsize` (по умолчанию 2 ГБ): MAX_JOBS=nproc там убивал
-# бы компилятор по OOM молча, посреди сборки.
-mem_mb=$(( $(awk '/MemAvailable/{print $2}' /proc/meminfo) / 1024 ))
-jobs=$(( mem_mb / 1536 )); (( jobs < 1 )) && jobs=1
-(( jobs > $(nproc) )) && jobs=$(nproc)
-log_info "сборка torchvision с CUDA $TORCH_CUDA_ARCH_LIST: $jobs потоков (память ${mem_mb} МБ, ядер $(nproc))"
+# Parallel compilations by memory, not by cores: a CUDA file eats up to
+# ~1.5 GB in nvcc, and the virt-customize appliance has what `--memsize` gave
+# (2 GB by default) — MAX_JOBS=nproc there would OOM-kill the compiler silently.
+# /proc/meminfo is checked to be a number before any arithmetic.
+mem_kb="$(awk '/^MemAvailable:/{print $2; exit}' "$R/proc/meminfo" 2>/dev/null || true)"
+cores="$(nproc 2>/dev/null || true)"
+jobs=1
+if [[ "$mem_kb" =~ ^[0-9]{1,12}$ && "$cores" =~ ^[0-9]{1,4}$ ]]; then
+    jobs=$(( mem_kb / 1024 / 1536 ))
+    (( jobs > cores )) && jobs=$cores
+    (( jobs < 1 )) && jobs=1
+fi
+log_info "сборка torchvision с CUDA $ARCH_LIST: $jobs потоков"
 
 (
     cd "$WORK/vision"
     export CUDA_HOME=/usr/local/cuda PATH="/usr/local/cuda/bin:$PATH"
-    export FORCE_CUDA=1 TORCH_CUDA_ARCH_LIST BUILD_VERSION="${TORCHVISION_TAG#v}" MAX_JOBS="$jobs"
-    python3 -m pip wheel --no-cache-dir --no-deps --no-build-isolation \
-        --constraint "$SCRIPT_DIR/constraints.txt" -w "$WORK/wheels" . \
+    export FORCE_CUDA=1 TORCH_CUDA_ARCH_LIST="$ARCH_LIST" BUILD_VERSION="${TORCHVISION_TAG#v}" MAX_JOBS="$jobs"
+    "${PIP_ENV[@]}" python3 -m pip wheel --no-cache-dir --no-deps --no-build-isolation \
+        --constraint "$EXT_DIR/constraints.txt" -w "$WORK/wheels" . \
         > "$WORK/torchvision-build.log" 2>&1
 ) || {
     log_error "сборка torchvision упала, хвост журнала:"
     >&2 tail -40 "$WORK/torchvision-build.log"
     exit 1
 }
-apt_retry "${PIP[@]}" pillow "$WORK"/wheels/torchvision-*.whl || {
+wheels=("$WORK"/wheels/torchvision-*.whl)
+[[ -f "${wheels[0]}" ]] || { log_error "сборка torchvision не дала колеса"; exit 1; }
+apt_retry "${PIP[@]}" pillow "${wheels[0]}" || {
     log_error "pip не поставил собранный torchvision"
     exit 1
 }
 
-# --- 5. Проверка --------------------------------------------------------------
-#
-# Без GPU: внутри virt-customize его нет, и torch.cuda.is_available()
-# честно ответит False. Проверяем то, что от сборки зависит: версии CUDA
-# и cuDNN в самом torch, загрузку всех .so (включая cuSPARSELt),
-# CUDA-операции torchvision и мост с numpy.
+# --- 5. Check ---------------------------------------------------------------------
+# No GPU inside virt-customize: torch.cuda.is_available() is honestly False.
+# What the build decides is checked: CUDA and cuDNN versions inside torch, all
+# .so loading (cuSPARSELt included), torchvision CUDA ops, the numpy bridge.
 python3 - <<'PYEOF' || { log_error "проверка импорта не прошла"; exit 1; }
-import warnings; warnings.simplefilter("error", UserWarning)  # numpy/scipy не в паре — отказ
+import warnings; warnings.simplefilter("error", UserWarning)  # numpy/scipy out of pair — refusal
 import numpy, scipy, torch, torchvision
 assert torch.version.cuda == "12.6", torch.version.cuda
 assert torch.backends.cudnn.version() >= 90000, torch.backends.cudnn.version()
@@ -218,7 +290,7 @@ assert torch.from_numpy(numpy.ones(3)).sum().item() == 3.0
 print(f"torch {torch.__version__} (CUDA {torch.version.cuda}, cuDNN {torch.backends.cudnn.version()}), "
       f"torchvision {torchvision.__version__} (CUDA ops {cuda_ops}), numpy {numpy.__version__}, scipy {scipy.__version__}")
 PYEOF
-python3 "$SCRIPT_DIR/check-system-python.py" || {
+python3 "$EXT_DIR/check-system-python.py" || {
     log_error "установка повредила системный Python — см. выше"
     exit 1
 }
