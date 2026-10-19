@@ -10,7 +10,7 @@
 
 - [ ] Task 1: [cream] стадии configure `early`, `cloud-user`, `graphical` (§6.4), `cream resolve --installed`, правка спеки по `desktop`
 - [ ] Task 2: конвертер `tools/convert-v1.py` (§4.7) с тестом на фикстурах
-- [ ] Task 3: обвязка проверок — автообнаружение тестов расширений, живой стенд `tools/live-test.sh`, гейт имён bisquite
+- [x] Task 3: обвязка проверок — автообнаружение тестов расширений, живой стенд `tools/live-test.sh`, гейт имён bisquite
 - [ ] Task 4: [cream] статическая проверка графа в `cream validate --catalog` и выпуск cream 1.1.0
 - [ ] Task 5: библиотека `cloud-user` (`kind: library`) + `yq`
 - [ ] Task 6: библиотека `l4t` (`kind: library`) + `btop` + `firefox`
@@ -199,7 +199,7 @@ P — живая проверка **ожидает** (плата Jetson/ВМ с 
 
 ### Task 3: обвязка проверок (владелец общих файлов волны 1)
 **Файлы:** `tools/check.sh`, `tools/live-test.sh` (новый), `tools/check-names.sh` (новый), `Makefile`,
-`.github/workflows/live-nightly.yml` (новый), перенос `tools/test-{firewall,can-usb,l4t-kernel-kvm,nvidia-jetpack,sensing-gmsl2-camera}.sh`
+`.github/workflows/live.yml` (новый; PR — изменённые L-расширения, ночью — все), `tools/hooktest.sh` (H-раннер), `tools/live-matrix.sh`, перенос `tools/test-{firewall,can-usb,l4t-kernel-kvm,nvidia-jetpack,sensing-gmsl2-camera}.sh`
 → `extensions/debian/<ext>/tests/` (`git mv`, без изменения логики, правка путей).
 **Шаги.**
 1. `check.sh` находит `extensions/debian/*/tests/*.sh` сам (как сейчас `teleport/tests`); явные строки перенесённых тестов убрать.

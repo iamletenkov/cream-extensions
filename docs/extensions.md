@@ -995,7 +995,42 @@ tools/check.sh                # всё сразу: валидаторы и те�
 tools/validate-extensions.py  # манифесты layout 2, схемы, обращение с файлами настроек
 tools/cream-validate.sh       # cream validate по расширениям cream/v1 (make cream-validate)
 tools/test-conf.sh            # lib/bisquite-conf и домены на подменённом корне
+tools/check-names.sh          # имена bisquite в расширениях cream/v1 (make check-names)
+tools/live-test.sh <имя>      # живой прогон настоящим cream (make test-live EXT=<имя>)
 ```
+
+### Тесты расширения cream/v1: V, H, L
+
+Три уровня (план [2026-10-19-cream-v1-migration](plans/2026-10-19-cream-v1-migration.md), колонка «тесты»):
+
+- **V** — `cream validate` (`make cream-validate`) и гейт имён `tools/check-names.sh`: в расширении
+  `cream/v1` нет `/opt/bisquite`, `/etc/bisquite`, `bisquite-conf`, `BISQUITE_`, `inet bisquite`,
+  `lib/get_cloud_user` и прочих имён layout 2 (список — в скрипте). Слово `bisquite` как имя сборщика
+  можно. Таблицу переименований в README оборачивают `<!-- check-names: off -->` … `<!-- check-names: on -->`,
+  одиночную строку (тест, проверяющий отсутствие) помечают `check-names: allow`.
+- **H** — хуки на подменённом корне: `extensions/<семейство>/<имя>/tests/test-*.sh`, исполняемый,
+  код 0 — прошли. `tools/check.sh` находит такие файлы сам, править его не нужно. Общая обвязка —
+  `tools/hooktest.sh` (`. "$HERE/../../../../tools/hooktest.sh"`): `ht_root` кладёт копию расширения в
+  `$ROOT/opt/cream/ext/<имя>`, `ht_hook <хук> [KEY=VALUE…]` зовёт хук как cream (очищенное окружение,
+  `CREAM_*`, несекретные ключи с default, cwd — каталог расширения), `ht_fake` подставляет команду с
+  журналом вызовов; опасные на хосте команды (`apt-get`, `dpkg`, `systemctl`, `curl`, …) закрыты сторожем
+  с кодом 127, пока тест их не подставит. Образец — `tools/test-hooktest.sh`.
+- **L** — живой прогон `tools/live-test.sh <имя>` (`make test-live EXT=<имя> [DISTRO=…]`): контейнер
+  `debian:12`/`debian:13`/`ubuntu:22.04`/`ubuntu:24.04` с systemd как PID 1 (флаги — как у интеграции
+  cream: без `--privileged`, `--cgroupns=host`, cgroup на запись, `--tmpfs /run`, явный `--memory`),
+  настоящий cream по пину, источник `path`. Сценарий: зависимости → `install` → повтор (`changed: false`)
+  → `install --reinstall` не меняет ни одного файла в `/etc`, `/opt/cream`, `/usr/local`,
+  `/var/lib/cream/ext` → перезапуск (configure на загрузке успешен, `systemctl --failed` пуст, нет
+  `ordering cycle`) → `remove` (если есть хук); значения секретов не видны в `ps`, журнале, реестре.
+  Код 20 допустим только от хука `install` и только с `--expect-skip` (рулинг Р11): `configure` без
+  устройства пишет предупреждение и выходит 0. Умолчания прогона — `tests/live.env` расширения (данные
+  `KEY=value`): `LIVE_DEPS`, `LIVE_ACCEPT_RISK=1`, `LIVE_EXPECT_SKIP=1`, `LIVE_PARAMS`, `LIVE_SECRETS`,
+  `LIVE_MEMORY`, `LIVE_CAPS` (`firewall` — `NET_ADMIN`), `LIVE_SNAPSHOT_IGNORE`, `LIVE_BOOT_CONFIGURE=optional`,
+  `LIVE_DISTROS`. Наличие `tests/live.env` делает расширение L-расширением для CI: `.github/workflows/live.yml`
+  гоняет изменённые на PR (и те, чьи `LIVE_DEPS` изменились) и все — ночью, каждое на своём раннере.
+  Прогоны на хосте идут по одному (замок `flock`), контейнер и образ удаляются, журналы — в
+  `.scratchpad/live/<имя>-<дистрибутив>/`. Самопроверка раннера на фикстурах `tools/testdata/live/` —
+  `make test-live-self`.
 
 Переходный каталог (пилот cream): манифест со строкой `schema: cream/v1`
 `validate-extensions.py` не разбирает по правилам layout 2 — он проверяет только

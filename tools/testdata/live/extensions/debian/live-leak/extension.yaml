@@ -1,0 +1,14 @@
+# Fixture of tools/test-live-test.sh: the install hook logs the secret — red.
+schema: cream/v1
+name: live-leak
+version: 1.0.0
+summary: фикстура L-раннера — секрет в журнале
+cream: ">=1.0.0"
+platform: {family: deb, arch: [amd64, arm64]}
+targets: {build: exec, live: "yes"}
+hooks:
+  install: {}
+  remove: {}
+config:
+  keys:
+    LIVE_LEAK_TOKEN: {type: str, default: "", empty: true, secret: file, description: "секрет"}

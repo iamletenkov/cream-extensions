@@ -1,0 +1,3 @@
+#!/bin/sh
+# built by bisquite (EXTENSION), lives in /opt/cream/ext/clean
+. "${CREAM_ROOT:-}/opt/cream/ext/cloud-user/get_cloud_user.sh"

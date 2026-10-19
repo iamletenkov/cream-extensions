@@ -1,0 +1,13 @@
+# Fixture of tools/test-live-test.sh: a unit fails at boot — systemctl --failed is not empty, red.
+schema: cream/v1
+name: live-unit-failed
+version: 1.0.0
+summary: фикстура L-раннера — юнит падает на загрузке
+cream: ">=1.0.0"
+platform: {family: deb, arch: [amd64, arm64]}
+targets: {build: exec, live: "yes"}
+hooks:
+  install: {}
+  remove: {}
+files:
+  - {src: files/live-unit-failed.service, dst: /etc/systemd/system/live-unit-failed.service, mode: "0644"}

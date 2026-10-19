@@ -1,0 +1,3 @@
+#!/bin/sh
+# Not idempotent: every run appends (spec cream §6.3 forbids).
+echo line >> /etc/live-nonidem.conf

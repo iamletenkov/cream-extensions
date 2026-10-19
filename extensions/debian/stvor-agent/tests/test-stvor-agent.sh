@@ -15,12 +15,12 @@
 # CREAM_DEB=<.deb> или кеш пина tools/cream-pin.env, и docker. Нет — строка
 # «пропущено», не молчание.
 #
-#   tools/test-stvor-agent.sh        код 0 — все проверки прошли
+#   extensions/debian/stvor-agent/tests/test-stvor-agent.sh        код 0 — все проверки прошли
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO="$(dirname "$HERE")"
-EXT="$REPO/extensions/debian/stvor-agent"
+EXT="$(dirname "$HERE")"
+REPO="$(cd "$EXT/../../.." && pwd)"
 
 TMP="$(mktemp -d)"
 trap 'rm -r -f -- "$TMP"' EXIT
@@ -437,8 +437,8 @@ cream_deb=""
 if [[ -n "${CREAM_DEB:-}" ]]; then
     cream_deb="$CREAM_DEB"
 else
-    pv="$(grep -E '^CREAM_VERSION=' "$HERE/cream-pin.env" | tail -n1 | cut -d= -f2-)"
-    ps="$(grep -E '^CREAM_SHA256=' "$HERE/cream-pin.env" | tail -n1 | cut -d= -f2-)"
+    pv="$(grep -E '^CREAM_VERSION=' "$REPO/tools/cream-pin.env" | tail -n1 | cut -d= -f2-)"
+    ps="$(grep -E '^CREAM_SHA256=' "$REPO/tools/cream-pin.env" | tail -n1 | cut -d= -f2-)"
     cached="$REPO/.cache/cream/cream_${pv}_amd64.deb"
     if [[ -n "$pv" && -f "$cached" ]] && echo "$ps  $cached" | sha256sum -c --status - 2>/dev/null; then
         cream_deb="$cached"

@@ -7,8 +7,8 @@
 # в systemd-контейнере (README расширения, «Проверка»).
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO="$(dirname "$HERE")"
-X="$REPO/extensions/debian/firewall"
+X="$(dirname "$HERE")"
+REPO="$(cd "$X/../../.." && pwd)"
 fails=0; total=0
 ok()  { total=$((total+1)); echo "  ok   $1"; }
 bad() { total=$((total+1)); fails=$((fails+1)); echo "  FAIL $1"; }

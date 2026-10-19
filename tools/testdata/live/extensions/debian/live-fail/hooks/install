@@ -1,0 +1,3 @@
+#!/bin/sh
+# A broken install: the runner must go red.
+exit 1

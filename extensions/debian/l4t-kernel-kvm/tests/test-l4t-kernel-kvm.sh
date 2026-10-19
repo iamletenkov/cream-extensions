@@ -9,7 +9,7 @@
 # base image (plan 2026-09-24, task 9) and the live build are its only checks.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-X="$HERE/../extensions/debian/l4t-kernel-kvm"
+X="$(dirname "$HERE")"
 fails=0; total=0
 ok()  { total=$((total+1)); echo "  ok   $1"; }
 bad() { total=$((total+1)); fails=$((fails+1)); echo "  FAIL $1"; }

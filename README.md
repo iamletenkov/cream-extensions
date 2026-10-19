@@ -24,8 +24,9 @@ extensions/
     └── wrt_cloudinit/
 lib/                         # общий код; сборка доставляет его в гостя (контракт)
                              #   bisquite-conf — библиотека и CLI настроек, knobs/ — общие схемы
-tools/                       # check.sh, validate-extensions.py, test-conf.sh, new-extension.sh
+tools/                       # check.sh, check-names.sh, live-test.sh, hooktest.sh, validate-extensions.py, new-extension.sh
 .github/workflows/ci-release.yml  # CI: tools/check.sh на push и PR, выпуск — release-please
+.github/workflows/live.yml        # живые прогоны L-расширений: изменённые на PR, все — ночью
 docs/extensions.md           # конвенция целиком: манифест, фазы, способности
 ```
 
@@ -148,8 +149,10 @@ conflicts: []
 ## Проверки
 
 ```bash
-tools/check.sh                # все проверки (сегодня — валидация манифестов)
+tools/check.sh                # все проверки: манифесты, cream validate, гейт имён, тесты расширений (make test)
 tools/validate-extensions.py  # только манифесты (нужен python3 + PyYAML)
+tools/check-names.sh          # гейт имён bisquite в расширениях cream/v1 (make check-names)
+tools/live-test.sh <имя>      # живой прогон настоящим cream в контейнере с systemd (make test-live EXT=<имя>)
 tools/new-extension.sh <имя>  # каркас нового расширения
 tools/agent-bump.sh <тег> <SHA256SUMS>  # пин stvor-agent в обёртке stvor-agent (его зовёт agent-bump.yml)
 tools/catalog-snapshot.sh [OUT] # снимок каталога cream (make snapshot)
@@ -171,6 +174,12 @@ tools/check.sh
 
 Из зависимостей нужен bash и Python 3 с PyYAML (`pip install pyyaml` или
 `apt install python3-yaml`).
+
+Тесты расширения лежат в его `tests/` и находятся сами: `tools/check.sh` гоняет
+каждый исполняемый `extensions/*/*/tests/test-*.sh` (в снимок каталога `tests/` не
+попадает). Живой прогон — отдельно (контейнер с systemd, сеть, по одному под
+замком): `make test-live EXT=<имя> [DISTRO=ubuntu-24.04]`, умолчания — в
+`tests/live.env` расширения. Подробно — [docs/extensions.md](docs/extensions.md#проверки).
 
 ## Подключение в VMFILE
 

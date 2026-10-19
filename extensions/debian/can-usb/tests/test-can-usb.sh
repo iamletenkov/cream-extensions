@@ -6,7 +6,7 @@
 # и порядок шагов в install.sh. Живая сборка — на плате (README, «Проверка»).
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-X="$HERE/../extensions/debian/can-usb"
+X="$(dirname "$HERE")"
 fails=0; total=0
 ok()  { total=$((total+1)); echo "  ok   $1"; }
 bad() { total=$((total+1)); fails=$((fails+1)); echo "  FAIL $1"; }

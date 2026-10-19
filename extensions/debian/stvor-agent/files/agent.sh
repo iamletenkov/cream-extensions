@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # The stvor-agent package: which one, where from, how it goes on and off.
 # Sourced by the hooks (hooks/install, upgrade, remove, apply); the pure
-# functions are called by tools/test-stvor-agent.sh. The agent lives in its own
+# functions are called by tests/test-stvor-agent.sh. The agent lives in its own
 # repository and ships as stvor-agent_<version>_<arch>.deb:
 # https://github.com/iamletenkov/stvor-agent
 #

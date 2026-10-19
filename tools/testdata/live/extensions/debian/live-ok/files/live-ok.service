@@ -1,0 +1,10 @@
+[Unit]
+Description=live-ok fixture service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,19 @@
+# Fixture of tools/test-live-test.sh: everything right — idempotent install,
+# a unit from files, configure at boot, a secret only in the secrets file, remove.
+schema: cream/v1
+name: live-ok
+version: 1.0.0
+summary: фикстура L-раннера — всё верно
+cream: ">=1.0.0"
+platform: {family: deb, arch: [amd64, arm64]}
+targets: {build: exec, live: "yes"}
+hooks:
+  install: {}
+  configure: {stage: system}
+  remove: {}
+config:
+  keys:
+    LIVE_OK_COLOR: {type: str, default: blue, description: "что install кладёт в /etc/live-ok/color"}
+    LIVE_OK_TOKEN: {type: str, default: "", empty: true, secret: file, description: "секрет"}
+files:
+  - {src: files/live-ok.service, dst: /etc/systemd/system/live-ok.service, mode: "0644"}

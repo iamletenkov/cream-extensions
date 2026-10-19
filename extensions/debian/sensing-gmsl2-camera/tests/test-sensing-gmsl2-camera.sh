@@ -5,7 +5,7 @@
 # apt-mark hold пакетов ядра L4T на подставных dpkg-query и apt-mark.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-X="$HERE/../extensions/debian/sensing-gmsl2-camera"
+X="$(dirname "$HERE")"
 fails=0; total=0
 ok()  { total=$((total+1)); echo "  ok   $1"; }
 bad() { total=$((total+1)); fails=$((fails+1)); echo "  FAIL $1"; }
@@ -89,7 +89,7 @@ line() { grep -nE "$1" "$I" | head -1 | cut -d: -f1; }
 check   "барьер L4T — до любой сети"            test "$(line '^nvisppg_gate ')" -lt "$(line '^(nvisppg_fetch|git clone)')"
 check   "подмена — после скачивания"            test "$(line '^nvisppg_fetch ')" -lt "$(line '^nvisppg_install ')"
 check   "nvisppg.sh в списке обязательных"      grep -qE '^for f in .*nvisppg\.sh' "$I"
-refuses "ни одной ссылки на удалённый шаг 02"   grep -rq '02-fetch-camera-drivers' "$X"
+refuses "ни одной ссылки на удалённый шаг 02"   grep -rq --exclude-dir=tests '02-fetch-camera-drivers' "$X"
 
 echo "== закрепление ядра (apt-mark hold) на подставных командах =="
 # Fake dpkg-query and apt-mark: FAKE_INSTALLED lists installed packages,

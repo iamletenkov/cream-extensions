@@ -29,11 +29,12 @@ name: CI and Release
 # Ветки проверяются на pull_request (результат слияния с main), push — только
 # main: там релиз. push во все ветки вместе с pull_request гонял CI дважды на
 # каждый коммит PR. Ветку без PR — черновым PR или вручную (workflow_dispatch).
-# Пилот cream (спека cream §16 шаг 2) живёт в ветке feature/cream-v1-pilot до
-# перевода всего каталога: PR в неё проверяются тем же check.sh.
+# Перевод каталога на cream/v1 (план 2026-10-19) идёт PR в ветки
+# feature/cream-v1-* (интеграционная feature/cream-v1-migration): они
+# проверяются тем же check.sh. Живые прогоны — live.yml.
 on:
   pull_request:
-    branches: [main, feature/cream-v1-pilot]
+    branches: [main, "feature/cream-v1-*"]
   push:
     branches: [main]
   workflow_dispatch:

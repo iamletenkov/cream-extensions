@@ -1,0 +1,147 @@
+name: Live tests
+
+# Живые прогоны расширений cream/v1 (план 2026-10-19, Task 3): настоящий cream
+# по пину tools/cream-pin.env ставит расширение в контейнере с systemd как
+# PID 1 (tools/live-test.sh: install, повтор, --reinstall без изменений файлов,
+# перезагрузка — configure, systemctl --failed пуст, нет ordering cycle,
+# секреты не утекают, remove). L-расширение — то, у которого есть
+# tests/live.env (умолчания прогона и дистрибутивы LIVE_DISTROS).
+#
+# Когда:
+# - pull_request — только изменённые L-расширения и те, чьи LIVE_DEPS
+#   изменились (tools/live-matrix.sh); правка раннера — его самопроверка на
+#   фикстурах (tools/test-live-test.sh); пин cream — все L-расширения;
+# - ночью и вручную — все L-расширения и самопроверка (вручную можно
+#   сузить до одного расширения).
+# Каждый элемент матрицы — свой раннер и один контейнер; сеть есть (apt,
+# загрузки по пину). Проверки репозитория (check.sh) — в ci-release.yml.
+on:
+  pull_request:
+    branches: [main, "feature/cream-v1-*"]
+    paths:
+      - "extensions/**"
+      - "tools/live-test.sh"
+      - "tools/live-matrix.sh"
+      - "tools/test-live-test.sh"
+      - "tools/testdata/live/**"
+      - "tools/cream-deb.sh"
+      - "tools/cream-pin.env"
+      - ".github/workflows/live.yml"
+  schedule:
+    - cron: "17 1 * * *"
+  workflow_dispatch:
+    inputs:
+      ext:
+        description: "одно расширение (пусто — все L-расширения)"
+        required: false
+        default: ""
+
+permissions: {}
+
+concurrency:
+  group: live-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      selftest: ${{ steps.plan.outputs.selftest }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Matrix
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          ONLY_EXT: ${{ inputs.ext }}
+        run: |
+          set -euo pipefail
+          selftest=true
+          if [ "$EVENT" = pull_request ]; then
+            git diff --name-only "$BASE_SHA" HEAD > "$RUNNER_TEMP/changed"
+            matrix="$(tools/live-matrix.sh --changed "$RUNNER_TEMP/changed")"
+            grep -Eq '^(tools/(live-test|live-matrix|test-live-test|cream-deb)\.sh|tools/testdata/live/|tools/cream-pin\.env|\.github/workflows/live\.yml)' \
+              "$RUNNER_TEMP/changed" || selftest=false
+          else
+            matrix="$(tools/live-matrix.sh --all)"
+            if [ -n "$ONLY_EXT" ]; then
+              matrix="$(jq -c --arg e "$ONLY_EXT" '{include: [.include[] | select(.ext == $e)]}' <<< "$matrix")"
+              selftest=false
+            fi
+          fi
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "selftest=$selftest" >> "$GITHUB_OUTPUT"
+          echo "Матрица: $matrix; самопроверка: $selftest"
+
+  selftest:
+    name: Runner self-test
+    needs: plan
+    if: needs.plan.outputs.selftest == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: python -m pip install --disable-pip-version-check pyyaml
+
+      - name: tools/test-live-test.sh
+        run: tools/test-live-test.sh debian-12
+
+      - name: Logs of failed cases
+        if: failure()
+        run: tail -n 60 .scratchpad/live/selftest-debian-12/*.out || true
+
+  live:
+    name: ${{ matrix.ext }} (${{ matrix.distro }})
+    needs: plan
+    if: needs.plan.outputs.matrix != '' && needs.plan.outputs.matrix != '{"include":[]}'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: python -m pip install --disable-pip-version-check pyyaml
+
+      - name: tools/live-test.sh
+        env:
+          EXT: ${{ matrix.ext }}
+          DISTRO: ${{ matrix.distro }}
+        run: tools/live-test.sh --distro "$DISTRO" "$EXT"
+
+      - name: Journal of the machine
+        if: failure()
+        env:
+          EXT: ${{ matrix.ext }}
+          DISTRO: ${{ matrix.distro }}
+        run: |
+          d=".scratchpad/live/$EXT-$DISTRO"
+          tail -n 40 "$d"/*.err || true
+          tail -n 150 "$d/journal.log" || true

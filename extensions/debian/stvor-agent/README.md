@@ -88,7 +88,7 @@ printf '%s' "$LABEL_TOKEN" | stvor-agent enable 'URL=https://<домен>/robot-
 
 ## Проверки
 
-`tools/test-stvor-agent.sh` (его зовёт `tools/check.sh`): манифест, пин,
+`tests/test-stvor-agent.sh` (его зовёт `tools/check.sh`): манифест, пин,
 выбор источника, сверка суммы, отказ при неполном пине, явные версия и сумма
 побеждают пин, reload меток после `dpkg -i` (не в фазе build), токен не попадает в argv и окружение `curl`/`dpkg`/
 `stvor-agent`, хуки `remove` и `apply`. При `CREAM_DEB=<.deb>` (или кеше пина
