@@ -152,7 +152,7 @@ PY
 }
 eq "schema" cream/v1 "$(manifest 'm["schema"]')"
 eq "name" stvor-agent "$(manifest 'm["name"]')"
-eq "version" 4.0.0 "$(manifest 'm["version"]')"
+check "version — 4.x (patch поднимает agent-bump)" grep -qE '^4\.[0-9]+\.[0-9]+$' <<< "$(manifest 'm["version"]')"
 eq "cream" '>=1.0.0' "$(manifest 'm["cream"]')"
 eq "arch" "['amd64', 'arm64']" "$(manifest 'm["platform"]["arch"]')"
 eq "targets" "{'build': 'exec', 'live': 'yes'}" "$(manifest 'm["targets"]')"

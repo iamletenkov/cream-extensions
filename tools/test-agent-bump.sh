@@ -43,6 +43,11 @@ new_tree(){
             -e '/^# FICTITIOUS TEST PIN/,/^# release puts/d' \
             "$PIN"
     fi
+    # FICT=1 — пин в виде до первого релиза (фикстура: нули и пометка
+    # FICTITIOUS); настоящий пин каталога после релиза 4.0.0 уже не фиктивный.
+    if [[ "${FICT:-0}" == 1 ]]; then
+        cp "$REPO/tools/testdata/agent-bump/pin.fictitious.env" "$PIN"
+    fi
     sed -i -E "s/^version: .*/version: ${EXT_VERSION:-4.0.0}/" "$MANIFEST"
     cp "$PIN" "$T/pin.before"
     cp "$MANIFEST" "$T/manifest.before"
@@ -54,8 +59,8 @@ pin(){ sed -n "s/^$1=//p" "$PIN"; }
 untouched(){ cmp -s "$PIN" "$T/pin.before" && cmp -s "$MANIFEST" "$T/manifest.before"; }
 
 echo "== фиктивный пин 4.0.0 → релиз v4.0.0: настоящие суммы на месте нулей =="
-new_tree
-eq "в каталоге — фиктивный пин" "$ZERO" "$(pin STVOR_AGENT_PIN_SHA256_AMD64)"
+FICT=1 new_tree
+eq "до релиза — фиктивный пин" "$ZERO" "$(pin STVOR_AGENT_PIN_SHA256_AMD64)"
 sums "$T/SHA256SUMS" "$A64  stvor-agent_4.0.0_amd64.deb" "$B64  stvor-agent_4.0.0_arm64.deb" \
     "$C64  stvor-agent_4.0.0_source.tar.gz"
 run v4.0.0 "$T/SHA256SUMS"
