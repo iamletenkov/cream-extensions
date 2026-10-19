@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# cream action `desktop status` (lock: none — only reads): the keys and which of
+# them are applied (dconf, X DPMS).
+set -euo pipefail
+exec "${CREAM_EXT_DIR:?run by cream}/files/desktop.sh" status

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# cream action `desktop defaults KEY=VALUE…`: write keys of the domain without
+# applying them — for a build or a script that sets the image defaults while the
+# display manager is not up. The same as `cream set --no-apply desktop …`;
+# pairs are checked by cream (params), the nested cream inherits the lock.
+set -euo pipefail
+(( $# )) || exit 0
+exec cream set --no-apply desktop "$@"

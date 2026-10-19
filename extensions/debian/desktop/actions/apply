@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# cream action `desktop apply [--now|--boot]`: apply the keys of the domain now.
+#   --now  (default) like after `cream set`: restarts the display manager
+#          (no-block) when the autologin changed and no graphical session is open
+#   --boot like at boot: waits up to 30 s for the user, restarts nothing
+set -euo pipefail
+(( $# <= 1 )) || { >&2 echo "desktop apply: один режим — --now или --boot"; exit 2; }
+exec "${CREAM_EXT_DIR:?run by cream}/files/desktop.sh" apply "${1:---now}"
