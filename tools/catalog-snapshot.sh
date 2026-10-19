@@ -89,7 +89,7 @@ tar -x -C /tmp/cat
 /tmp/cream/usr/bin/cream catalog pack /tmp/cat --out "/out/$1"'
 
 git -C "$REPO" archive --format=tar "$commit" -- cream-catalog.yaml LICENSE NOTICE "${dirs[@]}" \
-        ':(exclude)extensions/*/*/tests' \
+        ':(exclude,glob)extensions/*/*/tests/**' \
     | docker run --rm -i --network none -u "$(id -u):$(id -g)" \
         -e SOURCE_DATE_EPOCH="$epoch" \
         -v "$deb:/cream.deb:ro" -v "$OUT:/out" \

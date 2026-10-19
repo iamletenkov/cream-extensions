@@ -1,8 +1,8 @@
 # Корень каталога cream (спека cream §4, §9). version — тег каталога: его
 # поднимает release-please (extra-files в .github/release_please/, строка с
 # пометкой x-release-please-version), руками не правят. Каталог переходный
-# (спека cream §16 шаг 2): рядом с cream/v1 лежат расширения layout 2, и `cream validate --catalog .` по корню их отвергает
-# (manifest.schema). Поэтому снимок собирает tools/catalog-snapshot.sh из
+# (спека cream §16 шаг 2): рядом с cream/v1 лежат расширения layout 2, и
+# `cream validate --catalog .` по корню их отвергает (manifest.schema). Поэтому снимок собирает tools/catalog-snapshot.sh из
 # подмножества cream/v1 во временном дереве с этим же файлом; roots обязан
 # покрывать каждое cream/v1-расширение — скрипт это проверяет.
 schema: cream/v1
