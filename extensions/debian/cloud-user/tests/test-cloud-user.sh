@@ -136,14 +136,20 @@ run_lib; eq "гонка — запасной путь не берётся" 1 "$?
 printf 'null' > "$FAKE/userdata"
 run_lib; eq "userdata null — код 1" 1 "$?"
 
-echo "== в userdata нет пользователя — ошибка манифеста, не запасной путь =="
+echo "== yq ответил пусто или ошибкой — запасной путь =="
 lib_root
 printf 'carol:x:1001:1001::/home/carol:/bin/bash\n' > "$FAKE/passwd"
 mkdir -p "$ROOT/home/carol"
 printf '#cloud-config\npackages: [vim]\n' > "$FAKE/userdata"
-run_lib; eq "нет user — код 1" 1 "$?"
-eq "нет user — stdout пуст" "" "$(stdout)"
-check "stderr объясняет" grep -q 'User not found' "$ROOT/stderr"
+run_lib; eq "нет user — код 0" 0 "$?"
+eq "нет user — запасная учётка" carol "$(stdout)"
+check "нет user — сказано в stderr" grep -q 'no user name from yq' "$ROOT/stderr"
+printf '#cloud-config\nuser: alice\n' > "$FAKE/userdata"
+for body in 'echo ""' 'echo "jq: error: tag/0 is not defined" >&2; exit 3'; do
+    ht_fake yq "$body"
+    run_lib; eq "yq [$body] — код 0" 0 "$?"
+    eq "yq [$body] — запасная учётка" carol "$(stdout)"
+done
 
 echo "== запасной путь: нет cloud-init или yq =="
 for missing in cloud-init yq; do

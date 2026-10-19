@@ -39,7 +39,7 @@ stdout — только имя; диагностика — в stderr.
 | имя из userdata не проходит `^[a-z_][a-z0-9_-]{0,31}$` или это `default` (ссылка на `default_user` из `cloud.cfg`) | 0/1 | запасной путь (ниже), в stderr — `not a valid user name` |
 | `cloud-init query userdata` не ответил, есть `/var/lib/cloud/instance/user-data.txt` | 0 | из файла |
 | `cloud-init` есть, userdata ещё нет или `null` | 1 | — (гонка: вызывающий ждёт и повторяет) |
-| userdata есть, пользователя в ней нет | 1 | — (ошибка seed, запасной путь не маскирует её) |
+| userdata есть, а yq не дал имени (нет пользователя в seed, kislyuk/yq, сбой yq) | 0/1 | запасной путь (ниже), в stderr — `no user name from yq` |
 | нет `cloud-init` или `yq` | 0 | первая учётка с uid 1000…65533 и каталогом `/home/<имя>`; в stderr — `falling back to '<имя>'` |
 | нет и такой учётки | 1 | — |
 
