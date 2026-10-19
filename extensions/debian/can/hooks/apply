@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# cream hook `apply` of can: render /etc/modules-load.d/can.conf from
+# CAN_MODULES_LOAD (hook environment) and, when it changed on a running system,
+# queue systemd-modules-load to load the new modules now. hooks/install runs it
+# too (build: no systemd, the file is for the first boot). Non-blocking:
+# `cream set` may run inside a boot unit.
+set -euo pipefail
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+TARGET="$R/etc/modules-load.d/can.conf"
+modules="${CAN_MODULES_LOAD:-}"
+
+if [[ -z "$modules" ]]; then
+    if [[ -e "$TARGET" ]]; then
+        rm -f -- "$TARGET"
+        >&2 echo "can: CAN_MODULES_LOAD пуст — /etc/modules-load.d/can.conf удалён, модули CAN сами не грузятся"
+    fi
+    exit 0
+fi
+
+install -d -m 0755 "${TARGET%/*}"
+tmp="$(mktemp "${TARGET%/*}/.can.conf.XXXXXX")"
+trap 'rm -f -- "$tmp"' EXIT
+{
+    echo "# Written by the cream extension can from /etc/cream/can/config (CAN_MODULES_LOAD)."
+    echo "# Change: sudo cream set can CAN_MODULES_LOAD=\"can can_raw vcan\""
+    for m in $modules; do echo "$m"; done
+} > "$tmp"
+chmod 0644 "$tmp"
+if [[ -f "$TARGET" ]] && cmp -s "$tmp" "$TARGET"; then
+    >&2 echo "can: автозагрузка не изменилась"
+    exit 0
+fi
+mv -f -- "$tmp" "$TARGET"
+trap - EXIT
+>&2 echo "can: /etc/modules-load.d/can.conf — $modules"
+
+# Not a running system (build, chroot): the file is read on the next boot.
+[[ -d "$R/run/systemd/system" ]] || exit 0
+
+# A module missing for the running kernel is a warning, not a refusal: the
+# file is for the next boot too, and a new kernel may differ.
+for m in $modules; do
+    modinfo -n "$m" >/dev/null 2>&1 || >&2 echo "can: модуля $m нет для ядра $(uname -r) — проверьте имя"
+done
+# Removed modules stay loaded until reboot or `modprobe -r`: unloading under
+# a running candump would be a surprise.
+systemctl --no-block restart systemd-modules-load.service \
+    && >&2 echo "can: systemd-modules-load поставлен в очередь (загрузит новые модули)"
+exit 0
