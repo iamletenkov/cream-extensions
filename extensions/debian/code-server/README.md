@@ -190,11 +190,13 @@ mtime меняется всегда). Замер 2026-09-06 на Jetson Nano —
 
 ## Веб-приложение Teleport
 
-С 1.1.0 кладётся объявление для расширения `teleport-agent` (`teleport-app.sh`:
-на сборке и на каждой перенастройке):
+С 1.1.0 кладётся объявление для Teleport (`teleport-app.sh`: на сборке и
+на каждой перенастройке). С 4.0.0 его читает расширение `teleport` формата
+cream, путь — `/etc/cream/teleport/apps.d/` (до 4.0.0 —
+`/etc/bisquite/teleport/apps.d/` для прежнего `teleport-agent`):
 
 ```
-/etc/bisquite/teleport/apps.d/code-server.conf
+/etc/cream/teleport/apps.d/code-server.conf
 NAME=code-server
 URI=https://127.0.0.1:<PORT>
 ICON=laptop
@@ -202,11 +204,11 @@ ICON=laptop
 
 Порт — `CODE_SERVER_PORT` из действующих настроек, то есть после параметров VMFILE и `bisquite-conf set`; схема `https`, потому что
 `configure.sh` всегда выпускает сертификат mkcert. Файл безвреден без
-`teleport-agent`. С ним code-server публикуется как
+расширения `teleport`. С ним code-server публикуется как
 `https://code-server.<нода>.<хост прокси>` — через Teleport, при
 `CODE_SERVER_BIND=127.0.0.1` и без пароля: доступ решает метка `env` ноды
 и `tpApps` пользователя, а не code-server. Не публиковать —
-`bisquite-teleport set TELEPORT_APPS_DISABLE=code-server`.
+`cream set teleport TELEPORT_APPS_DISABLE=code-server`.
 
 Порт, сменённый на живой машине прямо в `~/.config/code-server/config.yaml`,
 объявление не догоняет — меняйте `CODE_SERVER_PORT`.

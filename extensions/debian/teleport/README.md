@@ -3,9 +3,8 @@
 Узел Teleport на машине: SSH-нода и веб-приложения без входящих портов — агент
 сам держит обратный туннель к прокси на 443. Расширение формата `cream/v1`
 (исполнитель — [cream](https://github.com/iamletenkov/cream)), перенос логики
-`bisquite-teleport-agent` 3.x (спека stvor-agent §10). Заменит `teleport-agent`
-(layout 2), который пока живёт рядом; оба дают способность `teleport-node` и
-взаимоисключимы.
+`bisquite-teleport-agent` 3.x (спека stvor-agent §10). Заменило обёртку
+`teleport-agent` (layout 2, удалена из каталога); способность — `teleport-node`.
 
 Метки узла задают три стороны: оператор (`TELEPORT_ENV`, `TELEPORT_LABELS`),
 внешний управляющий — служба `stvor-agent` (управляемые метки

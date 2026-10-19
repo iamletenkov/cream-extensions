@@ -8,8 +8,10 @@
 # библиотеки настроек lib/bisquite-conf и расширений на подменённом корне.
 # Сверка файлов-образцов контракта stvor-agent (check-contract-fixtures.sh:
 # пин набора — всегда, без сети; соседняя копия stvor-agent — если есть,
-# в CI её даёт checkout по ref). Тесты, которых ещё нет (extensions/debian/teleport/tests/*.sh,
-# tools/test-stvor-agent.sh), пропускаются со строкой, а не молча. Сверки копий
+# в CI её даёт checkout по ref). Тест tools/agent-bump.sh (пин обёртки
+# stvor-agent по SHA256SUMS релиза). Тесты, которых ещё нет
+# (extensions/debian/teleport/tests/*.sh, tools/test-stvor-agent.sh),
+# пропускаются со строкой, а не молча. Сверки копий
 # lib/ нет: копий нет, общий код доставляет в гостя сама сборка
 # (`/opt/bisquite/<имя>/lib`, см. docs/extensions.md). Все проверки доводятся
 # до конца, даже если первая упала.
@@ -37,8 +39,8 @@ echo
 echo "== test-conf =="
 "$HERE/test-conf.sh" || rc=1
 
-echo "== test-teleport-agent =="
-"$HERE/test-teleport-agent.sh" || rc=1
+echo "== test-agent-bump =="
+"$HERE/test-agent-bump.sh" || rc=1
 
 echo "== test-nvidia-jetpack =="
 "$HERE/test-nvidia-jetpack.sh" || rc=1
