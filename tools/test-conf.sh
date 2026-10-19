@@ -499,29 +499,9 @@ check_not "явный ключ с префиксом проверяется св
 check_not "BISQUITE_SELKIES_* вне схемы — отказ" lib conf_validate selkies BISQUITE_SELKIES_OTHER=1 2>/dev/null
 eq "config 0600 (пароли basic auth)" 600 "$(stat -c %a "$(cfg selkies)")"
 check "teleport-app.sh" bash "$STAGED/teleport-app.sh" 2>/dev/null
-eq "объявление с портом из настроек" "URI=http://127.0.0.1:8090" "$(grep URI "$ROOT/etc/bisquite/teleport/apps.d/selkies.conf")"
-eq "объявление selkies несёт иконку" "ICON=desktop" "$(grep ICON "$ROOT/etc/bisquite/teleport/apps.d/selkies.conf")"
-
-# Домен teleport (CLI bisquite-teleport, схема knobs) — в репозитории
-# bisquite-teleport-agent; здесь — только источник tarball обёртки.
-echo "== teleport-agent install.sh: источник tarball =="
-# The pure part of install.sh (sourced, nothing installed): architecture and URL.
-new_root; stage teleport-agent
-tpi(){ bash -c 'source "$1"; shift; "$@"' _ "$STAGED/install.sh" "$@"; }
-eq "версия по умолчанию — 18.10.0" 18.10.0 "$(tpi teleport_default_version)"
-eq "dpkg amd64 → amd64" amd64 "$(tpi teleport_arch amd64)"
-eq "dpkg arm64 (JetPack, Raspberry Pi OS 64) → arm64" arm64 "$(tpi teleport_arch arm64)"
-check_not "armhf — отказ" tpi teleport_arch armhf
-check_not "i386 — отказ" tpi teleport_arch i386
-eq "CDN amd64" https://cdn.teleport.dev/teleport-v18.10.0-linux-amd64-bin.tar.gz \
-    "$(tpi teleport_url 18.10.0 amd64 '')"
-eq "CDN arm64" https://cdn.teleport.dev/teleport-v18.10.0-linux-arm64-bin.tar.gz \
-    "$(tpi teleport_url 18.10.0 arm64 '')"
-eq "зеркало: раскладка binaries/teleport/<версия>/" \
-    https://binaries.example.org/binaries/teleport/18.10.0/teleport-v18.10.0-linux-arm64-bin.tar.gz \
-    "$(tpi teleport_url 18.10.0 arm64 https://binaries.example.org/)"
-eq "sha256 всегда с CDN" https://cdn.teleport.dev/teleport-v18.10.0-linux-arm64-bin.tar.gz.sha256 \
-    "$(tpi teleport_sha256_url 18.10.0 arm64)"
+eq "объявление с портом из настроек" "URI=http://127.0.0.1:8090" "$(grep URI "$ROOT/etc/cream/teleport/apps.d/selkies.conf")"
+eq "объявление selkies несёт иконку" "ICON=desktop" "$(grep ICON "$ROOT/etc/cream/teleport/apps.d/selkies.conf")"
+check_not "старый путь /etc/bisquite/teleport/apps.d не пишется" test -e "$ROOT/etc/bisquite/teleport/apps.d/selkies.conf"
 
 echo "== домен desktop: схема из lib, хук находит CLI того же lib =="
 new_root; stage gnome
@@ -558,8 +538,9 @@ eq "PASSWORD none перенесён" none "$(lib conf_get code-server CODE_SERV
 check_not "config.yaml code-server удалён" test -e "$ROOT/etc/bisquite/code-server/config.yaml"
 check_not "версия сборки не попала в файл устройства" grep -q CODE_SERVER_VERSION "$(cfg code-server)"
 check "teleport-app.sh code-server" bash "$STAGED/teleport-app.sh" 2>/dev/null
-eq "объявление code-server с портом" "URI=https://127.0.0.1:9003" "$(grep URI "$ROOT/etc/bisquite/teleport/apps.d/code-server.conf")"
-eq "объявление code-server несёт иконку" "ICON=laptop" "$(grep ICON "$ROOT/etc/bisquite/teleport/apps.d/code-server.conf")"
+eq "объявление code-server с портом" "URI=https://127.0.0.1:9003" "$(grep URI "$ROOT/etc/cream/teleport/apps.d/code-server.conf")"
+eq "объявление code-server несёт иконку" "ICON=laptop" "$(grep ICON "$ROOT/etc/cream/teleport/apps.d/code-server.conf")"
+check_not "старый путь apps.d code-server не пишется" test -e "$ROOT/etc/bisquite/teleport/apps.d/code-server.conf"
 
 echo "== домен kiosk: YAML -> KEY=VALUE =="
 new_root; stage kiosk

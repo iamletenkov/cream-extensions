@@ -1,6 +1,8 @@
 name: code-server
-version: 3.0.1
+version: 4.0.0
 layout: 2
+# 4.0.0: объявление для Teleport — в /etc/cream/teleport/apps.d/ (расширение
+#        teleport формата cream); прежний teleport-agent его не видит.
 # 3.0.1: объявление для Teleport несёт ICON=laptop (нужен teleport-agent 2.2.0+;
 #        более старый агент объявление с третьим ключом пропустит целиком).
 # 3.0.0: /etc/bisquite/code-server/config.yaml -> config (KEY=VALUE, домен

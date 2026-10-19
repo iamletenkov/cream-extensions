@@ -1,0 +1,12 @@
+# Minimal valid cream/v1 manifest: tools/test-cream-validate.sh expects
+# `cream validate` to accept it, tools/test-validate-extensions.sh expects
+# validate-extensions.py to leave it to cream.
+schema: cream/v1
+name: ok
+version: 1.0.0
+summary: минимальное расширение cream/v1 для проверки инструментов
+cream: ">=1.0.0"
+platform: {family: deb, arch: [amd64, arm64]}
+provides: [cream-v1-min]
+hooks:
+  install: {}

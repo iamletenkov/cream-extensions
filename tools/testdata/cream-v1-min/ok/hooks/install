@@ -1,0 +1,4 @@
+#!/bin/sh
+# Fixture hook: does nothing, it only has to exist and be executable.
+set -eu
+exit 0

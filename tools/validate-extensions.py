@@ -54,6 +54,15 @@
 Дополнительно (не ошибка, а предупреждение): расширение, которое объявляет
 `phase: firstboot`, но не содержит `configure.sh`, и наоборот.
 
+Переходный каталог (пилот cream, спека cream §16 шаг 2): манифест со
+строкой `schema: cream/v1` этот валидатор не разбирает по правилам layout 2 —
+его проверяет `cream validate` (tools/cream-validate.sh). Здесь у него
+проверяется только то, без чего соседи layout 2 разошлись бы с ним: схема
+ровно `cream/v1` (иная — ошибка, а не молчаливый пропуск), `name` равен имени
+каталога, `provides` — список; его способности и имя засчитываются при
+проверке `requires`/`conflicts` расширений layout 2. `install.sh` у него нет и
+не должно быть (хуки — `hooks/`).
+
 Код возврата: 0 — всё в порядке, 1 — есть ошибки, 2 — не удалось запуститься.
 """
 
@@ -108,6 +117,8 @@ SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 # Guest layout this repository targets: /opt/bisquite/<name>/ with lib/ linked
 # in by the build. bisquite refuses any other value, so the validator does too.
 SUPPORTED_LAYOUT = 2
+# Manifests with this schema are checked by `cream validate`, not here.
+CREAM_SCHEMA = "cream/v1"
 
 
 class Report:
@@ -122,19 +133,70 @@ class Report:
         self.warnings.append(f"{where}: {message}")
 
 
-def discover(report: Report) -> tuple[dict[str, dict], list[str]]:
-    """Найти каталоги расширений. Возвращает (манифесты, пропущенные каталоги)."""
+def load_manifest(path: Path, rel: str, report: Report) -> dict | None:
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        report.error(rel, f"extension.yaml не разбирается: {exc}")
+        return None
+    if not isinstance(data, dict):
+        report.error(rel, "extension.yaml не является отображением (mapping)")
+        return None
+    return data
+
+
+def check_cream_manifest(
+    ext_dir: Path, rel: str, data: dict, report: Report
+) -> bool:
+    """Минимум для манифеста со `schema`: остальное — `cream validate`."""
+    schema = data.get("schema")
+    if schema != CREAM_SCHEMA:
+        report.error(
+            rel,
+            f"`schema: {schema!r}` — неизвестная схема (известна только {CREAM_SCHEMA})",
+        )
+        return False
+    good = True
+    if data.get("name") != ext_dir.name:
+        report.error(
+            rel,
+            f"`name: {data.get('name')!r}` не совпадает с именем каталога `{ext_dir.name}`",
+        )
+        good = False
+    if "provides" in data and not isinstance(data["provides"], list):
+        report.error(rel, "`provides` — не список (скаляр в cream/v1 не принимается)")
+        good = False
+    return good
+
+
+def discover(
+    report: Report,
+) -> tuple[dict[str, dict], list[str], dict[str, dict]]:
+    """Найти каталоги расширений.
+
+    Возвращает (манифесты layout 2, пропущенные каталоги, манифесты cream/v1).
+    """
     manifests: dict[str, dict] = {}
     skipped: list[str] = []
+    cream: dict[str, dict] = {}
 
     if not EXTENSIONS_ROOT.is_dir():
         report.error("extensions/", "каталог не найден")
-        return manifests, skipped
+        return manifests, skipped, cream
 
     for group in sorted(p for p in EXTENSIONS_ROOT.iterdir() if p.is_dir()):
         for ext_dir in sorted(p for p in group.iterdir() if p.is_dir()):
             rel = ext_dir.relative_to(REPO_ROOT).as_posix()
             manifest_path = ext_dir / "extension.yaml"
+
+            if manifest_path.is_file():
+                data = load_manifest(manifest_path, rel, report)
+                if data is None:
+                    continue
+                if "schema" in data:
+                    if check_cream_manifest(ext_dir, rel, data, report):
+                        cream[rel] = data
+                    continue
 
             if not (ext_dir / "install.sh").is_file():
                 if manifest_path.is_file():
@@ -151,21 +213,11 @@ def discover(report: Report) -> tuple[dict[str, dict], list[str]]:
                 report.error(rel, "нет extension.yaml")
                 continue
 
-            try:
-                data = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
-            except yaml.YAMLError as exc:
-                report.error(rel, f"extension.yaml не разбирается: {exc}")
-                continue
-
-            if not isinstance(data, dict):
-                report.error(rel, "extension.yaml не является отображением (mapping)")
-                continue
-
             data["__dir__"] = ext_dir
             data["__rel__"] = rel
             manifests[rel] = data
 
-    return manifests, skipped
+    return manifests, skipped, cream
 
 
 def check_fields(manifests: dict[str, dict], report: Report) -> None:
@@ -265,9 +317,11 @@ def check_phase_matches_files(
         report.warn(rel, "рядом есть configure.sh, но phase firstboot не объявлен")
 
 
-def check_capabilities(manifests: dict[str, dict], report: Report) -> None:
+def check_capabilities(
+    manifests: dict[str, dict], cream: dict[str, dict], report: Report
+) -> None:
     providers: dict[str, list[str]] = {}
-    for _rel, data in manifests.items():
+    for _rel, data in [*manifests.items(), *cream.items()]:
         name = data.get("name")
         for capability in as_list(data.get("provides")):
             providers.setdefault(capability, []).append(str(name))
@@ -284,7 +338,11 @@ def check_capabilities(manifests: dict[str, dict], report: Report) -> None:
                 )
 
 
-def check_conflicts(manifests: dict[str, dict], report: Report) -> None:
+def check_conflicts(
+    manifests: dict[str, dict], cream: dict[str, dict], report: Report
+) -> None:
+    # cream/v1 does not need symmetric conflicts: cream checks both sides.
+    cream_names = {data.get("name") for data in cream.values()}
     by_name = {
         data["name"]: (rel, data)
         for rel, data in manifests.items()
@@ -295,6 +353,8 @@ def check_conflicts(manifests: dict[str, dict], report: Report) -> None:
         for other in as_list(data.get("conflicts")):
             if other == me:
                 report.error(rel, "расширение конфликтует само с собой")
+                continue
+            if other in cream_names:
                 continue
             if other not in by_name:
                 report.error(rel, f"`conflicts: {other}` — такого расширения нет")
@@ -505,12 +565,12 @@ def as_list(value: object) -> list[str]:
 
 def main() -> int:
     report = Report()
-    manifests, skipped = discover(report)
+    manifests, skipped, cream = discover(report)
 
     if manifests:
         check_fields(manifests, report)
-        check_capabilities(manifests, report)
-        check_conflicts(manifests, report)
+        check_capabilities(manifests, cream, report)
+        check_conflicts(manifests, cream, report)
         check_cycles(manifests, report)
         check_knobs(manifests, report)
 
@@ -520,6 +580,10 @@ def main() -> int:
             "пропущено (нет install.sh, доставка через UPLOAD — см. docs/extensions.md):"
         )
         for rel in skipped:
+            print(f"  {rel}")
+    if cream:
+        print(f"{CREAM_SCHEMA} (проверяет cream validate, tools/cream-validate.sh):")
+        for rel in sorted(cream):
             print(f"  {rel}")
 
     for line in report.warnings:

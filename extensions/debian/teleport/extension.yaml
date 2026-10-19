@@ -1,0 +1,143 @@
+schema: cream/v1
+name: teleport
+version: 4.0.0
+summary: Узел Teleport — бинарь, регистрация (join), рендер teleport.yaml, приложения apps.d
+cream: ">=1.0.0"
+# 4.0.0: перенос bisquite-teleport-agent 3.x под cream (спека stvor-agent §10):
+#        ручки — config.keys, CLI — действия, свой flock — блокировка cream,
+#        пути /etc/cream/teleport, /var/lib/cream/ext/teleport; метки
+#        managed_by и bisquite_agent_version не ставятся; списки ручек —
+#        через пробел; секрет первого входа — единственный секретный параметр
+#        join (рулинг РТ1); управляемые метки TELEPORT_MANAGED_LABELS (действия
+#        set-managed, managed-status — контракт stvor-agent, схема 1) и командные
+#        метки command-labels.d. Интерфейс управляемых меток — мажор расширения:
+#        его несовместимое изменение — teleport 5.0.0.
+platform:
+  family: deb
+  # Teleport публикует тарбол для amd64 и arm64; arm64 проверен на AGX Orin.
+  arch: [amd64, arm64]
+  os: [{id: debian, version: ">=12"}, {id: ubuntu, version: ">=22.04"}]
+  commands: [curl, tar, sha256sum]
+targets: {build: exec, live: "yes"}
+provides: [teleport-node]
+conflicts: {capabilities: [teleport-node]}
+hooks:
+  install: {timeout: 20m}
+  upgrade: {timeout: 20m}
+  remove: {}
+  apply: {}
+config:
+  keys:
+    # Бинарь Teleport — параметры установки: смена — повтор `cream install teleport KEY=…`.
+    TELEPORT_VERSION: {type: 're:^[0-9]+\.[0-9]+\.[0-9]+$', default: "18.10.0", scope: install,
+                       description: "версия Teleport; не новее кластера, для bound_keypair — не ниже 18.8.0"}
+    TELEPORT_SHA256: {type: 're:^[0-9a-f]{64}$', default: "", empty: true, scope: install,
+                      description: "sha256 тарбола архитектуры машины; пусто — .sha256 с cdn.teleport.dev"}
+    TELEPORT_MIRROR: {type: 're:^https?://[A-Za-z0-9.:/-]+$', default: "", empty: true, scope: install,
+                      description: "база зеркала <base>/binaries/teleport/<ver>/<тарбол>; пусто — cdn.teleport.dev"}
+    TELEPORT_TARBALL: {type: path, default: "", empty: true, scope: install,
+                       description: "локальный тарбол (офлайн, нужен TELEPORT_SHA256); взаимоисключим с TELEPORT_MIRROR"}
+    # Подключение. Регулярные выражения — те же, что в files/teleport.sh (KEY_TYPE):
+    # значения ложатся в YAML в двойных кавычках, кавычек и `$` в них нет.
+    TELEPORT_PROXY: {type: 're:^[a-z0-9][a-z0-9.-]{0,252}(:[0-9]{1,5})?$', default: "", empty: true,
+                     readonly: true, description: "прокси кластера host[:port]; пишет только join"}
+    TELEPORT_JOIN_METHOD: {type: 'enum:token,bound_keypair', default: "token", readonly: true,
+                           description: "метод регистрации; пишет только join"}
+    TELEPORT_TOKEN: {type: 're:^[A-Za-z0-9._-]{8,256}$', default: "", empty: true, readonly: true,
+                     description: "имя токена bound_keypair (не секрет); у метода token пусто; пишет только join"}
+    TELEPORT_CA_PIN: {type: 're:^sha256:[0-9a-f]{64}$', default: "", empty: true,
+                      description: "необязательная сверка CA кластера: sha256:<64 hex>"}
+    TELEPORT_ENV: {type: 're:^[a-zA-Z0-9][a-zA-Z0-9_./ -]{0,127}$', default: "", empty: true,
+                   description: "метка env — по ней роли кластера дают доступ"}
+    TELEPORT_NODENAME: {type: 're:^[a-z0-9][a-z0-9-]{1,62}$', default: "", empty: true,
+                        description: "имя ноды, метка DNS; пусто — короткое имя хоста"}
+    TELEPORT_LABELS: {type: 'list:re:^[a-zA-Z0-9][a-zA-Z0-9_./-]{0,63}=[a-zA-Z0-9][a-zA-Z0-9_./-]{0,127}$',
+                      default: "", empty: true,
+                      description: "прочие метки ноды ключ=значение через пробел (env, app, os_logins, teleport.icon нельзя)"}
+    TELEPORT_APPS: {type: 'list:re:^[a-z0-9][a-z0-9-]{0,62}=([0-9]{1,5}|https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?)$',
+                    default: "", empty: true,
+                    description: "приложения оператора имя=порт или имя=http(s)://хост[:порт][/путь] через пробел"}
+    TELEPORT_APPS_DISABLE: {type: 'list:re:^[a-z0-9][a-z0-9-]{0,62}$', default: "", empty: true,
+                            description: "не публиковать объявленные приложения: имена через пробел"}
+    TELEPORT_APPS_ICONS: {type: 'list:re:^[a-z0-9][a-z0-9-]{0,62}=[A-Za-z0-9][A-Za-z0-9._-]{0,63}$',
+                          default: "", empty: true,
+                          description: "иконка приложения в веб-морде прокси: имя=иконка через пробел"}
+    TELEPORT_APPS_DISCOVERY: {type: bool, default: "1",
+                              description: "0 — не читать объявления /etc/cream/teleport/apps.d"}
+    TELEPORT_OS_LOGINS: {type: bool, default: "1",
+                         description: "динамическая метка ноды os_logins (root и uid >= 1000 с shell); 0 — нет"}
+    # Метки внешнего управляющего (stvor-agent): пишет только set-managed, не больше 16,
+    # app, os_logins зарезервированы; перекрывают TELEPORT_LABELS по ключу, env — TELEPORT_ENV.
+    TELEPORT_MANAGED_LABELS: {type: 'list:re:^[a-z][a-z0-9_]{0,62}=[a-z0-9][a-z0-9._-]{0,62}$', default: "", empty: true,
+                              readonly: true,
+                              description: "управляемые метки ключ=значение через пробел; пишет только set-managed"}
+actions:
+  join:
+    summary: "регистрация узла; секрет первого входа — TELEPORT_REGISTRATION_SECRET=- (stdin)"
+    args: pairs
+    params:
+      TELEPORT_PROXY: {required: true}
+      TELEPORT_JOIN_METHOD: {}
+      TELEPORT_TOKEN: {}
+      TELEPORT_CA_PIN: {}
+      TELEPORT_ENV: {}
+      TELEPORT_NODENAME: {}
+      TELEPORT_LABELS: {}
+      TELEPORT_OS_LOGINS: {}
+      # token — сам join-токен, bound_keypair — секрет регистрации (рулинг РТ1).
+      TELEPORT_REGISTRATION_SECRET: {type: 're:^[[:graph:]]{8,1000}$', secret: true}
+      TELEPORT_FORCE: {type: bool}
+      TELEPORT_DEFER: {type: bool}
+    stdin: secret
+    lock: exclusive
+    timeout: 5m
+    output: json
+    phases: [live]
+  join-retry:
+    summary: "повтор ждущей регистрации (teleport-join.timer) и ручной «зарегистрировать сейчас»"
+    lock: exclusive
+    timeout: 5m
+    phases: [live]
+  leave:
+    summary: "отключить узел: агент выключен, регистрация, секрет и управляемые метки стёрты"
+    lock: exclusive
+    output: json
+    phases: [live]
+  set-managed:
+    summary: "полный набор управляемых меток k=v…; restart только при изменении конфига; JSON схемы 1"
+    args: free
+    lock: exclusive
+    # ожидание блокировки у вызывающего + restart с подтверждением <= 30 с
+    timeout: 3m
+    output: json
+    phases: [live]
+  managed-status:
+    summary: "управляемые метки, маркер managed-pending, регистрация, агент — JSON схемы 1"
+    lock: none
+    output: json
+    phases: [live]
+  status:
+    summary: "регистрация, служба, ручки, приложения, управляемые и командные метки — текстом"
+    lock: none
+    phases: [live]
+  render:
+    summary: "собрать /etc/teleport.yaml из ручек и apps.d (ExecStartPre/ExecReload teleport.service)"
+    lock: none
+    phases: [build, live]
+  reload-apps:
+    summary: "переопубликовать приложения после изменения apps.d (teleport-apps.service)"
+    lock: none
+    phases: [live]
+  scrub-token:
+    summary: "стереть секрет первого входа после регистрации (teleport-token.service)"
+    lock: exclusive
+    timeout: 7m
+    phases: [live]
+files:
+  - {src: files/teleport.service, dst: /etc/systemd/system/teleport.service, mode: "0644"}
+  - {src: files/teleport-apps.path, dst: /etc/systemd/system/teleport-apps.path, mode: "0644"}
+  - {src: files/teleport-apps.service, dst: /etc/systemd/system/teleport-apps.service, mode: "0644"}
+  - {src: files/teleport-token.path, dst: /etc/systemd/system/teleport-token.path, mode: "0644"}
+  - {src: files/teleport-token.service, dst: /etc/systemd/system/teleport-token.service, mode: "0644"}
+  - {src: files/teleport-join.service, dst: /etc/systemd/system/teleport-join.service, mode: "0644"}
+  - {src: files/teleport-join.timer, dst: /etc/systemd/system/teleport-join.timer, mode: "0644"}

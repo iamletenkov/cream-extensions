@@ -2,13 +2,18 @@ name: CI and Release
 
 # Выпуск — release-please, как в bisquite: на main после проверок он ведёт
 # PR «release X.Y.Z» (CHANGELOG.md); слияние этого PR создаёт тег vX.Y.Z и
-# опубликованный релиз с заметками. Файлов к релизу нет: версия набора
-# расширений — сам тег, его пинят `ref` источника и EXT_VERSION. Теги руками
-# не ставят.
+# опубликованный релиз с заметками. К релизу job release-assets прикладывает
+# снимок каталога cream-extensions-<v>.tar.gz и SHA256SUMS
+# (tools/catalog-snapshot.sh: детерминированный `cream catalog pack` по пину
+# cream, собранный на теге) — его по пину sha256 берут Stvor и bisquite
+# (`cream source add --archive … --sha256 …`). Версия каталога в
+# cream-catalog.yaml поднимается тем же release-please. Теги руками не ставят.
 #
 # Job проверок гоняет tools/check.sh — валидацию
 # манифестов extension.yaml (сверки копий lib/ больше нет: копий нет, lib/
-# доставляет в гостя сама сборка).
+# доставляет в гостя сама сборка) и `cream validate` по расширениям cream/v1
+# (tools/cream-validate.sh: cream по пину tools/cream-pin.env в контейнере
+# debian:12; пока пин пуст — пропуск со строкой).
 #
 # Почему это вообще заведено: проверки существовали только как ручные
 # скрипты. Ровно так и разошлись восемь копий get_cloud_user.sh — расхождение
@@ -24,16 +29,18 @@ name: CI and Release
 # Ветки проверяются на pull_request (результат слияния с main), push — только
 # main: там релиз. push во все ветки вместе с pull_request гонял CI дважды на
 # каждый коммит PR. Ветку без PR — черновым PR или вручную (workflow_dispatch).
+# Пилот cream (спека cream §16 шаг 2) живёт в ветке feature/cream-v1-pilot до
+# перевода всего каталога: PR в неё проверяются тем же check.sh.
 on:
   pull_request:
-    branches: [main]
+    branches: [main, feature/cream-v1-pilot]
   push:
     branches: [main]
   workflow_dispatch:
 
-# По умолчанию — только чтение; запись — только у job'а release-please.
-permissions:
-  contents: read
+# По умолчанию — ничего; каждый job называет свои права сам. Запись — только
+# у release-please (тег, PR релиза) и release-assets (файлы к релизу).
+permissions: {}
 
 # Отменять устаревший прогон можно только на PR: на main отмена посреди
 # release-please оставила бы релиз недоделанным.
@@ -45,6 +52,8 @@ jobs:
   check:
     name: check.sh
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -66,10 +75,25 @@ jobs:
       - name: Install PyYAML
         run: python -m pip install --disable-pip-version-check pyyaml
 
+      # Соседняя копия stvor-agent для tools/check-contract-fixtures.sh:
+      # файлы-образцы контракта управляемых меток (эталон —
+      # internal/teleport/testdata) сверяются с копией в
+      # extensions/debian/teleport/tests/fixtures. Ref — переменная репозитория
+      # STVOR_AGENT_REF (умолчание main; до слияния Go-агента в main stvor-agent
+      # — feature/go-agent). Без копии в CI сверка красная, а не пропуск.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          repository: iamletenkov/stvor-agent
+          ref: ${{ vars.STVOR_AGENT_REF || 'main' }}
+          path: .stvor-agent
+          persist-credentials: false
+
       # Одна точка входа, та же, что запускают руками: CI и локальный прогон
       # не должны расходиться. check.sh доводит до конца все проверки, даже
       # если первая упала, — в логе видны все ошибки, а не первая.
       - name: Run repository checks
+        env:
+          STVOR_AGENT_DIR: ${{ github.workspace }}/.stvor-agent
         run: tools/check.sh
 
       # shellcheck (на образе раннера есть) — та же цель, что в make ci
@@ -98,6 +122,73 @@ jobs:
           manifest-file: .github/release_please/.release-please-manifest.json
           token: ${{ secrets.GITHUB_TOKEN }}
 
+  # Сухой прогон выпуска снимка на PR: та же сборка, что на теге, без
+  # загрузки и без прав на запись. Воспроизводимость и приёмку снимка cream
+  # проверяет check.sh (tools/test-snapshot.sh); здесь — что сборка в том
+  # виде, в каком её зовёт release-assets, проходит и даёт файлы.
+  snapshot-dry-run:
+    name: Snapshot (dry run)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Build snapshot
+        run: tools/catalog-snapshot.sh dist
+
+      - name: Show snapshot (no upload)
+        run: |
+          set -euo pipefail
+          ls -l dist
+          (cd dist && sha256sum -c SHA256SUMS)
+          echo "Сухой прогон: снимок собран, к релизу не загружается"
+
+  # Снимок каталога к созданному релизу: сборка на теге (не на голове main —
+  # байты должны соответствовать тегу), имя файла сверяется с тегом, затем
+  # gh release upload. --clobber — перезапуск job'а заменяет те же байты
+  # (сборка детерминирована), а не падает на существующем файле.
+  release-assets:
+    name: Release snapshot assets
+    needs: release-please
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+          persist-credentials: false
+
+      - name: Build snapshot on the tag
+        run: tools/catalog-snapshot.sh dist
+
+      - name: Upload snapshot to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "::error::Тег релиза должен иметь вид vX.Y.Z, получено: '$TAG'"
+            exit 1
+          fi
+          asset="dist/cream-extensions-${BASH_REMATCH[1]}.tar.gz"
+          if [ ! -f "$asset" ]; then
+            echo "::error::Нет $asset: версия в cream-catalog.yaml не совпала с тегом $TAG"
+            ls -l dist
+            exit 1
+          fi
+          (cd dist && sha256sum -c SHA256SUMS)
+          gh release upload "$TAG" "$asset" dist/SHA256SUMS --clobber -R "$GITHUB_REPOSITORY"
+          echo "К релизу $TAG приложены $(basename "$asset") и SHA256SUMS"
+
   # Релиз сам поднимает расширения в bisquite: запускает там
   # extensions-bump.yml, который ставит указатель подмодуля и версию
   # в примерах на этот тег и открывает PR.
@@ -110,12 +201,18 @@ jobs:
   # Только push в main: на pull_request секретов нет, а pull_request_target
   # здесь не нужен и опасен. Без секрета (форк, чужой клон) шаг пропускается
   # с предупреждением; в iamletenkov/cream-extensions это отказ.
+  # Ждёт release-assets: bump в bisquite пинит снимок, он должен уже лежать
+  # в релизе.
   dispatch-bisquite:
     name: Bump extensions in bisquite
-    needs: release-please
+    needs: [release-please, release-assets]
+    # Выключено, пока bisquite не применяет расширения через cream (каталог 4.x
+    # несовместим со старой директивой EXTENSION): включается переменной
+    # репозитория BISQUITE_BUMP_ENABLED=true.
     if: >-
       github.event_name == 'push' && github.ref == 'refs/heads/main' &&
-      needs.release-please.outputs.release_created == 'true'
+      needs.release-please.outputs.release_created == 'true' &&
+      vars.BISQUITE_BUMP_ENABLED == 'true'
     runs-on: ubuntu-latest
     permissions: {}
     steps:

@@ -159,6 +159,34 @@ sources:
 `bs extension check <ссылка>`. Последняя печатает отчёт и при отказе, называя
 причину полем `refusal`, а код возврата при этом 1 — по нему её и ставят в CI.
 
+### Снимок каталога для cream
+
+Для cream (спека cream §9) каталог — это источник типа `archive`: снимок
+`cream-extensions-<v>.tar.gz` с `cream-catalog.yaml` в корне, который cream
+скачивает, сверяет по sha256 **до** распаковки и проверяет целиком. Снимок
+приложен к каждому релизу `vX.Y.Z` вместе с `SHA256SUMS` (job
+`release-assets` в `.github/workflows/ci-release.yml`); на PR тот же шаг
+идёт сухим прогоном без загрузки.
+
+```bash
+make snapshot        # tools/catalog-snapshot.sh: снимок HEAD в dist/
+make snapshot-check  # tools/test-snapshot.sh: воспроизводимость + приёмка cream
+cream source add cream-extensions --archive file:///…/cream-extensions-<v>.tar.gz \
+    --sha256 <сумма из SHA256SUMS> --sync
+```
+
+Каталог переходный: `cream validate --catalog .` по корню отвергает
+манифесты layout 2 (`manifest.schema`). Поэтому `tools/catalog-snapshot.sh`
+выгружает из коммита (`git archive`, не рабочее дерево) только
+`cream-catalog.yaml`, `LICENSE`, `NOTICE` и расширения `schema: cream/v1`
+без их `tests/` — по тем же путям, что в репозитории, — и запускает
+`cream catalog pack` по пину `tools/cream-pin.env` в `debian:12` без сети.
+`SOURCE_DATE_EPOCH` — время коммита: две сборки одного коммита дают одни
+байты, это проверяет `tools/test-snapshot.sh` (часть `tools/check.sh`), он же
+подключает снимок тем же cream и разрешает `teleport` и `stvor-agent`.
+`roots` в `cream-catalog.yaml` обязан покрывать каждое расширение `cream/v1`,
+иначе скрипт отказывает: расширение не должно пропасть из снимка молча.
+
 ### Ручной формы `COPY_IN` больше нет
 
 Прежняя запись — `COPY_IN <чекаут>/extensions/debian/<имя>:/opt/vmsetup/`
@@ -308,7 +336,7 @@ echo 'пароль' | sudo bisquite-conf set x11vnc X11VNC_PASSWORD=-   # сек
 | `selkies` | `/etc/bisquite/selkies/config` (0600) | `selkies` | `EnvironmentFile` юнита `selkies@.service` | объявление для Teleport + перезапуск `selkies@*` |
 | `vino` | `/etc/bisquite/vino/config` | `vino-vnc` | `configure.sh` → dconf пользователя | перезапуск `configure-vino-vnc` (сервер берёт порт и адрес при старте сессии) |
 | `sensing-camera` | `/etc/bisquite/sensing-camera/config` | `sensing-gmsl2-camera` | `bisquite-sensing-camera-ctl` в юнитах камер | перезапуск `bisquite-sensing-camera@*`, `bisquite-sensing-clock` |
-| `teleport` | `/etc/bisquite/teleport/config` (0600) | пакет `bisquite-teleport-agent` (ставит `teleport-agent`; схема — `/usr/lib/bisquite-teleport/knobs`) | `bisquite-teleport render` на старте агента | `render` + reload агента; кластер — только `bisquite-teleport join` |
+| `teleport` | `/etc/cream/teleport/config` (домен cream, `config.keys` манифеста) | `teleport` (`cream/v1`) | `cream run teleport render` на старте агента | хук `apply`: `render` + reload агента; кластер — только `cream run teleport join` |
 | `code-server` | `/etc/bisquite/code-server/config` (0600) | `code-server` | `configure.sh` → `~/.config/code-server/config.yaml` | перезапуск `configure-code-server` |
 | `kiosk` | `/etc/bisquite/kiosk/config` | `kiosk` | `configure.sh`, `run-kiosk.sh` | перезапуск `configure-kiosk` |
 | `chromium-kiosk` | `/etc/bisquite/chromium-kiosk/config` | `chromium-kiosk` | `configure.sh` → `/etc/chromium-kiosk/config.yml` | перезапуск `configure-chromium-kiosk` |
@@ -319,7 +347,7 @@ echo 'пароль' | sudo bisquite-conf set x11vnc X11VNC_PASSWORD=-   # сек
 
 Остальные расширения действующих настроек не имеют: они однократно
 настраивают систему, и повторить это можно только повторным прогоном
-`configure-<имя>.service`. `/etc/bisquite/teleport/apps.d/` — не настройки
+`configure-<имя>.service`. `/etc/cream/teleport/apps.d/` — не настройки
 домена, а объявления других расширений; библиотека его не трогает.
 
 Формат у всех один — `KEY=VALUE` с грамматикой systemd `EnvironmentFile`.
@@ -335,11 +363,11 @@ YAML-файлы `code-server`, `kiosk` и `chromium-kiosk` (формат bisquit
 шелл под пользователем, который обычно состоит в группе `sudo`, — то есть
 машину целиком.
 
-Вторая альтернатива — веб-приложение Teleport (`teleport-agent`): служба
+Вторая альтернатива — веб-приложение Teleport (расширение `teleport`): служба
 остаётся на петле, а расширение кладёт объявление в
-`/etc/bisquite/teleport/apps.d/<имя>.conf` — ровно `NAME` и `URI` на петле.
-Кому приложение видно, решает метка `env` оператора, а не объявление;
-формат и проверки — README `teleport-agent`.
+`/etc/cream/teleport/apps.d/<имя>.conf` — `NAME` и `URI` на петле (и при нужде
+`ICON`). Кому приложение видно, решает метка `env` оператора, а не объявление;
+формат и проверки — README `teleport`.
 
 Альтернатива без открытия порта и без кластера — туннель, он не требует правки
 конфигурации вовсе:
@@ -789,7 +817,7 @@ LightDM он разный, а под самим LightDM зависит от ег
 | `tensorrt` | `tensorrt` | мета-пакет `tensorrt` плюс `python3-libnvinfer` и `nvidia-l4t-dla-compiler` |
 | `web-remote-desktop` | `selkies` | Selkies 2.0 (AppImage) на существующем X-дисплее, WebSocket на `127.0.0.1:8080`; `selkies@.service` от пользователя сессии |
 | `web-browser` | `firefox` | `firefox` из `packages.mozilla.org` с пином 1000 поверх транзитного пакета снапа |
-| `teleport-node` | `teleport-agent` | `/usr/local/bin/teleport`, `teleport.service` из `bisquite-teleport join`; приложения — из `/etc/bisquite/teleport/apps.d` |
+| `teleport-node` | `teleport` (`cream/v1`) | `/usr/local/bin/teleport`, `teleport.service` из `cream run teleport join`; приложения — из `/etc/cream/teleport/apps.d` |
 | `l4t-boot-verify` | `l4t-boot-verify` | `bisquite-l4t-boot-verify.service` — `nvbootctrl verify` на каждой загрузке; вендорская `nv-l4t-bootloader-config` заглушена |
 | `gmsl2-camera` | `sensing-gmsl2-camera` | ядро и модули Sensing (пакеты ядра L4T — `apt-mark hold`), DTB-оверлей, запуск камер на каждой загрузке (`modprobe.d`, правило udev, `bisquite-sensing-clock.service`) |
 | `gstreamer` | `l4t-gstreamer` | `gstreamer1.0-tools` и плагины base/good/bad/ugly/libav, RTSP-сервер, `gstreamer1.0-nice`, `python3-gst-1.0` |
@@ -963,10 +991,23 @@ bs extension new <имя> [--path DIR] [--family deb] [--arch amd64,arm64]
 ## Проверки
 
 ```bash
-tools/check.sh                # всё сразу: валидатор и тесты библиотеки настроек
-tools/validate-extensions.py  # манифесты, схемы, обращение с файлами настроек
+tools/check.sh                # всё сразу: валидаторы и тесты
+tools/validate-extensions.py  # манифесты layout 2, схемы, обращение с файлами настроек
+tools/cream-validate.sh       # cream validate по расширениям cream/v1 (make cream-validate)
 tools/test-conf.sh            # lib/bisquite-conf и домены на подменённом корне
 ```
+
+Переходный каталог (пилот cream): манифест со строкой `schema: cream/v1`
+`validate-extensions.py` не разбирает по правилам layout 2 — он проверяет только
+схему (ровно `cream/v1`), `name` = имя каталога и `provides`-список, а способности
+и имя такого расширения засчитывает соседям layout 2. Остальное — `cream validate`:
+`tools/cream-validate.sh` собирает расширения `cream/v1` во временный каталог и
+гоняет `cream validate --catalog` в контейнере `debian:12`. cream берётся по пину
+`tools/cream-pin.env` (версия и sha256 `cream_<v>_amd64.deb`); пока пин пуст —
+пропуск со строкой «cream/v1 пропущен: пин cream не задан». Локально без релиза —
+`CREAM_DEB=<путь к .deb> tools/cream-validate.sh [каталог…]` (пин не проверяется,
+об этом печатается предупреждение). Фикстура инструментов —
+`tools/testdata/cream-v1-min/` (`ok` и заведомо невалидный `bad`).
 
 `tools/validate-extensions.py` проверяет:
 

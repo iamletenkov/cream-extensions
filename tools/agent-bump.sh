@@ -1,37 +1,37 @@
 #!/usr/bin/env bash
-# Raise the bisquite-teleport-agent pin of the teleport-agent extension to a
-# release of the agent, in the working tree only.
+# Raise the catalog pin of the stvor-agent wrapper to a release of
+# iamletenkov/stvor-agent, in the working tree only.
 #
 # Usage: tools/agent-bump.sh <tag> <SHA256SUMS>
 #
 #   <tag>         agent release tag, vX.Y.Z
 #   <SHA256SUMS>  that release's SHA256SUMS file, e.g. fetched with
-#                 gh release download <tag> -R iamletenkov/bisquite-teleport-agent \
+#                 gh release download <tag> -R iamletenkov/stvor-agent \
 #                     -p SHA256SUMS -D <dir>
 #
-# Edits: the default version and sha256 in agent.sh (and its comments), the
-# extension version with a history line in extension.yaml, the
-# AGENT_VERSION row of the README, the example in update.sh and the fixtures
-# of tools/test-teleport-agent.sh. Does not commit, does not run the checks —
-# the caller does (tools/check.sh).
+# Edits extensions/debian/stvor-agent: files/pin.env (version and the sums of
+# stvor-agent_<v>_amd64.deb and stvor-agent_<v>_arm64.deb) and extension.yaml
+# (patch bump of the extension version with a history line under it). Does
+# not commit, does not run the checks — the caller does (tools/check.sh).
 #
-# Prints `version=`, `sha256=`, `ext_version=` and `changed=true|false`
-# (GITHUB_OUTPUT format) on stdout. An agent older than the pin or already
-# pinned is `changed=false`, not an error: a rebuild of an old release
-# dispatches here too. The same version with another sum is an error — the
-# pinned package changed under its version, a human has to look.
+# Prints `version=`, `sha256_amd64=`, `sha256_arm64=`, `ext_version=` and
+# `changed=true|false` (GITHUB_OUTPUT format) on stdout. A release older than
+# the pin or already pinned is `changed=false`, not an error: a rebuild of an
+# old release dispatches here too. The same version with another sum is an
+# error — the pinned package changed under its version, a human has to look.
+# The one exception is the fictitious test pin (all-zero sums, put before the
+# first release): the same version replaces it, and its note goes away.
 set -euo pipefail
 
 TAG="${1:-}"
 SUMS="${2:-}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EXT="$ROOT/extensions/debian/teleport-agent"
-AGENT_SH="$EXT/agent.sh"
+EXT="$ROOT/extensions/debian/stvor-agent"
+PIN="$EXT/files/pin.env"
 MANIFEST="$EXT/extension.yaml"
-README="$EXT/README.md"
-UPDATE_SH="$EXT/update.sh"
-TESTS="$ROOT/tools/test-teleport-agent.sh"
 SEMVER='[0-9]+\.[0-9]+\.[0-9]+'
+ZERO="$(printf '0%.0s' {1..64})"
+ARCHES=(amd64 arm64)
 
 die(){ echo "error: $*" >&2; exit 1; }
 
@@ -39,80 +39,85 @@ die(){ echo "error: $*" >&2; exit 1; }
 [[ -f "$SUMS" ]] || { echo "error: SHA256SUMS file required, got '$SUMS'" >&2; exit 2; }
 
 new="${TAG#v}"
-deb="bisquite-teleport-agent_${new}_all.deb"
-# sha256sum writes "<sum>  <file>" (text) or "<sum> *<file>" (binary).
-sha="$(awk -v f="$deb" '$2 == f || $2 == "*" f {print $1}' "$SUMS")"
-[[ "$sha" =~ ^[0-9a-f]{64}$ ]] || die "no single sha256 for $deb in $SUMS"
+declare -A sha old_sha
+for arch in "${ARCHES[@]}"; do
+    deb="stvor-agent_${new}_${arch}.deb"
+    # sha256sum writes "<sum>  <file>" (text) or "<sum> *<file>" (binary).
+    found="$(awk -v f="$deb" '$2 == f || $2 == "*" f {print $1}' "$SUMS")"
+    [[ "$found" =~ ^[0-9a-f]{64}$ ]] || die "no single sha256 for $deb in $SUMS"
+    sha[$arch]="$found"
+done
 
-old="$(sed -nE "s/^agent_default_version\(\)\{ echo ($SEMVER); \}$/\1/p" "$AGENT_SH")"
-old_sha="$(sed -nE 's/^agent_default_sha256\(\)\{ echo ([0-9a-f]{64}); \}$/\1/p' "$AGENT_SH")"
-[[ "$old" =~ ^$SEMVER$ && -n "$old_sha" ]] || die "pin not found in $AGENT_SH"
+# The pin is data (KEY=value), read without sourcing.
+pin_get(){ sed -nE "s/^$1=(.*)$/\1/p" "$PIN"; }
+old="$(pin_get STVOR_AGENT_PIN_VERSION)"
+[[ "$old" =~ ^$SEMVER$ ]] || die "no STVOR_AGENT_PIN_VERSION in $PIN"
+fictitious=true
+for arch in "${ARCHES[@]}"; do
+    old_sha[$arch]="$(pin_get "STVOR_AGENT_PIN_SHA256_${arch^^}")"
+    [[ "${old_sha[$arch]}" =~ ^[0-9a-f]{64}$ ]] || die "no STVOR_AGENT_PIN_SHA256_${arch^^} in $PIN"
+    [[ "${old_sha[$arch]}" == "$ZERO" ]] || fictitious=false
+done
 
-echo "version=$new"
-echo "sha256=$sha"
-
-if [[ "$old" == "$new" ]]; then
-    [[ "$old_sha" == "$sha" ]] \
-        || die "agent $new is pinned with sha256 $old_sha, the release lists $sha"
+if [[ "$old" == "$new" && "$fictitious" == false ]]; then
+    for arch in "${ARCHES[@]}"; do
+        [[ "${old_sha[$arch]}" == "${sha[$arch]}" ]] \
+            || die "stvor-agent $new $arch is pinned with sha256 ${old_sha[$arch]}, the release lists ${sha[$arch]}"
+    done
+    echo "version=$new"
     echo "changed=false"
-    echo "teleport-agent already pins agent $new" >&2
+    echo "stvor-agent already pins $new" >&2
     exit 0
 fi
-if [[ "$(printf '%s\n%s\n' "$old" "$new" | sort -V | tail -n 1)" == "$old" ]]; then
+if [[ "$old" != "$new" && "$(printf '%s\n%s\n' "$old" "$new" | sort -V | tail -n 1)" == "$old" ]]; then
+    echo "version=$new"
     echo "changed=false"
-    echo "agent $new is older than the pinned $old — nothing to do" >&2
+    echo "stvor-agent $new is older than the pinned $old — nothing to do" >&2
     exit 0
 fi
 
 ext_old="$(sed -nE "s/^version: ($SEMVER)$/\1/p" "$MANIFEST")"
 [[ "$ext_old" =~ ^$SEMVER$ ]] || die "no version in $MANIFEST"
-# The extension follows the agent version (3.0.1 pinned 3.0.1, 3.1.0 — 3.1.0);
-# an extension already ahead by its own changes gets a minor bump instead.
-if [[ "$(printf '%s\n%s\n' "$ext_old" "$new" | sort -V | tail -n 1)" == "$new" && "$new" != "$ext_old" ]]; then
-    ext_new="$new"
-else
-    IFS=. read -r major minor _ <<< "$ext_old"
-    ext_new="$major.$((minor + 1)).0"
-fi
+IFS=. read -r major minor patch <<< "$ext_old"
+ext_new="$major.$minor.$((patch + 1))"
+
+echo "version=$new"
+echo "sha256_amd64=${sha[amd64]}"
+echo "sha256_arm64=${sha[arm64]}"
 echo "ext_version=$ext_new"
 
-old_re="${old//./\\.}"
+tmp="$(mktemp)"
+trap 'rm -f -- "$tmp"' EXIT
 
-# agent.sh: the pin, the comment above the sum and the parameter table.
-sed -i -E \
-    -e "s/^(agent_default_version\(\)\{ echo )$old_re(; \})$/\1$new\2/" \
-    -e "s/^(agent_default_sha256\(\)\{ echo )[0-9a-f]{64}(; \})$/\1$sha\2/" \
-    -e "s/^# sha256 of bisquite-teleport-agent_${SEMVER}_all\.deb \(GitHub release v$SEMVER\)\.$/# sha256 of $deb (GitHub release $TAG)./" \
-    -e "s/^(#   AGENT_VERSION +)$SEMVER +/\1$(printf '%-10s' "$new")/" \
-    "$AGENT_SH"
+# pin.env: the note of the fictitious pin (its comment lines and the empty
+# "#" line above them) goes, then the three values.
+awk '
+    /^# FICTITIOUS TEST PIN/ { skip = 1; if (have && held == "#") have = 0; next }
+    skip && /^#/ { next }
+    { skip = 0; if (have) print held; held = $0; have = 1 }
+    END { if (have) print held }
+' "$PIN" > "$tmp"
+sed -E \
+    -e "s/^STVOR_AGENT_PIN_VERSION=.*$/STVOR_AGENT_PIN_VERSION=$new/" \
+    -e "s/^STVOR_AGENT_PIN_SHA256_AMD64=.*$/STVOR_AGENT_PIN_SHA256_AMD64=${sha[amd64]}/" \
+    -e "s/^STVOR_AGENT_PIN_SHA256_ARM64=.*$/STVOR_AGENT_PIN_SHA256_ARM64=${sha[arm64]}/" \
+    "$tmp" > "$PIN"
 
-# extension.yaml: the new version, the history line on top of the others.
+# extension.yaml: the new version, the history line right under it.
 sed -i -E \
-    -e "s/^version: $ext_old$/version: $ext_new/" \
-    -e "/^layout: /a # $ext_new: пин пакета bisquite-teleport-agent $new." \
+    -e "s/^version: ${ext_old//./\\.}$/version: $ext_new/" \
+    -e "/^version: ${ext_new//./\\.}$/a # $ext_new: пин пакета stvor-agent $new." \
     "$MANIFEST"
-
-sed -i -E "s/^(\| \`AGENT_VERSION\` \| \`)$SEMVER(\` \|)/\1$new\2/" "$README"
-sed -i -E "s/(AGENT_DEB=\.\/bisquite-teleport-agent_)${SEMVER}(_all\.deb)/\1$new\2/" "$UPDATE_SH"
-
-# The fixtures name the default version only: every standalone old version
-# becomes the new one; other versions there (3.0.0, 3.0.2) stay below the
-# pin, as a bump only ever goes up. The loop catches adjacent occurrences.
-sed -i -E ":a; s/(^|[^0-9.])$old_re([^0-9.]|$)/\1$new\2/; ta" "$TESTS"
 
 # A silent no-op here would ship a PR that half-moves the pin.
 check(){ grep -qE -- "$2" "$1" || die "not updated in ${1#"$ROOT"/}: $2"; }
-check "$AGENT_SH" "^agent_default_version\(\)\{ echo ${new//./\\.}; \}$"
-check "$AGENT_SH" "^agent_default_sha256\(\)\{ echo $sha; \}$"
-check "$AGENT_SH" "^# sha256 of ${deb//./\\.} \(GitHub release ${TAG//./\\.}\)\.$"
-check "$AGENT_SH" "^#   AGENT_VERSION +${new//./\\.} "
+check "$PIN" "^STVOR_AGENT_PIN_VERSION=${new//./\\.}$"
+check "$PIN" "^STVOR_AGENT_PIN_SHA256_AMD64=${sha[amd64]}$"
+check "$PIN" "^STVOR_AGENT_PIN_SHA256_ARM64=${sha[arm64]}$"
 check "$MANIFEST" "^version: ${ext_new//./\\.}$"
-check "$MANIFEST" "^# ${ext_new//./\\.}: "
-check "$README" "^\| \`AGENT_VERSION\` \| \`${new//./\\.}\` \|"
-check "$UPDATE_SH" "AGENT_DEB=\./${deb//./\\.} "
-check "$TESTS" "^DEB=${deb//./\\.}$"
-if grep -qE "(^|[^0-9.])$old_re([^0-9.]|$)" "$AGENT_SH" "$TESTS" "$UPDATE_SH"; then
-    die "old version $old still present"
+check "$MANIFEST" "^# ${ext_new//./\\.}: пин пакета stvor-agent ${new//./\\.}\.$"
+if grep -q FICTITIOUS "$PIN"; then
+    die "the fictitious pin note is still in ${PIN#"$ROOT"/}"
 fi
 
 echo "changed=true"

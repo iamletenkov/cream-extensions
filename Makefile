@@ -1,18 +1,28 @@
 # cream-extensions — публичный API репозитория (`make help`).
 # Проверки идут на хосте так же, как в CI: bash, python3 с PyYAML, shellcheck
-# (нет на хосте — в контейнере koalaman/shellcheck).
+# (нет на хосте — в контейнере koalaman/shellcheck), docker для cream validate
+# (контейнер debian:12, tools/cream-validate.sh).
 
 .DEFAULT_GOAL := help
-.PHONY: help lint test check ci
+.PHONY: help lint test check ci cream-validate snapshot snapshot-check
 
 help: ## список целей
-	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-8s %s\n", $$1, $$2}'
+	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-15s %s\n", $$1, $$2}'
 
 lint: ## shellcheck всех shell-скриптов (планка -S error, см. tools/lint.sh)
 	tools/lint.sh
 
 test: ## tools/check.sh: валидация extension.yaml и тесты расширений
 	tools/check.sh
+
+cream-validate: ## cream validate по расширениям cream/v1 (пин tools/cream-pin.env или CREAM_DEB=<.deb>)
+	tools/cream-validate.sh
+
+snapshot: ## снимок каталога из HEAD: dist/cream-extensions-<v>.tar.gz + dist/SHA256SUMS (tools/catalog-snapshot.sh)
+	tools/catalog-snapshot.sh
+
+snapshot-check: ## две сборки снимка дают одни байты, cream принимает снимок (tools/test-snapshot.sh)
+	tools/test-snapshot.sh
 
 check: lint test ## lint + test
 

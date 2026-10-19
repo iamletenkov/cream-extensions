@@ -299,7 +299,7 @@ else
   log_warn "пароль хранится в образе открытым текстом: образ = пароль"
 fi
 
-# Declaration for teleport-agent: publish code-server as a Teleport app.
+# Declaration for the teleport extension: publish code-server as a Teleport app.
 # The same script runs on every reconfiguration (configure.sh), so a port
 # changed with `bisquite-conf set` reaches the declaration too.
 bash "$SCRIPT_DIR/teleport-app.sh" || { log_error "объявление для Teleport не положено"; exit 1; }

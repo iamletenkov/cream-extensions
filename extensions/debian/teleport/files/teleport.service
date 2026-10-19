@@ -1,0 +1,28 @@
+[Unit]
+Description=Teleport agent (SSH node and apps), cream extension teleport
+Documentation=https://goteleport.com/docs/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+# The config is generated from /etc/cream/teleport on every start, so a hand
+# edit of /etc/teleport.yaml never silently diverges from `status`. render is
+# `lock: none`: set-managed holds lock/teleport while it restarts this unit,
+# and this process is not its child (cream spec §7.3).
+ExecStartPre=/usr/bin/cream run teleport render
+ExecStart=/usr/local/bin/teleport start --config /etc/teleport.yaml --pid-file=/run/teleport.pid
+# HUP is Teleport's graceful restart: open SSH sessions survive a new app list.
+ExecReload=/usr/bin/cream run teleport render
+ExecReload=/bin/kill -HUP $MAINPID
+PIDFile=/run/teleport.pid
+# set-managed restarts this unit under lock/teleport and confirms the new run
+# within 30 s; the stvor-agent adapter gives the whole call 90 s. The default
+# stop (90 s) alone would eat it.
+TimeoutStopSec=30s
+LimitNOFILE=524288
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# cream hook `upgrade` of stvor-agent: the same as install — a new .deb by the
+# pin or explicit keys; the package postinst restarts the service.
+set -euo pipefail
+# shellcheck source=../files/agent.sh
+source "${CREAM_EXT_DIR:?run by cream}/files/agent.sh"
+sa_hook_install
