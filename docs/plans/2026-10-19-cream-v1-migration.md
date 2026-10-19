@@ -26,7 +26,7 @@
 - [ ] Task 16: `kiosk` + `chromium-kiosk`
 - [ ] Task 17: `selkies`
 - [ ] Task 18: `x11vnc` + `vino-vnc`
-- [ ] Task 19: `rustdesk` + `jetson-stats`
+- [x] Task 19: `rustdesk` + `jetson-stats`
 - [x] Task 20: `nvidia` + `nvidia-container-toolkit`
 - [x] Task 21: `nvidia-jetpack`
 - [x] Task 22: `cuda-toolkit` + `tensorrt` + `l4t-gstreamer`
