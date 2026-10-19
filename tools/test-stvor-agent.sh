@@ -349,6 +349,35 @@ new_root
 PHASE=build hook install >/dev/null 2>&1; rc=$?
 eq "фаза build — пакет ставится" "0 dpkg -i stvor-agent_4.0.0_amd64.deb $SUM_AMD64" "$rc $(installed)"
 
+echo "== install: метка stvor_agent подхватывается сразу =="
+# cream lays the drop-in before the install hook (spec cream §6.5): the render
+# of teleport-apps.path then skips the command — no binary yet. After dpkg -i
+# the hook asks teleport-apps.service for a render + reload (no restart).
+new_root; mkdir -p "$ROOT/run/systemd/system"
+hook install >/dev/null 2>&1; rc=$?
+eq "live, systemd — код 0" 0 "$rc"
+eq "live, systemd — после dpkg -i неблокирующий start teleport-apps.service" \
+    "curl $GH/v4.0.0/stvor-agent_4.0.0_amd64.deb
+dpkg -i stvor-agent_4.0.0_amd64.deb $SUM_AMD64
+systemctl --no-block start teleport-apps.service" "$(calls)"
+new_root; mkdir -p "$ROOT/run/systemd/system"
+PHASE=build hook install >/dev/null 2>&1; rc=$?
+eq "фаза build — teleport-apps.service не трогается" "0 " "$rc $(grep '^systemctl' "$FAKE/calls")"
+new_root
+hook install >/dev/null 2>&1; rc=$?
+eq "без systemd — teleport-apps.service не трогается" "0 " "$rc $(grep '^systemctl' "$FAKE/calls")"
+new_root; mkdir -p "$ROOT/run/systemd/system"; echo 4.0.0 > "$FAKE/installed"
+hook install >/dev/null 2>&1; rc=$?
+eq "та же версия уже стоит — teleport-apps.service не трогается" "0 " "$rc $(calls)"
+new_root; mkdir -p "$ROOT/run/systemd/system"; echo 3.1.0 > "$FAKE/installed"
+hook upgrade CREAM_PREV_VERSION=3.1.0 >/dev/null 2>&1; rc=$?
+eq "upgrade, systemd — тоже reload меток" "0 systemctl --no-block start teleport-apps.service" \
+    "$rc $(grep '^systemctl' "$FAKE/calls")"
+new_root; mkdir -p "$ROOT/run/systemd/system"
+printf 'not the package\n' > "$FAKE/deb-amd64"
+hook install >/dev/null 2>&1
+eq "сумма не та — teleport-apps.service не трогается" "" "$(grep '^systemctl' "$FAKE/calls")"
+
 echo "== upgrade =="
 new_root; echo 3.1.0 > "$FAKE/installed"
 hook upgrade CREAM_PREV_VERSION=3.1.0 >/dev/null 2>&1; rc=$?

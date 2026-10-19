@@ -136,7 +136,22 @@ sa_hook_install(){
     deb="$(sa_fetch "$work" "$arch")" || exit 1
     sa_run dpkg -i "$deb" || sa_die "dpkg -i $(basename "$deb") не прошёл"
     sa_log "установлен $(basename "$deb")${have:+ (было $have)}"
+    sa_reload_labels
     sa_log "включение: printf '%s' '<токен>' | sudo stvor-agent enable 'URL=https://<портал>/robot-api/v1/labels'"
+}
+
+# The drop-in of the stvor_agent label is laid by cream before the install
+# hook (spec cream §6.5): the render teleport-apps.path ran then skipped the
+# command, the binary was not there yet. Now it is: render + reload (HUP, no
+# restart) through teleport-apps.service, without waiting (cream convention).
+# Its ConditionPathExists=/etc/teleport.yaml makes it a no-op before join.
+sa_reload_labels(){
+    if [[ "${CREAM_PHASE:-live}" == build || ! -d "${CREAM_ROOT%/}/run/systemd/system" ]]; then
+        return 0
+    fi
+    sa_run systemctl --no-block start teleport-apps.service \
+        || sa_log "ВНИМАНИЕ: teleport-apps.service не запущен — метка stvor_agent появится при следующем render teleport"
+    return 0
 }
 
 # hooks/remove: the agent forgets its token and stops, then the package goes.
