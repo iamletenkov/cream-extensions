@@ -1,7 +1,7 @@
-# Правила по умолчанию расширения firewall (bisquite), бэкенд iptables, IPv6.
+# Правила по умолчанию расширения firewall (cream), бэкенд iptables, IPv6.
 #
 # То же, что 10-defaults.rules, для ip6tables-legacy-restore: файлы *.rules6
-# собираются по алфавиту в одну транзакцию для цепочки BISQUITE-INPUT таблицы
+# собираются по алфавиту в одну транзакцию для цепочки CREAM-INPUT таблицы
 # filter IPv6. Формат и правила — в 10-defaults.rules.
 
 # Петля.
@@ -19,4 +19,6 @@
 -p ipv6-icmp -m icmp6 --icmpv6-type neighbour-advertisement -j ACCEPT
 -p ipv6-icmp -m icmp6 --icmpv6-type router-advertisement -j ACCEPT
 
+# SSH (FIREWALL_SSH_PORTS, умолчание 22) добавляет сам configure после этих
+# файлов — и в запасном наборе тоже.
 # Всё остальное входящее отбрасывается последним правилом цепочки (DROP).

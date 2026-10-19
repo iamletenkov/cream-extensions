@@ -3,27 +3,87 @@
 Файрвол машины: входящее — только разрешённое, исходящее — всё. Два
 бэкенда с одними и теми же правилами по умолчанию:
 
-- **nftables** — своя таблица `inet bisquite`, файлы `*.nft`;
-- **iptables** (`iptables-legacy`) — своя цепочка `BISQUITE-INPUT` в таблице
+- **nftables** — своя таблица `inet cream`, файлы `*.nft`;
+- **iptables** (`iptables-legacy`) — своя цепочка `CREAM-INPUT` в таблице
   `filter` IPv4 и IPv6, файлы `*.rules` и `*.rules6`. Для ядер без `nft_ct` —
   прежде всего штатного ядра L4T r36.4.3 на Jetson.
 
-Бэкенд выбирается **при сборке и на каждой загрузке** по списку модулей
+```
+cream install --accept-risk firewall    # живая машина (live: confirm)
+cream run firewall status               # бэкенд и правила, как они в ядре
+cream remove firewall                   # снять свою таблицу и цепочки
+EXTENSION firewall                      # образ bisquite
+```
+
+Бэкенд выбирается **при установке и на каждой загрузке** по спискам модулей
 ядра (раздел «Выбор бэкенда»). Правила — файлы в
-`/etc/bisquite/firewall/rules.d/`, применяются службой `bisquite-firewall`
-**при каждой загрузке** (до сети) и по `systemctl restart`.
+`/etc/cream/firewall/rules.d/`; их собирает хук `configure` в
+`cream-configure@firewall` на стадии `early` — **на каждой загрузке до сети**
+(`Before=network-pre.target`), после установки на живой машине и после
+`cream set firewall …`.
 
-> **С 1.2.0 — бэкенд iptables.** Раньше на ядре без `nft_ct` сборка
-> отказывала; теперь при наличии модулей `iptables-legacy` выбирается он
-> (`FIREWALL_BACKEND=auto`). Отказ остался для ядра, где нет ни того, ни
-> другого.
+> **С 2.0.0 — cream/v1.** `install.sh` стал хуком `hooks/install`,
+> `configure.sh` — общим `firewall.sh`, который зовут хук `configure`,
+> действия и хук `remove`. Своей службы больше нет: на загрузке правила
+> собирает `cream-configure@firewall` (стадия `early`, нужен cream ≥ 1.1.0).
+> Команда-обёртка заменена действиями `cream run firewall status|check|reload`.
+> Таблица и цепочка переименованы **без миграции** (решение владельца):
+> обновлённая машина получает новую таблицу, старая снимается перезагрузкой
+> или руками. **SSH теперь открыт по умолчанию** (`FIREWALL_SSH_PORTS=22`):
+> и правилами, и запасным набором — установка на живую машину и битый файл
+> правил не отрезают оператора.
 
-## Что ставится
-
-| Фаза | Что |
+<!-- check-names: off -->
+| Было (1.x, раскладка 2) | Стало (2.0.0) |
 |---|---|
-| build | выбор бэкенда по каждому ядру образа (отказ, если ядро не тянет ни один); пакеты `nftables` и `iptables`; `/etc/bisquite/firewall/rules.d/10-defaults.{nft,rules,rules6}` (если их ещё нет); `/var/lib/bisquite/firewall/backend` — выбор сборки; `bisquite-firewall.service` (включён, `WantedBy=sysinit.target`, `Before=network-pre.target`); команда `/usr/local/sbin/bisquite-firewall` |
-| каждая загрузка | `configure.sh apply`: выбор бэкенда по работающему ядру; nftables — таблица заново одной транзакцией `nft -f`; iptables — цепочка заново одной транзакцией `iptables-legacy-restore --noflush` на семейство и один переход первым правилом `INPUT` |
+| таблица `inet bisquite` | `inet cream` |
+| цепочка `BISQUITE-INPUT` | `CREAM-INPUT` |
+| `bisquite-firewall.service` (`configure.sh apply`) | `cream-configure@firewall` (хук `configure`, стадия `early`) |
+| `/etc/bisquite/firewall/rules.d/` | `/etc/cream/firewall/rules.d/` |
+| `/etc/bisquite/firewall/config`, схема `knobs` | `/etc/cream/firewall/config`, `config.keys` манифеста |
+| `/var/lib/bisquite/firewall/backend` | `/var/lib/cream/ext/firewall/backend` |
+| `/run/bisquite-firewall/` | `/run/firewall/` |
+| `bisquite-firewall show` / `backend` | `cream run firewall status` |
+| `bisquite-firewall check` | `cream run firewall check` |
+| `systemctl restart bisquite-firewall` | `cream run firewall reload` |
+| `bisquite-firewall off` | `cream set firewall FIREWALL_ENABLE=0` или `cream remove firewall` |
+| `bisquite-conf set firewall …` | `cream set firewall …` |
+| `BISQUITE_FIREWALL_BACKEND`, `BISQUITE_FIREWALL_RUN`, `BISQUITE_FIREWALL_MODULES` (тестовые) | нет: тест подменяет корень (`CREAM_ROOT`), `check` берёт бэкенд аргументом |
+<!-- check-names: on -->
+
+Ключи `FIREWALL_ENABLE`, `FIREWALL_BACKEND` — прежние; новый — `FIREWALL_SSH_PORTS`.
+
+## Манифест
+
+| Поле | Значение |
+|---|---|
+| `cream` | `>=1.1.0` — стадия `early` появилась в 1.1.0 |
+| `platform.arch` | `amd64`, `arm64` — пакеты и скрипты, архитектура не участвует |
+| `targets` | `build: exec`, `live: confirm` — `live_note` ниже |
+| `provides` | `host-firewall` |
+| `hooks` | `install` (15 мин), `configure` (стадия `early`, после `nftables.service`, 2 мин), `remove` (2 мин); своего `apply` нет — применение = перезапуск configure (спека cream §8.4) |
+| `actions` | `status` (`lock: none`), `check` (`lock: none`), `reload` (`lock: exclusive`) |
+
+### Почему `live: confirm`
+
+Сразу после установки на живой машине входящее закрыто (`policy drop`),
+кроме петли, ответов на исходящие соединения (в том числе обратного туннеля
+Teleport — узел сам звонит прокси) и SSH на портах `FIREWALL_SSH_PORTS`. SSH на
+другом порту или любая другая входящая служба будут отрезаны, пока их не
+откроет файл правил. Поэтому без `--accept-risk` cream не ставит; текст риска —
+`targets.live_note`. Открыть порт **до** установки:
+
+```
+sudo cream install --accept-risk firewall FIREWALL_SSH_PORTS="22 2222"
+```
+
+## Что делает
+
+| Шаг | Что |
+|---|---|
+| `install` (сборка и живая машина) | выбор бэкенда по каждому ядру образа (отказ, если ядро не тянет ни один — до apt); пакеты `nftables` и `iptables`; `/etc/cream/firewall/rules.d/10-defaults.{nft,rules,rules6}` и `README` (если их ещё нет; правленая копия остаётся, о расхождении — предупреждение); проверка файлов обоих бэкендов (`firewall.sh check nft|iptables`: формат `*.rules` — отказ, `nft -c`/`restore --test` без модулей ядра — предупреждение); `/var/lib/cream/ext/firewall/backend` — выбор сборки. В ядро ничего не грузится |
+| `configure` (каждая загрузка, стадия `early`; после `install`; `cream set`) | выбор бэкенда по работающему ядру; nftables — таблица заново одной транзакцией `nft -f`; iptables — цепочка заново одной транзакцией `iptables-legacy-restore --noflush` на семейство и один переход первым правилом `INPUT`; затем снимается таблица или цепочка другого бэкенда |
+| `remove` | снимает **только** таблицу `inet cream` и цепочку `CREAM-INPUT` с её переходом из `INPUT`; входящее больше не фильтруется. Файлы правил оператора и пакеты остаются (`--purge` снимет и `/etc/cream/firewall`) |
 
 Правила по умолчанию (`10-defaults.nft`; для iptables — `10-defaults.rules`
 и `10-defaults.rules6` того же смысла):
@@ -33,11 +93,12 @@
   `-m conntrack --ctstate ESTABLISHED,RELATED`), `invalid` — drop;
 - UDP 7400–32000 на `127.0.0.1` (DDS/ROS 2);
 - ICMPv6 обнаружения соседей (без них не работает IPv6, в т.ч. исходящий);
+- SSH — TCP-порты `FIREWALL_SSH_PORTS` (умолчание `22`); правило добавляет сам
+  `configure` после файлов каталога;
 - остальное входящее — `policy drop` (iptables — последнее правило цепочки
   `-j DROP`); исходящее — `policy accept` (iptables — `OUTPUT` не трогается).
 
-SSH, ping и прочие входящие закрыты: доступ к машине — через агент Teleport
-(исходящий туннель) или своим файлом правил.
+Ping и прочие входящие закрыты: открыть — своим файлом правил.
 
 ### Docker не задевается
 
@@ -45,8 +106,8 @@ SSH, ping и прочие входящие закрыты: доступ к ма�
 держит свои цепочки (`DOCKER`, `DOCKER-USER`, `FORWARD`, таблица `nat`) в
 iptables-nft или iptables-legacy, и сброс отрезал бы контейнеры. nftables:
 наша таблица добавляет только базовую цепочку на хуке `input`. iptables:
-транзакция `--noflush` объявляет и заменяет только `BISQUITE-INPUT`, в
-`INPUT` добавляется ровно одно правило `-j BISQUITE-INPUT` (первым;
+транзакция `--noflush` объявляет и заменяет только `CREAM-INPUT`, в
+`INPUT` добавляется ровно одно правило `-j CREAM-INPUT` (первым;
 повторный `apply` его не дублирует), политика `INPUT` остаётся как была.
 В обоих случаях проброс портов (`-p 8080:80`) идёт через DNAT и `forward`, выход
 контейнеров в сеть — через `forward` и masquerade. Ни то, ни другое в `input`
@@ -54,23 +115,24 @@ iptables-nft или iptables-legacy, и сброс отрезал бы конт�
 машины** по адресу моста — нужно — своим правилом (пример ниже).
 
 `nftables.service` дистрибутива не включается: его `/etc/nftables.conf`
-начинается с `flush ruleset`. Если его включили — `bisquite-firewall` стоит
-после него и пересобирает свою таблицу, но цепочки Docker он уже снёс
-(лечится `systemctl restart docker`).
+начинается с `flush ruleset`. Если его включили — configure стоит после него
+(`after: [nftables.service]`) и пересобирает свою таблицу, но цепочки Docker
+он уже снёс (лечится `systemctl restart docker`).
 
 ## Настройки
 
-Домен `firewall`, файл `/etc/bisquite/firewall/config`, схема — `knobs`.
+Домен `firewall`, файл `/etc/cream/firewall/config`, схема — `config.keys`
+манифеста. Смена через `cream set firewall …` перезапускает
+`cream-configure@firewall`.
 
 | Ключ | Умолчание | Что |
 |---|---|---|
-| `FIREWALL_ENABLE` | `1` | `0` — таблица снимается, входящее не фильтруется |
-
+| `FIREWALL_ENABLE` | `1` | `0` — таблица и цепочки снимаются, входящее не фильтруется |
 | `FIREWALL_BACKEND` | `auto` | `auto` — nftables, если в ядре есть `nf_tables` и `nft_ct`, иначе iptables, если есть модули `iptables-legacy`; `nft`, `iptables` — явно |
+| `FIREWALL_SSH_PORTS` | `22` | TCP-порты SSH через пробел — открыты и правилами, и запасным набором; пусто — SSH закрыт. Значение не из портов — `configure` ничего не применяет и выходит с ошибкой (прежние правила остаются) |
 
-Смена `FIREWALL_BACKEND` через `bisquite-conf set` перезапускает службу:
-новый бэкенд применяется, и только после этого снимается таблица или
-цепочка прежнего — окна без файрвола нет.
+Смена `FIREWALL_BACKEND`: новый бэкенд применяется, и только после этого
+снимается таблица или цепочка прежнего — окна без файрвола нет.
 
 ### Выбор бэкенда
 
@@ -79,17 +141,17 @@ iptables-nft или iptables-legacy, и сброс отрезал бы конт�
 | nftables | `nf_tables`, `nft_ct` |
 | iptables | `ip_tables`, `iptable_filter`, `ip6_tables`, `ip6table_filter`, `nf_conntrack`, `xt_conntrack`, `xt_tcpudp` |
 
-- **Сборка** (`install.sh`, до apt): для каждого ядра образа
+- **Установка** (`hooks/install`, до apt): для каждого ядра образа
   (`/lib/modules/*/` с `modules.order`, не `uname -r` appliance) —
   `auto`: nftables, иначе iptables, иначе **отказ** с перечнем недостающих
   модулей; явное `nft`/`iptables` без своих модулей — тоже отказ. Выбор
-  пишется в `/var/lib/bisquite/firewall/backend`. Ядра в образе нет
+  пишется в `/var/lib/cream/ext/firewall/backend`. Ядра в образе нет
   (контейнер) — предупреждение, выбирает загрузка.
-- **Каждая загрузка** (`configure.sh apply`): то же по ядру `uname -r`
+- **Каждая загрузка** (`hooks/configure`): то же по ядру `uname -r`
   (`/lib/modules/$(uname -r)`). Списков модулей нет — бэкенд сборки, а без
   него nftables. Явный `FIREWALL_BACKEND`, которого ядро по спискам не
   тянет, всё равно пробуется (оператор так сказал) — с записью в журнал.
-  `sudo bisquite-firewall backend` печатает, что выберет `apply`.
+  `cream run firewall status` печатает, что выберет `apply`.
 
 **Почему `iptables-legacy`, а не `iptables-nft`.** iptables-nft 1.8.7
 (Ubuntu 22.04) не переводит `-m conntrack` в родное nft-выражение: это
@@ -104,55 +166,56 @@ iptables-nft или iptables-legacy, и сброс отрезал бы конт�
 ### Файлы правил nftables (`*.nft`)
 
 Включаются по алфавиту после пересоздания таблицы, в той же транзакции;
-формат — команды nft к таблице `inet bisquite`:
+формат — команды nft к таблице `inet cream`:
 
 ```
-# /etc/bisquite/firewall/rules.d/50-ssh.nft
-add rule inet bisquite input tcp dport 22 accept
+# /etc/cream/firewall/rules.d/50-local.nft
 # ping
-add rule inet bisquite input icmp type echo-request accept
+add rule inet cream input icmp type echo-request accept
 # служба машины для контейнеров Docker (мост docker0 и сети compose)
-add rule inet bisquite input iifname "docker0" tcp dport 8000 accept
-add rule inet bisquite input iifname "br-*" tcp dport 8000 accept
+add rule inet cream input iifname "docker0" tcp dport 8000 accept
+add rule inet cream input iifname "br-*" tcp dport 8000 accept
 ```
 
 ### Файлы правил iptables (`*.rules`, `*.rules6`)
 
 `*.rules` — IPv4 (`iptables-legacy-restore`), `*.rules6` — IPv6
 (`ip6tables-legacy-restore`). По алфавиту, одна транзакция на семейство:
-своя цепочка объявляется (то есть очищается), затем строки файлов, в конце
-`-A BISQUITE-INPUT -j DROP`. Строка — правило **своей цепочки** в синтаксисе
-`iptables-restore`, полной формой или краткой (префикс добавится):
+своя цепочка объявляется (то есть очищается), затем строки файлов, правила
+SSH, в конце `-A CREAM-INPUT -j DROP`. Строка — правило **своей цепочки** в
+синтаксисе `iptables-restore`, полной формой или краткой (префикс добавится):
 
 ```
-# /etc/bisquite/firewall/rules.d/50-ssh.rules
--p tcp --dport 22 -j ACCEPT
+# /etc/cream/firewall/rules.d/50-local.rules
+-p tcp --dport 8000 -j ACCEPT
 # ping — то же полной формой
--A BISQUITE-INPUT -p icmp --icmp-type echo-request -j ACCEPT
+-A CREAM-INPUT -p icmp --icmp-type echo-request -j ACCEPT
 # служба машины для контейнеров Docker
 -i docker0 -p tcp --dport 8000 -j ACCEPT
 -i br-+ -p tcp --dport 8000 -j ACCEPT
 ```
 
 ```
-# /etc/bisquite/firewall/rules.d/50-ssh.rules6
--p tcp --dport 22 -j ACCEPT
+# /etc/cream/firewall/rules.d/50-local.rules6
+-p tcp --dport 8000 -j ACCEPT
 ```
 
 Пустые строки и `#` пропускаются. **Ошибка файла** — любая другая команда
 (`-A INPUT`, `-I`, `-D`, `-F`, `-X`, `-P`, `-N`, `-t`, `*filter`, `COMMIT`,
 `:ЦЕПОЧКА`) или строка не с `-`: файлы не могут тронуть чужие цепочки.
-Формат проверяется и при сборке (отказ), и на загрузке.
+Формат проверяется и при установке (отказ), и на загрузке.
 
 ### Ошибка в файле
 
 **Ошибка в любом файле выбранного бэкенда — не применяется ничего из
-каталога:** грузится запасной набор (петля и ответы, входящее закрыто),
-служба уходит в `failed`, причина — в `journalctl -u bisquite-firewall`.
-Закрытая машина, а не открытая. Файлы другого бэкенда не читаются (`*.nft`
-при iptables и наоборот), но при сборке проверяются оба набора.
-`10-defaults.*` — тоже файлы оператора: повторная установка (дочерний образ)
-их не перезаписывает, а предупреждает о расхождении.
+каталога:** грузится запасной набор (петля, ответы и SSH на
+`FIREWALL_SSH_PORTS`, остальное входящее закрыто), `configure` выходит с
+ошибкой — `cream-configure@firewall` в `failed`, причина — в
+`journalctl -u cream-configure@firewall`. Закрытая машина, а не открытая, но
+оператор по SSH не отрезан. Файлы другого бэкенда не читаются (`*.nft` при
+iptables и наоборот), но при установке проверяются оба набора.
+`10-defaults.*` — тоже файлы оператора: повторная установка (дочерний образ,
+`--reinstall`) их не перезаписывает, а предупреждает о расхождении.
 
 ## Сборка
 
@@ -160,10 +223,11 @@ add rule inet bisquite input iifname "br-*" tcp dport 8000 accept
 EXTENSION firewall
 EXTENSION firewall FIREWALL_ENABLE=0      # образ загрузится с выключенным файрволом
 EXTENSION firewall FIREWALL_BACKEND=iptables   # iptables и на ядре с nft_ct
+EXTENSION firewall FIREWALL_SSH_PORTS=     # SSH закрыт (доступ — Teleport)
 ```
 
-Свои файлы правил в образ — `COPY_IN`/`UPLOAD` в
-`/etc/bisquite/firewall/rules.d/` после `EXTENSION firewall`.
+Свои файлы правил в образ — `UPLOAD` в `/etc/cream/firewall/rules.d/` после
+`EXTENSION firewall`.
 
 ### Ядро образа и Jetson
 
@@ -189,77 +253,52 @@ Docker на том же ядре правилами `-m conntrack` и `-m addrty
 
 ```yaml
 firstboot-commands:
-  - "echo 'add rule inet bisquite input tcp dport 22 accept' > /etc/bisquite/firewall/rules.d/50-ssh.nft"
+  - "echo 'add rule inet cream input tcp dport 8000 accept' > /etc/cream/firewall/rules.d/50-app.nft"
   # то же для бэкенда iptables (Jetson):
-  - "echo '-p tcp --dport 22 -j ACCEPT' > /etc/bisquite/firewall/rules.d/50-ssh.rules"
-  - "systemctl restart bisquite-firewall"
+  - "echo '-p tcp --dport 8000 -j ACCEPT' > /etc/cream/firewall/rules.d/50-app.rules"
+  - "cream run firewall reload"
   # или выключить совсем:
-  - "bisquite-conf set --apply firewall FIREWALL_ENABLE=0"
+  - "cream set firewall FIREWALL_ENABLE=0"
 ```
 
 ## На работающей машине
 
 ```bash
-sudo bisquite-firewall show              # бэкенд и наши правила, как они в ядре
-sudo bisquite-firewall backend           # какой бэкенд выберет apply и почему
-sudoedit /etc/bisquite/firewall/rules.d/50-ssh.nft    # или 50-ssh.rules
-sudo bisquite-firewall check             # проверить файлы (nft -c / restore --test), ничего не применяя
-sudo systemctl restart bisquite-firewall # применить (атомарно, без открытого окна)
-sudo bisquite-firewall off               # снять (таблицу и цепочки) до следующей загрузки
-sudo bisquite-conf set firewall FIREWALL_ENABLE=0   # выключить насовсем (хук перезапускает службу)
+sudo cream run firewall status           # бэкенд, что выберет apply, наши правила в ядре
+sudoedit /etc/cream/firewall/rules.d/50-local.nft    # или 50-local.rules
+sudo cream run firewall check            # проверить файлы (nft -c / restore --test), ничего не применяя
+sudo cream run firewall reload           # применить (атомарно, без открытого окна)
+sudo cream set firewall FIREWALL_SSH_PORTS="22 2222"   # порты SSH (перезапускает configure)
+sudo cream set firewall FIREWALL_ENABLE=0   # выключить (таблица и цепочки снимаются)
 ```
 
-`systemctl stop` таблицу не снимает намеренно: остановка внутри `restart`
-была бы окном, когда машина открыта.
+`systemctl stop cream-configure@firewall` таблицу не снимает намеренно:
+остановка внутри перезапуска была бы окном, когда машина открыта.
 
-## Проверка
+## Проверки
 
-```bash
-systemctl is-active bisquite-firewall           # active
-sudo nft list table inet bisquite               # nftables: policy drop + правила
-sudo iptables-legacy -S BISQUITE-INPUT          # iptables: правила, последним -j DROP
-sudo iptables-legacy -S INPUT | head -2         # iptables: первым -j BISQUITE-INPUT
-sudo nft list tables                            # таблицы Docker на месте
-curl -m 3 http://<адрес машины>:<закрытый порт>  # с другой машины: таймаут
-docker run --rm -p 8080:80 nginx:alpine          # с другой машины :8080 открыт
-docker run --rm alpine wget -qO- http://deb.debian.org >/dev/null && echo ok
-```
+- **H** — `tests/test-firewall.sh` (`make test`): выбор бэкенда по спискам
+  модулей; манифест; `configure` на подменённом корне с подставными `nft` и
+  `iptables-legacy*` — таблица `inet cream` одной транзакцией, SSH открыт по
+  умолчанию и в запасном наборе, `FIREWALL_SSH_PORTS` пустой и битый, битый
+  файл, `FIREWALL_ENABLE=0`, переключение бэкенда; формат `*.rules`
+  (`check`, код 3); `install` — выбор по ядру образа, отказ до apt, умолчания
+  не перезаписываются, повтор не меняет файлов; `remove` снимает только свою
+  таблицу и цепочку, `flush ruleset` не звучит никогда.
+- **L** — `make test-live EXT=firewall DISTRO=debian-12` и `ubuntu-24.04`
+  (`tests/live.env`: `--accept-risk`, `NET_ADMIN` в собственном netns
+  контейнера, не `--network host`): установка, повтор, `--reinstall` без
+  изменения файлов, перезапуск контейнера — `cream-configure@firewall`
+  успешен, таблица `inet cream` поднята на загрузке, циклов порядка нет;
+  `remove` снимает таблицу.
 
-Проверено в systemd-контейнерах `ubuntu:24.04` (с Docker CE 29.9 из
-расширения `docker`) и `debian:12`: порт без правила закрыт снаружи и
-открыт с петли; проброс `-p 8080:80`, выход контейнеров в сеть и
-`127.0.0.1:8080` работают при включённом файрволе, после
-`systemctl restart bisquite-firewall` и после перезапуска dockerd; свой файл
-открывает порт; битый файл — запасной набор и `failed`;
-`FIREWALL_ENABLE=0/1` через `bisquite-conf`; таблица поднимается при загрузке.
-
-Проверка ядра (1.1.0, 2026-10-15): `ubuntu:22.04` arm64 с раскладкой ядра
-L4T r36.4.3 — отказ по `nft_ct` до apt; `debian:12` с ядрами
-6.1.0-52/53-amd64 — `nf_tables`, `nft_ct` найдены; `ubuntu:24.04` без ядра —
-предупреждение и установка дальше.
-
-Проверка бэкенда iptables (1.2.0, 2026-10-15), `tests/test-firewall.sh` и
-контейнерные прогоны:
-
-- **arm64, сборка:** `ubuntu:22.04` arm64 (qemu-user) со списками модулей
-  настоящего ядра L4T r36.4.3 (`nvidia-l4t-kernel` 36.4.3) — `auto` выбирает
-  iptables, ставятся `nftables`, `iptables` arm64, в `backend` — `iptables`;
-  `FIREWALL_BACKEND=nft` — отказ по `nft_ct`; ядро без `ip6_tables` — отказ
-  с перечнем; файл `-A INPUT …` — отказ сборки; дочерний образ сохраняет
-  правленый `10-defaults.rules`. Применить правила под qemu-user нельзя
-  вовсе: он не пропускает ни `IPT_SO_*` (`iptables-legacy`), ни сокет
-  netlink netfilter (`nft`) — замер того же дня.
-- **применение, iptables:** privileged systemd-контейнер `ubuntu:22.04`
-  amd64, где `/lib/modules/$(uname -r)` подменён списками L4T, а ядро хоста
-  играет роль ядра робота: служба `active`, бэкенд `iptables`, переход первым
-  в `INPUT` (v4, v6), порт без правила снаружи закрыт, с петли открыт,
-  исходящее работает; свой `*.rules` открывает порт; два `restart` — переход
-  не дублируется; битый файл и файл с `-A INPUT` — `failed` и запасной набор;
-  `FIREWALL_BACKEND=nft` — таблица nft, цепочки сняты; `FIREWALL_ENABLE=0` —
-  сняты оба; после перезапуска контейнера правила на месте. Подставные
-  цепочки Docker (`DOCKER`, `DOCKER-USER`, `FORWARD`, `nat POSTROUTING`, чужое
-  правило `INPUT`) в iptables-legacy, ip6tables-legacy и iptables-nft
-  сравнивались до и после каждого шага — не изменились.
-- **применение, nftables:** тот же контейнер с `/lib/modules` хоста
-  (6.1.0-52/53-amd64, `nft_ct` есть) — бэкенд `nft`, прежнее поведение;
-  `FIREWALL_BACKEND=iptables` — цепочка вместо таблицы.
+Проверено в 1.x (раскладка 2, те же правила и бэкенды) в systemd-контейнерах
+`ubuntu:24.04` (с Docker CE из расширения `docker`), `debian:12` и
+`ubuntu:22.04` arm64 со списками модулей L4T r36.4.3: порт без правила закрыт
+снаружи и открыт с петли; проброс `-p 8080:80`, выход контейнеров в сеть и
+`127.0.0.1:8080` работают при включённом файрволе и после перезапуска dockerd;
+бэкенд iptables — переход первым в `INPUT` (v4, v6), повторный apply его не
+дублирует; подставные цепочки Docker в iptables-legacy, ip6tables-legacy и
+iptables-nft до и после каждого шага не менялись. Применить правила под
+qemu-user нельзя вовсе: он не пропускает ни `IPT_SO_*`, ни сокет netlink
+netfilter.

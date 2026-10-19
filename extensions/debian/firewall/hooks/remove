@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# cream hook `remove` of firewall: takes down OUR table `inet cream` and OUR
+# iptables-legacy chain CREAM-INPUT with its jump from INPUT — nothing else
+# (no `flush ruleset`, no foreign tables or chains: Docker's stay). Input is
+# unfiltered afterwards. The rules files in /etc/cream/firewall/rules.d are the
+# operator's and stay (cream removes /etc/cream/firewall only with --purge);
+# the packages nftables and iptables stay too (Docker uses iptables). A repeat
+# finds nothing and exits 0.
+set -euo pipefail
+R="${CREAM_ROOT:-}"; R="${R%/}"
+"${CREAM_EXT_DIR:-$(dirname "$0")/..}/firewall.sh" off
+rm -f -- "${CREAM_STATE_DIR:-$R/var/lib/cream/ext/firewall}/backend"
+rm -r -f -- "$R/run/firewall"
