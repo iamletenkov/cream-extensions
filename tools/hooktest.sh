@@ -13,6 +13,7 @@
 #
 # Корень ($ROOT):
 #   $ROOT/opt/cream/ext/<ext>  копия расширения — CREAM_EXT_DIR и cwd хука
+#   $ROOT/opt/cream/ext/<lib>  библиотеки (kind: library) из depends — соседи по каталогу
 #   $ROOT/etc/cream/<ext>      CREAM_ETC_DIR (config, secrets)
 #   $ROOT/var/lib/cream/ext/<ext>  CREAM_STATE_DIR
 #   $ROOT/bin                  подставные команды, первыми в PATH
@@ -72,6 +73,23 @@ ht_root() {
         "$ROOT/etc/cream/$HT_NAME" "$ROOT/var/lib/cream/ext/$HT_NAME"
     cp -a "$src" "$HT_EXT"
     rm -r -f -- "$HT_EXT/tests"
+    # Libraries (kind: library) from `depends`, laid down as cream does: the
+    # catalog sibling, without tests/. Other depends are the test's business.
+    local lib
+    while read -r lib; do
+        [[ -n "$lib" ]] || continue
+        cp -a "$(dirname "$src")/$lib" "$ROOT/opt/cream/ext/$lib"
+        rm -r -f -- "$ROOT/opt/cream/ext/$lib/tests"
+    done < <(python3 - "$src" <<'PY'
+import os, sys, yaml
+src = sys.argv[1]
+m = yaml.safe_load(open(os.path.join(src, "extension.yaml"), encoding="utf-8"))
+for d in m.get("depends") or []:
+    p = os.path.join(os.path.dirname(src), d["name"], "extension.yaml")
+    if os.path.isfile(p) and (yaml.safe_load(open(p, encoding="utf-8")) or {}).get("kind") == "library":
+        print(d["name"])
+PY
+    )
     : > "$FAKE/calls"
     for k in "${HT_GUARDED[@]}"; do
         ht_fake "$k" "echo \"hooktest: $k не подставлен (ht_fake $k …)\" >&2; exit 127"

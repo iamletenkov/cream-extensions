@@ -3,7 +3,7 @@
 # окружение как у cream (очищено, CREAM_*, ключи с default, секрет — только
 # в файле), cwd — копия расширения без tests/, umask 022, KEY=VALUE
 # перекрывает, код хука доходит до теста (сбой, 20), сторож опасных команд,
-# журнал подставных, действие с аргументами.
+# журнал подставных, действие с аргументами, библиотеки из depends.
 #
 #   tools/test-hooktest.sh        код 0 — все проверки прошли
 set -uo pipefail
@@ -63,5 +63,14 @@ eq "argv подставной" "install -y demo-pkg" "$(tail -n1 "$FAKE/apt-get.
 echo "== действие =="
 ht_action hello DEMO_COLOR=red -- a b; eq "действие — 0" 0 "$?"
 eq "аргументы и ключи действия" "hello a b color=red" "$(ht_out)"
+
+echo "== библиотеки из depends =="
+CAT="$(dirname "$HERE")/extensions/debian"
+ht_root "$CAT/docker"
+check "библиотека cloud-user разложена" test -x "$ROOT/opt/cream/ext/cloud-user/get_cloud_user.sh"
+check "библиотека apt-guard разложена" test -f "$ROOT/opt/cream/ext/apt-guard/apt-guard.sh"
+check_not "tests/ библиотеки не попали" test -e "$ROOT/opt/cream/ext/apt-guard/tests"
+ht_root "$CAT/gnome"
+check_not "не библиотека (desktop) не раскладывается" test -e "$ROOT/opt/cream/ext/desktop"
 
 ht_done
