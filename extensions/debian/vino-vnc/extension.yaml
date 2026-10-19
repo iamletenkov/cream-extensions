@@ -16,7 +16,7 @@
 # parameter (VINO_PORT, X11VNC_PORT), not by excluding each other.
 schema: cream/v1
 name: vino-vnc
-version: 5.0.0
+version: 5.0.1
 summary: VNC через vino (GNOME) в сессии пользователя cloud-init — настройки системным dconf, по умолчанию только петля
 cream: ">=1.0.0"
 platform:
@@ -30,6 +30,7 @@ provides: [remote-desktop]
 requires: [x11-server, display-manager]
 depends:
   - {name: cloud-user, version: ">=1.0.0 <2"}
+  - {name: apt-guard, version: ">=1.0.0 <2"}
 hooks:
   install: {timeout: 15m}
   configure:

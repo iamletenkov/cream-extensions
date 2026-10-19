@@ -61,7 +61,9 @@ case "$1" in
     *) cut -d: -f3 <<< "$line" ;;
 esac'
     ht_fake chgrp
-    ht_fake apt-get
+    ht_fake apt-get 'if [[ "$1" == -s ]]; then v=Remv; [[ "$2" == purge ]] && v=Purg
+    for a in "${@:3}"; do echo "$v $a [1.0]"; done; cat "$FAKE/sim-extra" 2>/dev/null; exit 0; fi
+exit 0'
     ht_fake dpkg-query 'exit 1'
     ht_fake systemctl
     ht_fake sleep
@@ -79,10 +81,10 @@ leaked() {
 echo "== манифест =="
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "мажор 5" 5.0.0 "$(mf 'm["version"]')"
+eq "мажор 5" 5.0.1 "$(mf 'm["version"]')"
 eq "cream >= 1.0.0" '>=1.0.0' "$(mf 'm["cream"]')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
-eq "depends cloud-user" cloud-user "$(mf '",".join(d["name"] for d in m["depends"])')"
+eq "depends cloud-user, apt-guard" cloud-user,apt-guard "$(mf '",".join(d["name"] for d in m["depends"])')"
 eq "хуки" "['configure', 'install', 'remove']" "$(mf 'sorted(m["hooks"])')"
 eq "стадия system (Р5)" system "$(mf 'm["hooks"]["configure"]["stage"]')"
 eq "after cloud-init" "['cloud-init.service']" "$(mf 'm["hooks"]["configure"]["after"]')"
@@ -246,5 +248,18 @@ check_not "секретная база снята" test -e "$SEC"
 check_not "автозапуск снят" test -e "$AUTO"
 check_not "профиль, созданный нами, снят" test -e "$PROFILE"
 ht_hook remove; eq "повтор remove — 0" 0 "$?"
+
+echo "== remove: симуляция снимает чужой пакет — отказ =="
+fresh
+S="$ROOT/var/lib/cream/ext/vino-vnc"
+mkdir -p "$S" "$ROOT/etc/xdg/autostart"; echo vino > "$S/installed"
+: > "$ROOT/etc/xdg/autostart/vino-server.desktop"
+echo 'Remv gnome-remote-desktop-compat [1.0]' > "$FAKE/sim-extra"
+ht_hook remove; eq "симуляция снимает чужой пакет — 1" 1 "$?"
+check "симуляция спрошена" ht_called '^apt-get -s remove vino$'
+check "чужой пакет назван" grep -q 'gnome-remote-desktop-compat' "$ROOT/out"
+check_not "ничего не снято" ht_called '^apt-get -q -y remove'
+check "автозапуск на месте" test -e "$ROOT/etc/xdg/autostart/vino-server.desktop"
+check "запись осталась" test -s "$S/installed"
 
 ht_done
