@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# cream hook `install` of cuda-toolkit: CUDA Toolkit from the NVIDIA jetson/common
+# repository already connected by nvidia-l4t-apt-source (part of the L4T BSP).
+#
+# WHY NO REPOSITORY OF OUR OWN. Unlike the amd64 world (cuda-repo-* from
+# developer.download.nvidia.com), a Jetson has the repository in its rootfs:
+# /etc/apt/sources.list.d/nvidia-l4t-apt-source.list carries
+#   deb https://repo.download.nvidia.com/jetson/common r36.4 main
+#   deb https://repo.download.nvidia.com/jetson/t234 r36.4 main
+# from the base image build (see nvidia-jetpack). A second source would either
+# duplicate it or break apt with a version conflict.
+#
+# WHY `cuda-toolkit`, NOT `cuda`. The `cuda` package also pulls the driver
+# (`cuda-drivers`): on a Jetson the GPU stack is part of L4T (nvidia-l4t-core),
+# not a separate driver. `cuda-toolkit` takes the compiler and libraries
+# without it — checked on a live board (JetPack 6.2.1, L4T 36.4.3): version
+# 12.6.11-1 from jetson/common r36.4/main, 2026-09-12.
+#
+# PATH/LD_LIBRARY_PATH. The CUDA deb package, unlike the runfile installer,
+# does not set the profile (NVIDIA's own post-install actions say so). Without
+# it `nvcc` is not in PATH for anyone, root included. The setting goes to
+# /etc/profile.d — system-wide, never into a home directory.
+#
+# Exit codes (spec §6.2, ruling R11): 20 — not a Jetson (no
+# /etc/nv_tegra_release), before apt touches anything; 1 — failure; 0 — done.
+set -euo pipefail
+
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+log_info(){ >&2 echo -e "${GREEN}[INFO]${NC} cuda-toolkit: $*"; }
+log_warn(){ >&2 echo -e "${YELLOW}[WARN]${NC} cuda-toolkit: $*"; }
+log_error(){ >&2 echo -e "${RED}[ERROR]${NC} cuda-toolkit: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}"
+
+apt_retry(){
+    local max=5 n=1 d
+    while true; do
+        if "$@"; then return 0; fi
+        if (( n >= max )); then return 1; fi
+        d=$(( n * 2 )); log_warn "apt не отработал, повтор через ${d}s ($n/$max)"
+        sleep "$d"; n=$(( n + 1 ))
+    done
+}
+
+# put_file MODE DEST: stdin into DEST through a temporary file in the same
+# directory and a rename — a symlink at DEST is replaced, never followed.
+put_file(){
+    local mode="$1" dest="$2" tmp
+    tmp="$(mktemp "$(dirname "$dest")/.cuda-toolkit.XXXXXX")"
+    cat > "$tmp"
+    chmod "$mode" "$tmp"
+    mv -f -T -- "$tmp" "$dest"
+}
+
+is_installed(){
+    [[ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null || true)" == installed ]]
+}
+
+# The first line of a file as data for the log: printable characters only
+# (log_* print with `echo -e`, so backslashes go too).
+first_line(){ head -n 1 -- "$1" | tr -cd '[:print:]' | tr -d '\\'; }
+
+export DEBIAN_FRONTEND=noninteractive
+APT_OPTS=(-q -y -o Dpkg::Options::=--force-confnew)
+
+# --- 1. A Jetson? ------------------------------------------------------------
+# `arch: [arm64]` does not catch "arm64, but not a Jetson"; without the L4T
+# release file there is nothing to install from — 20, not a failure.
+TEGRA_RELEASE="$R/etc/nv_tegra_release"
+if [[ ! -f "$TEGRA_RELEASE" ]]; then
+    log_warn "нет /etc/nv_tegra_release — это не NVIDIA Jetson (L4T): CUDA ставить неоткуда"
+    exit 20
+fi
+log_info "L4T: $(first_line "$TEGRA_RELEASE")"
+
+SOURCE_LIST="$R/etc/apt/sources.list.d/nvidia-l4t-apt-source.list"
+if [[ ! -f "$SOURCE_LIST" ]]; then
+    log_error "нет /etc/apt/sources.list.d/nvidia-l4t-apt-source.list — источник jetson/common не подключён"
+    log_error "проверь, что nvidia-jetpack (шаг сборки базового образа L4T) применён к этому дереву"
+    exit 1
+fi
+
+# --- 2. Packages -------------------------------------------------------------
+PKGS=(cuda-toolkit)
+new=()
+for p in "${PKGS[@]}"; do
+    is_installed "$p" || new+=("$p")
+done
+
+log_info "apt-get update"
+apt_retry apt-get update -q || exit 1
+
+log_info "ставлю cuda-toolkit (может занять несколько минут — набор большой)"
+apt_retry apt-get install "${APT_OPTS[@]}" "${PKGS[@]}" || {
+    log_error "cuda-toolkit не установился"
+    exit 1
+}
+
+# What `remove` may take away: only what was not there before cream. A repeat
+# (--reinstall) adds nothing and keeps the first record.
+if (( ${#new[@]} )); then
+    install -d -m 0755 "$STATE"
+    { if [[ -f "$STATE/packages" && ! -L "$STATE/packages" ]]; then cat "$STATE/packages"; fi
+      printf '%s\n' "${new[@]}"; } | sed '/^$/d' | sort -u | put_file 0644 "$STATE/packages"
+fi
+
+# --- 3. Profile --------------------------------------------------------------
+# cuda-toolkit lands in /usr/local/cuda-<version> with the symlink
+# /usr/local/cuda; the version is not pinned so that a package update does not
+# leave the profile pointing nowhere.
+CUDA_HOME="$R/usr/local/cuda"
+if [[ ! -e "$CUDA_HOME" ]]; then
+    log_error "/usr/local/cuda не появился — пакет поставился, но раскладка другая"
+    exit 1
+fi
+
+install -d -m 0755 "$R/etc/profile.d"
+put_file 0644 "$R/etc/profile.d/cuda-toolkit.sh" <<'PROFILEEOF'
+# Added by the cuda-toolkit extension. A system profile, not .bashrc:
+# CUDA is for every user, not only for whoever built the image.
+export PATH="/usr/local/cuda/bin${PATH:+:${PATH}}"
+export LD_LIBRARY_PATH="/usr/local/cuda/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+PROFILEEOF
+
+log_info "готово: /usr/local/cuda -> $(basename -- "$(readlink -f -- "$CUDA_HOME")" | tr -cd '[:print:]')"
+log_info "nvcc появится в PATH после новой сессии входа (profile.d читается при логине)"
