@@ -1,0 +1,2 @@
+#!/bin/sh
+systemctl disable live-unit-failed.service || true

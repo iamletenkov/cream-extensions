@@ -1,0 +1,10 @@
+# Fixture of tools/test-live-test.sh: install exits 20 — skipped with --expect-skip, red without.
+schema: cream/v1
+name: live-skip
+version: 1.0.0
+summary: фикстура L-раннера — нет устройства
+cream: ">=1.0.0"
+platform: {family: deb, arch: [amd64, arm64]}
+targets: {build: exec, live: "yes"}
+hooks:
+  install: {}

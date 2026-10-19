@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Writes what it was given under the root; installs a package; DEMO_EXIT — its code.
+set -euo pipefail
+mkdir -p "$CREAM_ROOT/etc/demo" "$CREAM_STATE_DIR"
+printf '%s\n' "$DEMO_COLOR" > "$CREAM_ROOT/etc/demo/color"
+env | sort > "$CREAM_STATE_DIR/env"
+pwd > "$CREAM_STATE_DIR/cwd"
+umask > "$CREAM_STATE_DIR/umask"
+apt-get install -y demo-pkg
+exit "${DEMO_EXIT:-0}"

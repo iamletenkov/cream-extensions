@@ -1,0 +1,12 @@
+# Fixture of tools/test-live-test.sh: configure exits 20 — only install may (Р11), red.
+schema: cream/v1
+name: live-configure-20
+version: 1.0.0
+summary: фикстура L-раннера — configure возвращает 20
+cream: ">=1.0.0"
+platform: {family: deb, arch: [amd64, arm64]}
+targets: {build: exec, live: "yes"}
+hooks:
+  install: {}
+  configure: {stage: system}
+  remove: {}

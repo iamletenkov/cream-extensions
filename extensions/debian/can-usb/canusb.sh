@@ -4,7 +4,7 @@
 #   source "$SCRIPT_DIR/canusb.sh"
 #
 # The pinned values (release, kernel, URL, sums) live in install.sh and come
-# in as arguments, so that tools/test-can-usb.sh can feed fixtures.
+# in as arguments, so that tests/test-can-usb.sh can feed fixtures.
 # CANUSB_ROOT is a test root, empty in the guest. The caller's
 # log_info/log_warn/log_error are used when defined.
 

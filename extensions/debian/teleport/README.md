@@ -13,6 +13,7 @@
 
 ## Что изменилось против 3.x
 
+<!-- check-names: off — таблица переименований называет старые имена -->
 | Было | Стало |
 |---|---|
 | `bisquite-teleport <команда>` | `cream run teleport <действие>`; хуки `install`, `upgrade`, `remove`, `apply` |
@@ -25,6 +26,7 @@
 | списки ручек через запятую | **через пробел** (тип `list:` cream); в значениях меток пробела нет |
 | `TELEPORT_TOKEN=-` / `TELEPORT_TOKEN=<токен>` | секрет первого входа — только `TELEPORT_REGISTRATION_SECRET=-` (см. ниже) |
 | `labels-enable`, `pull`, `TELEPORT_LABELS_URL`, таймер меток | удалено — это служба `stvor-agent` |
+<!-- check-names: on -->
 
 ## Установка — бинарь Teleport
 

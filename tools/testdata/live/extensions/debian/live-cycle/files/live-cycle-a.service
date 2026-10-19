@@ -1,0 +1,12 @@
+[Unit]
+Description=live-cycle-a fixture
+After=live-cycle-b.service
+Wants=live-cycle-b.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+
+[Install]
+WantedBy=multi-user.target

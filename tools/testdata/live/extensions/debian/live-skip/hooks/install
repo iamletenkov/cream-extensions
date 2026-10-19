@@ -1,0 +1,3 @@
+#!/bin/sh
+# No device in a container: not applicable here (Р11).
+[ -e /dev/live-skip0 ] || exit 20

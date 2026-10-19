@@ -1,0 +1,3 @@
+#!/bin/sh
+. /opt/bisquite/dirty/lib/bisquite-conf
+nft add table inet bisquite

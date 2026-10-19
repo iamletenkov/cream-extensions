@@ -1,0 +1,10 @@
+#!/bin/sh
+# Idempotent: the same inputs give the same files.
+set -eu
+mkdir -p /etc/live-ok
+printf '%s\n' "$LIVE_OK_COLOR" > /etc/live-ok/color
+# The derived file of the secret: 0600 root, the value never on argv or stdout.
+umask 077
+sed -n 's/^LIVE_OK_TOKEN=//p' "$CREAM_SECRETS_FILE" > /etc/live-ok/token
+systemctl daemon-reload
+systemctl enable live-ok.service

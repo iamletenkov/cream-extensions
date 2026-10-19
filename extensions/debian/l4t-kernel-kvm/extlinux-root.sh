@@ -2,7 +2,7 @@
 # Корень по PARTUUID во всех записях extlinux.conf.
 #
 # Подключается из install.sh (`. "$HERE/extlinux-root.sh"`) и из
-# tools/test-l4t-kernel-kvm.sh. Опций оболочки файл не ставит и ничего
+# tests/test-l4t-kernel-kvm.sh. Опций оболочки файл не ставит и ничего
 # не выполняет при подключении — только объявляет функции.
 #
 # ЗАЧЕМ. У базы Q-engineering в APPEND стоит `root=/dev/mmcblk0p1`, то есть

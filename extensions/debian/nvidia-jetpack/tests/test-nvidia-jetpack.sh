@@ -3,7 +3,7 @@
 # профили, манифесты, состав команд, сверка пакета перед прошивкой.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-S="$HERE/../extensions/debian/nvidia-jetpack/scripts"
+S="$(dirname "$HERE")/scripts"
 unset WORK OUT_DIR OUT_RAW OUT_QCOW2
 fails=0; total=0
 ok()  { total=$((total+1)); echo "  ok   $1"; }

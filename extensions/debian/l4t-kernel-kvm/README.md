@@ -400,7 +400,7 @@ PARTUUID. Два таких носителя, подключённые к пла
 
 Код — в `extlinux-root.sh` рядом с `install.sh` (`kvm_root_partition`,
 `kvm_check_extlinux_roots`, `kvm_rewrite_root`); тесты на образцах
-`extlinux.conf` — `tools/test-l4t-kernel-kvm.sh`. Определение раздела
+`extlinux.conf` — `tests/test-l4t-kernel-kvm.sh`. Определение раздела
 тестами не покрыто: ему нужен настоящий блочный узел под `/`, его проверяет
 сборка.
 

@@ -1,0 +1,4 @@
+#!/bin/sh
+# Leaks the secret into the journal: the audit must go red.
+set -eu
+logger -t live-leak "token=$(sed -n 's/^LIVE_LEAK_TOKEN=//p' "$CREAM_SECRETS_FILE")"
