@@ -1,13 +1,31 @@
+# yq — mikefarah/yq as a static binary by the catalog pin (files/pin.env) and
+# its sha256. One tool, always the same one: the `yq` of Debian/Ubuntu packages
+# is another program (kislyuk, a jq wrapper) with an incompatible query language.
+schema: cream/v1
 name: yq
-version: 1.1.0
-layout: 2
-family: deb
-# Бинарь ставится под архитектуру гостя, но выбирается по `dpkg
-# --print-architecture` внутри него же, а не угадывается снаружи.
-arch: [amd64, arm64]
-# Только `build`: на первой загрузке ставить нечего, а нужен он там
-# уже готовым — им читают config.yaml другие расширения.
-phase: [build]
+version: 2.0.0
+summary: Статический бинарь mikefarah/yq в /usr/local/bin по пину версии и sha256
+cream: ">=1.0.0"
+platform:
+  family: deb
+  arch: [amd64, arm64]
+  os: [{id: debian, version: ">=12"}, {id: ubuntu, version: ">=22.04"}]
+  commands: [curl, sha256sum]
+targets: {build: exec, live: "yes"}
 provides: [yq]
-requires: []
-conflicts: []
+hooks:
+  install: {timeout: 5m}
+  remove: {}
+config:
+  keys:
+    YQ_VERSION:
+      type: "re:^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+      default: v4.45.1
+      scope: install
+      description: "выпуск mikefarah/yq; не пин каталога (files/pin.env) — только вместе с YQ_SHA256"
+    YQ_SHA256:
+      type: "re:^[0-9a-f]{64}$"
+      default: ""
+      empty: true
+      scope: install
+      description: "sha256 yq_linux_<arch> машины для YQ_VERSION; пусто — из пина каталога"
