@@ -14,7 +14,7 @@
 # not a requirement.
 schema: cream/v1
 name: l4t-opencv
-version: 2.0.0
+version: 2.0.1
 summary: OpenCV 4.8.0 для NVIDIA Jetson (cv2 с GStreamer) — пакеты NVIDIA на R36, проверка образа на R32
 cream: ">=1.0.0"
 platform:
@@ -25,6 +25,7 @@ targets: {build: exec, live: "yes"}
 provides: [opencv]
 depends:
   - {name: l4t, version: ">=1.0.0 <2"}
+  - {name: apt-guard, version: ">=1.0.0 <2"}
 hooks:
   install: {timeout: 30m}
   remove: {timeout: 15m}
