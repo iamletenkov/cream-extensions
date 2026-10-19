@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# cream hook `configure` of pixelflux-tegra: stage graphical, every boot and
+# after install/upgrade (was verify-pixelflux-tegra.service).
+#
+# Checks on live hardware what the image build cannot: the encoder node, its
+# access for the session user, and pixelflux itself naming "tegra" for H.264
+# with the preload of the drop-in. Not the session log: "Encoder: TEGRA" appears
+# only with a client and once lied (the encoder taken, no frame sent).
+#
+# No node, no selkies, a stale stamp, another backend — a warning and exit 0
+# (plan ruling R11): a failed boot unit helps nobody, the journal says what to
+# do. A real failure (usermod refused) — exit 1.
+#
+# Everything read from outside (stat, the drop-in, the module's answer, the
+# user name) is checked against a pattern before it is used or printed; no
+# eval and no arithmetic on it.
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] pixelflux-tegra: $*"; }
+log_warn(){ >&2 echo "[WARN] pixelflux-tegra: $*"; }
+log_error(){ >&2 echo "[ERROR] pixelflux-tegra: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:-$R/var/lib/cream/ext/pixelflux-tegra}"
+DROPIN="$R/etc/systemd/system/selkies@.service.d/10-pixelflux-tegra.conf"
+CLOUD_USER_LIB="$R/opt/cream/ext/cloud-user/get_cloud_user.sh"
+RE_NAME='^[a-z_][a-z0-9_-]{0,31}$'
+REINSTALL="sudo cream install --reinstall pixelflux-tegra"
+
+# restart_sessions: running selkies@ get the preload (not at boot: they start
+# after this stage with the drop-in already in place).
+restart_sessions(){
+    local u
+    while IFS= read -r u; do
+        [[ "$u" =~ ^selkies@[a-z_][a-z0-9_-]*\.service$ ]] || continue
+        systemctl restart --no-block "$u" || log_warn "перезапуск $u не поставлен в очередь"
+        log_info "$u перезапускается — подкладка дойдёт до процесса"
+    done < <(systemctl list-units --plain --no-legend --state=active 'selkies@*.service' 2>/dev/null | awk '{print $1}')
+}
+
+PREFIX="$(readlink -f "$R/opt/selkies/current" 2>/dev/null || true)"
+SELKIES_PY="$PREFIX/usr/conda/bin/python"
+if [[ -z "$PREFIX" || ! -x "$SELKIES_PY" ]]; then
+    log_warn "нет /opt/selkies/current/usr/conda/bin/python — selkies не установлен, проверять нечего"
+    exit 0
+fi
+if [[ ! -f "$STATE/stamp" ]] || [[ "$(cat -- "$STATE/stamp")" != "prefix=${PREFIX#"$R"}" ]]; then
+    log_warn "отпечаток не совпал с ${PREFIX#"$R"}: AppImage сменился без переустановки — подкладка не проверена;"
+    log_warn "  $REINSTALL (или cream install pixelflux-tegra, если не ставилось)"
+    exit 0
+fi
+
+node=""
+for c in nvhost-msenc v4l2-nvenc; do
+    [[ -c "$R/dev/$c" ]] && { node="/dev/$c"; break; }
+done
+if [[ -z "$node" ]]; then
+    log_warn "нет ни /dev/nvhost-msenc, ни /dev/v4l2-nvenc — кодера не видно, Selkies будет кодировать процессором"
+    exit 0
+fi
+log_info "узел кодера: $node"
+
+# Access of the session user. JetPack 5/6: a 0666 clone of /dev/null. JetPack 4:
+# /dev/nvhost-msenc root:video 0660, and cloud-init gives the user only sudo —
+# without video pixelflux silently falls back to x264. Read from the mode bits:
+# the encoder is opened O_RDWR, `test -r` as the user would not show it.
+user=""
+if [[ -x "$CLOUD_USER_LIB" ]]; then user="$("$CLOUD_USER_LIB" 2>/dev/null || true)"; fi
+if [[ ! "$user" =~ $RE_NAME ]] || ! id -u "$user" >/dev/null 2>&1; then
+    log_warn "пользователь сессии не определён — доступ к $node не проверен"
+else
+    mode="$(stat -L -c %a "$R$node" 2>/dev/null || true)"
+    group="$(stat -L -c %G "$R$node" 2>/dev/null || true)"
+    if [[ ! "$mode" =~ ^[0-7]{3,4}$ || ! "$group" =~ $RE_NAME ]]; then
+        log_warn "права $node не разобраны — доступ $user не проверен"
+    elif [[ "${mode: -1}" == 6 || "${mode: -1}" == 7 ]]; then
+        log_info "$node открыт всем ($mode) — группа не нужна"
+    else
+        in_group=no
+        for g in $(id -nG "$user" 2>/dev/null); do [[ "$g" == "$group" ]] && in_group=yes; done
+        if [[ "$in_group" == yes ]]; then
+            log_info "$node доступен через группу $group, $user в ней"
+        elif [[ "$group" == root ]]; then
+            log_warn "$node с правами $mode и группой root — группой доступ $user не дать; кодирование пойдёт процессором"
+        else
+            log_warn "$node ($mode, группа $group) недоступен $user — добавляю в группу $group"
+            usermod -aG "$group" "$user" || { log_error "usermod -aG $group $user не сработал"; exit 1; }
+            # Groups are read at process start: a running session would stay on x264.
+            if systemctl is-active --quiet "selkies@$user.service" 2>/dev/null; then
+                systemctl restart --no-block "selkies@$user.service" || log_warn "перезапуск selkies@$user не поставлен — нужна перезагрузка"
+            fi
+        fi
+    fi
+fi
+
+if [[ ! -f "$DROPIN" ]]; then
+    log_warn "нет drop-in ${DROPIN#"$R"} — сессия упадёт после старта захвата; $REINSTALL"
+    exit 0
+fi
+preload="$(sed -n 's/^Environment=LD_PRELOAD=//p' "$DROPIN" | tail -n 1)"
+if [[ ! "$preload" =~ ^[A-Za-z0-9/._+:-]{1,512}$ ]]; then
+    log_warn "в drop-in нет годной строки Environment=LD_PRELOAD= — $REINSTALL"
+    exit 0
+fi
+
+# The verdict of the backend itself, with the preload the session gets.
+# pixelflux prints diagnostics to stdout too, hence the marker.
+raw="$(LD_PRELOAD="$preload" "$SELKIES_PY" -c \
+    'import pixelflux; print("BACKEND=" + str(pixelflux.hardware_encoders().get("h264", "none")))' 2>/dev/null || true)"
+backend="${raw##*BACKEND=}"
+[[ "$backend" =~ ^[a-z0-9_-]{1,32}$ ]] || backend="неизвестно"
+if [[ "$backend" != tegra ]]; then
+    log_warn "pixelflux выбирает для H.264 '$backend', а не 'tegra' — кодирование пойдёт процессором (x264)"
+    log_warn "  вендорские библиотеки: ldconfig -p | grep -E 'libnvv4l2|libnvbufsurface|libnvbuf_utils'"
+    exit 0
+fi
+log_info "бэкенд H.264: tegra — аппаратное кодирование доступно"
+
+case "${CREAM_REASON:-boot}" in
+    boot) ;;
+    *) restart_sessions ;;
+esac

@@ -1,22 +1,39 @@
+# pixelflux-v4l2m2m — hardware H.264 in Selkies on a board whose encoder is a
+# standard V4L2 M2M device (Raspberry Pi 3/4/CM4, bcm2835-codec). Selkies 2.0.0
+# carries pixelflux with the v4l2m2m backend and falls back to it by itself;
+# this extension is the check that it really does (1080p desktop: 0.378 of a
+# core against 1.128 on x264).
+#
+# install   — selkies must be installed; the module of its AppImage must carry
+#             the v4l2m2m backend (the build stops if upstream drops it). On a
+#             live machine the backend is probed: no M2M encoder → 20 (plan
+#             ruling R11). In the build there are no devices — no probe. A stamp
+#             of the AppImage prefix in the state directory.
+# configure — every boot, stage graphical (was verify-pixelflux-v4l2m2m.service):
+#             pixelflux names v4l2m2m for H.264. Not — a warning and exit 0 (R11).
+# remove    — the stamp.
+#
+# 2.0.0: cream/v1 (plan 2026-10-19, Task 27); rename table — README.md.
+schema: cream/v1
 name: pixelflux-v4l2m2m
-version: 1.0.0
-layout: 2
-# 1.0.0: Selkies 2.0.0rc1 несёт pixelflux 2.1.0rc1 с бэкендом v4l2m2m, и лестница
-#        сама падает с VA-API на M2M. Колесо и rc0-compat убраны; расширение
-#        свелось к проверке — на сборке, что база несёт бэкенд, и на первой
-#        загрузке (verify), что сессия идёт на V4L2M2M, а не в софт.
-family: deb
-# Бэкенд generic и по архитектуре не гейтится, но платы с M2M в нашем парке —
-# Raspberry Pi 3/4 и CM4, то есть arm64. Проверка «именно M2M» на amd64
-# смысла не имеет.
-arch: [arm64]
-# build     — убедиться, что базовый pixelflux несёт бэкенд v4l2m2m, и включить
-#             службу verify;
-# firstboot — проверить на живом устройстве, что сессия поднялась НА УЗЛЕ,
-#             а не свалилась в софт.
-phase: [build, firstboot]
+version: 2.0.0
+summary: Аппаратное кодирование Selkies через V4L2 M2M (Raspberry Pi) — проверка бэкенда на сборке и загрузке
+cream: ">=1.1.0"
+platform:
+  family: deb
+  # The backend is generic, but the M2M boards of the fleet are arm64.
+  arch: [arm64]
+targets:
+  build: exec
+  live: "yes"
 provides: [hardware-video-encoding]
-# Проверяет модуль внутри AppImage, который ставит `selkies`, и требует, чтобы
-# selkies шёл раньше.
 requires: [web-remote-desktop]
-conflicts: [pixelflux-tegra]
+# Both tune pixelflux inside the one AppImage of selkies.
+conflicts:
+  extensions: [pixelflux-tegra]
+hooks:
+  install: {timeout: 5m}
+  configure:
+    stage: graphical
+    timeout: 2m
+  remove: {timeout: 1m}
