@@ -19,6 +19,6 @@
 -p ipv6-icmp -m icmp6 --icmpv6-type neighbour-advertisement -j ACCEPT
 -p ipv6-icmp -m icmp6 --icmpv6-type router-advertisement -j ACCEPT
 
-# SSH (FIREWALL_SSH_PORTS, умолчание 22) добавляет сам configure после этих
-# файлов — и в запасном наборе тоже.
+# SSH закрыт; порты из FIREWALL_SSH_PORTS (умолчание — пусто) добавляет сам
+# configure после этих файлов — и в запасном наборе тоже.
 # Всё остальное входящее отбрасывается последним правилом цепочки (DROP).

@@ -5,7 +5,7 @@
 #   chain input  — hook input,  policy drop   (входящее на саму машину)
 #   chain output — hook output, policy accept (исходящее)
 # Ошибка в любом файле — не применяется ничего из каталога, машина остаётся
-# закрытой (lo, established и SSH), configure (cream-configure@firewall) — failed.
+# закрытой (lo и established), configure (cream-configure@firewall) — failed.
 #
 # Свои правила — отдельным файлом рядом (например 50-http.nft), этот можно
 # править: повторная установка расширения его не перезаписывает.
@@ -27,6 +27,6 @@ add rule inet cream input ip daddr 127.0.0.1 udp dport 7400-32000 accept
 # NS/NA/RA приходят не ответом на соединение, conntrack их не видит.
 add rule inet cream input icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert } ip6 hoplimit 255 accept
 
-# SSH (FIREWALL_SSH_PORTS, умолчание 22) открывает сам configure после этих
-# файлов — и в запасном наборе тоже.
+# SSH закрыт; порты из FIREWALL_SSH_PORTS (умолчание — пусто) открывает сам
+# configure после этих файлов — и в запасном наборе тоже.
 # Всё остальное входящее отбрасывается политикой цепочки (policy drop).

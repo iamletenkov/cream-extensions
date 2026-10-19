@@ -17,8 +17,8 @@
 # 2.0.0: cream/v1 (was layout 2, 1.2.0): table `inet bisquite` -> `inet cream`,
 # chain BISQUITE-INPUT -> CREAM-INPUT without migrating loaded rules (owner's
 # check-names: on
-# decision); the CLI -> actions status, reload, check; SSH (FIREWALL_SSH_PORTS,
-# 22 by default) is open in the rules and in the fallback set.
+# decision); the CLI -> actions status, reload, check; SSH stays closed by
+# default (FIREWALL_SSH_PORTS empty: Teleport is a reverse tunnel).
 schema: cream/v1
 name: firewall
 version: 2.0.0
@@ -35,11 +35,13 @@ targets:
   build: exec
   live: confirm
   live_note: >-
-    сразу после установки входящее закрыто (policy drop), кроме петли, ответов на
-    исходящие соединения (в том числе обратного туннеля Teleport) и SSH на портах
-    FIREWALL_SSH_PORTS (умолчание 22): SSH на другом порту или иная входящая служба
-    будут отрезаны, пока их не откроет файл правил /etc/cream/firewall/rules.d;
-    если включён nftables.service, его flush ruleset снимает и цепочки Docker
+    сразу после установки входящее закрыто (policy drop), кроме петли и ответов на
+    исходящие соединения (обратный туннель Teleport работает); SSH по умолчанию
+    закрыт — на живой машине, куда вы вошли по SSH, сначала
+    cream set firewall FIREWALL_SSH_PORTS=22 (или установите с этим параметром),
+    иначе сессия оборвётся; иные входящие службы открывает файл правил
+    /etc/cream/firewall/rules.d; если включён nftables.service, его flush ruleset
+    снимает и цепочки Docker
 provides: [host-firewall]
 hooks:
   install: {timeout: 15m}
@@ -60,9 +62,9 @@ config:
       description: "чем фильтровать: auto — nftables, если в ядре есть nf_tables и nft_ct, иначе iptables-legacy (цепочка CREAM-INPUT, файлы *.rules/*.rules6); nft, iptables — явно"
     FIREWALL_SSH_PORTS:
       type: "list:port"
-      default: "22"
+      default: ""
       empty: true
-      description: "порты TCP SSH через пробел — открыты и правилами, и запасным набором; пусто — SSH закрыт"
+      description: "порты TCP SSH через пробел — открыты и правилами, и запасным набором; пусто (умолчание) — SSH закрыт"
 actions:
   status:
     summary: "бэкенд применённый и тот, что выберет apply; настройки; наша таблица и цепочки в ядре"

@@ -118,6 +118,22 @@ else
     rm -f -- "$STATE/backend"
 fi
 
+# Live machine, SSH closed, someone logged in over SSH: cream runs configure
+# right after this hook and the session drops. A warning, not a refusal — the
+# operator accepted the risk (live: confirm) and may be on a console or Teleport.
+# SSH_CONNECTION of the caller does not reach the hook (cream clears the
+# environment), so ask the kernel: established TCP on local :22, then who(1).
+ssh_session(){
+    local s
+    s="$(ss -tnH state established '( sport = :22 )' 2>/dev/null)" || s=""
+    [[ -n "$s" ]] && return 0
+    who 2>/dev/null | grep -Eq 'pts/[0-9]+ .*\([^:)][^)]*\)$'   # remote, not an X display (:0)
+}
+if [[ "${CREAM_PHASE:-}" == live && -z "${FIREWALL_SSH_PORTS:-}" ]] && ssh_session; then
+    log_warn "на машине открыта сессия SSH, а SSH закрыт (FIREWALL_SSH_PORTS пуст): configure сразу после установки оборвёт её"
+    log_warn "оставить SSH — cream set firewall FIREWALL_SSH_PORTS=22 (или cream install --accept-risk firewall FIREWALL_SSH_PORTS=22)"
+fi
+
 # nftables.service loads /etc/nftables.conf, which starts with `flush
 # ruleset` — it would wipe Docker's chains as well. It is not ours to enable;
 # configure is ordered after it (hooks.configure.after) and rebuilds our table.
@@ -125,4 +141,4 @@ if systemctl is-enabled nftables.service >/dev/null 2>&1; then
     log_warn "nftables.service включён: его /etc/nftables.conf делает flush ruleset (снимет и цепочки Docker); configure firewall стоит после него"
 fi
 
-log_info "готово: FIREWALL_ENABLE=${FIREWALL_ENABLE:-1}, FIREWALL_BACKEND=$WANT${BUILD_BACKEND:+ (ядро образа — $BUILD_BACKEND)}, SSH: ${FIREWALL_SSH_PORTS-22}, правила — $RULES_DIR"
+log_info "готово: FIREWALL_ENABLE=${FIREWALL_ENABLE:-1}, FIREWALL_BACKEND=$WANT${BUILD_BACKEND:+ (ядро образа — $BUILD_BACKEND)}, SSH: ${FIREWALL_SSH_PORTS:-закрыт}, правила — $RULES_DIR"

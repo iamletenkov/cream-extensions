@@ -82,7 +82,9 @@ eq "хуки: install, configure, remove (apply — перезапуск configu
 eq "status — lock none" none "$(man 'm["actions"]["status"]["lock"]')"
 eq "check — lock none" none "$(man 'm["actions"]["check"]["lock"]')"
 eq "reload — lock exclusive" exclusive "$(man 'm["actions"]["reload"]["lock"]')"
-eq "SSH открыт по умолчанию: FIREWALL_SSH_PORTS=22" 22 "$(man 'm["config"]["keys"]["FIREWALL_SSH_PORTS"]["default"]')"
+eq "SSH закрыт по умолчанию: FIREWALL_SSH_PORTS пуст" "" "$(man 'm["config"]["keys"]["FIREWALL_SSH_PORTS"]["default"]')"
+check "live_note: сначала cream set FIREWALL_SSH_PORTS=22" has "cream set firewall FIREWALL_SSH_PORTS=22" \
+    "$(man 'm["targets"].get("live_note", "")')"
 eq "provides host-firewall" "[host-firewall]" "$(man 'm["provides"]')"
 for f in hooks/install hooks/configure hooks/remove actions/status actions/reload actions/check; do
     check "$f исполняемый" test -x "$EXT/$f"
@@ -158,9 +160,12 @@ check "таблица inet cream загружена" test -e "$FAKE/nft-table"
 check "…пересоздаётся одной транзакцией" loaded "delete table inet cream"
 check "…input: policy drop" grep -q 'type filter hook input priority filter; policy drop;' "$FAKE/nft-loaded"
 check "…умолчания включены файлом" loaded "include \"$RD/10-defaults.nft\""
-check "SSH открыт по умолчанию (nft)" loaded "add rule inet cream input tcp dport { 22 } accept"
+check_not "SSH закрыт по умолчанию (nft)" grep -q 'dport {' "$FAKE/nft-loaded"
+ht_hook configure FIREWALL_SSH_PORTS=22
+check "FIREWALL_SSH_PORTS=22 (nft)" loaded "add rule inet cream input tcp dport { 22 } accept"
 check "…и после файлов правил" test "$(grep -n 'dport { 22 }' "$FAKE/nft-loaded" | cut -d: -f1)" -gt \
     "$(grep -n '^include' "$FAKE/nft-loaded" | tail -1 | cut -d: -f1)"
+ht_hook configure
 eq "бэкенд записан" nft "$(cat "$RUN/backend")"
 check_not "flush ruleset — никогда" ht_called 'flush'
 check "умолчания nft — таблица inet cream" grep -q '^add rule inet cream input iif lo accept$' "$EXT/rules.d/10-defaults.nft"
@@ -182,12 +187,14 @@ check "…таблица прежняя" cmp "$HT_TMP/prev" "$FAKE/nft-loaded"
 ht_hook configure FIREWALL_SSH_PORTS=70000
 check_not "порт 70000 — отказ" test "$?" -eq 0
 
-# Broken file: the fallback (loopback, replies, SSH) instead of the rules.
+# Broken file: the fallback (loopback, replies; SSH only if the operator set it).
 echo 'add rule inet cream input tcp dport nonsense accept' > "$RD/70-broken.nft"
-ht_hook configure; eq "битый файл — configure 1 (failed-юнит)" 1 "$?"
+ht_hook configure
+check_not "запасной набор по умолчанию — без SSH" grep -q 'dport' "$FAKE/nft-loaded"
+ht_hook configure FIREWALL_SSH_PORTS=22; eq "битый файл — configure 1 (failed-юнит)" 1 "$?"
 check "…запасной набор: петля" loaded "add rule inet cream input iif lo accept"
 check "…ответы" loaded "add rule inet cream input ct state established,related accept"
-check "…и SSH (машину не отрезать)" loaded "add rule inet cream input tcp dport { 22 } accept"
+check "…и SSH, заданный оператором" loaded "add rule inet cream input tcp dport { 22 } accept"
 check_not "…без файлов каталога" grep -q '^include' "$FAKE/nft-loaded"
 check "…причина в выводе" grep -q 'не загрузились' "$ROOT/out"
 rm -f "$RD/70-broken.nft"
@@ -206,13 +213,15 @@ ht_hook configure; eq "без списков модулей — бэкенд с�
 # == configure, iptables-legacy ===============================================
 fw_root l4t
 ht_hook configure; eq "configure (L4T, iptables) — 0" 0 "$?"
+check_not "IPv4: SSH закрыт по умолчанию" grep -q -- '--dport 22' "$FAKE/ipt4-loaded"
+ht_hook configure FIREWALL_SSH_PORTS=22
 eq "бэкенд iptables" iptables "$(cat "$RUN/backend")"
 check "IPv4: своя цепочка объявлена" v4 ':CREAM-INPUT - [0:0]'
 check "IPv4: петля" v4 '-A CREAM-INPUT -i lo -j ACCEPT'
 check "IPv4: established,related" v4 '-A CREAM-INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT'
 check "IPv4: UDP 7400–32000 на 127.0.0.1" v4 '-A CREAM-INPUT -d 127.0.0.1/32 -p udp -m udp --dport 7400:32000 -j ACCEPT'
-check "IPv4: SSH открыт по умолчанию" v4 '-A CREAM-INPUT -p tcp -m tcp --dport 22 -j ACCEPT'
-check "IPv6: SSH открыт по умолчанию" v6 '-A CREAM-INPUT -p tcp -m tcp --dport 22 -j ACCEPT'
+check "IPv4: FIREWALL_SSH_PORTS=22" v4 '-A CREAM-INPUT -p tcp -m tcp --dport 22 -j ACCEPT'
+check "IPv6: FIREWALL_SSH_PORTS=22" v6 '-A CREAM-INPUT -p tcp -m tcp --dport 22 -j ACCEPT'
 check "IPv6: обнаружение соседей" v6 '-A CREAM-INPUT -p ipv6-icmp -m icmp6 --icmpv6-type neighbour-solicitation -j ACCEPT'
 check_not "IPv6 не получает правил IPv4" grep -q 127.0.0.1 "$FAKE/ipt6-loaded"
 eq "IPv4: в конце DROP и COMMIT" $'-A CREAM-INPUT -j DROP\nCOMMIT' "$(tail -2 "$FAKE/ipt4-loaded")"
@@ -242,7 +251,9 @@ for bad_line in '-A INPUT -p tcp --dport 22 -j ACCEPT' '-I CREAM-INPUT 1 -j ACCE
 done
 check "…причина называет файл и строку" grep -q '60-bad.rules:1' "$ROOT/out"
 ht_hook configure; eq "файл с -A INPUT — configure 1" 1 "$?"
-check "…запасной набор v4 с SSH" v4 '-A CREAM-INPUT -p tcp -m tcp --dport 22 -j ACCEPT'
+check_not "…запасной набор v4 без SSH по умолчанию" grep -q -- '--dport 22' "$FAKE/ipt4-loaded"
+ht_hook configure FIREWALL_SSH_PORTS=22
+check "…запасной набор v4 с SSH оператора" v4 '-A CREAM-INPUT -p tcp -m tcp --dport 22 -j ACCEPT'
 check_not "…и без правил файлов" v4 '-A INPUT -p tcp --dport 22 -j ACCEPT'
 rm -f "$RD/60-bad.rules"
 ht_action check; eq "check по умолчаниям — 0" 0 "$?"
@@ -300,6 +311,21 @@ check_not "…до apt" ht_called '^apt-get'
 rm -rf "$ROOT/lib/modules"
 HT_PHASE=build ht_hook install; eq "ядра в образе нет — 0" 0 "$?"
 check_not "…выбора сборки нет" test -e "$STATE/backend"
+
+# Live install with SSH closed while someone is logged in over SSH: a warning, not a refusal.
+fw_root
+ht_fake ss 'echo "ESTAB 0 0 10.0.0.5:22 10.0.0.9:51234"'
+ht_fake who 'echo "op pts/0 2026-10-19 05:00 (10.0.0.9)"'
+ht_hook install; eq "live install при сессии SSH и закрытом SSH — 0 (не отказ)" 0 "$?"
+check "…предупреждение о сессии" grep -q 'cream set firewall FIREWALL_SSH_PORTS=22' "$ROOT/out"
+ht_hook install FIREWALL_SSH_PORTS=22; eq "…с FIREWALL_SSH_PORTS=22 — 0" 0 "$?"
+check_not "…без предупреждения" grep -q 'сессия SSH' "$ROOT/out"
+HT_PHASE=build ht_hook install
+check_not "при сборке не предупреждает" grep -q 'сессия SSH' "$ROOT/out"
+ht_fake ss
+ht_fake who
+ht_hook install
+check_not "сессии нет — без предупреждения" grep -q 'сессия SSH' "$ROOT/out"
 
 # == remove ===================================================================
 fw_root full

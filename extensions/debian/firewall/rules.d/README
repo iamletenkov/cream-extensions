@@ -4,7 +4,7 @@
   iptables — файлы *.rules (IPv4) и *.rules6 (IPv6), по алфавиту, одна
              транзакция iptables-legacy-restore на семейство, только для
              цепочки CREAM-INPUT.
-Порты SSH открывает настройка FIREWALL_SSH_PORTS (умолчание 22), не файл.
+SSH закрыт; порты SSH открывает настройка FIREWALL_SSH_PORTS (умолчание пусто).
 Файлы с другим расширением не читаются. Примеры — в
 /opt/cream/ext/firewall/README.md. Проверить: sudo cream run firewall check;
 применить: sudo cream run firewall reload

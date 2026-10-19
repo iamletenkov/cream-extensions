@@ -23,10 +23,11 @@
 # Settings come from the environment cream gives hooks and actions:
 # FIREWALL_ENABLE, FIREWALL_BACKEND, FIREWALL_SSH_PORTS.
 #
-# SSH stays reachable: FIREWALL_SSH_PORTS (default 22) is opened by the rules
-# AND by the fallback set, so neither a fresh install on a live machine nor a
-# broken rules file cuts the operator off. A Teleport node dials out (reverse
-# tunnel), its traffic is a reply — `established,related` lets it in.
+# SSH is closed by default: a robot needs no inbound SSH — the Teleport node
+# dials out (reverse tunnel), its traffic is a reply that `established,related`
+# lets in. FIREWALL_SSH_PORTS (empty by default) opens TCP ports for SSH in the
+# rules and in the fallback set: an operator who set it is not cut off by a
+# broken rules file.
 #
 # Why a table/chain of our own and never `flush ruleset` or `iptables -F`:
 # Docker keeps its chains (DOCKER, DOCKER-USER, FORWARD, nat) in the same
@@ -68,7 +69,7 @@ SSH_PORTS=()
 read_ssh_ports(){
     local p
     SSH_PORTS=()
-    for p in ${FIREWALL_SSH_PORTS-22}; do
+    for p in ${FIREWALL_SSH_PORTS:-}; do
         if [[ ! "$p" =~ ^[0-9]{1,5}$ ]] || (( 10#$p < 1 || 10#$p > 65535 )); then
             log "FIREWALL_SSH_PORTS: «$p» — не порт (ожидаются числа 1–65535 через пробел); ничего не применено"
             return 1
@@ -139,8 +140,8 @@ nft_ssh(){
     printf 'add rule %s input tcp dport { %s } accept\n' "$TABLE" "${list%, }"
 }
 
-# Without the files: loopback, replies and SSH only. Used when the files do
-# not load — closed rather than open, but the operator is not cut off.
+# Without the files: loopback, replies and the SSH ports the operator set
+# (none by default). Used when the files do not load — closed rather than open.
 nft_fallback(){
     nft_skeleton
     cat <<EOF
@@ -191,7 +192,7 @@ nft_apply(){
     log "правила не загрузились — каталог $RULES_DIR не применён:"
     printf '%s\n' "$out" >&2
     if nft_fallback > "$RUN_DIR/fallback.nft" && nft -f "$RUN_DIR/fallback.nft"; then
-        log "загружен запасной набор: петля, ответы и SSH (${SSH_PORTS[*]:-закрыт}); исправьте файл и sudo cream run firewall reload"
+        log "загружен запасной набор: петля, ответы, SSH: ${SSH_PORTS[*]:-закрыт}; исправьте файл и sudo cream run firewall reload"
     else
         log "и запасной набор не загрузился — входящее НЕ фильтруется"
     fi
@@ -343,7 +344,7 @@ ipt_apply(){
     [[ -n "$out" ]] && printf '%s\n' "$out" >&2
     if ipt_fallback > "$RUN_DIR/fallback.v4" && cp "$RUN_DIR/fallback.v4" "$RUN_DIR/fallback.v6" \
         && ipt_load "$RUN_DIR/fallback.v4" "$RUN_DIR/fallback.v6"; then
-        log "загружен запасной набор: петля, ответы и SSH (${SSH_PORTS[*]:-закрыт}); исправьте файл и sudo cream run firewall reload"
+        log "загружен запасной набор: петля, ответы, SSH: ${SSH_PORTS[*]:-закрыт}; исправьте файл и sudo cream run firewall reload"
     else
         log "и запасной набор не загрузился — входящее НЕ фильтруется"
     fi
@@ -414,7 +415,7 @@ do_show(){
     b="$(cat "$RUN_DIR/backend" 2>/dev/null)" || b="(apply ещё не было)"
     echo "# бэкенд: $b"
     echo "# apply выберет: $(resolve_backend 2>/dev/null)"
-    echo "# FIREWALL_ENABLE=${FIREWALL_ENABLE:-1} FIREWALL_SSH_PORTS=${FIREWALL_SSH_PORTS-22}"
+    echo "# FIREWALL_ENABLE=${FIREWALL_ENABLE:-1} FIREWALL_SSH_PORTS=${FIREWALL_SSH_PORTS:-}"
     nft_present && nft list table inet cream
     if command -v iptables-legacy >/dev/null 2>&1; then
         if ipt_present ip_tables_names "${IPT4[@]}"; then
