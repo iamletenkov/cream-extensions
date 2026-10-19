@@ -1,5 +1,16 @@
 # Changelog
 
+## [4.0.0](https://github.com/iamletenkov/cream-extensions/compare/v3.3.0...v4.0.0) (2026-10-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* расширение teleport-agent удалено; apps.d переехал в /etc/cream/teleport/apps.d/.
+
+### Добавлено
+
+* пилот cream/v1 — расширения teleport и stvor-agent ([abfaa52](https://github.com/iamletenkov/cream-extensions/commit/abfaa52be924a2e9f49ee3115a9e42c2564466f8))
+
 ## [3.3.0](https://github.com/iamletenkov/bisquite-extensions/compare/v3.2.0...v3.3.0) (2026-10-15)
 
 
