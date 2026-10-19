@@ -164,6 +164,40 @@ ICON=laptop
 | `teleport-app.sh`, `install.sh`, `configure.sh` | `files/code-server.sh`, `hooks/*` |
 <!-- check-names: on -->
 
+## Остатки 4.x — отказ установки и запуска
+
+Переходной совместимости нет (рулинг Р1). Расширение 4.x оставляло то, что
+запускает code-server **в обход проверки пароля** или держит **доверенный
+корневой CA**. Пока хоть что-то из этого есть на машине, `install` отказывает
+(код 1) **до любых изменений**, а `configure` и `apply` — с кодом 1, служба не
+запускается (запущенные `code-server@*` гасятся, объявление снимается). В
+сообщении — перечень найденного и команды уборки.
+
+| Остаток | Где |
+|---|---|
+| юнит экземпляра и его drop-in | `/etc/systemd/system/code-server@<пользователь>.service[.d]` (свой шаблон `code-server@.service` — не остаток) |
+| ссылки включения экземпляров | `/etc/systemd/system/*.wants/code-server@*.service`, `*.requires/…` (это расширение экземпляры не включает) |
+| служба настройки 4.x и её включение | `/etc/systemd/system/configure-code-server.service[.d]`, `*.wants/configure-code-server.service` |
+| `config.yaml` без аутентификации, написанный не этим расширением | `~<пользователь>/.config/code-server/config.yaml` с `auth: none` без заголовка `# Written by cream (extension code-server)` |
+| CA mkcert в системном хранилище | `/usr/local/share/ca-certificates/mkcert_development_CA_*.crt` |
+
+Уборка:
+
+```bash
+sudo systemctl disable --now configure-code-server.service 'code-server@*.service'
+sudo rm -r -f -- /etc/systemd/system/configure-code-server.service* /etc/systemd/system/code-server@?*.service* \
+    /etc/systemd/system/*.wants/configure-code-server.service /etc/systemd/system/*.wants/code-server@*.service
+sudo systemctl daemon-reload
+sudo rm ~<пользователь>/.config/code-server/config.yaml        # configure напишет свой
+# CA mkcert: его же инструментом…
+sudo CAROOT=~<пользователь>/.local/share/code-server/certs mkcert -uninstall
+# …или руками
+sudo rm /usr/local/share/ca-certificates/mkcert_development_CA_*.crt && sudo update-ca-certificates --fresh
+```
+
+После CA стоит убрать и сам каталог `~/.local/share/code-server/certs` (в нём
+закрытый ключ CA). Затем — `sudo cream install code-server` заново.
+
 ## Проверки
 
 - **V** — `make cream-validate`.
@@ -177,7 +211,9 @@ ICON=laptop
   `apps.d`; адреса; пользователь — явный, cloud-init, root, без дома, кривое имя;
   чужие экземпляры гасятся; только `--no-block`), объявление через настоящий
   `teleport/files/teleport.sh render`, `apply`, `remove`, обёртка `start` (отказ
-  78, чистое окружение code-server), `write-config` (не по форме, чужой каталог).
+  78, чистое окружение code-server), `write-config` (не по форме, чужой каталог), остатки 4.x (каждый вид — отказ
+  `install` до сети и apt и отказ `configure` без старта; свой шаблон и свой
+  `config.yaml` с `auth: none` — не остатки).
 - **L** — `make test-live EXT=code-server` (`tests/live.env`: dep `cloud-user`,
   пароль — случайный секрет): установка `.deb`, повтор, `--reinstall` без
   изменений, аудит секрета (`ps`, журнал, реестр, `config`), загрузка, `remove`.
