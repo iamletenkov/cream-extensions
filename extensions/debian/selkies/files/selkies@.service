@@ -1,0 +1,23 @@
+# Selkies on the X session of user %i. Started by the configure hook of the
+# extension (cream-configure@selkies, stage graphical), never enabled on its
+# own: configure is the gate that checks the authentication first.
+[Unit]
+Description=Selkies web remote desktop for user %i
+After=graphical.target display-manager.service
+Requires=display-manager.service
+
+[Service]
+Type=simple
+User=%i
+# systemd (root) reads both files; the secrets (0600 root) reach the wrapper's
+# environment only, the wrapper passes them to Selkies alone.
+EnvironmentFile=/etc/cream/selkies/config
+EnvironmentFile=-/etc/cream/selkies/secrets
+UMask=0077
+NoNewPrivileges=yes
+# Waiting for the session is the wrapper's job, it refuses loudly (see its header).
+ExecStart=/bin/bash /opt/cream/ext/selkies/files/run-selkies.sh %i
+Restart=always
+RestartSec=5
+# 78 (EX_CONFIG) — refused to start without authentication: no restart loop.
+RestartPreventExitStatus=78
