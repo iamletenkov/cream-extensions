@@ -2,10 +2,15 @@
 
 Заставляет cloud-init читать NoCloud-seed с раздела, помеченного `cidata`.
 
-> **С 1.1.0 — раскладка 2.** Манифест объявляет `layout: 2`: каталог расширения
-> в госте — `/opt/bisquite/nocloud-cidata/` (был `/opt/vmsetup/nocloud-cidata/`). Путей гостя
-> расширение не прибивает, поэтому версия минорная; нужен bisquite
-> с поддержкой `layout: 2`.
+```
+EXTENSION nocloud-cidata      # образ bisquite (targets.live: no — только сборка)
+```
+
+> **С 2.0.0 — cream/v1.** `install.sh` стал хуком `hooks/install`, появился хук
+> `remove`; каталог в госте — `/opt/cream/ext/nocloud-cidata/`. Файл переименован:
+> `zz-cream-nocloud.cfg` → **`zz-cream-nocloud.cfg`** (в расширении —
+> `files/zz-cream-nocloud.cfg`). `cream install` на живой машине отказывает:
+> `targets.live: no`.
 
 ## Зачем
 
@@ -49,19 +54,22 @@ EXTENSION nocloud-cidata
 
 | Поле | Значение |
 |---|---|
-| `phase` | `[build]` — cloud-init читает конфигурацию до того, как что-либо могло бы её поправить, `configure.sh` нет |
+| `targets` | `build: exec`, `live: no` — cloud-init читает конфигурацию до того, как что-либо могло бы её поправить |
+| `platform` | `deb`, `amd64`/`arm64`, `os`: debian, ubuntu |
 | `provides` | `nocloud-cidata-seed` |
-| `requires` | — |
-| `conflicts` | — |
+| `hooks` | `install`, `remove` (по 5 мин) |
+| `depends`, `conflicts` | — |
 
-`requires: []`, хотя cloud-init обязателен: способности «в образе есть
-cloud-init» в дереве не объявляет никто, а требование к несуществующей
-способности валидатор отверг бы. Поэтому проверка осталась в `install.sh` —
-она громкая и называет следствие.
+Зависимостей нет, хотя cloud-init обязателен: способности «в образе есть
+cloud-init» в дереве не объявляет никто. Поэтому проверка осталась в хуке
+`install` — она громкая и называет следствие.
+
+Файл кладёт хук, а не поле `files` манифеста (`build: exec` на машине цели):
+отказ без cloud-init должен прийти раньше, чем файл ляжет.
 
 ## Что делает
 
-Кладёт `/etc/cloud/cloud.cfg.d/zz-bisquite-nocloud.cfg`:
+Кладёт `/etc/cloud/cloud.cfg.d/zz-cream-nocloud.cfg`:
 
 ```yaml
 datasource_list: [ NoCloud, None ]
@@ -96,21 +104,30 @@ datasource:
 перекрыт так же молча — работать расширение будет по-прежнему правильно,
 но в журнале про перекрытие ничего не скажет.
 
+## `remove`
+
+Удаляет `/etc/cloud/cloud.cfg.d/zz-cream-nocloud.cfg`; штатные конфиги источника
+seed снова действуют.
+
 ## Ограничения
 
-`phase: build`, то есть архитектуры хоста и образа обязаны совпасть —
+`build: exec`, то есть архитектуры хоста и образа обязаны совпасть —
 libguestfs не выполняет код в госте чужой архитектуры. Само копирование файла
 архитектуры не касается; ограничение вносит форма расширения, а не задача.
-Это записано открытым вопросом в спеке (`docs/specs/2026-09-02-extensions-system.md`,
-«Расширение без кода»): понятия «расширение, которому гость не нужен»
-в системе пока нет.
 
-## Проверка
+## Проверки
+
+- **V** — `make cream-validate`, `tools/check-names.sh`.
+- **H** — `tests/test-nocloud-cidata.sh`: файл байт в байт и 0644, YAML, имя старше
+  штатных, повтор, предупреждение о перекрытом конфиге, отказ без cloud-init, `remove`.
+- **P** — сборка образа через bisquite (живого прогона нет: `live: no`).
+
+### Вручную
 
 На собранном образе:
 
 ```console
-$ virt-cat -a образ.qcow2 /etc/cloud/cloud.cfg.d/zz-bisquite-nocloud.cfg
+$ virt-cat -a образ.qcow2 /etc/cloud/cloud.cfg.d/zz-cream-nocloud.cfg
 ```
 
 На устройстве после первой загрузки:

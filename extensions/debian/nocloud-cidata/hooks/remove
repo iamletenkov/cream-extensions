@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# cream hook `remove` of nocloud-cidata: removes /etc/cloud/cloud.cfg.d/zz-cream-nocloud.cfg;
+# the stock datasource configs it overrode take effect again.
+set -euo pipefail
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+rm -f -- "$R/etc/cloud/cloud.cfg.d/zz-cream-nocloud.cfg"
+>&2 echo "[INFO] nocloud-cidata: /etc/cloud/cloud.cfg.d/zz-cream-nocloud.cfg снят"
