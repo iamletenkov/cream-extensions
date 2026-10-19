@@ -1160,7 +1160,10 @@ tools/live-test.sh <имя>      # живой прогон настоящим cr
   устройства пишет предупреждение и выходит 0. Умолчания прогона — `tests/live.env` расширения (данные
   `KEY=value`): `LIVE_DEPS`, `LIVE_ACCEPT_RISK=1`, `LIVE_EXPECT_SKIP=1`, `LIVE_PARAMS`, `LIVE_SECRETS`,
   `LIVE_MEMORY`, `LIVE_CAPS` (`firewall` — `NET_ADMIN`), `LIVE_SNAPSHOT_IGNORE`, `LIVE_BOOT_CONFIGURE=optional`,
-  `LIVE_DISTROS`. Наличие `tests/live.env` делает расширение L-расширением для CI: `.github/workflows/live.yml`
+  `LIVE_FAILED_IGNORE` (ERE с якорями `^…$` по имени юнита целиком: юниты, которые роняет контейнер, а не
+  расширение, — например, `lightdm.service` без VT или монтирования NFS без `CAP_SYS_ADMIN`; каждый такой
+  юнит печатается строкой «разрешено упасть»), `LIVE_DISTROS`. Зависимости ставятся с `--allow-skip`:
+  зависимость, ответившая кодом 20 (`nvidia` без ядер), записывается `skipped` и печатается «пропущена». Наличие `tests/live.env` делает расширение L-расширением для CI: `.github/workflows/live.yml`
   гоняет изменённые на PR (и те, чьи `LIVE_DEPS` изменились) и все — ночью, каждое на своём раннере.
   Прогоны на хосте идут по одному (замок `flock`), контейнер и образ удаляются, журналы — в
   `.scratchpad/live/<имя>-<дистрибутив>/`. Самопроверка раннера на фикстурах `tools/testdata/live/` —
