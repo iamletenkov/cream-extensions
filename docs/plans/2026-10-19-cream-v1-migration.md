@@ -23,7 +23,7 @@
 - [x] Task 13: `gnome` + `xfce4` + `lxde`
 - [ ] Task 14: `cloud-user-desktop` + `wallpaper`
 - [ ] Task 15: `code-server`
-- [ ] Task 16: `kiosk` + `chromium-kiosk`
+- [x] Task 16: `kiosk` + `chromium-kiosk`
 - [ ] Task 17: `selkies`
 - [x] Task 18: `x11vnc` + `vino-vnc`
 - [ ] Task 19: `rustdesk` + `jetson-stats`
