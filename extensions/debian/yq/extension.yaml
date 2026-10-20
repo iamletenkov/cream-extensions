@@ -3,13 +3,13 @@
 # is another program (kislyuk, a jq wrapper) with an incompatible query language.
 schema: cream/v1
 name: yq
-version: 2.0.0
+version: 2.1.0
 summary: Статический бинарь mikefarah/yq в /usr/local/bin по пину версии и sha256
 cream: ">=1.0.0"
 platform:
   family: deb
   arch: [amd64, arm64]
-  os: [{id: debian, version: ">=12"}, {id: ubuntu, version: ">=22.04"}]
+  os: [{id: debian, version: ">=12"}, {id: ubuntu, version: ">=18.04"}]
   commands: [curl, sha256sum]
 targets: {build: exec, live: "yes"}
 provides: [yq]

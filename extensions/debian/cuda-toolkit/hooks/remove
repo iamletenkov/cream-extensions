@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # cream hook `remove` of cuda-toolkit: the packages `install` put on (the record
 # in $CREAM_STATE_DIR/packages; a toolkit that was there before cream stays) and
-# the profile /etc/profile.d/cuda-toolkit.sh. apt is asked first in simulation:
+# the profile /etc/profile.d/cuda-toolkit.sh; on R32 also the jetson/common
+# source and key it added (record `source`) and the link /usr/local/cuda it
+# made (record `link`). apt is asked first in simulation:
 # when it would take away anything besides our packages (something installed
 # later depends on them) the hook refuses and changes nothing. A repeat finds
 # nothing and exits 0.
@@ -30,4 +32,15 @@ else
     log_info "своих пакетов нет — CUDA не трогаю"
 fi
 
-rm -f -- "$R/etc/profile.d/cuda-toolkit.sh" "$STATE/packages"
+if [[ -f "$STATE/source" && ! -L "$STATE/source" ]]; then
+    rm -f -- "$R/etc/apt/sources.list.d/cream-cuda-toolkit.list" \
+        "$R/usr/share/keyrings/cream-cuda-toolkit-jetson.asc"
+    log_info "источник jetson/common и ключ NVIDIA сняты"
+fi
+# Only the link this extension made, and only while it still points where it did.
+if [[ -f "$STATE/link" && ! -L "$STATE/link" && -L "$R/usr/local/cuda" \
+      && "$(readlink -- "$R/usr/local/cuda")" == cuda-10.2 ]]; then
+    rm -f -- "$R/usr/local/cuda"
+fi
+
+rm -f -- "$R/etc/profile.d/cuda-toolkit.sh" "$STATE/packages" "$STATE/source" "$STATE/link"

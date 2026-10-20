@@ -4,7 +4,7 @@
 #
 #   tools/live-test.sh [флаги] <расширение>
 #
-#   --distro D        debian-12 (умолчание; или DISTRO=…) | debian-13 | ubuntu-22.04 | ubuntu-24.04
+#   --distro D        debian-12 (умолчание; или DISTRO=…) | debian-13 | ubuntu-20.04 | ubuntu-22.04 | ubuntu-24.04
 #   --deps "a b"      расширения, которые ставятся раньше, по порядку (с --accept-risk
 #                     и --allow-skip: код 20 зависимости — запись skipped, не сбой)
 #   --accept-risk     расширение с targets.live: confirm
@@ -84,7 +84,7 @@ done
 [[ "$ext" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "имя расширения «$ext» — не имя"
 distro="${distro:-debian-12}"
 case "$distro" in
-    debian-12 | debian-13 | ubuntu-22.04 | ubuntu-24.04) ;;
+    debian-12 | debian-13 | ubuntu-20.04 | ubuntu-22.04 | ubuntu-24.04) ;;
     *) die "неизвестный дистрибутив «$distro»" ;;
 esac
 

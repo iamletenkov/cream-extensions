@@ -43,8 +43,15 @@ done
 [[ -n "$sim" ]] && cat "$FAKE/sim-extra"
 [[ -e "$FAKE/apt-fails-$sub" ]] && exit 100
 [[ "$sub" == install && ! -e "$FAKE/no-layout" ]] && {
-    mkdir -p "$(dirname "$FAKE")/usr/local/cuda-12.6/bin"
-    ln -sfn cuda-12.6 "$(dirname "$FAKE")/usr/local/cuda"
+    if [[ "${*: -1}" == cuda-toolkit-10-2 ]]; then
+        mkdir -p "$(dirname "$FAKE")/usr/local/cuda-10.2/bin"
+        printf "#!/bin/sh\n" > "$(dirname "$FAKE")/usr/local/cuda-10.2/bin/nvcc"
+        chmod 0755 "$(dirname "$FAKE")/usr/local/cuda-10.2/bin/nvcc"
+        [[ -e "$FAKE/no-link" ]] || ln -sfn cuda-10.2 "$(dirname "$FAKE")/usr/local/cuda"
+    else
+        mkdir -p "$(dirname "$FAKE")/usr/local/cuda-12.6/bin"
+        ln -sfn cuda-12.6 "$(dirname "$FAKE")/usr/local/cuda"
+    fi
 }
 exit 0'
     PROFILE="$ROOT/etc/profile.d/cuda-toolkit.sh"
@@ -146,5 +153,94 @@ ht_hook remove; eq "apt снял бы чужой пакет — 1" 1 "$?"
 check "чужой пакет назван" grep -q my-app "$ROOT/out"
 check_not "remove не выполнен" ht_called '^apt-get -q -y remove'
 eq "запись осталась" cuda-toolkit "$(cat "$STATE/packages")"
+
+# --- R32 (Jetson Nano, JetPack 4.6): CUDA 10.2 ------------------------------
+R32='# R32 (release), REVISION: 6.1, GCID: 27863751, BOARD: t210ref, EABI: aarch64, DATE: Mon Jul 26 19:20:30 UTC 2021'
+OTA_PIN=576f852981855e5c6cfb9b625ffb51b984ca451f1181b2e70435b005034fad55
+# r32_root: a Nano without CUDA and without an active jetson/common source (the
+# vendor image comments NVIDIA's lines out).
+r32_root() {
+    cu_root
+    mkdir -p "$ROOT/etc/apt/sources.list.d"
+    printf '%s\n' "$R32" > "$ROOT/etc/nv_tegra_release"
+    echo '# deb https://repo.download.nvidia.com/jetson/common r32.6 main' \
+        > "$ROOT/etc/apt/sources.list.d/nvidia-l4t-apt-source.list"
+    OWN_LIST="$ROOT/etc/apt/sources.list.d/cream-cuda-toolkit.list"
+    OWN_KEY="$ROOT/usr/share/keyrings/cream-cuda-toolkit-jetson.asc"
+}
+
+echo "== R32: ключ NVIDIA в расширении по sha256 =="
+eq "ключ jetson-ota-public — пин sha256" "$OTA_PIN" \
+    "$(sha256sum < "$EXT/files/jetson-ota-public.asc" | cut -d' ' -f1)"
+check "пин ключа в хуке" grep -q "$OTA_PIN" "$EXT/hooks/install"
+
+echo "== R32: CUDA 10.2 уже в образе — без apt =="
+r32_root
+mkdir -p "$ROOT/usr/local/cuda-10.2/bin"
+printf '#!/bin/sh\n' > "$ROOT/usr/local/cuda-10.2/bin/nvcc"; chmod 0755 "$ROOT/usr/local/cuda-10.2/bin/nvcc"
+ln -s cuda-10.2 "$ROOT/usr/local/cuda"
+ht_hook install; eq "CUDA в образе — 0" 0 "$?"
+check_not "apt не зовётся" ht_called '^apt-get'
+check_not "источник не заводится" test -e "$OWN_LIST"
+check "профиль PATH" grep -qF '/usr/local/cuda/bin' "$PROFILE"
+check_not "своих пакетов нет" test -s "$STATE/packages"
+: > "$FAKE/calls"
+ht_hook remove; eq "remove — 0" 0 "$?"
+check_not "remove: apt не зовётся" ht_called '^apt-get'
+check "remove: CUDA образа на месте" test -x "$ROOT/usr/local/cuda-10.2/bin/nvcc"
+check "remove: ссылка образа на месте" test -L "$ROOT/usr/local/cuda"
+
+echo "== R32: CUDA 10.2 в образе без ссылки /usr/local/cuda =="
+r32_root
+mkdir -p "$ROOT/usr/local/cuda-10.2/bin"
+printf '#!/bin/sh\n' > "$ROOT/usr/local/cuda-10.2/bin/nvcc"; chmod 0755 "$ROOT/usr/local/cuda-10.2/bin/nvcc"
+ht_hook install; eq "без ссылки — 0" 0 "$?"
+eq "ссылка /usr/local/cuda -> cuda-10.2" cuda-10.2 "$(readlink "$ROOT/usr/local/cuda")"
+ht_hook remove; eq "remove — 0" 0 "$?"
+check_not "remove: своя ссылка снята" test -L "$ROOT/usr/local/cuda"
+check "remove: CUDA образа на месте" test -x "$ROOT/usr/local/cuda-10.2/bin/nvcc"
+
+echo "== R32: установка из jetson/common r32.<ревизия> =="
+r32_root
+ht_hook install; eq "R32 установка — 0" 0 "$?"
+eq "свой источник: r32.6, signed-by" \
+    "deb [signed-by=/usr/share/keyrings/cream-cuda-toolkit-jetson.asc] https://repo.download.nvidia.com/jetson/common r32.6 main" \
+    "$(cat "$OWN_LIST" 2>/dev/null)"
+eq "ключ — из расширения" "$OTA_PIN" "$(sha256sum < "$OWN_KEY" 2>/dev/null | cut -d' ' -f1)"
+eq "ключ — 0644" 644 "$(stat -c %a "$OWN_KEY" 2>/dev/null)"
+check "ставится cuda-toolkit-10-2" ht_called '^apt-get .*install .*cuda-toolkit-10-2$'
+check_not "cuda-toolkit (R36) не ставится" ht_called '^apt-get .*install .* cuda-toolkit$'
+eq "свои пакеты записаны" cuda-toolkit-10-2 "$(cat "$STATE/packages")"
+check "профиль PATH" grep -qF '/usr/local/cuda/bin' "$PROFILE"
+: > "$FAKE/calls"
+ht_hook remove; eq "R32 remove — 0" 0 "$?"
+check "свой пакет удалён" ht_called '^apt-get .* remove cuda-toolkit-10-2$'
+check_not "свой источник снят" test -e "$OWN_LIST"
+check_not "свой ключ снят" test -e "$OWN_KEY"
+check "чужой список NVIDIA не тронут" test -e "$ROOT/etc/apt/sources.list.d/nvidia-l4t-apt-source.list"
+
+echo "== R32: активный jetson/common вендора — второго источника нет =="
+r32_root
+echo 'deb https://repo.download.nvidia.com/jetson/common r32.6 main' \
+    > "$ROOT/etc/apt/sources.list.d/nvidia-l4t-apt-source.list"
+ht_hook install; eq "с источником вендора — 0" 0 "$?"
+check_not "свой источник не заводится" test -e "$OWN_LIST"
+check "ставится cuda-toolkit-10-2" ht_called '^apt-get .*install .*cuda-toolkit-10-2$'
+
+echo "== R32: отказы =="
+r32_root
+printf '# R32 (release), REVISION: 9.9, GCID: 1\n' > "$ROOT/etc/nv_tegra_release"
+ht_hook install; eq "неизвестная ревизия R32 — 1" 1 "$?"
+check_not "неизвестная ревизия — apt не зовётся" ht_called '^apt-get'
+check_not "неизвестная ревизия — источник не заводится" test -e "$OWN_LIST"
+r32_root
+printf 'tampered\n' >> "$HT_EXT/files/jetson-ota-public.asc"
+ht_hook install; eq "ключ не сошёлся по sha256 — 1" 1 "$?"
+check_not "подменённый ключ — apt не зовётся" ht_called '^apt-get'
+check_not "подменённый ключ не положен" test -e "$OWN_KEY"
+r32_root
+: > "$FAKE/apt-fails-install"
+ht_hook install; eq "R32 apt install не прошёл — 1" 1 "$?"
+check_not "отказ — профиль не пишется" test -e "$PROFILE"
 
 ht_done

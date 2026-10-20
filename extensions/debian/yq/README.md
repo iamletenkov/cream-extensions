@@ -3,6 +3,10 @@
 Ставит `yq` — статический бинарь [mikefarah/yq](https://github.com/mikefarah/yq)
 в `/usr/local/bin/yq` по пину версии и sha256.
 
+> **2.1.0 — Ubuntu 18.04 и 20.04.** `platform.os` принимает Ubuntu ≥ 18.04
+> (прежде ≥ 22.04): статическому бинарю версия glibc не нужна, а Jetson Nano
+> (L4T R32) — это Ubuntu 18.04/20.04. Debian — по-прежнему ≥ 12.
+>
 > **2.0.0 — формат cream/v1** (каталог 5.0.0). Манифест `schema: cream/v1`,
 > `install.sh` → `hooks/install`, появился хук `remove`; дерево на машине —
 > `/opt/cream/ext/yq/`. Бинарь качается через `curl` (вместо `wget`) и до

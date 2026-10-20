@@ -279,6 +279,10 @@ same_as_fixture(){ python3 -c "$SAME_AS_FIXTURE" "$FIXTURES/$2" "$1"; }
 
 # ===========================================================================
 echo "== манифест: действия и ручка управляемых меток =="
+# Jetson Nano (L4T R32) is Ubuntu 20.04: the Teleport binary needs glibc 2.17,
+# the units need systemd >= 245 at most. Ubuntu 18.04 (systemd 237) is not in.
+check "platform.os: Debian >= 12, Ubuntu >= 20.04" grep -qxF \
+    '  os: [{id: debian, version: ">=12"}, {id: ubuntu, version: ">=20.04"}]' "$EXT/extension.yaml"
 manifest_action(){ sed -n "/^  $1:\$/,/^  [a-z-]*:\$/p" "$EXT/extension.yaml"; }
 check "set-managed: args free" grep -qx '    args: free' <<< "$(manifest_action set-managed)"
 check "set-managed: lock exclusive" grep -qx '    lock: exclusive' <<< "$(manifest_action set-managed)"

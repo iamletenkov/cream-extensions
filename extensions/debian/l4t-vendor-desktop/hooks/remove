@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# cream hook `remove` of l4t-vendor-desktop: install put nothing on the machine,
+# so there is nothing to take away — the desktop belongs to the vendor image.
+set -euo pipefail
+>&2 echo "[INFO] l4t-vendor-desktop: рабочий стол принадлежит образу вендора — снимать нечего"

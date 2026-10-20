@@ -7,11 +7,15 @@
 #           recorded in /var/lib/cream/ext/cuda-toolkit/packages.
 # remove  — its own packages (never one that was there before cream) and the
 #           profile; refuses when apt would take anything else with them.
-# No configure: nothing to finish on boot. No library: the L4T release is only
-# checked to exist, the branch does not matter here.
+# R32 (Jetson Nano): CUDA 10.2 — `cuda-toolkit-10-2`, or nothing when the
+#           vendor image already has /usr/local/cuda-10.2; without an active
+#           jetson/common line — its own source r32.<revision> signed by the
+#           NVIDIA key from files/ (sha256-pinned in the hook).
+# No configure: nothing to finish on boot. No library: the release line is
+# parsed in the hook (major and revision), nothing else is shared.
 schema: cream/v1
 name: cuda-toolkit
-version: 2.0.1
+version: 2.1.0
 summary: CUDA Toolkit для NVIDIA Jetson из репозитория jetson/common и системный профиль PATH
 cream: ">=1.0.0"
 platform:
