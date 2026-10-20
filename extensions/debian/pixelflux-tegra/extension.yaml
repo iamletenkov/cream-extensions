@@ -24,7 +24,7 @@
 # 3.0.0: cream/v1 (plan 2026-10-19, Task 27); rename table — README.md.
 schema: cream/v1
 name: pixelflux-tegra
-version: 3.0.0
+version: 3.0.1
 summary: Аппаратное кодирование Selkies на Jetson — подкладка libxcb, шим gbm, проверка бэкенда Tegra
 cream: ">=1.1.0"
 platform:

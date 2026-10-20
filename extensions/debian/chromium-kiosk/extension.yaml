@@ -19,7 +19,7 @@
 #        locale is not touched any more (the extension locale does that).
 schema: cream/v1
 name: chromium-kiosk
-version: 4.0.0
+version: 4.0.1
 summary: Киоск пакета chromium-kiosk (Salamek) — своя графическая сессия, config.yml из ключей домена
 cream: ">=1.0.0"
 platform:
@@ -38,6 +38,8 @@ provides: [kiosk-browser]
 # Both kiosks take the screen.
 conflicts:
   extensions: [kiosk]
+depends:
+  - {name: apt-guard, version: ">=1.0.0 <2"}
 hooks:
   install: {timeout: 30m}
   configure: {stage: system, before: [chromium-kiosk_configwatcher.service], timeout: 2m}

@@ -42,7 +42,12 @@ else
     log_warn "нет библиотеки cloud-user ($LIB) — группа docker не назначена"
 fi
 
-if [[ -z "$user" ]]; then
+if [[ -n "$user" && ! "$user" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
+    # The library checks the name too; this hook still refuses to hand usermod
+    # anything else (an older library, a stub): printed without control characters.
+    bad="${user:0:64}"
+    log_warn "'${bad//[^[:alnum:]_.+-]/?}' — не имя пользователя, группа docker не назначена"
+elif [[ -z "$user" ]]; then
     # Not a failure: Docker works without this, the group is a convenience. No
     # wait loop either: configure runs on every boot and cloud-init's userdata
     # stays in /var/lib/cloud/instance, so a first-boot race resolves on the

@@ -39,6 +39,8 @@ p="${*: -1}"
 [[ -e "$FAKE/pkgs/$p" ]] && printf installed
 exit 0'
     ht_fake apt-get '
+if [[ "$1" == -s ]]; then v=Remv; [[ "$2" == purge ]] && v=Purg
+    for a in "${@:3}"; do echo "$v $a [1.0]"; done; cat "$FAKE/sim-extra" 2>/dev/null; exit 0; fi
 sub=""
 for a in "$@"; do
     case "$a" in -*|Dpkg::*) ;; *) [[ -z "$sub" ]] && { sub="$a"; continue; }
@@ -90,7 +92,7 @@ eq "cream 1.0 (стадия system)" ">=1.0.0" "$(mf 'm["cream"]')"
 eq "live: confirm" confirm "$(mf 'm["targets"]["live"]')"
 check "live_note называет docker.io" grep -q docker.io <<< "$(mf 'm["targets"]["live_note"]')"
 check "live_note называет podman-docker" grep -q podman-docker <<< "$(mf 'm["targets"]["live_note"]')"
-eq "depends cloud-user" "cloud-user >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
+eq "depends cloud-user, apt-guard" "cloud-user >=1.0.0 <2 apt-guard >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
 eq "хуки" "configure install remove" "$(mf '" ".join(sorted(m["hooks"]))')"
 eq "стадия configure" system "$(mf 'm["hooks"]["configure"]["stage"]')"
 eq "configure после docker.service" docker.service "$(mf '" ".join(m["hooks"]["configure"]["after"])')"
@@ -239,6 +241,14 @@ echo alice > "$FAKE/user"
 rm -f "$FAKE/group-docker"
 ht_hook configure; eq "нет группы docker — 0" 0 "$?"
 check_not "нет группы — usermod нет" ht_called '^usermod'
+for junk in '-oroot' 'Alice' 'a b' 'x$(id)' $'b\e[31mad' '../etc'; do
+    docker_root
+    printf '%s\n' "$junk" > "$FAKE/user"
+    ht_hook configure; eq "имя [$junk] — 0" 0 "$?"
+    check_not "имя [$junk] — usermod нет" ht_called '^usermod'
+    check "имя [$junk] — предупреждение" grep -q 'не имя пользователя' "$ROOT/out"
+    check_not "имя [$junk] — ESC имени не в выводе" grep -q $'\e\\[31m' "$ROOT/out"
+done
 
 echo "== configure: Raspberry Pi cmdline.txt =="
 docker_root
@@ -329,5 +339,17 @@ printf 'docker-ce\n' > "$STATE/packages"
 : > "$FAKE/apt-fails-remove"
 ht_hook remove; eq "apt-get remove упал — 1" 1 "$?"
 check "сбой remove — запись сохранена для повтора" test -s "$STATE/packages"
+# apt would take a package installed later on top of ours: refuse, change nothing.
+docker_root
+mkdir -p "$STATE"
+printf 'docker-ce\ncontainerd.io\n' > "$STATE/packages"
+: > "$FAKE/pkgs/docker-ce"; : > "$FAKE/pkgs/containerd.io"
+echo 'Remv nvidia-container-toolkit [1.17.8-1]' > "$FAKE/sim-extra"
+ht_hook remove; eq "симуляция снимает чужой пакет — 1" 1 "$?"
+check "симуляция спрошена" ht_called '^apt-get -s remove docker-ce containerd.io$'
+check "чужой пакет назван" grep -q 'nvidia-container-toolkit' "$ROOT/out"
+check_not "ничего не снято" ht_called '^apt-get -q -y remove'
+check "docker-ce на месте" installed docker-ce
+check "запись осталась" test -s "$STATE/packages"
 
 ht_done

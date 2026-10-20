@@ -82,7 +82,7 @@ blocking_systemctl() { grep -E '^systemctl (start|restart|stop|reload) ' "$FAKE/
 echo "== манифест и раскладка =="
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
 eq "name" pixelflux-tegra "$(mf 'm["name"]')"
-eq "мажор +1 (Р1)" 3.0.0 "$(mf 'm["version"]')"
+eq "мажор +1 (Р1)" 3.0.1 "$(mf 'm["version"]')"
 eq "cream 1.1 (graphical)" ">=1.1.0" "$(mf 'm["cream"]')"
 eq "arm64" "arm64" "$(mf '" ".join(m["platform"]["arch"])')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
@@ -221,6 +221,19 @@ pf_root; ht_hook install; node_v4l2; ln -s /dev/null "$ROOT/dev/nvhost-msenc"
 ht_fake stat 'case "$*" in *%a*) echo 660 ;; *%G*) echo "vid;eo" ;; *) exit 2 ;; esac'
 ht_hook configure CREAM_REASON=boot; eq "кривое имя группы — 0" 0 "$?"
 check_not "кривая группа не уходит в usermod" ht_called '^usermod'
+for g in video render; do
+    pf_root; ht_hook install; node_v4l2; ln -s /dev/null "$ROOT/dev/nvhost-msenc"
+    ht_fake stat 'case "$*" in *%a*) echo 660 ;; *%G*) echo '"$g"' ;; *) exit 2 ;; esac'
+    ht_hook configure CREAM_REASON=boot; eq "группа $g — 0" 0 "$?"
+    check "alice — в группу $g" ht_called "^usermod -aG $g alice\$"
+done
+for g in sudo disk docker shadow; do
+    pf_root; ht_hook install; node_v4l2; ln -s /dev/null "$ROOT/dev/nvhost-msenc"
+    ht_fake stat 'case "$*" in *%a*) echo 660 ;; *%G*) echo '"$g"' ;; *) exit 2 ;; esac'
+    ht_hook configure CREAM_REASON=boot; eq "группа $g — 0 с предупреждением" 0 "$?"
+    check_not "в группу $g не добавляет" ht_called '^usermod'
+    check "группа $g — предупреждение" grep -q "группа $g" "$ROOT/out"
+done
 pf_root; ht_hook install; node_v4l2; ln -s /dev/null "$ROOT/dev/nvhost-msenc"
 ht_fake stat 'case "$*" in *%a*) echo 660 ;; *%G*) echo video ;; *) exit 2 ;; esac'
 : > "$FAKE/usermod-fails"

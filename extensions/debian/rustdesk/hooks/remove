@@ -3,6 +3,8 @@
 # (hooks/configure --clear, as the users), the package removed if we put it
 # on, the unit we laid out removed. The device identity (RustDesk.toml) and
 # options RustDesk wrote itself stay: they are the machine's and the users'.
+# apt is asked first in simulation (library apt-guard), before anything changes:
+# when it would take anything besides rustdesk the hook refuses.
 # A repeat finds nothing and exits 0.
 set -euo pipefail
 
@@ -12,9 +14,19 @@ STATE_DIR="${CREAM_STATE_DIR:?run by cream}"
 # shellcheck source=../files/common.sh
 . "$EXT_DIR/files/common.sh"
 
+ours=""
+if [[ -f "$STATE_DIR/packages" ]] && grep -qx rustdesk "$STATE_DIR/packages"; then
+    ours=1
+    APT_GUARD="$R/opt/cream/ext/apt-guard/apt-guard.sh"
+    [[ -f "$APT_GUARD" ]] || { log "нет библиотеки apt-guard ($APT_GUARD) — cream ставит её по depends"; exit 1; }
+    # shellcheck source=../../apt-guard/apt-guard.sh
+    source "$APT_GUARD"
+    apt_guard_check remove rustdesk || exit 1
+fi
+
 "$EXT_DIR/hooks/configure" --clear || log "свои опции RustDesk2.toml сняты не у всех (см. выше)"
 
-if [[ -f "$STATE_DIR/packages" ]] && grep -qx rustdesk "$STATE_DIR/packages"; then
+if [[ -n "$ours" ]]; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get -q -y remove rustdesk || { log "apt-get remove rustdesk не прошёл"; exit 1; }
     log "пакет rustdesk удалён"

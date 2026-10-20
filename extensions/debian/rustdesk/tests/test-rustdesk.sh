@@ -39,7 +39,9 @@ rroot() {
     ht_fake getent 'f="$FAKE/$1"; [[ -f "$f" ]] || exit 2; [[ -z "${2-}" ]] && { cat "$f"; exit 0; }; grep -E "^${2}:" "$f" || exit 2'
     ht_fake dpkg '[[ "$1" == --print-architecture ]] && { cat "$FAKE/arch" 2>/dev/null || echo amd64; exit 0; }; exit 0'
     ht_fake dpkg-query '[[ -f "$FAKE/installed" ]] && printf "install ok installed %s\n" "$(cat "$FAKE/installed")"; exit 0'
-    ht_fake apt-get 'for a in "$@"; do
+    ht_fake apt-get 'if [[ "$1" == -s ]]; then v=Remv; [[ "$2" == purge ]] && v=Purg
+    for a in "${@:3}"; do echo "$v $a [1.0]"; done; cat "$FAKE/sim-extra" 2>/dev/null; exit 0; fi
+for a in "$@"; do
   if [[ "$a" == *.deb ]]; then
     cp "$a" "$FAKE/got.deb"
     v="${a##*/rustdesk-}"; echo "${v%%-*}" > "$FAKE/installed"
@@ -70,13 +72,13 @@ echo "== манифест =="
 # eval: test-only literal expressions over our own manifest, as in nvidia-jetpack.
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "мажор 2" 2.0.0 "$(mf 'm["version"]')"
+eq "мажор 2" 2.0.1 "$(mf 'm["version"]')"
 eq "cream >=1.0.0" ">=1.0.0" "$(mf 'm["cream"]')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
 eq "стадия system" system "$(mf 'm["hooks"]["configure"]["stage"]')"
 eq "до rustdesk.service" "['rustdesk.service']" "$(mf 'm["hooks"]["configure"]["before"]')"
 eq "хуки" "['configure', 'install', 'remove']" "$(mf 'sorted(m["hooks"])')"
-eq "depends cloud-user" "cloud-user >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
+eq "depends cloud-user, apt-guard" "cloud-user >=1.0.0 <2 apt-guard >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
 eq "параметры установки" "RUSTDESK_SHA256 RUSTDESK_SHA256_AMD64 RUSTDESK_SHA256_ARM64 RUSTDESK_URL RUSTDESK_VERSION" \
     "$(mf '" ".join(sorted(k for k, v in m["config"]["keys"].items() if v.get("scope") == "install"))')"
 check_not "ни одного ключа пароля или режима доступа" grep -qiE 'PASSWORD|VERIFICATION|APPROVE' <<< "$(mf '" ".join(m["config"]["keys"])')"
@@ -203,5 +205,17 @@ eq "чужая опция цела" 1 "$(opt "$R2/t.toml" local-ip-addr)"
 "$EXT/files/render-toml.sh" "$R2/t.toml" "key=a'b" >/dev/null 2>&1; eq "кавычка — 2" 2 "$?"
 ln -s "$R2/t.toml" "$R2/link.toml"
 "$EXT/files/render-toml.sh" "$R2/link.toml" key=abc >/dev/null 2>&1; eq "ссылка — отказ 1" 1 "$?"
+
+echo "== remove: симуляция снимает чужой пакет — отказ =="
+rroot; live_systemd
+HT_PHASE=build ht_hook install "RUSTDESK_SHA256=$DEB_SHA"
+ht_hook configure CREAM_REASON=install "RUSTDESK_ID_SERVER=$SRV" "RUSTDESK_KEY=$KEY"
+echo 'Remv rustdesk-plugins [1.0]' > "$FAKE/sim-extra"
+: > "$FAKE/calls"
+ht_hook remove; eq "симуляция снимает чужой пакет — 1" 1 "$?"
+check "чужой пакет назван" grep -q 'rustdesk-plugins' "$ROOT/out"
+check_not "ничего не снято" ht_called '^apt-get -q -y remove'
+check "свои опции остались" test -n "$(opt "$AT" custom-rendezvous-server)"
+check "запись осталась" grep -qx rustdesk "$STATE/packages"
 
 ht_done

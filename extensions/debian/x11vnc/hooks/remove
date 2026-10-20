@@ -2,10 +2,22 @@
 # cream hook `remove` of x11vnc: the instances off, the password file and the
 # no-password marker gone; the package x11vnc goes only when this install put it
 # on ($CREAM_STATE_DIR/installed). The unit file is removed by cream (`files`).
+# apt is asked first in simulation (library apt-guard), before anything changes:
+# when it would take anything besides x11vnc the hook refuses.
 set -euo pipefail
-"${CREAM_EXT_DIR:?run by cream}/files/x11vnc.sh" remove
+R="${CREAM_ROOT:-}"; R="${R%/}"
 STATE="${CREAM_STATE_DIR:?run by cream}/installed"
+ours=""
 if [[ -s "$STATE" ]] && grep -qx x11vnc "$STATE"; then
+    ours=1
+    APT_GUARD="$R/opt/cream/ext/apt-guard/apt-guard.sh"
+    [[ -f "$APT_GUARD" ]] || { >&2 echo "[ERROR] x11vnc: нет библиотеки apt-guard ($APT_GUARD) — cream ставит её по depends"; exit 1; }
+    # shellcheck source=../../apt-guard/apt-guard.sh
+    source "$APT_GUARD"
+    apt_guard_check remove x11vnc || exit 1
+fi
+"${CREAM_EXT_DIR:?run by cream}/files/x11vnc.sh" remove
+if [[ -n "$ours" ]]; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get -q -y remove x11vnc || >&2 echo "[WARN] x11vnc: пакет x11vnc не снят"
 fi

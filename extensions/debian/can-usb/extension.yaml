@@ -13,7 +13,7 @@
 # Tree: canusb.sh (functions), Kbuild.
 schema: cream/v1
 name: can-usb
-version: 2.0.0
+version: 2.0.1
 summary: Модули адаптеров CAN gs_usb, peak_usb, slcan под ядро Sensing (Jetson AGX Orin, L4T 36.4.3)
 cream: ">=1.0.0"
 platform:
@@ -23,14 +23,16 @@ targets:
   build: exec
   live: confirm
   live_note: >-
-    скачивает исходники ядра Jetson Linux 36.4.3 (около 220 МБ, потоком), ставит заголовки
+    скачивает исходники ядра Jetson Linux 36.4.3 (около 220 МБ во временный файл, сверка sha256 до распаковки), ставит заголовки
     ядра (nvidia-l4t-kernel-headers, закрепляет apt-mark hold) и компилятор и собирает три
     модуля под ядро Sensing в /lib/modules/5.15.148-tegra/updates/can-usb; модули грузит
     udev при подключении адаптера, после перезагрузки
 provides: [can-usb-adapters]
 # The Sensing kernel on /boot/Image is put there by sensing-gmsl2-camera.
 requires: [gmsl2-camera]
+depends:
+  - {name: apt-guard, version: ">=1.0.0 <2"}
 hooks:
-  # 220 MB of sources streamed, then a small build.
+  # 220 MB of sources downloaded and checked, then a small build.
   install: {timeout: 90m}
   remove: {timeout: 10m}

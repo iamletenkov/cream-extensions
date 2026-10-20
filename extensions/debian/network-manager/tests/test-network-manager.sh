@@ -28,7 +28,10 @@ fresh() {
 case "$*" in *Version*) printf 1.0-1 ;; *) printf "installed\n" ;; esac'
     ht_fake apt-cache 'if [[ -f "$FAKE/no-candidate" ]]; then c="(none)"; else c=1.0-1; fi
 printf "%s:\n  Installed: (none)\n  Candidate: %s\n" "${*: -1}" "$c"'
-    ht_fake apt-get 'if [[ " $* " == *" install "* ]]; then
+    ht_fake apt-get 'if [[ "$1" == -s ]]; then
+  for a in "${@:3}"; do echo "Remv $a [1.0-1]"; done; cat "$FAKE/sim-extra" 2>/dev/null; exit 0
+fi
+if [[ " $* " == *" install "* ]]; then
   for a in "$@"; do case "$a" in -*|install) ;; *) : > "$FAKE/pkg-$a" ;; esac; done
   [[ -f "$FAKE/enable-broken" ]] || ln -sf /lib/systemd/system/NetworkManager.service \
     "'"$ROOT"'/etc/systemd/system/multi-user.target.wants/NetworkManager.service"
@@ -44,7 +47,7 @@ enabled() { ln -sf /lib/systemd/system/NetworkManager.service "$WANTS/NetworkMan
 echo "== манифест =="
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "мажор 2" 2.0.0 "$(mf 'm["version"]')"
+eq "мажор 2" 2.0.1 "$(mf 'm["version"]')"
 eq "build: exec" exec "$(mf 'm["targets"]["build"]')"
 eq "live: confirm" confirm "$(mf 'm["targets"]["live"]')"
 check "live_note про сетевой стек" grep -q 'сет' <<< "$(mf 'm["targets"]["live_note"]')"
@@ -84,6 +87,20 @@ check_not "состояние снято" test -e "$STATE"
 : > "$FAKE/calls"
 ht_hook remove; eq "повтор remove — 0" 0 "$?"
 check_not "повтор remove ничего не удаляет" ht_called '^apt-get '
+
+# apt would take network-manager-gnome (and the desktop) with our package: refuse.
+fresh
+printf 'network-manager\nwpasupplicant\n' > "$STATE"
+echo 'Remv network-manager-gnome [1.30.0-2]' > "$FAKE/sim-extra"
+ht_hook remove; eq "симуляция снимает чужой пакет — 1" 1 "$?"
+check "симуляция спрошена" ht_called '^apt-get -s remove network-manager wpasupplicant$'
+check "чужой пакет назван" grep -q 'network-manager-gnome' <(ht_out)
+check_not "ничего не снято" ht_called '^apt-get -q -y remove'
+check "запись осталась" test -s "$STATE"
+rm -f "$ROOT/opt/cream/ext/apt-guard/apt-guard.sh"
+rm -f "$FAKE/sim-extra"
+ht_hook remove; eq "нет библиотеки apt-guard — 1" 1 "$?"
+check_not "без библиотеки apt не зовётся" ht_called '^apt-get -q -y remove'
 
 fresh
 ht_hook install; eq "ничего нет — install 0" 0 "$?"

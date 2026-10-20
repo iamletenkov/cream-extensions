@@ -14,7 +14,7 @@
 # Tree: constraints.txt, check-system-python.py, pip-owned.py.
 schema: cream/v1
 name: l4t-tensorflow
-version: 2.0.0
+version: 2.0.1
 summary: TensorFlow с CUDA для NVIDIA Jetson — колесо NVIDIA 2.16.1, cuDNN 9 и keras 3.3.3
 cream: ">=1.0.0"
 platform:
@@ -26,6 +26,8 @@ provides: [tensorflow]
 # cuDNN and numpy 1.26 it installs itself — the same versions as l4t-pytorch,
 # so the two do not argue (checked on a board: one numpy for both).
 requires: [cuda]
+depends:
+  - {name: apt-guard, version: ">=1.0.0 <2"}
 hooks:
   # A 553 MB wheel plus ~1.9 GB of dependencies from the network.
   install: {timeout: 90m}

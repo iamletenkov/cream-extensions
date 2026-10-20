@@ -20,7 +20,7 @@
 #        follow-up re-render restarts cream-configure@rustdesk.
 schema: cream/v1
 name: rustdesk
-version: 2.0.0
+version: 2.0.1
 summary: RustDesk — клиент и служба удалённой поддержки, адреса своего сервера из ключей домена
 cream: ">=1.0.0"
 platform:
@@ -34,6 +34,7 @@ targets: {build: exec, live: "yes"}
 provides: [remote-support]
 depends:
   - {name: cloud-user, version: ">=1.0.0 <2"}
+  - {name: apt-guard, version: ">=1.0.0 <2"}
 hooks:
   install: {timeout: 20m}
   configure:

@@ -18,7 +18,9 @@ fresh() {
     CFG="$ROOT/etc/chromium-kiosk/config.yml"
     STATE="$ROOT/var/lib/cream/ext/chromium-kiosk"
     ht_fake dpkg-query 'p="${*: -1}"; [[ -f "$FAKE/pkg-$p" ]] && printf installed; exit 0'
-    ht_fake apt-get 'if [[ " $* " == *" install "* ]]; then
+    ht_fake apt-get 'if [[ "$1" == -s ]]; then v=Remv; [[ "$2" == purge ]] && v=Purg
+    for a in "${@:3}"; do echo "$v $a [1.0]"; done; cat "$FAKE/sim-extra" 2>/dev/null; exit 0; fi
+if [[ " $* " == *" install "* ]]; then
   for a in "$@"; do case "$a" in -*|install|Dpkg::*) ;; *) : > "$FAKE/pkg-$a" ;; esac; done
 fi; exit 0'
     ht_fake sleep
@@ -30,7 +32,7 @@ echo "== манифест =="
 # eval: test-only literal expressions over our own files, as in nvidia-jetpack.
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "мажор 4" 4.0.0 "$(mf 'm["version"]')"
+eq "мажор 4" 4.0.1 "$(mf 'm["version"]')"
 eq "cream >=1.0.0 (стадия system)" ">=1.0.0" "$(mf 'm["cream"]')"
 eq "live: confirm" confirm "$(mf 'm["targets"]["live"]')"
 check "live_note про сторонний репозиторий" grep -q 'salamek' <<< "$(mf 'm["targets"]["live_note"]')"
@@ -117,11 +119,22 @@ check_not "без systemd: наблюдатель не трогают" ht_called
 fresh; mkdir -p "$ROOT/run/systemd/system"; ht_fake systemctl
 ht_hook install; : > "$FAKE/calls"
 ht_hook remove; eq "remove на живой — 0" 0 "$?"
-eq "наблюдатель: stop до apt, reset-failed после" \
-    "systemctl stop chromium-kiosk_configwatcher.service|apt-get|systemctl reset-failed chromium-kiosk_configwatcher.service" \
-    "$(cut -d' ' -f1-3 "$FAKE/calls" | sed 's/^apt-get .*/apt-get/' | paste -sd'|')"
+eq "симуляция, stop наблюдателя до apt, reset-failed после" \
+    "apt-get -s|systemctl stop chromium-kiosk_configwatcher.service|apt-get|systemctl reset-failed chromium-kiosk_configwatcher.service" \
+    "$(cut -d' ' -f1-3 "$FAKE/calls" | sed -e 's/^apt-get -s .*/apt-get -s/' -e 's/^apt-get -q .*/apt-get/' | paste -sd'|')"
 : > "$FAKE/calls"
 ht_hook remove; eq "повтор — 0" 0 "$?"
 check_not "повтор: apt не звали" ht_called '^apt-get '
+
+echo "== remove: симуляция снимает чужой пакет — отказ =="
+fresh; mkdir -p "$ROOT/run/systemd/system"; ht_fake systemctl
+ht_hook install
+echo 'Remv chromium-kiosk-extras [1.0]' > "$FAKE/sim-extra"
+: > "$FAKE/calls"
+ht_hook remove; eq "симуляция снимает чужой пакет — 1" 1 "$?"
+check "чужой пакет назван" grep -q 'chromium-kiosk-extras' "$ROOT/out"
+check_not "ничего не снято" ht_called '^apt-get -q -y remove'
+check_not "наблюдатель не остановлен" ht_called '^systemctl stop'
+check "запись пакетов осталась" test -s "$STATE/packages"
 
 ht_done

@@ -3,7 +3,7 @@
 # not a desktop: the X server and the session come from gnome/xfce4/lxde.
 schema: cream/v1
 name: firefox
-version: 2.0.0
+version: 2.0.1
 summary: Firefox из APT-репозитория Mozilla — настоящий .deb, а не снап
 cream: ">=1.0.0"
 platform:
@@ -11,6 +11,8 @@ platform:
   arch: [amd64, arm64]
 targets: {build: exec, live: "yes"}
 provides: [web-browser]
+depends:
+  - {name: apt-guard, version: ">=1.0.0 <2"}
 hooks:
   install: {timeout: 20m}
   remove: {timeout: 10m}

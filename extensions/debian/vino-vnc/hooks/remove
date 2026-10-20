@@ -1,14 +1,25 @@
 #!/usr/bin/env bash
 # cream hook `remove` of vino-vnc: the dconf databases, their profile lines and
 # the autostart go; the package vino only when this install put it on
-# ($CREAM_STATE_DIR/installed).
+# ($CREAM_STATE_DIR/installed). apt is asked first in simulation (library
+# apt-guard), before anything changes: when it would take anything besides vino
+# the hook refuses.
 set -euo pipefail
-"${CREAM_EXT_DIR:?run by cream}/files/vino-vnc.sh" remove
 R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}/installed"
+ours=""
+if [[ -s "$STATE" ]] && grep -qx vino "$STATE"; then
+    ours=1
+    APT_GUARD="$R/opt/cream/ext/apt-guard/apt-guard.sh"
+    [[ -f "$APT_GUARD" ]] || { >&2 echo "[ERROR] vino-vnc: нет библиотеки apt-guard ($APT_GUARD) — cream ставит её по depends"; exit 1; }
+    # shellcheck source=../../apt-guard/apt-guard.sh
+    source "$APT_GUARD"
+    apt_guard_check remove vino || exit 1
+fi
+"${CREAM_EXT_DIR:?run by cream}/files/vino-vnc.sh" remove
 AUTO="$R/etc/xdg/autostart/vino-server.desktop"
 [[ -L "$AUTO" ]] || rm -f -- "$AUTO"
-STATE="${CREAM_STATE_DIR:?run by cream}/installed"
-if [[ -s "$STATE" ]] && grep -qx vino "$STATE"; then
+if [[ -n "$ours" ]]; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get -q -y remove vino || >&2 echo "[WARN] vino-vnc: пакет vino не снят"
 fi

@@ -7,6 +7,8 @@
 # install put on ($CREAM_STATE_DIR/packages; those there before cream stay),
 # drops the source and the key and refreshes the apt lists. A running docker is
 # restarted when daemon.json changed. A repeat finds nothing and exits 0.
+# apt is asked first in simulation (library apt-guard), before anything changes:
+# when it would take anything besides our packages the hook refuses.
 set -euo pipefail
 
 log_info(){ >&2 echo "[INFO] nvidia-container-toolkit: $*"; }
@@ -26,6 +28,19 @@ put_file(){
     chmod "$mode" "$tmp"
     mv -f -T -- "$tmp" "$dest"
 }
+
+export DEBIAN_FRONTEND=noninteractive
+ours=()
+if [[ -f "$STATE/packages" && ! -L "$STATE/packages" ]]; then
+    mapfile -t ours < <(sed '/^$/d' "$STATE/packages")
+fi
+if (( ${#ours[@]} )); then
+    APT_GUARD="$R/opt/cream/ext/apt-guard/apt-guard.sh"
+    [[ -f "$APT_GUARD" ]] || { log_error "нет библиотеки apt-guard ($APT_GUARD) — cream ставит её по depends"; exit 1; }
+    # shellcheck source=../../apt-guard/apt-guard.sh
+    source "$APT_GUARD"
+    apt_guard_check purge "${ours[@]}" || exit 1
+fi
 
 # --- daemon.json --------------------------------------------------------------
 restored=""
@@ -57,11 +72,6 @@ if [[ -n "$restored" && "$PHASE" == live ]]; then
 fi
 
 # --- packages and source ------------------------------------------------------
-export DEBIAN_FRONTEND=noninteractive
-ours=()
-if [[ -f "$STATE/packages" && ! -L "$STATE/packages" ]]; then
-    mapfile -t ours < <(sed '/^$/d' "$STATE/packages")
-fi
 if (( ${#ours[@]} )); then
     apt-get -q -y purge "${ours[@]}" || { log_error "apt-get purge ${ours[*]} не прошёл"; exit 1; }
     log_info "удалены: ${ours[*]}"

@@ -14,7 +14,7 @@
 # files     — the iptables-raw check before each dockerd start and its drop-in.
 schema: cream/v1
 name: docker
-version: 4.0.0
+version: 4.0.1
 summary: Docker CE из официального apt-репозитория Docker (download.docker.com)
 cream: ">=1.0.0"
 platform:
@@ -35,6 +35,7 @@ targets:
 provides: [container-runtime]
 depends:
   - {name: cloud-user, version: ">=1.0.0 <2"}
+  - {name: apt-guard, version: ">=1.0.0 <2"}
 hooks:
   install: {timeout: 30m}
   # After docker.service: the group exists (postinst) and a restart for the

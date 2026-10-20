@@ -35,6 +35,8 @@ case "$p" in nvidia-container-toolkit) [[ "$*" == *Version* ]] && { echo 1.17.8-
 [[ -e "$FAKE/pkgs/$p" ]] && printf "install ok installed"
 exit 0'
     ht_fake apt-get '
+if [[ "$1" == -s ]]; then v=Remv; [[ "$2" == purge ]] && v=Purg
+    for a in "${@:3}"; do echo "$v $a [1.0]"; done; cat "$FAKE/sim-extra" 2>/dev/null; exit 0; fi
 sub=""
 for a in "$@"; do
     case "$a" in -*|Dpkg::*) ;; *) [[ -z "$sub" ]] && { sub="$a"; continue; }
@@ -249,5 +251,20 @@ ht_hook install; eq "install — 0" 0 "$?"
 : > "$FAKE/apt-fails-purge"
 ht_hook remove; eq "apt-get purge упал — 1" 1 "$?"
 check "сбой — запись пакетов сохранена для повтора" test -s "$STATE/packages"
+
+echo "== remove: симуляция снимает чужой пакет — отказ =="
+ctk_root
+ht_hook install >/dev/null
+dj_before="$(cat "$DJ" 2>/dev/null || echo absent)"
+echo 'Purg nvidia-docker2 [2.14.0-1]' > "$FAKE/sim-extra"
+: > "$FAKE/calls"
+ht_hook remove; eq "симуляция снимает чужой пакет — 1" 1 "$?"
+check "симуляция purge" ht_called '^apt-get -s purge '
+check "чужой пакет назван" grep -q 'nvidia-docker2' "$ROOT/out"
+check_not "ничего не снято" ht_called '^apt-get -q -y purge'
+eq "daemon.json не тронут" "$dj_before" "$(cat "$DJ" 2>/dev/null || echo absent)"
+check_not "docker не перезапущен" ht_called '^systemctl try-restart'
+check "источник на месте" test -e "$SRC"
+check "запись пакетов осталась" test -s "$STATE/packages"
 
 ht_done

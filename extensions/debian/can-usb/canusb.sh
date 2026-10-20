@@ -137,35 +137,35 @@ canusb_gate_headers(){
     _cu_info "заголовки ядра: .config и Module.symvers — те, что сверены с ядром Sensing"
 }
 
-# Download public_sources.tbz2 from URL as a stream, extract only the driver
-# sources into OUT and check the archive against SHA. The archive (220 MB) is
-# never stored: the guest disk is small by design. Sources extracted from an
-# archive whose sum does not match are removed before the refusal.
+# Download public_sources.tbz2 from URL into a temporary file in OUT, check
+# it against SHA, and only then extract the driver sources into OUT. The
+# archive comes from the network and tar/bzip2 run as root: nothing of it is
+# unpacked before its sum matches. Costs the archive's size (about 230 MB) of
+# free space in OUT for the duration; the archive is removed in every case.
 canusb_fetch(){
-    local url="$1" sha="$2" out="$3" fifo got hashpid f members=()
+    local url="$1" sha="$2" out="$3" archive got f members=()
     for f in "${CANUSB_SRC_FILES[@]}"; do members+=("$CANUSB_SRC_PREFIX/$f"); done
     mkdir -p "$out" || return 1
-    fifo="$(mktemp -u "$out/.sha.XXXXXX")"
-    mkfifo "$fifo" || return 1
-    sha256sum < "$fifo" > "$fifo.sum" &
-    hashpid=$!
-    if ! curl -fsSL --retry 3 --max-time 1800 "$url" | tee "$fifo" \
-            | tar -xjOf - Linux_for_Tegra/source/kernel_src.tbz2 \
-            | tar -xjf - -C "$out" "${members[@]}"; then
-        wait "$hashpid" 2>/dev/null
-        rm -f "$fifo" "$fifo.sum"; rm -rf "${out:?}/kernel"
-        _cu_error "исходники не скачались или в архиве нет драйверов CAN: $url"
+    archive="$(mktemp "$out/.public_sources.XXXXXX")" || return 1
+    if ! curl -fsSL --retry 3 --max-time 1800 -o "$archive" "$url"; then
+        rm -f -- "$archive"
+        _cu_error "public_sources.tbz2 не скачался: $url (нужно около 230 МБ свободного места в $out)"
         return 1
     fi
-    wait "$hashpid"
-    got="$(cut -d' ' -f1 "$fifo.sum")"
-    rm -f "$fifo" "$fifo.sum"
+    got="$(_cu_sha "$archive")"
     if [[ "$got" != "$sha" ]]; then
-        rm -rf "${out:?}/kernel"
-        _cu_error "sha256 public_sources.tbz2 $got, закреплена $sha — NVIDIA подменила файл?"
+        rm -f -- "$archive"
+        _cu_error "sha256 public_sources.tbz2 $got, закреплена $sha — NVIDIA подменила файл? Архив не распакован"
         return 1
     fi
-    _cu_info "исходники драйверов из public_sources.tbz2 (sha256 сошлась)"
+    if ! tar -xjOf "$archive" Linux_for_Tegra/source/kernel_src.tbz2 \
+            | tar -xjf - -C "$out" "${members[@]}"; then
+        rm -f -- "$archive"; rm -rf "${out:?}/kernel"
+        _cu_error "в архиве нет драйверов CAN: $url"
+        return 1
+    fi
+    rm -f -- "$archive"
+    _cu_info "исходники драйверов из public_sources.tbz2 (sha256 сошлась до распаковки)"
 }
 
 # Lay out the build directory DIR: sources from SRC (the fetch output) plus

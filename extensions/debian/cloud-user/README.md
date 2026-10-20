@@ -30,7 +30,8 @@ user="$("${CREAM_ROOT:-}/opt/cream/ext/cloud-user/get_cloud_user.sh")" || exit 1
 
 ## Что возвращает
 
-stdout — только имя; диагностика — в stderr.
+stdout — только имя; диагностика — в stderr, имена в ней — без управляющих
+символов (всё, кроме букв, цифр и `_.+-`, печатается как `?`).
 
 | Ситуация | Код | Имя |
 |---|---|---|
@@ -39,7 +40,7 @@ stdout — только имя; диагностика — в stderr.
 | `cloud-init query userdata` не ответил, есть `/var/lib/cloud/instance/user-data.txt` | 0 | из файла |
 | `cloud-init` есть, userdata ещё нет или `null` | 1 | — (гонка: вызывающий ждёт и повторяет) |
 | userdata есть, а yq не дал имени (нет пользователя в seed, kislyuk/yq, сбой yq) | 0/1 | запасной путь (ниже), в stderr — `no user name from yq` |
-| нет `cloud-init` или `yq` | 0 | первая учётка с uid 1000…65533 и каталогом `/home/<имя>`; в stderr — `falling back to '<имя>'` |
+| нет `cloud-init` или `yq` | 0 | первая учётка с uid 1000…65533, именем по тому же правилу `^[a-z_][a-z0-9_-]{0,31}$` и каталогом `/home/<имя>`; в stderr — `falling back to '<имя>'`; учётка с другим именем пропускается (`not a valid user name — skipped`) |
 | нет и такой учётки | 1 | — |
 
 `yq` — расширение [`yq`](../yq/README.md) (mikefarah/yq). Без него на образе

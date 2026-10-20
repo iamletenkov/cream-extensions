@@ -7,6 +7,8 @@
 # On a running system the package's config watcher is stopped before apt and
 # its state reset after: a watcher in its restart loop (no display yet) would
 # otherwise try to restart a unit apt has just taken away and stay `failed`.
+# apt is asked first in simulation (library apt-guard), before anything changes:
+# when it would take anything besides our packages the hook refuses.
 set -euo pipefail
 log_info(){ >&2 echo "[INFO] chromium-kiosk: $*"; }
 log_error(){ >&2 echo "[ERROR] chromium-kiosk: $*"; }
@@ -22,6 +24,11 @@ if [[ -f "$STATE" ]]; then
 fi
 if (( ${#ours[@]} )); then
     export DEBIAN_FRONTEND=noninteractive
+    APT_GUARD="$R/opt/cream/ext/apt-guard/apt-guard.sh"
+    [[ -f "$APT_GUARD" ]] || { log_error "нет библиотеки apt-guard ($APT_GUARD) — cream ставит её по depends"; exit 1; }
+    # shellcheck source=../../apt-guard/apt-guard.sh
+    source "$APT_GUARD"
+    apt_guard_check remove "${ours[@]}" || exit 1
     if [[ -n "$running" ]]; then
         systemctl stop "$WATCHER" 2>/dev/null || true
     fi

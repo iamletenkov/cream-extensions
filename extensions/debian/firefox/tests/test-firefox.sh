@@ -25,7 +25,9 @@ fresh() {
     ht_root "$EXT"
     printf '%s\n' "$FPR" > "$FAKE/fpr"
     printf '155.0.1~build1\n' > "$FAKE/version"
-    ht_fake apt-get 'case "$*" in *install*) for a in "$@"; do case "$a" in -*|install) ;; *) : > "$FAKE/pkg-$a" ;; esac; done
+    ht_fake apt-get 'if [[ "$1" == -s ]]; then v=Remv; [[ "$2" == purge ]] && v=Purg
+    for a in "${@:3}"; do echo "$v $a [1.0]"; done; cat "$FAKE/sim-extra" 2>/dev/null; exit 0; fi
+case "$*" in *install*) for a in "$@"; do case "$a" in -*|install) ;; *) : > "$FAKE/pkg-$a" ;; esac; done
     [[ " $* " == *" firefox "* ]] && { mkdir -p "$ROOTDIR/usr/lib/firefox"; printf "#!/bin/sh\n" > "$ROOTDIR/usr/lib/firefox/firefox"; chmod +x "$ROOTDIR/usr/lib/firefox/firefox"; } ;;
   *purge*|*remove*) for a in "$@"; do rm -f "$FAKE/pkg-$a"; done ;;
 esac; exit 0'
@@ -50,7 +52,7 @@ sum() { sha256sum "$@" | awk '{print $1}'; }
 echo "== манифест =="
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "мажор 2" 2.0.0 "$(mf 'm["version"]')"
+eq "мажор 2" 2.0.1 "$(mf 'm["version"]')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
 eq "хуки install и remove" "['install', 'remove']" "$(mf 'sorted(m["hooks"])')"
 eq "FIREFOX_LANGPACK — scope install" install "$(mf 'm["config"]["keys"]["FIREFOX_LANGPACK"]["scope"]')"
@@ -73,7 +75,7 @@ ht_hook install; eq "повтор install — 0" 0 "$?"
 eq "повтор не меняет файлы" "$before" "$(sum "$K" "$L" "$P" "$S")"
 : > "$FAKE/calls"
 ht_hook remove; eq "remove — 0" 0 "$?"
-check "remove: purge firefox" ht_called '^apt-get purge -q -y firefox$'
+check "remove: purge firefox" ht_called '^apt-get -q -y purge firefox$'
 check_not "remove: ключ снят" test -e "$K"
 check_not "remove: источник снят" test -e "$L"
 check_not "remove: пин снят" test -e "$P"
@@ -81,7 +83,7 @@ check "remove: apt-get update после снятия источника" ht_cal
 check_not "remove: состояние снято" test -e "$S"
 : > "$FAKE/calls"
 ht_hook remove; eq "повтор remove — 0" 0 "$?"
-check_not "повтор remove ничего не удаляет" ht_called '^apt-get purge'
+check_not "повтор remove ничего не удаляет" ht_called '^apt-get .*purge'
 
 echo "== языковой пакет =="
 fresh
@@ -91,11 +93,24 @@ eq "состояние: оба пакета" "$(printf 'firefox\nfirefox-l10n-ru
 ht_hook install FIREFOX_LANGPACK=de; eq "смена на de — 0" 0 "$?"
 eq "состояние копит пакеты" "$(printf 'firefox\nfirefox-l10n-de\nfirefox-l10n-ru')" "$(cat "$S")"
 ht_hook remove; eq "remove — 0" 0 "$?"
-check "remove: все свои пакеты" ht_called '^apt-get purge -q -y firefox firefox-l10n-de firefox-l10n-ru$'
+check "remove: все свои пакеты" ht_called '^apt-get -q -y purge firefox firefox-l10n-de firefox-l10n-ru$'
 
 fresh
 ht_hook install 'FIREFOX_LANGPACK=ru;rm'; eq "кривой код языка — 1" 1 "$?"
 check_not "до apt-get не дошло" ht_called '^apt-get '
+
+echo "== симуляция снимает чужой пакет =="
+fresh
+ht_hook install; eq "install — 0" 0 "$?"
+echo 'Purg thunderbird-firefox-bridge [1.0]' > "$FAKE/sim-extra"
+: > "$FAKE/calls"
+ht_hook remove; eq "remove с чужим пакетом — 1" 1 "$?"
+check "симуляция purge" ht_called '^apt-get -s purge firefox$'
+check "чужой пакет назван" grep -q 'thunderbird-firefox-bridge' "$ROOT/out"
+check_not "ничего не снято" ht_called '^apt-get -q -y purge'
+check "firefox на месте" test -e "$FAKE/pkg-firefox"
+check "состояние осталось" test -s "$S"
+check "источник не тронут" test -e "$L"
 
 echo "== пакет стоял до cream =="
 fresh
@@ -103,7 +118,7 @@ fresh
 ht_hook install; eq "install — 0" 0 "$?"
 check_not "чужой firefox не записан своим" grep -qsx firefox "$S"
 ht_hook remove; eq "remove — 0" 0 "$?"
-check_not "чужой firefox не удаляется" ht_called '^apt-get purge'
+check_not "чужой firefox не удаляется" ht_called '^apt-get .*purge'
 check_not "источник всё равно снят" test -e "$L"
 
 echo "== отказы =="

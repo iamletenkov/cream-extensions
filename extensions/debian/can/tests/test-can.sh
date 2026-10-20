@@ -29,6 +29,8 @@ p="${*: -1}"
 exit 1'
     # linux-modules-extra-<k> brings every module for <k>.
     ht_fake apt-get '
+if [[ "$1" == -s ]]; then v=Remv; [[ "$2" == purge ]] && v=Purg
+    for a in "${@:3}"; do echo "$v $a [1.0]"; done; cat "$FAKE/sim-extra" 2>/dev/null; exit 0; fi
 sub=""
 for a in "$@"; do
     case "$a" in -*) ;; *) [[ -z "$sub" ]] && { sub="$a"; continue; }
@@ -215,5 +217,17 @@ can_root debian
 mkdir -p "$STATE"; echo can-utils > "$STATE/packages"; : > "$FAKE/apt-fails-remove"
 ht_hook remove; eq "apt-get remove упал — 1" 1 "$?"
 check "сбой remove — запись сохранена" test -s "$STATE/packages"
+
+echo "== remove: симуляция снимает чужой пакет — отказ =="
+can_root debian
+kernel 6.1.0-53-amd64
+HT_PHASE=build ht_hook install >/dev/null
+echo 'Remv canopen-tools [1.0]' > "$FAKE/sim-extra"
+: > "$FAKE/calls"
+ht_hook remove; eq "симуляция снимает чужой пакет — 1" 1 "$?"
+check "чужой пакет назван" grep -q 'canopen-tools' "$ROOT/out"
+check_not "ничего не снято" ht_called '^apt-get -q -y remove'
+check "can.conf на месте" test -e "$CONF"
+check "запись пакетов осталась" test -s "$STATE/packages"
 
 ht_done

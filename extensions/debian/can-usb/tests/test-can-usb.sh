@@ -2,7 +2,7 @@
 # shellcheck disable=SC2016  # literal $… in fakes is the test data
 # Tests of the can-usb extension (cream/v1), what can be checked without a
 # board: the gates of canusb.sh (release, board, module tree, Sensing kernel,
-# headers), the streamed download of the sources with sha256, the build layout,
+# headers), the download of the sources checked by sha256 before unpacking, the build layout,
 # the vermagic check and the install with depmod on fake make/modinfo/strip/
 # depmod/modprobe, the pins and the order of steps in hooks/install; then the
 # manifest and hooks install / remove on a scratch root (CREAM_ROOT) the way
@@ -81,7 +81,7 @@ check_not "нет Module.symvers — отказ"                     q cu "$T/h2
 check_not "kernel.release не тот — отказ"                  q cu "$T/h3" canusb_gate_headers "$KV" "$HC" "$HS"
 check_not ".config другой — отказ"                         q cu "$T/h4" canusb_gate_headers "$KV" "$HC" "$HS"
 
-echo "== исходники: потоковое скачивание и сверка =="
+echo "== исходники: скачивание во временный файл, сверка, потом распаковка =="
 P=kernel/kernel-jammy-src/drivers/net/can
 mkdir -p "$T/ks/$P/usb/peak_usb" "$T/ps/Linux_for_Tegra/source"
 for f in usb/gs_usb.c usb/peak_usb/pcan_usb_core.c usb/peak_usb/pcan_usb_core.h usb/peak_usb/pcan_usb.c \
@@ -99,9 +99,20 @@ ZERO=0000000000000000000000000000000000000000000000000000000000000000
 check   "сумма сошлась — исходники извлечены"     q cu / canusb_fetch "file://$T/public_sources.tbz2" "$PSUM" "$T/f1"
 check   "…ровно восемь файлов драйверов"          q test "$(find "$T/f1/kernel" -type f | wc -l)" -eq 8
 check   "…и это они"                              q grep -qF 'usb/peak_usb/pcan_usb_fd.c' "$T/f1/$P/usb/peak_usb/pcan_usb_fd.c"
-check   "…служебных файлов не осталось"           q test "$(find "$T/f1" -maxdepth 1 -name '.sha*' | wc -l)" -eq 0
-check_not "sha256 не та — отказ"                    q cu / canusb_fetch "file://$T/public_sources.tbz2" "$ZERO" "$T/f2"
+check   "…архив после распаковки удалён"          q test "$(find "$T/f1" -maxdepth 1 -name '.public_sources*' | wc -l)" -eq 0
+# tar that logs each call: an archive whose sum does not match is never unpacked.
+mkdir -p "$T/tarbin"
+printf '#!/usr/bin/env bash\necho "tar $*" >> "%s/tar.calls"\nexec /usr/bin/env -S PATH=/usr/bin:/bin tar "$@"\n' "$T" > "$T/tarbin/tar"
+chmod +x "$T/tarbin/tar"
+: > "$T/tar.calls"
+check   "сумма сошлась — tar зовётся"             q env PATH="$T/tarbin:$PATH" bash -c "$(declare -f cu); T='$T' X='$X'; cu / canusb_fetch 'file://$T/public_sources.tbz2' '$PSUM' '$T/f1t'"
+check   "…и распаковывает из файла, не из потока" q grep -q '^tar -xjOf .*/\.public_sources\.' "$T/tar.calls"
+: > "$T/tar.calls"
+check_not "sha256 не та — отказ"                    q env PATH="$T/tarbin:$PATH" bash -c "$(declare -f cu); T='$T' X='$X'; cu / canusb_fetch 'file://$T/public_sources.tbz2' '$ZERO' '$T/f2'"
 check_not "…и исходников нет"                       q test -e "$T/f2/kernel"
+eq      "…tar не запускался ни разу"              0 "$(wc -l < "$T/tar.calls")"
+check   "…архив не остался"                       q test "$(find "$T/f2" -maxdepth 1 -name '.public_sources*' | wc -l)" -eq 0
+says    "…причина названа"                        "закреплена $ZERO" cu / canusb_fetch "file://$T/public_sources.tbz2" "$ZERO" "$T/f2b"
 check_not "в архиве нет slcan.c — отказ"            q cu / canusb_fetch "file://$T/short.tbz2" "$PSUM" "$T/f3"
 check_not "не скачалось — отказ"                    q cu / canusb_fetch "file://$T/missing.tbz2" "$PSUM" "$T/f4"
 
@@ -222,7 +233,9 @@ cu_root() {
 out="$(/usr/bin/sha256sum "$@")" || exit
 while read -r from to; do out="${out//$from/$to}"; done < "$FAKE/shamap"
 printf "%s\n" "$out"'
-    ht_fake curl '[[ -e "$FAKE/curl-fails" ]] && exit 22; cat "$FAKE/src.tbz2"'
+    ht_fake curl '[[ -e "$FAKE/curl-fails" ]] && exit 22
+o=""; while (( $# )); do [[ "$1" == -o ]] && { o="$2"; shift; }; shift; done
+if [[ -n "$o" ]]; then cat "$FAKE/src.tbz2" > "$o"; else cat "$FAKE/src.tbz2"; fi'
     ht_fake make "MAGIC='$MAGIC'"'
 for a; do case "$a" in M=*) m="${a#M=}";; esac; done
 for k in gs_usb peak_usb slcan; do echo "$MAGIC" > "$m/$k.ko"; done'

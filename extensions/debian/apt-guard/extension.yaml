@@ -1,0 +1,16 @@
+# apt-guard — library: apt_guard_check / apt_guard_remove for the `remove`
+# hooks of the catalog. apt is asked in simulation first; anything besides the
+# extension's own packages in the answer is a refusal before any change.
+# Consumers source "${CREAM_ROOT:-}/opt/cream/ext/apt-guard/apt-guard.sh"
+# (cream spec §4.5). No hooks: cream lays the tree down and keeps it while a
+# consumer depends on it.
+schema: cream/v1
+name: apt-guard
+kind: library
+version: 1.0.0
+summary: Библиотека — remove снимает только свои пакеты apt, с проверкой симуляцией
+cream: ">=1.0.0"
+platform:
+  family: deb
+  arch: [amd64, arm64]
+targets: {build: exec, live: "yes"}

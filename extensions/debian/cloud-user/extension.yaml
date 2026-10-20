@@ -5,7 +5,7 @@
 schema: cream/v1
 name: cloud-user
 kind: library
-version: 1.0.0
+version: 1.0.1
 summary: Библиотека — имя пользователя cloud-init для хуков других расширений
 cream: ">=1.0.0"
 platform:

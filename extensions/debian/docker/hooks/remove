@@ -9,7 +9,9 @@
 # /etc/docker/daemon.json stay. What is NOT undone, on purpose: the competing
 # packages install took away (docker.io & co.) are not put back; group docker
 # membership and cgroup_enable=memory in the Pi cmdline.txt stay (harmless
-# without docker). A repeat finds nothing and exits 0.
+# without docker). apt is asked first in simulation (library apt-guard): when it
+# would take anything besides our packages the hook refuses and changes nothing.
+# A repeat finds nothing and exits 0.
 set -euo pipefail
 
 log_info(){ >&2 echo "[INFO] docker: $*"; }
@@ -24,7 +26,11 @@ if [[ -f "$STATE/packages" ]]; then
     mapfile -t ours < <(sed '/^$/d' "$STATE/packages")
 fi
 if (( ${#ours[@]} )); then
-    apt-get -q -y remove "${ours[@]}" || { log_error "apt-get remove ${ours[*]} не прошёл"; exit 1; }
+    APT_GUARD="$R/opt/cream/ext/apt-guard/apt-guard.sh"
+    [[ -f "$APT_GUARD" ]] || { log_error "нет библиотеки apt-guard ($APT_GUARD) — cream ставит её по depends"; exit 1; }
+    # shellcheck source=../../apt-guard/apt-guard.sh
+    source "$APT_GUARD"
+    apt_guard_remove remove "${ours[@]}" || exit 1
     log_info "удалены: ${ours[*]} (данные /var/lib/docker и /etc/docker оставлены)"
 else
     log_info "своих пакетов нет — Docker не трогаю"
