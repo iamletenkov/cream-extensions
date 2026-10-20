@@ -24,7 +24,9 @@ fresh() {
     WANTS="$ROOT/etc/systemd/system/multi-user.target.wants"
     STATE="$ROOT/var/lib/cream/ext/network-manager/installed"
     mkdir -p "$WANTS" "$ROOT/lib/firmware"
-    ht_fake dpkg-query 'p="${*: -1}"; [[ -f "$FAKE/pkg-$p" ]] || exit 1
+    ht_fake dpkg-query 'p="${*: -1}"
+if [[ "$p" == -f* ]]; then for f in "$FAKE"/pkg-*; do [[ -e "$f" ]] && echo "installed ${f##*/pkg-}"; done; exit 0; fi
+[[ -f "$FAKE/pkg-$p" ]] || exit 1
 case "$*" in *Version*) printf 1.0-1 ;; *) printf "installed\n" ;; esac'
     ht_fake apt-cache 'if [[ -f "$FAKE/no-candidate" ]]; then c="(none)"; else c=1.0-1; fi
 printf "%s:\n  Installed: (none)\n  Candidate: %s\n" "${*: -1}" "$c"'
@@ -47,7 +49,7 @@ enabled() { ln -sf /lib/systemd/system/NetworkManager.service "$WANTS/NetworkMan
 echo "== манифест =="
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "мажор 2" 2.0.1 "$(mf 'm["version"]')"
+eq "версия 2.1.0" 2.1.0 "$(mf 'm["version"]')"
 eq "build: exec" exec "$(mf 'm["targets"]["build"]')"
 eq "live: confirm" confirm "$(mf 'm["targets"]["live"]')"
 check "live_note про сетевой стек" grep -q 'сет' <<< "$(mf 'm["targets"]["live_note"]')"
@@ -66,6 +68,15 @@ check "сообщение «не трогаю»" grep -q 'не трогаю' <(h
 check_not "состояния нет: ничего не ставили" test -s "$STATE"
 ht_hook remove; eq "remove — 0" 0 "$?"
 check_not "remove не удаляет чужие пакеты" ht_called '^apt-get '
+
+echo "== рекомендации, зависящие от network-manager (Ubuntu) =="
+fresh
+: > "$FAKE/pkg-modemmanager"
+printf 'Remv network-manager-pptp [1.0-1]\nRemv modemmanager:amd64 [1.0-1]\n' > "$FAKE/sim-extra"
+ht_hook install; eq "install — 0" 0 "$?"
+eq "состояние: свои пакеты и пришедшая с ними network-manager-pptp" \
+    "network-manager wpasupplicant network-manager-pptp" "$(tr '\n' ' ' < "$STATE" | sed 's/ $//')"
+check_not "стоявший до установки пакет не записан" grep -qx modemmanager "$STATE"
 
 echo "== ставит недостающее =="
 fresh

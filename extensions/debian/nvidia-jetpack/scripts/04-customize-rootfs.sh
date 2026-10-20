@@ -1,7 +1,8 @@
 #!/bin/bash
 # Шаг 4: подготовка rootfs Jetson ДО генерации system.img.
 #
-#     sudo /opt/cream/ext/nvidia-jetpack/scripts/04-customize-rootfs.sh -u jetson -p 'пароль' [-n orin]
+#     sudo /opt/cream/ext/nvidia-jetpack/scripts/04-customize-rootfs.sh -u jetson -P /root/jetson.pass [-n orin]
+#     sudo /opt/cream/ext/nvidia-jetpack/scripts/04-customize-rootfs.sh -u jetson -P -   # пароль со stdin
 #
 # Правка Linux_for_Tegra/rootfs/ перед сборкой образа официально поддерживается
 # NVIDIA — это штатный способ внести в систему то, что иначе пришлось бы
@@ -30,18 +31,23 @@ step() { echo; echo "=== $* ==="; }
 usage() {
     cat <<'USAGE'
 Использование:
-  04-customize-rootfs.sh -u ПОЛЬЗОВАТЕЛЬ -p ПАРОЛЬ [-n ИМЯ_ХОСТА]
+  04-customize-rootfs.sh -u ПОЛЬЗОВАТЕЛЬ -P ФАЙЛ|- [-n ИМЯ_ХОСТА]
+  04-customize-rootfs.sh -U
 
   -u   имя пользователя, создаваемого в системе платы
-  -p   его пароль
+  -P   откуда взять его пароль: ФАЙЛ (обычный файл, не ссылка, права 0600
+       или строже, владелец root или вызвавший sudo; первая строка) или «-» —
+       stdin (с терминала — без эха). В argv пароль не попадает: его видно
+       в ps и /proc/<pid>/cmdline всем пользователям станции. Прежний -p
+       ПАРОЛЬ отклоняется.
   -n   имя хоста платы (необязательно; по умолчанию — как решит L4T)
   -U   НЕ создавать пользователя вовсе — в системе остаётся только root.
-       Несовместим с -u/-p. Для образов, куда учётку кладёт cloud-init
+       Несовместим с -u/-P. Для образов, куда учётку кладёт cloud-init
        при записи (bs device write), а не вендорский скрипт при сборке:
        базовый образ флота не должен нести ничьи конкретные креды.
 
-Ровно одно из двух: либо -u и -p ВМЕСТЕ (обязательны друг с другом),
-либо -U одна. Умолчаний у -u и -p нет намеренно: пароль, зашитый в скрипт,
+Ровно одно из двух: либо -u и -P ВМЕСТЕ (обязательны друг с другом),
+либо -U одна. Умолчаний у -u и -P нет намеренно: пароль, зашитый в скрипт,
 попал бы в репозиторий и оттуда в каждый собранный образ. Учётные данные
 задаёт оператор в момент сборки конкретной платы; для образа, который
 разойдётся на флот, это -U.
@@ -57,13 +63,16 @@ USAGE
 
 USER_NAME=""
 PASSWORD=""
+PASS_SRC=""
 HOSTNAME_ARG=""
 SKIP_USER=0
 
-while getopts ":u:p:n:Uh" opt; do
+while getopts ":u:p:P:n:Uh" opt; do
     case "$opt" in
         u) USER_NAME="$OPTARG" ;;
-        p) PASSWORD="$OPTARG" ;;
+        p) echo "ОШИБКА: -p ПАРОЛЬ больше не принимается — пароль в argv виден в ps."
+           echo "  Используй -P ФАЙЛ (0600) или -P - (stdin)."; exit 1 ;;
+        P) PASS_SRC="$OPTARG" ;;
         n) HOSTNAME_ARG="$OPTARG" ;;
         U) SKIP_USER=1 ;;
         h) usage; exit 0 ;;
@@ -73,14 +82,14 @@ while getopts ":u:p:n:Uh" opt; do
 done
 
 if [ "$SKIP_USER" -eq 1 ]; then
-    if [ -n "$USER_NAME" ] || [ -n "$PASSWORD" ]; then
-        echo "ОШИБКА: -U несовместим с -u/-p — либо учётка, либо её нет."
+    if [ -n "$USER_NAME" ] || [ -n "$PASS_SRC" ]; then
+        echo "ОШИБКА: -U несовместим с -u/-P — либо учётка, либо её нет."
         echo
         usage
         exit 1
     fi
-elif [ -z "$USER_NAME" ] || [ -z "$PASSWORD" ]; then
-    echo "ОШИБКА: -u и -p обязательны (или используй -U, чтобы не создавать"
+elif [ -z "$USER_NAME" ] || [ -z "$PASS_SRC" ]; then
+    echo "ОШИБКА: -u и -P обязательны (или используй -U, чтобы не создавать"
     echo "  пользователя вовсе)."
     echo
     usage
@@ -88,6 +97,33 @@ elif [ -z "$USER_NAME" ] || [ -z "$PASSWORD" ]; then
 fi
 
 [ "$(id -u)" -eq 0 ] || { echo "Нужен root"; exit 1; }
+
+# The password: from a 0600 file or stdin, never from argv. Read before any
+# change to the tree, so a bad source refuses with the tree untouched.
+if [ "$SKIP_USER" -eq 0 ]; then
+    if [ "$PASS_SRC" = - ]; then
+        if [ -t 0 ]; then
+            IFS= read -r -s -p "пароль для $USER_NAME: " PASSWORD; echo
+        else
+            IFS= read -r PASSWORD || [ -n "$PASSWORD" ]
+        fi
+    else
+        [ -f "$PASS_SRC" ] && [ ! -L "$PASS_SRC" ] \
+            || { echo "ОШИБКА: -P $PASS_SRC — не обычный файл (или ссылка)"; exit 1; }
+        mode="$(stat -c %a "$PASS_SRC")"; fowner="$(stat -c %u "$PASS_SRC")"
+        if [ $(( 8#$mode & 8#077 )) -ne 0 ]; then
+            echo "ОШИБКА: -P $PASS_SRC — права $mode, нужно 0600 или строже (chmod 600)"
+            exit 1
+        fi
+        if [ "$fowner" != 0 ] && [ "$fowner" != "${SUDO_UID:-0}" ]; then
+            echo "ОШИБКА: -P $PASS_SRC — владелец uid $fowner, ждали root или вызвавшего sudo"
+            exit 1
+        fi
+        IFS= read -r PASSWORD < "$PASS_SRC" || [ -n "$PASSWORD" ]
+    fi
+    [ -n "$PASSWORD" ] || { echo "ОШИБКА: пароль пустой"; exit 1; }
+    case "$PASSWORD" in *:*) echo "ОШИБКА: двоеточие в пароле не принимается"; exit 1 ;; esac
+fi
 
 step "0. Проверка дерева BSP"
 [ -d "$LFT" ] || { echo "ОСТАНОВ: нет $LFT — сначала 03-prepare-bsp.sh"; exit 1; }
@@ -135,7 +171,11 @@ elif grep -q "^${USER_NAME}:" "$ROOTFS/etc/passwd" 2>/dev/null; then
     echo "пользователь '$USER_NAME' в rootfs уже есть — повторно не создаю"
     echo "(если нужен другой пароль — начни дерево заново с 03-prepare-bsp.sh)"
 else
-    CREATE_ARGS=(-u "$USER_NAME" -p "$PASSWORD" -a)
+    # The vendor script takes the password only in argv, so it gets a random
+    # throwaway one; the real one is set right after it by chpasswd -e with
+    # the hash on stdin (-e: no PAM, which would load from the arm64 rootfs).
+    THROWAWAY="$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')"
+    CREATE_ARGS=(-u "$USER_NAME" -p "$THROWAWAY" -a)
     [ -n "$HOSTNAME_ARG" ] && CREATE_ARGS+=(-n "$HOSTNAME_ARG")
     # --accept-license есть не во всех версиях BSP; без него скрипт в части
     # выпусков останавливается на подтверждении лицензии и ждёт ввода,
@@ -153,7 +193,12 @@ else
     fi
     grep -q "^${USER_NAME}:" "$ROOTFS/etc/passwd" \
         || { echo "ОСТАНОВ: скрипт отработал, но пользователя в rootfs/etc/passwd нет"; exit 1; }
-    echo "пользователь '$USER_NAME' создан"
+    HASH="$(printf '%s\n' "$PASSWORD" | openssl passwd -6 -stdin)" && [ -n "$HASH" ] \
+        || { echo "ОСТАНОВ: openssl не дал хеш пароля"; exit 1; }
+    printf '%s:%s\n' "$USER_NAME" "$HASH" | chpasswd -e -R "$ROOTFS" \
+        || { echo "ОСТАНОВ: chpasswd не записал пароль '$USER_NAME' в rootfs"; exit 1; }
+    unset PASSWORD HASH THROWAWAY
+    echo "пользователь '$USER_NAME' создан, пароль задан (stdin chpasswd, не argv)"
 fi
 
 # Проверяем результат по факту, а не по имени файла-маркера: имена юнитов

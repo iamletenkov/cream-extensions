@@ -28,7 +28,7 @@ EXTENSION docker                        # образ bisquite
 | `platform.os` | `debian`, `ubuntu` (любая версия: сюиту проверяет гейт кандидата) |
 | `targets` | `build: exec`, `live: confirm` — `live_note` ниже |
 | `provides` | `container-runtime` |
-| `depends` | `cloud-user >=1.0.0 <2` — имя пользователя для группы `docker` |
+| `depends` | `cloud-user >=1.0.0 <2` — имя пользователя для группы `docker`; `apt-guard >=1.0.0 <2` — `remove` снимает только свои пакеты |
 | `requires` | пусто — всё, что нужно, расширение ставит само |
 | `conflicts` | пусто: бывший близнец `docker-ce` слит сюда 2026-09-03, конфликтовать не с кем |
 | `hooks` | `install` (30 мин), `configure` (стадия `system`, после `docker.service`, 5 мин), `remove` (15 мин) |
@@ -88,7 +88,10 @@ EXTENSION docker                        # образ bisquite
 
 - `apt-get remove` (не `purge`) пакетов из `/var/lib/cream/ext/docker/packages`:
   образы, тома (`/var/lib/docker`) и `/etc/docker/daemon.json` остаются;
-  Docker, стоявший до cream, не трогается;
+  Docker, стоявший до cream, не трогается. Сначала apt спрашивается
+  симуляцией (библиотека `apt-guard`): снял бы что-то кроме своих пакетов —
+  отказ (код 1), ничего не меняется; сбой `apt-get remove` — код 1, запись
+  остаётся для повтора;
 - снимает источник и ключ Docker, свой источник и ключ NVIDIA, обновляет
   списки apt; проверку iptables raw, drop-in и `cream-configure@docker`
   снимает сам cream;
@@ -356,8 +359,8 @@ journalctl -u docker -b | grep "iptables raw"
 EXTENSION docker
 ```
 
-На живую машину — `sudo cream install --accept-risk docker` (библиотеку
-`cloud-user` cream поставит сам, по `depends`).
+На живую машину — `sudo cream install --accept-risk docker` (библиотеки
+`cloud-user` и `apt-guard` cream поставит сам, по `depends`).
 
 `hooks/install` при сборке запускается внутри `virt-customize`, то есть под
 барьером архитектуры: arm64-образ собирается только на arm64-хосте.
@@ -377,9 +380,10 @@ EXTENSION docker
   Jetson (свой источник NVIDIA или вендорский, `nvidia-ctk`); `configure` —
   группа через заглушку `cloud-user`, двойной прогон `cmdline.txt` (одна
   правка, код 10, бэкап не перезаписан), перезапуск под NVIDIA один раз;
-  `remove` — только своё, повтор без действий.
+  `remove` — только своё, повтор без действий, сбой apt — код 1 с сохранённой
+  записью, симуляция снимает чужой пакет — отказ без изменений.
 - **L** — `make test-live EXT=docker` на `debian-12` и `ubuntu-24.04`
-  (`tests/live.env`: `LIVE_DEPS=cloud-user`, `--accept-risk`, `LIVE_CAPS=NET_ADMIN`).
+  (`tests/live.env`: `LIVE_DEPS="apt-guard cloud-user"`, `--accept-risk`, `LIVE_CAPS=NET_ADMIN`).
   **Ограничение среды:** контейнер без `--privileged`. `NET_ADMIN` — в
   собственном netns контейнера, как у `firewall`: без него `dockerd` не
   создаёт цепочку `nat DOCKER` и падает в цикле перезапусков. С ним демон

@@ -8,6 +8,7 @@
 | Спеки (что и почему) | `docs/specs/YYYY-MM-DD-slug.md` | раздел «Отвергнутые варианты» обязателен |
 | Планы (как) | `docs/plans/YYYY-MM-DD-slug.md` | тот же slug, `## Progress Tracker` в шапке |
 | Исследования | `docs/research/YYYY-MM-DD-slug.md` | отчёты, сравнения, внешние практики |
+| Runbooks (процедуры) | `docs/runbooks/NN_slug.md` | пошагово, с командами и проверкой результата |
 | Изменения версии | `CHANGELOG.md` | ведёт release-please, руками не правим |
 
 Правила:

@@ -278,8 +278,8 @@ sudo cream set firewall FIREWALL_ENABLE=0   # выключить (таблица
   (`tests/live.env`: `--accept-risk`, `NET_ADMIN` в собственном netns
   контейнера, не `--network host`): установка, повтор, `--reinstall` без
   изменения файлов, перезапуск контейнера — `cream-configure@firewall`
-  успешен, таблица `inet cream` поднята на загрузке, циклов порядка нет;
-  `remove` снимает таблицу.
+  успешен (поднять таблицу на загрузке — его работа), циклов порядка нет;
+  `remove` — расширения нет в `cream list`, `systemctl --failed` пуст.
 
 Проверено в 1.x (раскладка 2, те же правила и бэкенды) в systemd-контейнерах
 `ubuntu:24.04` (с Docker CE из расширения `docker`), `debian:12` и

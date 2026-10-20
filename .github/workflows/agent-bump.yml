@@ -10,9 +10,7 @@ name: Agent Bump
 # берётся последний релиз агента.
 #
 # Ветка, в которую идёт PR: вход `base`, иначе переменная репозитория
-# AGENT_BUMP_BASE, иначе main. Пока обёртка stvor-agent живёт только в
-# пилотной ветке cream (спека cream §16 шаг 2), AGENT_BUMP_BASE =
-# feature/cream-v1-pilot; после слияния пилота в main переменную удаляют.
+# AGENT_BUMP_BASE (сейчас main), иначе main.
 #
 # Правки делает tools/agent-bump.sh (его же гоняют руками): версия и суммы
 # stvor-agent_<v>_amd64.deb и _arm64.deb в pin.env — из SHA256SUMS релиза,

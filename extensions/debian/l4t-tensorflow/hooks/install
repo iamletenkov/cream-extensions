@@ -15,8 +15,9 @@
 # CUDA). The extension keeps old models and TF/Keras code running; it is not a
 # way forward — worth knowing before pulling 1.9 GB into an image.
 #
-# pip (ruling of the plan for Task 23): always with constraints.txt of the
-# extension tree; the NVIDIA wheel is checked by sha256. pip runs as root and
+# pip (ruling of the plan for Task 23): only in hash-checking mode —
+# requirements.txt of the extension tree (every pin with its sha256) and the
+# NVIDIA wheel as a file with its sha256 (also checked before pip). pip runs as root and
 # installs into /usr/local, with HOME in the temporary directory and no pip
 # configuration: nothing lands in the home directory of root. What pip put on
 # is recorded for `remove` (pip-owned.py). check-system-python.py guards the
@@ -99,7 +100,7 @@ WORK="$(mktemp -d "$R/var/tmp/l4t-tensorflow.XXXXXX")"
 install -d -m 0700 "$WORK/home"
 PIP=(env HOME="$WORK/home" PIP_CONFIG_FILE=/dev/null PIP_NO_CACHE_DIR=1 PIP_USER=0
     PIP_DISABLE_PIP_VERSION_CHECK=1 PYTHONNOUSERSITE=1
-    python3 -m pip install --no-cache-dir --constraint "$EXT_DIR/constraints.txt")
+    python3 -m pip install --no-cache-dir --require-hashes -r "$EXT_DIR/requirements.txt")
 
 # On any exit: record what pip put into /usr/local (also after a failure
 # half-way — remove must find it), then drop the temporary directory.
@@ -139,11 +140,11 @@ echo "$TF_SHA256  $WORK/$TF_WHEEL" | sha256sum -c --quiet - || {
     exit 1
 }
 
-# numpy/scipy first and explicitly: otherwise pip would keep apt's numpy 1.21.5
-# if it satisfied the requirement, but TF needs >=1.23.5 — it is installed
-# anyway, so let it be visible here.
-log_info "pip: numpy, scipy, keras, tensorflow"
-apt_retry "${PIP[@]}" numpy scipy keras "$WORK/$TF_WHEEL" || {
+# numpy/scipy are pinned in requirements.txt: TF needs numpy >=1.23.5 and
+# apt has 1.21.5, so pip installs it anyway — the file makes it visible.
+printf 'tensorflow @ file://%s --hash=sha256:%s\n' "$WORK/$TF_WHEEL" "$TF_SHA256" > "$WORK/nvidia.txt"
+log_info "pip: requirements.txt и tensorflow (по хешам)"
+apt_retry "${PIP[@]}" -r "$WORK/nvidia.txt" || {
     log_error "pip не поставил TensorFlow"
     exit 1
 }

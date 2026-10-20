@@ -1,9 +1,9 @@
 # l4t-tensorflow — TensorFlow with CUDA for NVIDIA Jetson (JetPack 6, L4T 36.4):
 # the NVIDIA wheel by sha256, cuDNN from apt, keras and the rest of PyPI pinned
-# by constraints.txt. The last TensorFlow NVIDIA publishes for Jetson (jp/v61).
+# by requirements.txt with hashes. The last TensorFlow NVIDIA publishes for Jetson (jp/v61).
 #
 # install — not a Jetson (no /etc/nv_tegra_release) — code 20 before apt
-#           (ruling R11); pip only with constraints.txt, as root into
+#           (ruling R11); pip only by hashes (requirements.txt), as root into
 #           /usr/local, never with a home directory of root; what it put on is
 #           recorded in /var/lib/cream/ext/l4t-tensorflow/{packages,pip}.
 # remove  — its own pip distributions (never one another still needs, e.g.
@@ -11,10 +11,10 @@
 #           apt would take anything else; cuDNN and pip stay while torch is
 #           installed).
 # No library: no R32 branch (no wheel for Python 3.8 / CUDA 10.2).
-# Tree: constraints.txt, check-system-python.py, pip-owned.py.
+# Tree: requirements.txt, check-system-python.py, pip-owned.py.
 schema: cream/v1
 name: l4t-tensorflow
-version: 2.0.1
+version: 2.1.0
 summary: TensorFlow с CUDA для NVIDIA Jetson — колесо NVIDIA 2.16.1, cuDNN 9 и keras 3.3.3
 cream: ">=1.0.0"
 platform:

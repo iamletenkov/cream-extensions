@@ -43,8 +43,12 @@ R32). Агент — статический Go-бинарь, пакет зави
 `teleport-apps.service` больше не запускают. До `join` юнит ничего не делает
 (`ConditionPathExists=/etc/teleport.yaml`).
 
-**Токен меток — не ручка cream.** Хуки токен не принимают и службу не
-включают; включение — `stvor-agent enable` с токеном на stdin. Дочерние
+**Токен меток — не ручка cream.** Хуки токен не принимают и службу сами не
+включают. Юнит `stvor-agent.service` включает **пакет** при установке
+(`postinst`), но старт ждёт токена: в юните `ConditionPathExists=/etc/stvor-agent/token`,
+и до токена служба при загрузке тихо пропускается (`inactive`, не `failed`).
+Токен пишет `stvor-agent enable` (токен на stdin) — он же запускает службу; `stvor-agent
+disable` (и хук `remove`) убирает токен и `state.json`. Дочерние
 процессы хуков (`curl`, `dpkg`, `stvor-agent`) получают своё минимальное
 окружение (`PATH`, `LANG`, `DEBIAN_FRONTEND`).
 
@@ -90,9 +94,9 @@ printf '%s' "$LABEL_TOKEN" | stvor-agent enable 'URL=https://<домен>/robot-
 # офлайн: STVOR_AGENT_DEB=/путь/stvor-agent_<v>_<arch>.deb вместо зеркала
 ```
 
-В образе bisquite (`targets.build: exec`) пакет ставится на сборке, служба
-не стартует; метка `stvor_agent` попадает в первый render `teleport`.
-Включение — на первой загрузке тем же `stvor-agent enable`.
+В образе bisquite (`targets.build: exec`) пакет ставится на сборке: юнит
+включён, но без токена служба не стартует; метка `stvor_agent` попадает в первый
+render `teleport`. Токен — на первой загрузке тем же `stvor-agent enable`.
 
 ## Проверки
 

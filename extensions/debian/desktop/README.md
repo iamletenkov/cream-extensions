@@ -16,7 +16,7 @@ xfconf, lxsession) и группы пользователя сеанса. Оди
 | `depends` | `cloud-user >=1.0.0 <2` — имя пользователя cloud-init |
 | хуки | `install` (dconf-cli, x11-xserver-utils), `configure`, `remove` |
 | `configure` | стадия `system`, `after: [cloud-init.service, guestfs-firstboot.service]`, `before: [display-manager.service, gdm.service, gdm3.service, lightdm.service]` |
-| действия | `apply` (`lock: exclusive`), `status` (`lock: none`), `defaults` |
+| действия | `apply` (`lock: exclusive`), `status` (`lock: none`), `defaults` (`lock: exclusive`, и при сборке) |
 
 ## Ручки (`/etc/cream/desktop/config`)
 

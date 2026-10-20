@@ -46,7 +46,7 @@ echo "== манифест =="
 # eval: test-only literal expressions over our own manifest, as in nvidia-jetpack.
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "мажор 2" 2.0.0 "$(mf 'm["version"]')"
+eq "версия 2.1.0" 2.1.0 "$(mf 'm["version"]')"
 eq "cream >=1.0.0" ">=1.0.0" "$(mf 'm["cream"]')"
 eq "только arm64" "['arm64']" "$(mf 'm["platform"]["arch"]')"
 eq "build: exec" exec "$(mf 'm["targets"]["build"]')"
@@ -98,6 +98,17 @@ echo "$R36" > "$ROOT/etc/nv_tegra_release"
 rm -f -- "$ROOT/boot/"*.dtb
 ht_hook install; eq "SoC не определить — 1" 1 "$?"
 fresh
+# 32.7.3: NVIDIA publishes no t210 sources — no line in the table.
+echo '# R32 (release), REVISION: 7.3, GCID: 31982016, BOARD: t210ref, EABI: aarch64, DATE: Tue Nov 22 17:30:08 UTC 2022' \
+    > "$ROOT/etc/nv_tegra_release"
+ht_hook install; eq "версии нет в таблице сумм — 1" 1 "$?"
+check "называет версию" grep -q 'L4T 32.7.3' <(ht_out)
+check "перечисляет известные версии" grep -q '32.7.4' <(ht_out)
+fresh
+rm -f -- "$HT_EXT/public-sources.sha256"
+ht_hook install; eq "нет таблицы сумм — 1" 1 "$?"
+check_not "отказы по суммам не дошли до apt-get" ht_called '^apt-get '
+fresh
 cp "$CONF" "$ROOT/victim"; rm -f -- "$CONF"; ln -s "$ROOT/victim" "$CONF"
 ht_hook install; eq "extlinux.conf — ссылка: отказ 1" 1 "$?"
 check "сообщение про ссылку" grep -q 'ссылка' <(ht_out)
@@ -105,6 +116,32 @@ fresh
 rm -f -- "$CONF"
 ht_hook install; eq "нет extlinux.conf — 1" 1 "$?"
 check_not "отказы не дошли до apt-get" ht_called '^apt-get '
+
+echo "== таблица сумм исходников =="
+SUMS="$EXT/public-sources.sha256"
+check "строки: версия, sha256, размер" python3 - "$SUMS" <<'PY2'
+import re, sys
+seen = set()
+for line in open(sys.argv[1]):
+    if line.startswith("#") or not line.strip():
+        continue
+    v, h, n = line.split()
+    assert re.fullmatch(r"\d+\.\d+\.\d+", v) and v not in seen, v
+    assert re.fullmatch(r"[0-9a-f]{64}", h) and int(n) > 100_000_000, v
+    seen.add(v)
+assert {"32.6.1", "32.7.4"} <= seen  # the kvm base and the BSP of the build chain
+PY2
+# Static order (the build itself is P): checksum before unpacking.
+check "sha256sum до tar -xjf" python3 - "$EXT/hooks/install" <<'PY2'
+import sys
+s = open(sys.argv[1]).read()
+sys.exit(0 if 0 < s.index('sha256sum "$WORK/public_sources.tbz2"') < s.index("tar -xjf") else 1)
+PY2
+check "проверка версии до apt-get" python3 - "$EXT/hooks/install" <<'PY2'
+import sys
+s = open(sys.argv[1]).read()
+sys.exit(0 if 0 < s.index("нет суммы public_sources.tbz2") < s.index("apt-get update") else 1)
+PY2
 
 # --- extlinux-root.sh: what step 7 does to extlinux.conf ---------------------
 # er FUNCTION ARGS…: a function of extlinux-root.sh in a clean shell.

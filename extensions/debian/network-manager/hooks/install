@@ -99,9 +99,23 @@ else
                 exit 1
             fi
         done
+        before="$(dpkg-query -W -f='${db:Status-Status} ${Package}\n' 2>/dev/null \
+            | awk '$1 == "installed" {print $2}')"
         apt_retry apt-get "${APT_OPTS[@]}" install "${missing[@]}"
-        remember "${missing[@]}"
-        log_info "установлено: ${missing[*]}"
+        # Recommends that depend on network-manager came with this install
+        # (Ubuntu: network-manager-pptp, …), and apt would take them along on
+        # remove — so remove's guard would refuse. They are ours: recorded
+        # too, but only those that were not there before.
+        ours=("${missing[@]}")
+        while read -r word pkg _; do
+            [[ "$word" == Remv ]] || continue
+            pkg="${pkg%%:*}"
+            [[ " ${ours[*]} " == *" $pkg "* ]] && continue
+            grep -qxF -- "$pkg" <<< "$before" && continue
+            ours+=("$pkg")
+        done < <(apt-get -s remove "${missing[@]}" 2>/dev/null || true)
+        remember "${ours[@]}"
+        log_info "установлено: ${ours[*]}"
     fi
 
     # Юнит включает сама упаковка (postinst через deb-systemd-helper), даже

@@ -15,12 +15,15 @@
 # files/qemu-aarch64.conf is the binfmt template the hooks copy and compare —
 # not a `files` entry: it is written only when the emulator is there.
 #
+# 3.1.0: step 04 takes the password from a 0600 file or stdin (-P), never argv;
+#        step 09 builds into a root-only stage and the operator moves the
+#        results into OUT_DIR (no chown -R).
 # 3.0.0: cream/v1; scripts in /opt/cream/ext/nvidia-jetpack/scripts/ instead of
 #        /opt/nvidia-jetpack/; live install with --accept-risk.
 # 2.0.0: камеры ушли из базового образа в расширение sensing-gmsl2-camera.
 schema: cream/v1
 name: nvidia-jetpack
-version: 3.0.1
+version: 3.1.0
 summary: Станция прошивки NVIDIA Jetson на amd64 — инструментарий L4T, NFS, binfmt aarch64, скрипты
 cream: ">=1.0.0"
 platform:

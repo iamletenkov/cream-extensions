@@ -390,6 +390,76 @@ refuses "…oem-config снят"                             test -L "$R4/etc/sy
 refuses "…/opt/sensing не появился"                    test -e "$R4/opt/sensing"
 refuses "…про камеры ни слова"                         bash -c "$(declare -f r04); rb='$rb' ct='$ct' S='$S'; r04 2>&1 | grep -qi 'камер'"
 
+echo "== шаг 04: пароль не в argv =="
+# A fresh fake tree per run; the vendor script records its argv and adds the
+# user, chpasswd records its argv and stdin.
+mk04() {
+    local c; c="$(mktemp -d)"; local r="$c/Linux_for_Tegra/rootfs"
+    mkdir -p "$r/bin" "$r/etc/apt/sources.list.d" "$r/var/lib/dpkg/info" "$r/etc/systemd/system" "$c/Linux_for_Tegra/tools"
+    printf '#!/bin/sh\n' > "$r/bin/bash"; chmod +x "$r/bin/bash"
+    date -Iseconds > "$r/.applied-binaries"
+    printf 'root:x:0:0::/root:/bin/bash\n' > "$r/etc/passwd"
+    printf '#!/bin/bash\necho "$*" > "%s/vendor.argv"\necho "$2:x:1000:1000::/home/$2:/bin/bash" >> rootfs/etc/passwd\n' "$c" \
+        > "$c/Linux_for_Tegra/tools/l4t_create_default_user.sh"
+    chmod +x "$c/Linux_for_Tegra/tools/l4t_create_default_user.sh"
+    echo "$c"
+}
+pb="$(mktemp -d)"; cp "$rb/id" "$pb/id"
+printf '#!/bin/bash\necho "$*" > "$CHP_LOG.argv"; cat > "$CHP_LOG.stdin"\n' > "$pb/chpasswd"; chmod +x "$pb/chpasswd"
+PW='s3cret-Пароль word'
+r04p() { local c="$1"; shift; env PATH="$pb:$PATH" WORK="$c" CHP_LOG="$c/chp" SUDO_UID="$(id -u)" bash "$S/04-customize-rootfs.sh" "$@"; }
+c4="$(mk04)"; printf '%s\n' "$PW" > "$c4/pass"; chmod 600 "$c4/pass"
+check   "04 -P файл 0600 проходит"                      r04p "$c4" -u jetson -P "$c4/pass"
+refuses "…пароль не в argv скрипта NVIDIA"              grep -qF "$PW" "$c4/vendor.argv"
+check   "…chpasswd -e -R в rootfs"                      grep -qx -- "-e -R $c4/Linux_for_Tegra/rootfs" "$c4/chp.argv"
+check   "…chpasswd получил хеш SHA-512 на stdin"        grep -qE '^jetson:\$6\$[^:]+$' "$c4/chp.stdin"
+check   "…хеш — от того самого пароля" bash -c '
+    h="$(cut -d: -f2- "$1")"; salt="$(cut -d\$ -f3 <<< "$h")"
+    [ "$(printf "%s\n" "$2" | openssl passwd -6 -salt "$salt" -stdin)" = "$h" ]' _ "$c4/chp.stdin" "$PW"
+c4="$(mk04)"
+check   "04 -P - (stdin) проходит"   bash -c 'printf "%s\n" "$1" | env PATH="$2:$PATH" WORK="$3" CHP_LOG="$3/chp" bash "$4/04-customize-rootfs.sh" -u jetson -P -' _ "$PW" "$pb" "$c4" "$S"
+check   "…хеш на stdin chpasswd"                        grep -qE '^jetson:\$6\$' "$c4/chp.stdin"
+c4="$(mk04)"
+refuses "04 -p ПАРОЛЬ — отказ"                          r04p "$c4" -u jetson -p "$PW"
+refuses "…скрипт NVIDIA не звался"                      test -e "$c4/vendor.argv"
+printf '%s\n' "$PW" > "$c4/pass"; chmod 644 "$c4/pass"
+check   "04 -P чужой файл (не root, не SUDO_UID) — отказ" bash -c 'install -m 600 /dev/null "$2/own"; echo pw > "$2/own"; out="$(env PATH="$1:$PATH" WORK="$2" SUDO_UID=4242 bash "$3/04-customize-rootfs.sh" -u jetson -P "$2/own" 2>&1)" && exit 1; grep -q "владелец uid" <<< "$out"' _ "$pb" "$c4" "$S"
+refuses "04 -P файл 0644 — отказ"                       r04p "$c4" -u jetson -P "$c4/pass"
+chmod 600 "$c4/pass"; ln -s "$c4/pass" "$c4/pass.link"
+refuses "04 -P ссылка — отказ"                          r04p "$c4" -u jetson -P "$c4/pass.link"
+: > "$c4/empty"; chmod 600 "$c4/empty"
+refuses "04 -P пустой файл — отказ"                     r04p "$c4" -u jetson -P "$c4/empty"
+refuses "04 -U с -P — отказ"                            r04p "$c4" -U -P "$c4/pass"
+refuses "…дерево не тронуто (скрипт NVIDIA не звался)"  test -e "$c4/vendor.argv"
+
+echo "== шаг 09: результаты переносит оператор =="
+# As ourselves (no root in tests): the operator is the current user.
+po() { ( . "$S/publish-out.sh"; "$@" ); }
+me="$(id -u):$(id -g)"
+pd="$(mktemp -d)"; st="$pd/w/.out-stage"; mkdir -p "$pd/w"
+check   "stage_init создаёт каталог сборки"             po stage_init "$st"
+echo qcow > "$st/system.qcow2"; echo man > "$st/manifest.json"; echo part > "$st/system.qcow2.tmp"
+echo victim > "$pd/victim"; ln -s "$pd/victim" "$st/evil-link"
+mkdir -p "$pd/w/out"; ln -s "$pd/victim" "$pd/w/out/system.qcow2"
+check   "publish_out переносит результаты"              po publish_out "$st" "$pd/w/out" "$me"
+eq_f()  { [ "$(cat "$1")" = "$2" ]; }
+check   "…system.qcow2 — обычный файл, ссылка заменена" bash -c '[ -f "$1" ] && [ ! -L "$1" ] && [ "$(cat "$1")" = qcow ]' _ "$pd/w/out/system.qcow2"
+check   "…цель подложенной ссылки не тронута"           eq_f "$pd/victim" victim
+check   "…manifest.json перенесён"                       eq_f "$pd/w/out/manifest.json" man
+refuses "…*.tmp не переносится"                          test -e "$pd/w/out/system.qcow2.tmp"
+refuses "…ссылка из каталога сборки не переносится"     test -e "$pd/w/out/evil-link"
+refuses "…в каталоге сборки результатов не осталось"     test -e "$st/system.qcow2"
+check   "stage_init заново — прежний каталог убран"     po stage_init "$st"
+refuses "…старое содержимое не пережило"                 test -e "$st/system.qcow2.tmp"
+echo q2 > "$st/system.qcow2"
+ln -s "$pd/elsewhere" "$pd/w/out2"
+refuses "OUT_DIR — ссылка: отказ"                       po publish_out "$st" "$pd/w/out2" "$me"
+refuses "владелец не числами: отказ"                    po publish_out "$st" "$pd/w/out" "root:root"
+check   "без владельца — переносит root (сам)"          po publish_out "$st" "$pd/w/out3"
+refuses "пустой каталог сборки: отказ"                  po publish_out "$st" "$pd/w/out3"
+refuses "09 без chown -R"                               bash -c 'cat "$@" | grep -vE "^[[:space:]]*#" | grep -qE "chown +-R"' _ "$S/09-build-jetson-base.sh" "$S/publish-out.sh"
+check   "09 пишет шаги в каталог сборки"                grep -q 'export OUT_DIR="$STAGE"' "$S/09-build-jetson-base.sh"
+
 echo "== шаг 11: пакет Nano (nvmassflashgen) =="
 check   "nano: offline nvmassflashgen, цель QSPI"   bash -c "$(declare -f c11); S='$S'; c11 nano 32.7.4 | grep -q 'FUSELEVEL=fuselevel_production ./nvmassflashgen.sh jetson-nano-qspi mmcblk0p1'"
 check   "nano: измеренные значения"                 bash -c "$(declare -f c11); S='$S'; c11 nano 32.7.4 | grep -q 'BOARDID=3448 BOARDSKU=0000 FAB=400 BOARDREV=F.0'"

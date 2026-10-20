@@ -51,7 +51,7 @@ live_systemd() { mkdir -p "$ROOT/run/systemd/system"; }
 echo "== манифест =="
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "мажор 3" 3.0.1 "$(mf 'm["version"]')"
+eq "версия 3.1.0" 3.1.0 "$(mf 'm["version"]')"
 eq "cream >=1.0.0" ">=1.0.0" "$(mf 'm["cream"]')"
 eq "только amd64" "['amd64']" "$(mf 'm["platform"]["arch"]')"
 eq "build: exec" exec "$(mf 'm["targets"]["build"]')"

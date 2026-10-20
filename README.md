@@ -4,6 +4,38 @@
 ставит [cream](https://github.com/iamletenkov/cream) на живую машину
 (`cream install`) и в образ, собираемый
 [bisquite](https://github.com/iamletenkov/bisquite) (инструкция `EXTENSION` в VMFILE).
+Расширение — каталог `extensions/debian/<имя>/` с манифестом `extension.yaml`,
+хуками и файлами: Docker, узел Teleport и агент портала Stvor, рабочие столы и
+удалённый доступ, драйверы NVIDIA и стек Jetson (L4T), сеть, firewall и прочее для
+машин на Debian/Ubuntu.
+
+## Быстрый старт
+
+```sh
+# 1. cream — .deb из релиза iamletenkov/cream (версия и суммы — tools/cream-pin.env, SHA256SUMS релиза)
+V=1.1.3; A="$(dpkg --print-architecture)"
+curl -fLO "https://github.com/iamletenkov/cream/releases/download/v$V/cream_${V}_${A}.deb"
+curl -fsSL "https://github.com/iamletenkov/cream/releases/download/v$V/SHA256SUMS" | grep "cream_${V}_${A}.deb" | sha256sum -c -
+sudo apt-get install -y "./cream_${V}_${A}.deb"
+
+# 2. каталог — снимок релиза по sha256 (SHA256SUMS релиза vX.Y.Z этого репозитория)
+sudo cream source add cream-extensions \
+  --archive https://github.com/iamletenkov/cream-extensions/releases/download/vX.Y.Z/cream-extensions-X.Y.Z.tar.gz \
+  --sha256 <сумма> --sync
+
+# 3. расширение: установка с параметрами, настройки, действия, снятие
+sudo cream install docker
+sudo cream install x11vnc X11VNC_PORT=5901 X11VNC_LISTEN=all
+cream show x11vnc                         # настройки домена
+sudo cream set x11vnc X11VNC_PORT=5902    # проверка по схеме, хук apply
+sudo cream remove x11vnc
+```
+
+Ключи, действия и ограничения расширения — в его `README.md`
+(`extensions/debian/<имя>/README.md`); расширения с `targets.live: confirm` ставятся
+с `--accept-risk`. Документация репозитория — [docs/README.md](docs/README.md):
+конвенция [docs/extensions.md](docs/extensions.md), runbooks выпуска, нового
+расширения, пина cream и живых прогонов — [docs/runbooks/](docs/runbooks/).
 
 
 ## Структура
@@ -14,20 +46,23 @@ extensions/
     ├── docker/
     ├── teleport/            # узел Teleport (join, render, apps.d, метки)
     ├── stvor-agent/         # обёртка пакета stvor-agent (пин по архитектурам)
-    ├── cloud-user/  l4t/    # библиотеки (kind: library) — общий код других расширений
+    ├── cloud-user/  l4t/  apt-guard/   # библиотеки (kind: library) — общий код других расширений
     ├── code-server/
     ├── chromium-kiosk/  kiosk/
     ├── desktop/  gnome/  xfce4/  lxde/  l4t-vendor-desktop/
     ├── x11vnc/  vino-vnc/  selkies/
     ├── network-manager/  nocloud-cidata/  cloud-growroot/
     ├── nvidia/  nvidia-container-toolkit/  jetson-stats/
-    └── can/  firewall/  locale/  rustdesk/   # рабочая машина робота
+    ├── can/  firewall/  locale/  rustdesk/   # рабочая машина робота
+    └── l4t-*/  nvidia-jetpack/  cuda-toolkit/  tensorrt/  …   # Jetson (L4T): ядро, CUDA, ML, сборка BSP
 cream-catalog.yaml           # корень каталога cream: roots, version (ведёт release-please)
 tools/                       # check.sh, cream-validate.sh, lint-hooks.sh, check-names.sh, live-test.sh,
-                             #   hooktest.sh, new-extension.sh, catalog-snapshot.sh, cream-pin.env (пин cream)
+                             #   live-matrix.sh, hooktest.sh, new-extension.sh, catalog-snapshot.sh,
+                             #   cream-deb.sh, agent-bump.sh, cream-pin.env (пин cream)
 .github/workflows/ci-release.yml  # CI: tools/check.sh на PR и push в main, выпуск — release-please
 .github/workflows/live.yml        # живые прогоны L-расширений: изменённые на PR, все — ночью
 docs/extensions.md           # конвенция целиком: формат cream/v1, линт хуков, пин cream, проверки
+docs/runbooks/               # выпуск каталога, новое расширение, пин cream, живые прогоны
 ```
 
 Ubuntu-образы используют расширения из `debian/` (Ubuntu — Debian-совместима).
@@ -157,6 +192,7 @@ EXTENSION x11vnc X11VNC_PORT=5901 X11VNC_LISTEN=all
 
 ### Как выпустить версию
 
+Пошагово с проверками — [runbook 01](docs/runbooks/01_release-catalog.md).
 Workflow `CI and Release`, конфиг — `.github/release_please/`:
 
 1. Сливаешь в `main` коммиты по [Conventional Commits](https://www.conventionalcommits.org/ru/):
@@ -176,15 +212,14 @@ Workflow `CI and Release`, конфиг — `.github/release_please/`:
    `BISQUITE_DISPATCH_TOKEN` этого репозитория: fine-grained PAT только на <!-- check-names: allow: имя секрета GitHub -->
    bisquite с правом Actions: Read and write, действует до 16.10.2027 —
    до этой даты перевыпустить, иначе job релиза покраснеет.
-   Пока bisquite не ставит расширения через cream, job выключен: его включает
-   переменная репозитория `BISQUITE_BUMP_ENABLED=true`. <!-- check-names: allow: имя переменной GitHub -->
+   Job идёт, пока переменная репозитория `BISQUITE_BUMP_ENABLED=true` <!-- check-names: allow: имя переменной GitHub -->
+   (включена 2026-10-20); `false` его выключает.
 
 Пин агента в обёртке `stvor-agent` руками не поднимают: релиз
 `iamletenkov/stvor-agent` запускает здесь `agent-bump.yml` (правки —
 `tools/agent-bump.sh`), и тот открывает PR `feat(stvor-agent): пин агента X.Y.Z`
 с суммами обоих `.deb` из `SHA256SUMS` релиза. База PR — вход `base`, иначе
-переменная `AGENT_BUMP_BASE` (пока обёртка только в пилотной ветке —
-`feature/cream-v1-pilot`), иначе `main`.
+переменная `AGENT_BUMP_BASE` (сейчас `main`), иначе `main`.
 
 ### Что тянет выпуск
 

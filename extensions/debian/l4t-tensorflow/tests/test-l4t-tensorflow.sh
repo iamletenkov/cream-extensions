@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016  # literal $… in fakes is the test data
 # Tests of the l4t-tensorflow extension (cream/v1): manifest, hook install
-# (cuDNN from apt, the NVIDIA TensorFlow wheel, pip only with constraints) and
+# (cuDNN from apt, the NVIDIA TensorFlow wheel, pip only by hashes of requirements.txt) and
 # hook remove on a scratch root (CREAM_ROOT) the way cream runs them, with fake
 # apt-get, dpkg-query, curl, sha256sum and python3 (pip and the import checks
 # are fakes; pip-owned.py runs on the real python3). root, network and a
@@ -80,6 +80,13 @@ case "$sub" in
         while (( $# )); do
             case "$1" in
                 --constraint|-c) shift 2; continue ;;
+                -r) cat "$2" >> "$FAKE/pip-reqs"
+                    for n in $(grep -v -e "^[[:space:]]*#" -e "^[[:space:]]*--" -e "^[[:space:]]*$" "$2" | sed -e "s/[ =@].*//"); do
+                        mkdir -p "$SITE/$n-1.0.dist-info"
+                        { echo "Name: $n"; echo "Version: 1.0"
+                          [[ -f "$FAKE/req/$n" ]] && sed "s/^/Requires-Dist: /" "$FAKE/req/$n"; } > "$SITE/$n-1.0.dist-info/METADATA"
+                    done
+                    shift 2; continue ;;
                 -*) shift; continue ;;
                 *.whl) n="$(basename "$1")"; n="${n%%-*}" ;;
                 *) n="$1" ;;
@@ -110,7 +117,17 @@ eq "requires cuda" cuda "$(mf '" ".join(m["requires"])')"
 eq "только библиотека apt-guard" "apt-guard >=1.0.0 <2" "$(mf '" ".join(d["name"] + " " + d["version"] for d in m["depends"])')"
 eq "хуки" "install remove" "$(mf '" ".join(sorted(m["hooks"]))')"
 check "install: явный timeout" test -n "$(mf 'm["hooks"]["install"]["timeout"]')"
-check "constraints.txt в дереве" test -f "$EXT/constraints.txt"
+check "requirements.txt в дереве" test -f "$EXT/requirements.txt"
+check_not "constraints.txt убран" test -e "$EXT/constraints.txt"
+check "requirements.txt: каждый пакет — == и хотя бы один sha256" python3 - "$EXT/requirements.txt" <<'PY2'
+import re, sys
+text = re.sub(r"\\\n", " ", open(sys.argv[1]).read())
+reqs = [" ".join(l.split("#")[0].split()) for l in text.splitlines()]
+reqs = [r for r in reqs if r]
+assert reqs
+for r in reqs:
+    assert re.fullmatch(r"[A-Za-z0-9_.-]+==[A-Za-z0-9_.+!-]+( --hash=sha256:[0-9a-f]{64})+", r), r
+PY2
 check "check-system-python.py в дереве" test -f "$EXT/check-system-python.py"
 check "pip-owned.py в дереве" test -f "$EXT/pip-owned.py"
 check "pip-owned.py как у l4t-pytorch" cmp -s "$EXT/pip-owned.py" "$EXT/../l4t-pytorch/pip-owned.py"
@@ -136,8 +153,12 @@ tf_root jetson
 ht_hook install; eq "установка — 0" 0 "$?"
 check "cuDNN и pip из apt" ht_called '^apt-get install .* libcudnn9-cuda-12 python3-pip$'
 check "pip install был" test -n "$(pip_calls)"
-check "каждый pip install — с constraints" test "$(pip_calls | wc -l)" = "$(pip_calls | grep -c -- '--constraint .*/constraints.txt')"
-check "колесо TF NVIDIA и keras" ht_called '^python3 -m pip install .* numpy scipy keras .*tensorflow-2\.16\.1.*\.whl$'
+check "каждый pip install — по хешам requirements.txt" \
+    test "$(pip_calls | wc -l)" = "$(pip_calls | grep -c -- '--require-hashes -r .*/requirements.txt')"
+check_not "pip без --constraint" grep -q -- '--constraint' "$FAKE/calls"
+check "tensorflow — файлом с sha256 колеса NVIDIA" \
+    grep -qE "^tensorflow @ file://$ROOT/var/tmp/l4t-tensorflow\.[^ ]+/tensorflow-2\.16\.1[^ ]*\.whl --hash=sha256:ee3cd33c24f75ec9d429580499ae9c7bfdcb4a833b4e92e8b3b1092659fb287c$" "$FAKE/pip-reqs"
+check "keras из requirements.txt" test -d "$SITE/keras-1.0.dist-info"
 check_not "pip без --user" grep -q -- '--user' "$FAKE/calls"
 check "pip: HOME во временном каталоге" grep -q "HOME=$ROOT/var/tmp/" "$FAKE/pip-env"
 check "pip: конфиг pip не читается" grep -q 'PIP_CONFIG_FILE=/dev/null' "$FAKE/pip-env"

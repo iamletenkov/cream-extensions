@@ -149,7 +149,7 @@ if [ "$TARGET" = emmc ]; then
   пользователя нет, а пароль root не задан.
 
   Что сделать:
-    sudo WORK=$WORK ./04-customize-rootfs.sh -u rescue -p <пароль>
+    sudo WORK=$WORK ./04-customize-rootfs.sh -u rescue -P -   # спросит пароль без эха
 
   и запустить этот скрипт заново. Учётка нужна именно аварийная — eMMC
   тут запасной путь на случай отказа основного диска.

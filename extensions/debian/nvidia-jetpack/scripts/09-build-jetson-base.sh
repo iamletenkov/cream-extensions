@@ -28,8 +28,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${WORK:?профиль не загружен: . profile.sh && load_profile <плата> <релиз>}"
 : "${OUT_DIR:?профиль не загружен}"
 LFT="$WORK/Linux_for_Tegra"
-# Результат пары — ровно $OUT_DIR: манифест хеширует $OUT_DIR/system.qcow2,
-# chown отдаёт $OUT_DIR. Унаследованный OUT_QCOW2 (из старой оболочки
+# Результат пары — ровно $OUT_DIR: манифест хеширует system.qcow2 каталога
+# сборки, который в конце переносится в $OUT_DIR целиком. Унаследованный OUT_QCOW2 (из старой оболочки
 # станции) отправил бы qcow2 в другое место, а манифест захешировал бы
 # qcow2 ПРОШЛОЙ сборки, оставшийся в $OUT_DIR, — поэтому отказ, а не догадка.
 [ "${OUT_QCOW2:-}" = "$OUT_DIR/system.qcow2" ] || {
@@ -39,6 +39,13 @@ LFT="$WORK/Linux_for_Tegra"
 }
 # shellcheck source=/dev/null
 . "$SCRIPT_DIR/vendor-image.sh"
+# shellcheck source=/dev/null
+. "$SCRIPT_DIR/publish-out.sh"
+# The steps write into a root-only stage, not into $OUT_DIR: the results
+# reach $OUT_DIR at the end, moved as the operator (publish-out.sh).
+PUBLISH_DIR="$OUT_DIR"
+STAGE="$WORK/.out-stage"
+export OUT_DIR="$STAGE" OUT_QCOW2="$STAGE/system.qcow2"
 
 FRESH=0
 case "${1:-}" in
@@ -87,6 +94,9 @@ step() { echo; echo "=== $* ==="; }
 fail() { echo; echo "ОТКАЗ: $*"; exit 1; }
 [ "$(id -u)" -eq 0 ] || fail "нужен root (sudo -E, иначе профиль потеряется)"
 echo "пара: $JETSON@$L4T   система: $ROOTFS_SOURCE $ROOTFS_L4T   дерево: $LFT   результат: $OUT_DIR"
+
+step "каталог сборки $STAGE (только root; результаты — в $PUBLISH_DIR в конце)"
+stage_init "$STAGE" || fail "каталог сборки не создан"
 
 if [ "$FRESH" -eq 1 ]; then
     step "--fresh: сношу дерево пары и промежуточные файлы (кеш загрузок остаётся)"
@@ -138,16 +148,17 @@ for s in "${STEPS[@]}"; do
     esac
 done
 
-# Артефакты отдаются человеку, а не root'у. OUT_OWNER задаёт Makefile
-# (владелец клона); SUDO_UID — запасной путь при ручном запуске. Одного SUDO_UID
-# мало: при `sudo -E make` внутренний sudo от root выставляет его в 0.
+# Артефакты отдаются человеку, а не root'у. OUT_OWNER (UID[:GID]) — явно;
+# SUDO_UID — запасной путь при ручном запуске. Одного SUDO_UID мало: при
+# `sudo -E make` внутренний sudo от root выставляет его в 0. Переносит их в
+# $PUBLISH_DIR сам оператор (setpriv), а не root: без chown -R и без записи
+# root'а в каталог оператора.
 owner="${OUT_OWNER:-}"
-if [ -z "$owner" ] && [ -n "${SUDO_UID:-}" ]; then
+if [ -z "$owner" ] && [ -n "${SUDO_UID:-}" ] && [ "$SUDO_UID" != 0 ]; then
     owner="$SUDO_UID:${SUDO_GID:-$SUDO_UID}"
 fi
-if [ -n "$owner" ]; then
-    chown -R "$owner" "$OUT_DIR"
-fi
+step "результаты -> $PUBLISH_DIR${owner:+ (от имени $owner)}"
+publish_out "$STAGE" "$PUBLISH_DIR" "$owner" || fail "результаты не перенесены в $PUBLISH_DIR"
 
 step "ГОТОВО"
-ls -lh "$OUT_DIR"
+ls -lh "$PUBLISH_DIR"

@@ -99,6 +99,13 @@ case "$sub" in
         while (( $# )); do
             case "$1" in
                 --constraint|-c) shift 2; continue ;;
+                -r) cat "$2" >> "$FAKE/pip-reqs"
+                    for n in $(grep -v -e "^[[:space:]]*#" -e "^[[:space:]]*--" -e "^[[:space:]]*$" "$2" | sed -e "s/[ =@].*//"); do
+                        mkdir -p "$SITE/$n-1.0.dist-info"
+                        { echo "Name: $n"; echo "Version: 1.0"
+                          [[ -f "$FAKE/req/$n" ]] && sed "s/^/Requires-Dist: /" "$FAKE/req/$n"; } > "$SITE/$n-1.0.dist-info/METADATA"
+                    done
+                    shift 2; continue ;;
                 -*) shift; continue ;;
                 *.whl) n="$(basename "$1")"; n="${n%%-*}" ;;
                 *) n="$1" ;;
@@ -152,7 +159,17 @@ n, u = re.fullmatch(r"(\d+)([mh])", t).groups()
 sys.exit(0 if int(n) * (60 if u == "h" else 1) >= 120 else 1)' "$EXT/extension.yaml"
 eq "ключ TORCH_CUDA_ARCH_LIST" "8.7 install" \
     "$(mf '" ".join(str(m["config"]["keys"]["TORCH_CUDA_ARCH_LIST"][k]) for k in ("default","scope"))')"
-check "constraints.txt в дереве" test -f "$EXT/constraints.txt"
+check "requirements.txt в дереве" test -f "$EXT/requirements.txt"
+check_not "constraints.txt убран" test -e "$EXT/constraints.txt"
+check "requirements.txt: каждый пакет — == и хотя бы один sha256" python3 - "$EXT/requirements.txt" <<'PY2'
+import re, sys
+text = re.sub(r"\\\n", " ", open(sys.argv[1]).read())
+reqs = [" ".join(l.split("#")[0].split()) for l in text.splitlines()]
+reqs = [r for r in reqs if r]
+assert reqs
+for r in reqs:
+    assert re.fullmatch(r"[A-Za-z0-9_.-]+==[A-Za-z0-9_.+!-]+( --hash=sha256:[0-9a-f]{64})+", r), r
+PY2
 check "check-system-python.py в дереве" test -f "$EXT/check-system-python.py"
 check "pip-owned.py в дереве" test -f "$EXT/pip-owned.py"
 check "hooks/install исполняемый" test -x "$EXT/hooks/install"
@@ -207,13 +224,20 @@ ht_hook install; eq "R36 — 0" 0 "$?"
 check "cuDNN и сборочные пакеты" ht_called '^apt-get install .* libcudnn9-cuda-12 .*ninja-build'
 check "cuSPARSELt распакован" test -f "$ROOT/usr/local/cusparselt/lib/libcusparseLt.so.0"
 eq "ld.so.conf cuSPARSELt" /usr/local/cusparselt/lib "$(cat "$ROOT/etc/ld.so.conf.d/cusparselt.conf")"
-check "каждый pip install — с constraints" test "$(pip_calls | wc -l)" = "$(pip_calls | grep -c -- '--constraint .*/constraints.txt')"
+check "pip install из сети — по хешам requirements.txt" \
+    test "$(pip_calls | grep -vc -- '--no-index')" = "$(pip_calls | grep -c -- '--require-hashes -r .*/requirements.txt')"
+check_not "pip без --constraint" grep -q -- '--constraint' "$FAKE/calls"
+check "pip wheel torchvision — без индекса" ht_called '^python3 -m pip wheel .*--no-index'
+check "torchvision ставится без индекса и зависимостей" \
+    ht_called '^python3 -m pip install .*--no-index --no-deps .*torchvision-0\.20\.0.*\.whl'
+check "torch — файлом с sha256 колеса NVIDIA" \
+    grep -qE "^torch @ file://$ROOT/var/tmp/l4t-pytorch\.[^ ]+/torch-2\.5\.0a0[^ ]*\.whl --hash=sha256:6f75fd2d2ef840ede1a90dbcf40a5458214bee26cc803fa510cda2e8978d972a$" "$FAKE/pip-reqs"
 check "pip install был" test -n "$(pip_calls)"
 check_not "pip без --user" grep -q -- '--user' "$FAKE/calls"
 check_not "pip: HOME не /root" grep -q 'HOME=/root' "$FAKE/pip-env"
 check "pip: HOME во временном каталоге" grep -q "HOME=$ROOT/var/tmp/" "$FAKE/pip-env"
 check "pip: конфиг pip не читается" grep -q 'PIP_CONFIG_FILE=/dev/null' "$FAKE/pip-env"
-check "torch из колеса NVIDIA" ht_called '^python3 -m pip install .*torch-2\.5\.0a0.*\.whl'
+check "torch поставлен" test -d "$SITE/torch-1.0.dist-info"
 check "torchvision собран с CUDA 8.7" grep -q 'FORCE_CUDA=1 TORCH_CUDA_ARCH_LIST=8.7' "$FAKE/build-env"
 check "MAX_JOBS по памяти (8 ГБ — 5, не больше ядер)" grep -qE "MAX_JOBS=($(( $(nproc) < 5 ? $(nproc) : 5 )))( |$)" "$FAKE/build-env"
 check "torchvision поставлен" ht_called '^python3 -m pip install .*torchvision-0\.20\.0.*\.whl'
