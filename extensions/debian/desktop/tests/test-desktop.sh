@@ -106,7 +106,7 @@ all_on='DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_LOCK=1 DESKTOP_DISABLE_SCREEN
 echo "== манифест и раскладка =="
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
 eq "name" desktop "$(mf 'm["name"]')"
-eq "версия 1.0.0 (новое расширение)" 1.0.0 "$(mf 'm["version"]')"
+eq "версия 1.0.1" 1.0.1 "$(mf 'm["version"]')"
 eq "cream 1.0" ">=1.0.0" "$(mf 'm["cream"]')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
 eq "хуки" "configure install remove" "$(mf '" ".join(sorted(m["hooks"]))')"

@@ -13,7 +13,7 @@ VNC-доступ к рабочему столу X11 пользователя, с
 
 | Поле | Значение |
 |---|---|
-| `version` | `5.0.1`, `cream: ">=1.1.0"` |
+| `version` | `5.0.2`, `cream: ">=1.1.0"` |
 | `targets` | `build: exec`, `live: yes` |
 | `provides` / `requires` | `remote-desktop` / `x11-server`, `display-manager` |
 | `depends` | `cloud-user >=1.0.0 <2`, `apt-guard >=1.0.0 <2` |

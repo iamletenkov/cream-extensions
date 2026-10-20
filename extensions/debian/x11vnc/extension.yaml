@@ -13,7 +13,9 @@
 # remove    — instances off, password file gone, x11vnc only when ours.
 schema: cream/v1
 name: x11vnc
-version: 5.0.1
+version: 5.0.2
+# 5.0.2: только README (выпуск 5.1.1 изменил дерево без подъёма версии —
+#        cream отвергал обновление с 5.0.1: version.same_digest).
 summary: VNC к рабочему столу X11 пользователя cloud-init — x11vnc@<пользователь>, по умолчанию только петля
 cream: ">=1.1.0"
 platform:

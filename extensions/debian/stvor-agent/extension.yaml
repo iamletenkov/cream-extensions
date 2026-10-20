@@ -5,7 +5,9 @@
 # file goes away on `cream remove stvor-agent`).
 schema: cream/v1
 name: stvor-agent
-version: 4.1.0
+version: 4.1.1
+# 4.1.1: только README (выпуск 5.1.1 изменил дерево без подъёма версии —
+#        cream отвергал обновление с 4.1.0: version.same_digest).
 # 4.1.0: Ubuntu 20.04 (Jetson Nano, L4T R32): агент — статический Go, юнит
 #        пакета (Type=exec, ProtectClock) требует systemd >= 245 — у focal 245.
 # 4.0.2: метку stvor_agent применяет teleport 4.0.2 (reload-apps), хуки больше не

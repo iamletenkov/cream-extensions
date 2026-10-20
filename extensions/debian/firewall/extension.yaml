@@ -19,7 +19,9 @@
 # default (FIREWALL_SSH_PORTS empty: Teleport is a reverse tunnel).
 schema: cream/v1
 name: firewall
-version: 2.0.0
+version: 2.0.1
+# 2.0.1: только README (выпуск 5.1.1 изменил дерево без подъёма версии —
+#        cream отвергал обновление с 2.0.0: version.same_digest).
 summary: Файрвол машины — своя таблица nftables inet cream или цепочка iptables-legacy CREAM-INPUT
 cream: ">=1.1.0"
 platform:
