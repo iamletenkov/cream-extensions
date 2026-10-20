@@ -17,6 +17,9 @@ Task 29 (финальная интеграция) — PR выпуска 5.0.0 о
 0. PR `fix:` по финальному ревью 5.0.0: `remove` снимает пакеты только через `apt-guard`
    (новая зависимость 21 расширения — рецептам bisquite нужен слой `EXTENSION apt-guard`),
    `can-usb` сверяет архив до распаковки, группы `pixelflux-tegra`, имя в `cloud-user`/`docker`.
+0a. Ветка `feature/nano-r32` (поверх 0): Jetson Nano (L4T R32, Ubuntu 18.04/20.04) —
+   `cuda-toolkit` 2.1.0 (CUDA 10.2), `yq` 2.1.0 (Ubuntu ≥ 18.04), новое `l4t-vendor-desktop` 1.0.0;
+   цепочка Nano bisquite разрешается `cream resolve` на focal/bionic. Рецептам bisquite — правки VMFILE.
 1. Task 29: PR каталога 5.0.0 (`feat!:`, `Release-As: 5.0.0`) — слияние и выпуск решает владелец;
    автоподъём пина каталога в bisquite не включать до плана bisquite.
 2. Бэклог после 5.0.0 — раздел «Бэклог после 5.0.0» плана
