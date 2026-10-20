@@ -211,6 +211,23 @@ jobs:
         run: |
           set -euo pipefail
           version="${TAG#v}"
+          # Проверки — до PR, чтобы ссылка на прогон попала в его описание.
+          since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          gh workflow run ci-release.yml -R "$GITHUB_REPOSITORY" --ref "$BRANCH"
+          run_url=""
+          for _ in $(seq 1 20); do
+            run_url="$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci-release.yml \
+              --branch "$BRANCH" --event workflow_dispatch -L 5 --json url,createdAt \
+              --jq "[.[] | select(.createdAt >= \"$since\")][0].url // empty")"
+            [ -n "$run_url" ] && break
+            sleep 3
+          done
+          if [ -n "$run_url" ]; then
+            checks="Прогон проверок на ветке: $run_url"
+          else
+            checks="Прогон проверок запрошен, но за минуту не появился: Actions → ci-release.yml → ветка \`$BRANCH\`."
+            echo "::warning::$checks"
+          fi
           body="$(mktemp)"
           cat > "$body" <<EOF
           Пин пакета \`stvor-agent\` в обёртке \`stvor-agent\` — $version:
@@ -220,12 +237,10 @@ jobs:
 
           Релиз агента: https://github.com/$AGENT_REPO/releases/tag/$TAG
 
-          PR открыт workflow \`agent-bump.yml\` токеном GITHUB_TOKEN; такие события
-          проверки сами не запускают, поэтому workflow запустил \`ci-release.yml\`
-          на ветке вручную — его прогон виден в проверках PR. Если проверок нет:
-          Actions → CI and Release → Run workflow → ветка \`$BRANCH\`, либо закрыть
-          и снова открыть PR, либо пустой коммит владельцем.
+          PR открыт токеном GITHUB_TOKEN, а его события проверок не запускают,
+          поэтому workflow запустил \`ci-release.yml\` на ветке сам (workflow_dispatch).
+          $checks
+          Сливать — только после зелёного прогона.
           EOF
           gh pr create -R "$GITHUB_REPOSITORY" --base "$BASE" --head "$BRANCH" \
             --title "feat(stvor-agent): пин агента $version" --body-file "$body"
-          gh workflow run ci-release.yml -R "$GITHUB_REPOSITORY" --ref "$BRANCH"
