@@ -60,7 +60,8 @@
 ### Хуки: окружение и коды
 
 cream зовёт хук с очищенным окружением: `PATH`, `LANG=C.UTF-8`, `CREAM_*`
-(`CREAM_PHASE`, `CREAM_EXT`, `CREAM_EXT_DIR`, `CREAM_ETC_DIR`, `CREAM_STATE_DIR`,
+(`CREAM_PHASE`, `CREAM_EXT`, `CREAM_EXT_VERSION`, `CREAM_PREV_VERSION`, `CREAM_EXT_DIR`,
+`CREAM_ETC_DIR`, `CREAM_STATE_DIR`,
 `CREAM_ROOT`, `CREAM_CONFIG_FILE`, `CREAM_SECRETS_FILE`, `CREAM_REASON`,
 `CREAM_CHANGED_KEYS`, `CREAM_LOCK_FD`, `CREAM_LOCK_MODE`; у действий ещё
 `CREAM_ACTION`, `CREAM_OUTPUT`) и все **несекретные** ключи домена под их
@@ -78,7 +79,9 @@ cream зовёт хук с очищенным окружением: `PATH`, `LAN
   бывает внутри загрузочного юнита, и блокирующий restart ждал бы сам себя.
 - **Действие с `lock: none`** только читает домен — `cream set` из него запрещён;
   действие, которое зовут из `Exec*` юнита, объявляется `lock: none` (§7.3).
-- **`remove`** обязателен при `targets.live: yes` (Р9); `upgrade` не пишем (Р10).
+- **`remove`** обязателен при `targets.live: yes` (Р9); `upgrade` новым расширениям не пишем
+  (Р10: без него cream зовёт идемпотентный `install` с `CREAM_PREV_VERSION`); он есть только у
+  пилотных `teleport` и `stvor-agent`.
 - **`remove` снимает пакеты apt только через библиотеку `apt-guard`**
   (`apt_guard_remove`/`apt_guard_check`, `depends` на `apt-guard`): apt сначала
   спрашивается симуляцией, и пакет в ответе, кроме своих, — отказ до любых изменений
@@ -102,15 +105,15 @@ cream зовёт хук с очищенным окружением: `PATH`, `LAN
 стадией `cloud-user` выходит в каталоге только с `cream: ">=1.1.1"` (рулинг Р14
 плана); `tools/lint-hooks.sh` отказывает манифесту, где это не так, а
 `tools/new-extension.sh` ставит нужную версию сам. Пин проверок
-(`tools/cream-pin.env`) — 1.1.1.
+(`tools/cream-pin.env`) — 1.1.3.
 
 ### Пин cream
 
 `tools/cream-pin.env` — единственное место версии cream для проверок каталога:
 `cream validate` (`tools/cream-validate.sh`), снимок (`tools/cream-deb.sh`), живые
 прогоны (`tools/live-test.sh`). В нём `CREAM_VERSION`, `CREAM_SHA256`
-(`cream_<v>_amd64.deb` — его гоняют инструменты) и `CREAM_SHA256_ARM64` (для
-учёта); суммы — из `SHA256SUMS` релиза
+(`cream_<v>_amd64.deb` — его гоняют инструменты), `CREAM_SHA256_ARM64` (для
+учёта) и необязательный `CREAM_URL` (пусто — ассет релиза на GitHub); сейчас — cream 1.1.3; суммы — из `SHA256SUMS` релиза
 (`gh release download v<v> -R iamletenkov/cream -p SHA256SUMS`). Поднять cream —
 поправить три строки и прогнать `make ci`, `make cream-validate`; изменение пина
 CI считает изменением всех L-расширений (`tools/live-matrix.sh`).
@@ -402,8 +405,9 @@ LightDM он разный, а под самим LightDM зависит от ег
 ### `conflicts`
 
 Несовместимость объявляется по имени расширения (`conflicts.extensions`) или по
-способности (`conflicts.capabilities`): три десктопа конфликтуют по
-`desktop-session`, и новый десктоп получает конфликт, не правя соседей.
+способности (`conflicts.capabilities`): десктопы (`gnome`, `xfce4`, `lxde`,
+`l4t-vendor-desktop`) конфликтуют по `desktop-session`, и новый десктоп получает
+конфликт, не правя соседей.
 Конфликт по имени объявляют обе стороны (`kiosk` ↔ `chromium-kiosk`): односторонний
 конфликт — это конфликт, о котором узнает только один из двух авторов.
 
@@ -444,8 +448,18 @@ LightDM он разный, а под самим LightDM зависит от ег
 | `gstreamer` | `l4t-gstreamer` | `gstreamer1.0-tools` и плагины base/good/bad/ugly/libav, RTSP-сервер, `gstreamer1.0-nice`, `python3-gst-1.0` |
 | `hw-video-codec` | `l4t-gstreamer` | `nvidia-l4t-gstreamer` версии `nvidia-l4t-core`: `nvv4l2h264enc`/`h265enc`/`decoder`, `nvvidconv` |
 | `opencv` | `l4t-opencv` | `libopencv` и `libopencv-python` 4.8.0 от NVIDIA, с GStreamer, без CUDA; на R32 ничего не ставит — сверяет cv2 образа (с CUDA) и пишет `OPENBLAS_CORETYPE` |
-| `pytorch` | `l4t-pytorch` | колесо torch nv24.08 с CDN NVIDIA, torchvision из исходников с CUDA; на R32 ничего не ставит — сверяет torch образа и пишет `OPENBLAS_CORETYPE` |
-| `tensorflow` | `l4t-tensorflow` | колесо tensorflow nv24.08 с CDN NVIDIA |
+| `pytorch` | `l4t-pytorch` | колесо torch nv24.08 с CDN NVIDIA, torchvision из исходников с CUDA (pip с `--require-hashes` по `requirements.txt` расширения); на R32 ничего не ставит — сверяет torch образа и пишет `OPENBLAS_CORETYPE` |
+| `tensorflow` | `l4t-tensorflow` | колесо tensorflow nv24.08 с CDN NVIDIA; pip с `--require-hashes` по `requirements.txt` расширения |
+| `system-monitor` | `btop` | `btop` из apt или статическая сборка релиза по sha256 |
+| `cloud-growroot` | `cloud-growroot` | модули cloud-init `growpart` и `resizefs` в `cloud.cfg` |
+| `cloud-user-desktop` | `cloud-user-desktop` | вендорский рабочий стол: удаление вендорской учётки, ручки `desktop` для пользователя cloud-init |
+| `wallpaper` | `wallpaper` | системное умолчание обоев GNOME (dconf), Xfce (xfconf), LXDE (pcmanfm) |
+| `yq` | `yq` | статический `mikefarah/yq` в `/usr/local/bin` по пину версии и sha256 |
+| `stvor-agent` | `stvor-agent` | пакет `stvor-agent` по пину версии и sha256 своей архитектуры (`files/pin.env`) |
+| `kvm-host`, `l4t-custom-kernel` | `l4t-kernel-kvm` | ядро L4T с KVM для Jetson Nano/TX1 (t210), собранное из исходников NVIDIA (сверка по `public-sources.sha256` для каждой версии L4T), загрузка по умолчанию |
+| `l4t-board-selected` | `l4t-board-fdt` | строка `FDT` платы в записи `kvm` файла `extlinux.conf` |
+| `jetson-flash-station` | `nvidia-jetpack` | станция прошивки Jetson на amd64: инструментарий L4T, NFS, binfmt aarch64, скрипты |
+| `hardware-video-encoding` | `pixelflux-v4l2m2m` | аппаратное кодирование Selkies через V4L2 M2M (Raspberry Pi); `pixelflux-tegra` своей способности не даёт |
 
 Кто чего требует:
 
@@ -459,14 +473,19 @@ LightDM он разный, а под самим LightDM зависит от ег
 | `l4t-tensorflow` | `cuda` | `install` отказывает без `/usr/local/cuda/lib64`: TF грузит библиотеки тулкита |
 | `can-usb` | `gmsl2-camera` | `install` отказывает, если `/boot/Image` — не ядро Sensing закреплённой сборки: модули собираются под него, а кладёт его `sensing-gmsl2-camera` — ставится раньше `can-usb` |
 | `nvidia-container-toolkit` | `gpu-driver-nvidia`, `container-runtime` | `nvidia-ctk runtime configure --runtime=docker` правит `/etc/docker/daemon.json`; без драйвера среда `nvidia` бесполезна |
+| `wallpaper` | `desktop-session` | без рабочего стола ключи обоев никто не читает: отказ — при сборке |
+| `pixelflux-tegra`, `pixelflux-v4l2m2m` | `web-remote-desktop` | настраивают pixelflux внутри AppImage `selkies` |
+| `l4t-board-fdt` | `l4t-custom-kernel` | без деревьев `-kvm` от `l4t-kernel-kvm` выбирать нечего |
 | остальные | — | ничего не требуют по коду |
 
 Конфликты:
 
 | Пара | Причина |
 |---|---|
-| `gnome` ↔ `xfce4` ↔ `lxde` (по способности `desktop-session`) | каждый ставит свой дисплей-менеджер и делает его системным `display-manager.service` |
+| `gnome` ↔ `xfce4` ↔ `lxde` ↔ `l4t-vendor-desktop` (по способности `desktop-session`) | каждый ставит (или берёт из образа вендора) свой дисплей-менеджер и делает его системным `display-manager.service` |
 | `kiosk` ↔ `chromium-kiosk` | оба автостартом на `graphical.target` разворачивают полноэкранный браузер на одном месте |
+| `pixelflux-tegra` ↔ `pixelflux-v4l2m2m` | оба настраивают pixelflux внутри одного AppImage `selkies` |
+| `teleport` (по своей способности `teleport-node`) | второй поставщик узла Teleport из другого источника |
 
 Оговорка про честность вывода: десктопы измерены по коду, киоски —
 рассуждение, а не замер. Ни один VMFILE не ставит `kiosk` и `chromium-kiosk`
@@ -531,12 +550,15 @@ tools/new-extension.sh <имя> [--stage system|early|cloud-user|graphical]
 ## Проверки
 
 ```bash
-tools/check.sh                # всё сразу: cream validate, гейт имён, линт хуков, тесты (make test)
+tools/check.sh                # всё сразу: cream validate, гейт имён, линт хуков, тесты инструментов
+                              # и расширений, снимок, сверка образцов контракта stvor-agent (make test)
 tools/lint.sh                 # shellcheck: скрипты расширений — warning, остальное — error (make lint)
 tools/lint-hooks.sh           # линт хуков и действий (см. «Формат cream/v1»)
 tools/cream-validate.sh       # cream validate --catalog . по корню (make cream-validate)
 tools/check-names.sh          # прежние имена bisquite по всему репозиторию (make check-names)
 tools/live-test.sh <имя>      # живой прогон настоящим cream (make test-live EXT=<имя>)
+tools/catalog-snapshot.sh     # снимок каталога (make snapshot; проверка — make snapshot-check)
+tools/check-contract-fixtures.sh  # образцы контракта stvor-agent ↔ teleport против пина contract-fixtures.sha256
 ```
 
 ### Тесты расширения: V, H, L
@@ -556,7 +578,7 @@ tools/live-test.sh <имя>      # живой прогон настоящим cr
   журналом вызовов; опасные на хосте команды (`apt-get`, `dpkg`, `systemctl`, `curl`, …) закрыты сторожем
   с кодом 127, пока тест их не подставит. Образец — `tools/test-hooktest.sh`.
 - **L** — живой прогон `tools/live-test.sh <имя>` (`make test-live EXT=<имя> [DISTRO=…]`): контейнер
-  `debian:12`/`debian:13`/`ubuntu:22.04`/`ubuntu:24.04` с systemd как PID 1 (флаги — как у интеграции
+  `debian:12`/`debian:13`/`ubuntu:20.04`/`ubuntu:22.04`/`ubuntu:24.04` с systemd как PID 1 (флаги — как у интеграции
   cream: без `--privileged`, `--cgroupns=host`, cgroup на запись, `--tmpfs /run`, явный `--memory`),
   настоящий cream по пину, источник `path`. Сценарий: зависимости → `install` → повтор (`changed: false`)
   → `install --reinstall` не меняет ни одного файла в `/etc`, `/opt/cream`, `/usr/local`,
@@ -567,11 +589,14 @@ tools/live-test.sh <имя>      # живой прогон настоящим cr
   `KEY=value`): `LIVE_DEPS`, `LIVE_ACCEPT_RISK=1`, `LIVE_EXPECT_SKIP=1`, `LIVE_PARAMS`, `LIVE_SECRETS`,
   `LIVE_MEMORY`, `LIVE_CAPS` (`firewall` — `NET_ADMIN`), `LIVE_SNAPSHOT_IGNORE`, `LIVE_BOOT_CONFIGURE=optional`,
   `LIVE_FAILED_IGNORE` (ERE с якорями `^…$` по имени юнита целиком: юниты, которые роняет контейнер, а не
-  расширение, — например, `lightdm.service` без VT или монтирования NFS без `CAP_SYS_ADMIN`; каждый такой
+  расширение, — например, `lightdm.service` без VT, монтирования NFS без `CAP_SYS_ADMIN`, `polkit.service` и
+  `systemd-hostnamed.service` у `network-manager` на Ubuntu; каждый такой
   юнит печатается строкой «разрешено упасть»), `LIVE_NIGHTLY_ONLY=1` (тяжёлое расширение — `gnome`, `lxde` —
   не входит в матрицу PR, только в ночной и ручной прогон), `LIVE_DISTROS`. Зависимости ставятся с `--allow-skip`:
   зависимость, ответившая кодом 20 (`nvidia` без ядер), записывается `skipped` и печатается «пропущена». Наличие `tests/live.env` делает расширение L-расширением для CI: `.github/workflows/live.yml`
-  гоняет изменённые на PR (и те, чьи `LIVE_DEPS` изменились) и все — ночью, каждое на своём раннере.
+  гоняет изменённые на PR (и те, чьи `LIVE_DEPS` изменились; смена пина cream — все) и все — ночью,
+  каждое на своём раннере; матрицу считает `tools/live-matrix.sh` (дистрибутивы — `LIVE_DISTROS`,
+  умолчание `debian-12 ubuntu-24.04`).
   Прогоны на хосте идут по одному (замок `flock`), контейнер и образ удаляются, журналы — в
   `.scratchpad/live/<имя>-<дистрибутив>/`. Самопроверка раннера на фикстурах `tools/testdata/live/` —
   `make test-live-self`.
@@ -598,8 +623,10 @@ cream берётся по пину `tools/cream-pin.env` (см. «Пин cream»
 
 Проверка, которую надо не забыть запустить, — не проверка. `tools/check.sh`
 гоняет GitHub Actions: `.github/workflows/ci-release.yml`, на каждый pull
-request в `main` и на каждый push в `main`. Один job, одна команда — та же, что
-запускают руками, чтобы CI и локальный прогон не разъезжались.
+request в `main` (и в `feature/cream-v1-*`) и на каждый push в `main`. Job
+`check`: gitleaks, `tools/check.sh` и `make lint` — те же команды, что запускают
+руками, чтобы CI и локальный прогон не разъезжались. Живые прогоны — отдельный
+`.github/workflows/live.yml`, подъём пина `stvor-agent` — `agent-bump.yml`.
 
 - **`runs-on: ubuntu-latest`, а не `[self-hosted, linux, x64]`,** как в основном
   репозитории: job, приколоченный к раннеру, которого у репозитория может не

@@ -50,6 +50,7 @@ sudo cream remove nvidia-jetpack                  # снимает binfmt-фай
 | `platform` | `deb`, `arch: [amd64]`, `os`: `ubuntu`, `debian` |
 | `targets` | `build: exec`; `live: confirm` — `live_note` перечисляет, что меняется на машине |
 | `provides` | `jetson-flash-station` |
+| `depends` | `apt-guard >=1.0.0 <2` — `remove` снимает только свои пакеты |
 | `hooks` | `install` (30 мин), `remove` (15 мин); `configure` нет |
 | `files` | `files/99-jetson-usb.rules` → `/etc/udev/rules.d/99-jetson-usb.rules` |
 
@@ -57,8 +58,10 @@ sudo cream remove nvidia-jetpack                  # снимает binfmt-фай
 Jetson»), а не по отдельной утилите: ссылаться на расширение будут именно
 так.
 
-`requires` и `depends` пусты: скрипты станции тянут BSP сами и работают с
-системными пакетами, которые ставит этот же хук `install`. Ни рабочего стола, ни
+`requires` пуст: скрипты станции тянут BSP сами и работают с
+системными пакетами, которые ставит этот же хук `install`. `depends` — только
+библиотека `apt-guard`: `remove` сначала спрашивает apt симуляцией и
+отказывает, если тот снял бы что-то кроме своих пакетов. Ни рабочего стола, ни
 контейнеров, ни VNC им не нужно — образ станции включает их по другим
 причинам.
 
@@ -217,7 +220,7 @@ ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0955", TEST=="power/control", 
 | `06-flash.sh` | `--flash-only`; предполётно проверяет ufw, место и режим APX |
 | `07-flash-rootfs-ssh.sh` | Обход: rootfs в APP SSH-потоком, минуя NFS |
 | `08-build-base-image.sh` | Образ диска (`.img` + `.qcow2`) для тиражирования на флот; плата не нужна |
-| `09-build-jetson-base.sh` | Оркестратор `01`→`03`→`04 -U`→`11`→манифест→`08`→манифест; у `vendor-image` — `01`→`03`→`11`→образ вендора→qcow2→манифесты; в bisquite ничего не регистрирует |
+| `09-build-jetson-base.sh` | Оркестратор `01`→`03`→`04 -U`→`11`→манифест→`08`→манифест; у `vendor-image` — `01`→`03`→`11`→образ вендора→qcow2→манифесты; собирает в `$WORK/.out-stage`, в `$OUT_DIR` результаты переносит оператор (`publish-out.sh`); в bisquite ничего не регистрирует |
 | `10-flash-internal.sh` | Выборочно: только QSPI либо QSPI + внутренняя eMMC |
 | `11-package-bootloader.sh` | Пакет прошивки загрузчика, плата не нужна: `l4t_initrd_flash.sh --massflash` у AGX, `nvmassflashgen.sh` у Nano |
 | `14-flash-bootloader.sh` | Прошивка загрузчика готовым пакетом; плата в recovery; **необратимо**; у Nano — `nvmflash.sh` из самого пакета |
@@ -226,6 +229,7 @@ ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0955", TEST=="power/control", 
 | `90-install-sdkmanager.sh` | SDK Manager по редирект-ссылке NVIDIA |
 | `manifest.py` | Пишет внутренний (в rootfs) и внешний (рядом с артефактами) манифесты пары |
 | `vendor-image.sh` | Подключается шагом `09`: образ вендора в кеш со сверкой sha256, разреженный raw, qcow2, внутренний манифест |
+| `publish-out.sh` | Подключается шагом `09`: каталог сборки только для root и перенос результатов в `$OUT_DIR` от имени оператора (`OUT_OWNER` или `SUDO_UID`) |
 
 Порядок запуска и что делать при обрыве — в `/opt/cream/ext/nvidia-jetpack/scripts/README.md`.
 
@@ -329,9 +333,10 @@ cat /sys/bus/usb/devices/*/power/control        # должно быть on
 - **H** — `tests/test-hooks.sh`: манифест, установка при сборке и на живой машине,
   повтор без apt и без перезапуска, binfmt (перезапуск `systemd-binfmt` только на
   живой машине с systemd вне контейнера; ссылка на месте файла не разыменовывается;
-  без эмулятора файла нет), отказ без `scripts/`, `remove` только своего;
-  `tests/test-nvidia-jetpack.sh` — сценарии станции (профили, манифесты, шаги) без BSP и платы.
-- **L** — `make test-live EXT=nvidia-jetpack` (`tests/live.env`, `--accept-risk`) на
+  без эмулятора файла нет), отказ без `scripts/`, `remove` только своего (симуляция снимает
+  чужой пакет — отказ); `tests/test-nvidia-jetpack.sh` — сценарии станции (профили, манифесты,
+  шаги, пароль шага `04` только через `-P`, перенос результатов `09` оператором) без BSP и платы.
+- **L** — `make test-live EXT=nvidia-jetpack` (`tests/live.env`: `LIVE_DEPS=apt-guard`, `--accept-risk`) на
   `ubuntu-22.04` и `debian-12`: установка, повтор, `--reinstall`, загрузка, `remove`; без
   прошивки платы и без binfmt хоста. NFS-сервер в контейнере без `CAP_SYS_ADMIN` не
   поднимается: `proc-fs-nfsd.mount` и `run-rpc_pipefs.mount` разрешено упасть
@@ -342,4 +347,4 @@ cat /sys/bus/usb/devices/*/power/control        # должно быть on
 
 Расширение распространяется на условиях публичной некоммерческой лицензии
 Bisquite (PolyForm Noncommercial 1.0.0, см. `LICENSE`). Для коммерческого
-использования требуется отдельная платная лицензия — см. `COMMERCIAL-LICENSE.md`.
+использования требуется отдельная платная лицензия — см. `NOTICE`.
