@@ -1,5 +1,17 @@
 # Changelog
 
+## [5.1.0](https://github.com/iamletenkov/cream-extensions/compare/v5.0.0...v5.1.0) (2026-10-20)
+
+
+### Добавлено
+
+* Jetson Nano (L4T r32) — cuda 10.2, yq на Ubuntu 18.04+, l4t-vendor-desktop, teleport на Ubuntu 20.04 ([#25](https://github.com/iamletenkov/cream-extensions/issues/25)) ([6e8c118](https://github.com/iamletenkov/cream-extensions/commit/6e8c11875ca29994b11755c8a44cf770529fe461))
+
+
+### Исправлено
+
+* remove не снимает чужие пакеты, can-usb сверяет архив до распаковки ([77b778d](https://github.com/iamletenkov/cream-extensions/commit/77b778d32719a093e924011554c1a95298773208))
+
 ## [5.0.0](https://github.com/iamletenkov/cream-extensions/compare/v4.0.0...v5.0.0) (2026-10-19)
 
 
