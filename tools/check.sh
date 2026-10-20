@@ -17,6 +17,9 @@
 # tools/cream-bump.sh (пин cream в tools/cream-pin.env). Тест
 # снимка каталога (test-snapshot.sh: две сборки tools/catalog-snapshot.sh дают
 # одни байты, cream принимает снимок через source add --archive и resolve).
+# Правило версий (check-version-bump.sh: дерево расширения изменилось с
+# последнего тега v* — version в extension.yaml выше, чем в теге; иначе cream
+# отвергает обновление version.same_digest) и его тест.
 #
 # Тесты расширений находятся сами: каждый исполняемый
 # extensions/<семейство>/<имя>/tests/test-*.sh (рулинг Р13 плана
@@ -67,6 +70,12 @@ echo "== test-cream-bump =="
 
 echo "== test-snapshot =="
 "$HERE/test-snapshot.sh" || rc=1
+
+echo "== check-version-bump =="
+"$HERE/check-version-bump.sh" || rc=1
+
+echo "== test-check-version-bump =="
+"$HERE/test-check-version-bump.sh" || rc=1
 
 echo "== check-contract-fixtures =="
 "$HERE/check-contract-fixtures.sh" || rc=1
