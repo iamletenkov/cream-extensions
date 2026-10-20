@@ -18,6 +18,12 @@ name: Cream Bump
 # PR открывает GITHUB_TOKEN, события от него другие workflow не запускают,
 # поэтому проверки запускаются явно: `gh workflow run ci-release.yml --ref
 # <ветка>` (как в agent-bump.yml).
+#
+# С секретом RELEASE_PR_TOKEN (fine-grained PAT владельца: Contents, Pull
+# requests, Issues — Read and write) ветку пушит и PR открывает он, и CI на
+# PR запускается сам (pull_request); явный прогон выше остаётся. Права
+# Actions у PAT нет, поэтому workflow run и gh run list — от GITHUB_TOKEN.
+# Без секрета всё идёт от GITHUB_TOKEN, как описано выше.
 on:
   workflow_dispatch:
     inputs:
@@ -46,6 +52,8 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          # PAT, если задан: push ветки от него запускает CI на PR.
+          token: ${{ secrets.RELEASE_PR_TOKEN || github.token }}
           ref: main
 
       - name: Resolve tag
@@ -175,8 +183,15 @@ jobs:
         env:
           TAG: ${{ steps.tag.outputs.tag }}
           BRANCH: ${{ steps.tag.outputs.branch }}
+          PR_TOKEN: ${{ secrets.RELEASE_PR_TOKEN || github.token }}
+          HAS_PR_TOKEN: ${{ secrets.RELEASE_PR_TOKEN != '' }}
         run: |
           set -euo pipefail
+          if [ "$HAS_PR_TOKEN" = true ]; then
+            origin="PR открыт токеном RELEASE_PR_TOKEN: проверки на PR запускаются сами (pull_request), а \`ci-release.yml\` на ветке workflow запустил ещё и явно (workflow_dispatch)."
+          else
+            origin="PR открыт токеном GITHUB_TOKEN, а его события проверок не запускают, поэтому workflow запустил \`ci-release.yml\` на ветке сам (workflow_dispatch)."
+          fi
           version="${TAG#v}"
           # Проверки — до PR, чтобы ссылка на прогон попала в его описание.
           since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -204,10 +219,9 @@ jobs:
           Выпуск cream: https://github.com/$CREAM_REPO/releases/tag/$TAG
 
           Если расширениям нужна новая версия, поднимите их \`cream:\` отдельным PR.
-          PR открыт токеном GITHUB_TOKEN, а его события проверок не запускают,
-          поэтому workflow запустил \`ci-release.yml\` на ветке сам (workflow_dispatch).
+          $origin
           $checks
           Сливать — только после зелёного прогона.
           BODY
-          gh pr create -R "$GITHUB_REPOSITORY" --base main --head "$BRANCH" \
+          GH_TOKEN="$PR_TOKEN" gh pr create -R "$GITHUB_REPOSITORY" --base main --head "$BRANCH" \
             --title "build(tools): пин cream $version" --body-file "$body"
