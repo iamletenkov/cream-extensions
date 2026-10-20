@@ -1,8 +1,10 @@
 schema: cream/v1
 name: teleport
-version: 4.0.2
+version: 4.1.0
 summary: Узел Teleport — бинарь, регистрация (join), рендер teleport.yaml, приложения apps.d
 cream: ">=1.0.0"
+# 4.1.0: Ubuntu 20.04 (Jetson Nano, L4T R32): тарбол Teleport требует glibc 2.17,
+#        юниты — systemd ≤ 245 (path-юниты, PIDFile, ConditionPathExists).
 # 4.0.2: командная метка попадает в конфиг и до появления команды, если та в
 #        /usr/bin, /usr/sbin или /usr/local/bin (drop-in кладётся раньше бинаря);
 #        reload-apps — lock: exclusive, ждёт выхода агента из перехода, без
@@ -26,7 +28,7 @@ platform:
   family: deb
   # Teleport публикует тарбол для amd64 и arm64; arm64 проверен на AGX Orin.
   arch: [amd64, arm64]
-  os: [{id: debian, version: ">=12"}, {id: ubuntu, version: ">=22.04"}]
+  os: [{id: debian, version: ">=12"}, {id: ubuntu, version: ">=20.04"}]
   commands: [curl, tar, sha256sum]
 targets: {build: exec, live: "yes"}
 provides: [teleport-node]

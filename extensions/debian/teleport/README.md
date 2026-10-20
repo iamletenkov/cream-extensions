@@ -13,6 +13,12 @@
 
 ## Установка — бинарь Teleport
 
+**Платформа:** Debian ≥ 12, Ubuntu ≥ 20.04 (с 4.1.0 — ради Jetson Nano на L4T
+R32). Тарбол Teleport 18.10 arm64 требует glibc ≥ 2.17 (`objdump -T`, 2026-10-20),
+у focal 2.31; path-юниты, `PIDFile`, `ConditionPathExists` и `systemctl show
+--value` есть в systemd 245. Ubuntu 18.04 (systemd 237) не поддерживается.
+
+
 ```
 cream install teleport                                   # 18.10.0 с cdn.teleport.dev
 cream install teleport TELEPORT_VERSION=18.10.0 TELEPORT_MIRROR=https://binaries.example.org \
