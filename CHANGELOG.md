@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.1.1](https://github.com/iamletenkov/cream-extensions/compare/v5.1.0...v5.1.1) (2026-10-20)
+
+
+### Исправлено
+
+* бэклог 5.0 — суммы исходников L4T, хеши PyPI, пароль jetpack; runbooks ([#28](https://github.com/iamletenkov/cream-extensions/issues/28)) ([3e7708b](https://github.com/iamletenkov/cream-extensions/commit/3e7708bfcca6e0bc7f8c376262c62801901e1021))
+
 ## [5.1.0](https://github.com/iamletenkov/cream-extensions/compare/v5.0.0...v5.1.0) (2026-10-20)
 
 
