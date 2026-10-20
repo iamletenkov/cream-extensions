@@ -19,7 +19,7 @@ check-names: ## гейт имён bisquite по репозиторию, кром
 	tools/check-names.sh
 
 # Живой прогон: настоящий cream в контейнере с systemd, сеть, под замком flock.
-# Умолчания расширения — его tests/live.env; DISTRO=debian-12|debian-13|ubuntu-22.04|ubuntu-24.04;
+# Умолчания расширения — его tests/live.env; DISTRO=debian-12|debian-13|ubuntu-20.04|ubuntu-22.04|ubuntu-24.04;
 # прочие флаги tools/live-test.sh — в ARGS (ARGS="--accept-risk --deps 'cloud-user'").
 DISTRO ?= debian-12
 test-live: ## живой прогон: make test-live EXT=<имя> [DISTRO=…] [ARGS=…] (tools/live-test.sh)
