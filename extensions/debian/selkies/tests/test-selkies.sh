@@ -76,7 +76,7 @@ blocking_systemctl() { grep -E '^systemctl (start|restart|stop|reload|enable --n
 echo "== манифест и раскладка =="
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
 eq "name" selkies "$(mf 'm["name"]')"
-eq "мажор +1 (Р1)" 6.0.0 "$(mf 'm["version"]')"
+eq "мажор +1 (Р1)" 6.0.1 "$(mf 'm["version"]')"
 eq "cream 1.1 (стадия graphical)" ">=1.1.0" "$(mf 'm["cream"]')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
 eq "стадия graphical" graphical "$(mf 'm["hooks"]["configure"]["stage"]')"

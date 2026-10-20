@@ -14,7 +14,9 @@
 # files     — the iptables-raw check before each dockerd start and its drop-in.
 schema: cream/v1
 name: docker
-version: 4.0.1
+version: 4.0.2
+# 4.0.2: только README (выпуск 5.1.1 изменил дерево без подъёма версии —
+#        cream отвергал обновление с 4.0.1: version.same_digest).
 summary: Docker CE из официального apt-репозитория Docker (download.docker.com)
 cream: ">=1.0.0"
 platform:

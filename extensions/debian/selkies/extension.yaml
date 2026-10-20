@@ -24,7 +24,9 @@
 #        Rename table — README.md.
 schema: cream/v1
 name: selkies
-version: 6.0.0
+version: 6.0.1
+# 6.0.1: только README (выпуск 5.1.1 изменил дерево без подъёма версии —
+#        cream отвергал обновление с 6.0.0: version.same_digest).
 summary: Selkies — рабочий стол X-сессии в браузере; без пароля не стартует, наружу — через Teleport
 cream: ">=1.1.0"
 platform:

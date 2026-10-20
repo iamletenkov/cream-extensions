@@ -11,7 +11,7 @@ xfconf, lxsession) и группы пользователя сеанса. Оди
 
 | Поле | Значение |
 |---|---|
-| `version` | `1.0.0`, `cream: ">=1.0.0"` |
+| `version` | `1.0.1`, `cream: ">=1.0.0"` |
 | `targets` | `build: exec`, `live: yes` |
 | `depends` | `cloud-user >=1.0.0 <2` — имя пользователя cloud-init |
 | хуки | `install` (dconf-cli, x11-xserver-utils), `configure`, `remove` |

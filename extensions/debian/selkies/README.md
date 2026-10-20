@@ -14,7 +14,7 @@ cream/v1 (план 2026-10-19, Task 17).
 
 | Поле | Значение |
 |---|---|
-| `version` | `6.0.0`, `cream: ">=1.1.0"` (стадия `graphical`) |
+| `version` | `6.0.1`, `cream: ">=1.1.0"` (стадия `graphical`) |
 | `platform.arch` | `amd64`, `arm64` (AppImage — x86_64, aarch64) |
 | `targets` | `build: exec`, `live: yes` |
 | `provides` / `requires` | `web-remote-desktop` / `x11-server`, `display-manager` |
