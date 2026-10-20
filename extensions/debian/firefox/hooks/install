@@ -76,9 +76,12 @@ if ! gpg --homedir "$gpg_home" --batch --quiet --import "$tmp_key" >/dev/null 2>
     log_error "ключ $MOZILLA_KEY_URL не импортируется gpg"
     exit 1
 fi
-primary_keys="$(gpg --homedir "$gpg_home" --batch --with-colons --list-keys 2>/dev/null | awk -F: '$1 == "pub"' | wc -l)"
-actual_fpr="$(gpg --homedir "$gpg_home" --batch --with-colons --list-keys 2>/dev/null \
-    | awk -F: '$1 == "pub" { p = 1; next } p && $1 == "fpr" { print $10; exit }')"
+# The listing is read whole into a variable and parsed from it: awk with an
+# early `exit` on gpg's pipe closed it while gpg was still writing (a second
+# key) — SIGPIPE, status 141 under pipefail instead of the refusal below.
+key_list="$(gpg --homedir "$gpg_home" --batch --with-colons --list-keys 2>/dev/null)" || key_list=""
+primary_keys="$(awk -F: '$1 == "pub" { n++ } END { print n + 0 }' <<< "$key_list")"
+actual_fpr="$(awk -F: '$1 == "pub" { p++; next } p == 1 && $1 == "fpr" && !f { print $10; f = 1 }' <<< "$key_list")"
 if [[ "$primary_keys" != 1 ]]; then
     log_error "в файле ключа $MOZILLA_KEY_URL — $primary_keys основных ключей, ожидался ровно один ($MOZILLA_KEY_FPR)"
     exit 1

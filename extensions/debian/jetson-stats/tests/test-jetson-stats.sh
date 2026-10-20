@@ -48,9 +48,12 @@ fi; exit 0'
     # python3 -m pip: list/install/uninstall over $FAKE/pip-installed; the
     # environment and argv of every call are recorded.
     ht_fake python3 '
-[[ "$1 $2" == "-m pip" ]] || exit 2
+[[ "$1 $2" == "-m pip" ]] || exec /usr/bin/python3 "$@"
 shift 2
 env > "$FAKE/pip.env.$1"
+if [[ "$1" == install ]]; then
+  while (( $# )); do [[ "$1" == -r ]] && cp "$2" "$FAKE/pip.reqs"; shift; done; set -- install
+fi
 case "$1" in
   list) cat "$FAKE/pip-installed" | sed "s/$/==1.0/" ;;
   install) [[ -f "$FAKE/pip-fails" ]] && exit 1
@@ -71,7 +74,7 @@ echo "== манифест =="
 # eval: test-only literal expressions over our own manifest, as in nvidia-jetpack.
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "мажор 3" 3.0.1 "$(mf 'm["version"]')"
+eq "версия 3.1.0" 3.1.0 "$(mf 'm["version"]')"
 eq "cream >=1.1.1 (стадия cloud-user, Р14)" ">=1.1.1" "$(mf 'm["cream"]')"
 eq "только arm64" "['arm64']" "$(mf 'm["platform"]["arch"]')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
@@ -79,7 +82,19 @@ eq "стадия cloud-user" cloud-user "$(mf 'm["hooks"]["configure"]["stage"]'
 check_not "без порядка относительно jtop.service" grep -q 'jtop' <<< "$(mf 'm["hooks"]["configure"].get("after", []) + m["hooks"]["configure"].get("before", []) + m["hooks"]["configure"].get("wants", [])')"
 eq "хуки" "['configure', 'install', 'remove']" "$(mf 'sorted(m["hooks"])')"
 eq "depends cloud-user, apt-guard" "cloud-user >=1.0.0 <2 apt-guard >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
-check "constraints закрепляют jetson-stats" grep -qE '^jetson-stats==[0-9.]+' "$EXT/constraints.txt"
+check "requirements.txt закрепляет jetson-stats" grep -qE '^jetson-stats==[0-9.]+' "$EXT/requirements.txt"
+check_not "constraints.txt убран" test -e "$EXT/constraints.txt"
+# pip 9.0.1 of Ubuntu 18.04 (L4T R32) reads the file as ASCII under LANG=C.
+check "requirements.txt — только ASCII (pip 9 на R32)" python3 -c 'open(__import__("sys").argv[1], encoding="ascii").read()' "$EXT/requirements.txt"
+check "requirements.txt: каждый пакет — == и хотя бы один sha256" python3 - "$EXT/requirements.txt" <<'PY2'
+import re, sys
+text = re.sub(r"\\\n", " ", open(sys.argv[1]).read())
+reqs = [" ".join(l.split("#")[0].split()) for l in text.splitlines()]
+reqs = [r for r in reqs if r]
+assert reqs
+for r in reqs:
+    assert re.fullmatch(r'[A-Za-z0-9_.-]+==[A-Za-z0-9_.+!-]+( ; python_version [<>=]+ "[0-9.]+")?( --hash=sha256:[0-9a-f]{64})+', r), r
+PY2
 for f in install.sh configure.sh configure-jetson-stats.service; do
     check_not "layout 2: нет $f" test -e "$EXT/$f"
 done
@@ -95,7 +110,8 @@ jroot
 : > "$FAKE/jtop-installs-unit"
 ht_hook install; eq "install — 0" 0 "$?"
 check "apt: python3-pip" ht_called '^apt-get .*install .*python3-pip'
-check "pip с constraints" ht_called '^python3 -m pip install .*--constraint .*jetson-stats'
+check "pip по хешам requirements.txt" ht_called '^python3 -m pip install .*--require-hashes -r .*/requirements\.txt'
+check_not "pip без --constraint" ht_called '^python3 -m pip .*--constraint'
 check_not "pip без --user" ht_called '^python3 -m pip .*--user'
 envf="$FAKE/pip.env.install"
 check "HOME pip — временный каталог" grep -qE "^HOME=$ROOT/tmp/" "$envf"
@@ -124,7 +140,14 @@ eq "повтор: pip-запись та же" "distro jetson-stats nvidia-ml-py 
 echo "== install: своя версия и сбой pip =="
 jroot
 ht_hook install JETSON_STATS_VERSION=4.3.2; eq "версия 4.3.2 — 0" 0 "$?"
-check "ставит заданную версию" ht_called '^python3 -m pip install .* jetson-stats==4\.3\.2$'
+check "ставит заданную версию — по её хешу, без маркера Python" \
+    grep -qE '^jetson-stats==4\.3\.2 +--hash=sha256:2b033cb02b9d' "$FAKE/pip.reqs"
+check_not "…другой версии jetson-stats в файле нет" grep -q '^jetson-stats==7' "$FAKE/pip.reqs"
+check "…зависимости — по хешам" grep -q '^smbus2==0.6.1' "$FAKE/pip.reqs"
+jroot
+ht_hook install JETSON_STATS_VERSION=7.3.0; eq "версия без хешей — 1" 1 "$?"
+check "…называет версии с хешами" grep -q '7.2.1 4.3.2' <(ht_out)
+check_not "…pip не звали" ht_called '^python3 -m pip install'
 ht_hook install 'JETSON_STATS_VERSION=1;id'; eq "версия не по форме — 1" 1 "$?"
 jroot; : > "$FAKE/pip-fails"
 ht_hook install; eq "pip упал — 1" 1 "$?"

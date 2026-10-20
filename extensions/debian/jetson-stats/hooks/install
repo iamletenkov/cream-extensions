@@ -5,7 +5,7 @@
 #
 # WHY pip, NOT apt. jetson-stats exists only on PyPI; upstream documents one
 # way: `sudo pip3 install -U jetson-stats`. Here pip runs as root into the
-# system prefix with constraints.txt (pinned versions), HOME in a temporary
+# system prefix by hashes of requirements.txt (pinned versions), HOME in a temporary
 # directory, no pip configuration (PIP_CONFIG_FILE=/dev/null), no --user and no
 # user site: nothing lands in root's home. What pip put on is recorded in
 # $CREAM_STATE_DIR/pip for `remove`.
@@ -68,12 +68,36 @@ trap 'rm -r -f -- "$WORK"' EXIT
 mkdir -m 0700 "$WORK/home"
 PIP_ENV=(env HOME="$WORK/home" PIP_CONFIG_FILE=/dev/null PIP_NO_CACHE_DIR=1 PIP_USER=0
     PIP_DISABLE_PIP_VERSION_CHECK=1 PYTHONNOUSERSITE=1)
-constraints="$EXT_DIR/constraints.txt"
-spec=jetson-stats
+# pip only in hash-checking mode: requirements.txt of the tree, every package
+# pinned with its sha256. JETSON_STATS_VERSION picks one of the hashed
+# jetson-stats lines (its Python marker dropped); a version without hashes is
+# refused — new hashes are a release of the extension.
+reqs="$EXT_DIR/requirements.txt"
+spec="jetson-stats (requirements.txt)"
 if [[ -n "$VERSION" ]]; then
-    # The version of the key wins over the pin: the pin lines of jetson-stats go.
-    grep -v '^jetson-stats==' "$EXT_DIR/constraints.txt" > "$WORK/constraints.txt"
-    constraints="$WORK/constraints.txt"
+    if ! python3 -I - "$EXT_DIR/requirements.txt" "$VERSION" "$WORK/requirements.txt" <<'PYEOF'
+import re, sys
+src, want, out = sys.argv[1:]
+text = re.sub(r"\\\n", " ", open(src, encoding="utf-8").read())
+lines, found = [], False
+for line in text.splitlines():
+    m = re.match(r"jetson-stats==([^ ;]+)\s*(?:;[^-]*)?(.*)$", line)
+    if m:
+        if m.group(1) == want:
+            lines.append("jetson-stats==%s %s" % (want, m.group(2)))
+            found = True
+        continue
+    lines.append(line)
+open(out, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+sys.exit(0 if found else 3)
+PYEOF
+    then
+        log_error "JETSON_STATS_VERSION=$VERSION: для этой версии нет хешей в requirements.txt"
+        log_error "версии с хешами: $(sed -n 's/^jetson-stats==\([^ ;]*\).*/\1/p' "$EXT_DIR/requirements.txt" | tr '\n' ' ')"
+        log_error "другая версия — хеши строкой в requirements.txt и новый релиз расширения (README)"
+        exit 1
+    fi
+    reqs="$WORK/requirements.txt"
     spec="jetson-stats==$VERSION"
 fi
 pip_flags=()
@@ -86,8 +110,8 @@ pip_names(){ "${PIP_ENV[@]}" python3 -m pip list --format=freeze 2>/dev/null | s
 pip_names > "$WORK/before"
 ok=""
 for attempt in 1 2 3; do
-    if "${PIP_ENV[@]}" python3 -m pip install --no-cache-dir --constraint "$constraints" \
-            "${pip_flags[@]+"${pip_flags[@]}"}" "$spec"; then
+    if "${PIP_ENV[@]}" python3 -m pip install --no-cache-dir --require-hashes -r "$reqs" \
+            "${pip_flags[@]+"${pip_flags[@]}"}"; then
         ok=1; break
     fi
     log_warn "pip не отработал (попытка $attempt/3)"
