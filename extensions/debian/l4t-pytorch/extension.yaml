@@ -5,17 +5,17 @@
 # OPENBLAS_CORETYPE=ARMV8 is pinned (library l4t).
 #
 # install — not a Jetson (no /etc/nv_tegra_release) — code 20 before apt
-#           (ruling R11); pip only with constraints.txt, as root into
+#           (ruling R11); pip only by hashes (requirements.txt), as root into
 #           /usr/local, never with a home directory of root; what it put on is
 #           recorded in /var/lib/cream/ext/l4t-pytorch/{packages,pip,cusparselt}.
 # remove  — its own pip distributions (never one another still needs, e.g.
 #           numpy of l4t-tensorflow, pip-owned.py), its own apt packages (refuses
 #           when apt would take anything else; cuDNN and pip stay while
 #           tensorflow is installed), cuSPARSELt, the OPENBLAS pin of R32.
-# Tree: constraints.txt, check-system-python.py, pip-owned.py.
+# Tree: requirements.txt, check-system-python.py, pip-owned.py.
 schema: cream/v1
 name: l4t-pytorch
-version: 2.0.1
+version: 2.1.0
 summary: PyTorch и torchvision с CUDA для NVIDIA Jetson — колесо NVIDIA и сборка torchvision (R36), проверка образа (R32)
 cream: ">=1.0.0"
 platform:

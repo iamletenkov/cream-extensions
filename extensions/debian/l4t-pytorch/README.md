@@ -9,12 +9,12 @@ sudo cream remove l4t-pytorch
 ```
 
 > **2.0.0 — cream/v1.** `install.sh` стал хуком `hooks/install`, появился хук `remove`;
-> `live: yes`. Каталог в госте — `/opt/cream/ext/l4t-pytorch/` (`constraints.txt`,
+> `live: yes`. Каталог в госте — `/opt/cream/ext/l4t-pytorch/` (`requirements.txt`,
 > `check-system-python.py`, `pip-owned.py` — в дереве расширения). Общий код L4T — библиотека [`l4t`](../l4t/README.md) (`depends: l4t >=1.0.0 <2`) вместо общего L4T-файла из `lib/` layout 2.
 > Нет `/etc/nv_tegra_release` (не Jetson) — код **20** до apt (рулинг Р11), а не
 > отказ 1. `TORCH_CUDA_ARCH_LIST` — прежнее имя, теперь ключ `config.keys`
 > (`scope: install`). Временный каталог сборки — `/var/tmp`, cuSPARSELt распаковывается
-> рядом и подменяется переименованием. `pip` — только с `constraints.txt` из дерева расширения, под root в `/usr/local`,
+> рядом и подменяется переименованием. `pip` — только по хешам `requirements.txt` из дерева расширения (с 2.1.0, см. «Хеши PyPI»), под root в `/usr/local`,
 > с `HOME` во временном каталоге и без конфигурации pip (`PIP_CONFIG_FILE=/dev/null`):
 > в домашний каталог root ничего не пишется. Загрузки NVIDIA сверяются по sha256.
 
@@ -65,8 +65,8 @@ instruction` (замер на Nano: rc=132). Вендорский образ э�
 | torchvision | 0.20.0 | **исходники** с GitHub (тег сверяется с коммитом), сборка с CUDA 8.7 |
 | cuDNN | 9.3 | apt, `libcudnn9-cuda-12` |
 | cuSPARSELt | 0.6.2.3 | архив NVIDIA redist `linux-aarch64`, sha256 закреплён, в `/usr/local/cusparselt` |
-| numpy / scipy | 1.26.4 / 1.13.1 | PyPI |
-| sympy, networkx, filelock, fsspec, mpmath, typing_extensions | `constraints.txt` | PyPI |
+| numpy / scipy | 1.26.4 / 1.13.1 | PyPI, по хешам |
+| sympy, networkx, filelock, fsspec, mpmath, typing_extensions, pillow | `requirements.txt` | PyPI, по хешам |
 
 Проверено на плате 2026-09-14: `torch.cuda.is_available()`, свёртка на GPU,
 `torchvision.ops.nms` на `cuda:0`, `resnet18` на GPU, мост numpy↔CUDA,
@@ -106,6 +106,33 @@ torch nv24.08 собран под C-API numpy 0x10 (ветка 1.23+), а в jam
 1.8.0 (его тянут matplotlib и pandas) с numpy 1.26 предупреждает на каждом
 импорте.
 
+## Хеши PyPI (`--require-hashes`) — с 2.1.0
+
+Всё, что `pip` берёт из сети, проверяется по sha256: `requirements.txt` в дереве
+расширения — каждый пакет закреплён `==` и несёт хеши всех файлов PyPI, которые
+pip CPython 3.10 на linux-aarch64 (glibc 2.35) может выбрать, плюс sdist. Колесо
+NVIDIA передаётся файлом с его sha256 (`<имя> @ file://… --hash=sha256:…`), и
+`pip install --require-hashes -r requirements.txt -r <файл колеса>` ставит всё
+одним вызовом. Зависимость, которой нет в файле и нет в системе, — отказ pip
+«нет хеша», а не тихое скачивание свежей версии. Уже стоящим из apt пакетам
+(`jinja2`, `requests`, `six`, `setuptools`, `wheel`) хеш не нужен — pip их не качает
+(проверено на `pip` 22.0.2 Ubuntu 22.04).
+
+Поднять версию или добавить пакет:
+
+```sh
+# 1. файл, который выберет плата (arm64, cp310), — из того же индекса PyPI
+pip download --no-deps --only-binary=:all: --python-version 3.10 --implementation cp --abi cp310 \
+  $(for m in $(seq 35 -1 17); do printf -- '--platform manylinux_2_%s_aarch64 ' "$m"; done) \
+  --platform manylinux2014_aarch64 -d /tmp/wh 'numpy==1.26.4'
+pip hash /tmp/wh/*            # этот хеш обязан попасть в requirements.txt
+# 2. остальные файлы той же версии (другие теги aarch64, sdist) — digests.sha256 из
+#    https://pypi.org/pypi/numpy/1.26.4/json
+```
+
+Правка файла — новый минор расширения; `tests/test-*.sh` проверяет, что у каждой
+строки есть `==` и хотя бы один sha256.
+
 ## Сторож системного Python
 
 pip под root ставит в `/usr/local`, и оттуда пакеты перекрывают apt-овые
@@ -115,7 +142,7 @@ pip под root ставит в `/usr/local`, и оттуда пакеты пе�
 
 Поэтому:
 
-- в `constraints.txt` закреплено **только то, что pip ставит в любом
+- в `requirements.txt` закреплено **только то, что pip ставит в любом
   случае**. `jinja2` там нет: apt-овый 3.0.3 удовлетворяет torch, а
   закреплённая версия встала бы поверх — и cloud-init импортировал бы её;
 - `check-system-python.py` после установки проверяет, что прямые
@@ -158,7 +185,9 @@ apt-пакеты, которых не было; `pip` — дистрибутив
 - **V** — `make cream-validate`, `tools/check-names.sh`.
 - **H** — `tests/test-l4t-pytorch.sh`: `pip-owned.py` на фикстурах dist-info; код 20,
   отказы до apt (ключ, библиотека, `nvcc`, Python); R36 — apt, cuSPARSELt, каждый
-  `pip install` с `constraints.txt`, `HOME` не root, сборка torchvision с CUDA,
+  `pip install` из сети — `--require-hashes -r requirements.txt`, колесо torch файлом с
+  sha256, torchvision — `--no-index --no-deps`; у каждой строки `requirements.txt` есть
+  `==` и sha256; `HOME` не root, сборка torchvision с CUDA,
   `MAX_JOBS` по памяти и при мусоре в meminfo, отказы (sha256, коммит, сборка, импорт,
   системный Python), запись pip и при отказе; R32; `remove` (своё, чужое, при
   `l4t-tensorflow`, отказ при чужих зависимых).

@@ -9,10 +9,10 @@ sudo cream remove l4t-tensorflow
 ```
 
 > **2.0.0 — cream/v1.** `install.sh` стал хуком `hooks/install`, появился хук `remove`;
-> `live: yes`. Каталог в госте — `/opt/cream/ext/l4t-tensorflow/` (`constraints.txt`,
+> `live: yes`. Каталог в госте — `/opt/cream/ext/l4t-tensorflow/` (`requirements.txt`,
 > `check-system-python.py`, `pip-owned.py` — в дереве). Нет `/etc/nv_tegra_release`
 > (не Jetson) — код **20** до apt (рулинг Р11), а не отказ 1. Временный каталог —
-> `/var/tmp`. Настроек нет. `pip` — только с `constraints.txt` из дерева расширения, под root в `/usr/local`,
+> `/var/tmp`. Настроек нет. `pip` — только по хешам `requirements.txt` из дерева расширения (с 2.1.0; как и почему — «Хеши PyPI» в [README l4t-pytorch](../l4t-pytorch/README.md)), под root в `/usr/local`,
 > с `HOME` во временном каталоге и без конфигурации pip (`PIP_CONFIG_FILE=/dev/null`):
 > в домашний каталог root ничего не пишется. Загрузки NVIDIA сверяются по sha256.
 
@@ -47,11 +47,11 @@ jetson-ai-lab под именем `tensorflow` отдаёт обычные ко�
 
 | Что | Версия | Откуда |
 |---|---|---|
-| tensorflow | 2.16.1 nv24.08 | CDN NVIDIA, sha256 закреплён |
+| tensorflow | 2.16.1 nv24.08 | CDN NVIDIA, sha256 закреплён (и для pip — файлом с хешем) |
 | keras | 3.3.3 | PyPI — та, с которой вышел TF 2.16; pip сам взял бы 3.12 |
 | cuDNN | 9.3 | apt |
 | numpy / scipy | 1.26.4 / 1.13.1 | PyPI, те же, что у `l4t-pytorch` |
-| остальное | `constraints.txt` | PyPI |
+| остальное | `requirements.txt` | PyPI, по хешам (`--require-hashes`) |
 
 Проверено на плате 2026-09-14: обучение модели Keras на GPU, и вместе
 в одном процессе с torch, torchvision, `cv2` и TensorRT.
@@ -62,7 +62,7 @@ jetson-ai-lab под именем `tensorflow` отдаёт обычные ко�
 Поверх apt TF законно перекрывает семь пакетов: `gast`, `markupsafe`,
 `mpmath`, `numpy`, `protobuf`, `scipy`, `sympy`. `markupsafe` — зависимость
 `jinja2` у cloud-init; с 3.0.3 cloud-init шаблоны рендерит (проверено).
-`requests`, `urllib3`, `idna`, `certifi` в `constraints.txt` не закреплены
+`requests`, `urllib3`, `idna`, `certifi` в `requirements.txt` не закреплены
 намеренно: apt-овые версии TF устраивают, и перекрывать их незачем.
 
 ## Что снимает `remove`
@@ -88,7 +88,8 @@ l4t-tensorflow`), затем `pip uninstall` своих, кроме нужных
 
 - **V** — `make cream-validate`, `tools/check-names.sh`.
 - **H** — `tests/test-l4t-tensorflow.sh`: код 20, отказы до apt (CUDA, Python),
-  установка (каждый `pip install` с `constraints.txt`, `HOME` не root, записи),
+  установка (каждый `pip install` — `--require-hashes -r requirements.txt`, колесо TF
+  файлом с sha256, у каждой строки `requirements.txt` есть `==` и sha256, `HOME` не root, записи),
   отказы (sha256, импорт, системный Python; запись pip и при отказе), `remove`
   (своё, чужое, при `l4t-pytorch`, отказ при чужих зависимых).
 - **P — ожидает.** Платы Jetson в CI нет: установка на живой плате (AGX Orin, R36) через

@@ -22,9 +22,10 @@
 # decoders) are ABI-incompatible with NVIDIA torch. Built on the board itself
 # (12 cores) — 128 s, a 1.4 MB wheel, nms runs on cuda:0.
 #
-# pip (ruling of the plan for Task 23): always with constraints.txt of the
-# extension tree; downloads of NVIDIA are checked by sha256, torchvision by the
-# commit of its tag. pip runs as root and installs into /usr/local, with HOME
+# pip (ruling of the plan for Task 23): from the network only in hash-checking
+# mode — requirements.txt of the extension tree (every pin with its sha256) and
+# the NVIDIA wheel as a file with its sha256; torchvision is checked by the
+# commit of its tag and built and installed with --no-index. pip runs as root and installs into /usr/local, with HOME
 # in the temporary directory and no pip configuration: nothing lands in the
 # home directory of root. What pip put on is recorded for `remove`
 # (pip-owned.py). check-system-python.py guards the system Python at the end.
@@ -154,7 +155,10 @@ WORK="$(mktemp -d "$R/var/tmp/l4t-pytorch.XXXXXX")"
 install -d -m 0700 "$WORK/home"
 PIP_ENV=(env HOME="$WORK/home" PIP_CONFIG_FILE=/dev/null PIP_NO_CACHE_DIR=1 PIP_USER=0
     PIP_DISABLE_PIP_VERSION_CHECK=1 PYTHONNOUSERSITE=1)
-PIP=("${PIP_ENV[@]}" python3 -m pip install --no-cache-dir --constraint "$EXT_DIR/constraints.txt")
+PIP=("${PIP_ENV[@]}" python3 -m pip install --no-cache-dir --require-hashes
+    -r "$EXT_DIR/requirements.txt")
+# Built locally from a checked commit: no index, no dependencies fetched.
+PIP_LOCAL=("${PIP_ENV[@]}" python3 -m pip install --no-cache-dir --no-index --no-deps)
 
 # On any exit: record what pip put into /usr/local (also after a failure
 # half-way — remove must find it), then drop the temporary directory.
@@ -226,9 +230,11 @@ echo "$TORCH_SHA256  $WORK/$TORCH_WHEEL" | sha256sum -c --quiet - || {
     log_error "контрольная сумма колеса torch не совпала"
     exit 1
 }
-# scipy goes with numpy, see constraints.txt.
-log_info "pip: numpy, scipy, torch"
-apt_retry "${PIP[@]}" numpy scipy "$WORK/$TORCH_WHEEL" || {
+# The whole requirements.txt (numpy, scipy, torch dependencies, pillow for the
+# torchvision build) together with the wheel, all by hash.
+printf 'torch @ file://%s --hash=sha256:%s\n' "$WORK/$TORCH_WHEEL" "$TORCH_SHA256" > "$WORK/nvidia.txt"
+log_info "pip: requirements.txt и torch (по хешам)"
+apt_retry "${PIP[@]}" -r "$WORK/nvidia.txt" || {
     log_error "pip не поставил torch"
     exit 1
 }
@@ -261,7 +267,7 @@ log_info "сборка torchvision с CUDA $ARCH_LIST: $jobs потоков"
     export CUDA_HOME=/usr/local/cuda PATH="/usr/local/cuda/bin:$PATH"
     export FORCE_CUDA=1 TORCH_CUDA_ARCH_LIST="$ARCH_LIST" BUILD_VERSION="${TORCHVISION_TAG#v}" MAX_JOBS="$jobs"
     "${PIP_ENV[@]}" python3 -m pip wheel --no-cache-dir --no-deps --no-build-isolation \
-        --constraint "$EXT_DIR/constraints.txt" -w "$WORK/wheels" . \
+        --no-index -w "$WORK/wheels" . \
         > "$WORK/torchvision-build.log" 2>&1
 ) || {
     log_error "сборка torchvision упала, хвост журнала:"
@@ -270,7 +276,7 @@ log_info "сборка torchvision с CUDA $ARCH_LIST: $jobs потоков"
 }
 wheels=("$WORK"/wheels/torchvision-*.whl)
 [[ -f "${wheels[0]}" ]] || { log_error "сборка torchvision не дала колеса"; exit 1; }
-apt_retry "${PIP[@]}" pillow "${wheels[0]}" || {
+"${PIP_LOCAL[@]}" "${wheels[0]}" || {
     log_error "pip не поставил собранный torchvision"
     exit 1
 }

@@ -9,7 +9,7 @@ pip под root ставит в /usr/local/lib/python3.10/dist-packages, и от
 Проверяем две вещи:
   1. прямые Python-зависимости пакета cloud-init импортируются из apt,
      а не из /usr/local (перекрытие ИХ — сигнал, что закрепление версий
-     в constraints.txt вышло за пределы необходимого);
+     в requirements.txt вышло за пределы необходимого);
   2. cloud-init рендерит jinja-шаблон — markupsafe из-под него pip
      перекрывает законно (его тянет werkzeug у tensorboard), и это
      единственный способ убедиться, что пара jinja2/markupsafe живая.
