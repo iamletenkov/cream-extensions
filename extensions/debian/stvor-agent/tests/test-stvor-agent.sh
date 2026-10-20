@@ -155,6 +155,10 @@ eq "name" stvor-agent "$(manifest 'm["name"]')"
 check "version — 4.x (patch поднимает agent-bump)" grep -qE '^4\.[0-9]+\.[0-9]+$' <<< "$(manifest 'm["version"]')"
 eq "cream" '>=1.0.0' "$(manifest 'm["cream"]')"
 eq "arch" "['amd64', 'arm64']" "$(manifest 'm["platform"]["arch"]')"
+# Jetson Nano (L4T R32) is Ubuntu 20.04: the agent is a static Go binary, its
+# unit (Type=exec, ProtectClock) needs systemd >= 245 — focal has 245.
+eq "os: Debian >= 12, Ubuntu >= 20.04" "[{'id': 'debian', 'version': '>=12'}, {'id': 'ubuntu', 'version': '>=20.04'}]" \
+    "$(manifest 'm["platform"]["os"]')"
 eq "targets" "{'build': 'exec', 'live': 'yes'}" "$(manifest 'm["targets"]')"
 eq "provides" "['stvor-agent']" "$(manifest 'm["provides"]')"
 eq "depends: teleport >=4.0.2 <5 (метка без бинаря)" "[{'name': 'teleport', 'version': '>=4.0.2 <5'}]" "$(manifest 'm["depends"]')"
