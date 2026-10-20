@@ -1,0 +1,196 @@
+name: Cream Bump
+
+# Поднимает пин исполнителя cream (tools/cream-pin.env) до выпуска cream и
+# открывает PR в main.
+#
+# Кто запускает: выпуск iamletenkov/cream (его ci.yml, job
+# dispatch-extensions, делает `gh workflow run cream-bump.yml -f tag=<тег>`
+# токеном EXTENSIONS_DISPATCH_TOKEN — fine-grained PAT только на этот
+# репозиторий с правом Actions: Read and write) либо человек руками. Без `tag`
+# берётся последний выпуск cream.
+#
+# Правки делает tools/cream-bump.sh (его же гоняют руками): версия и суммы
+# cream_<v>_amd64.deb и _arm64.deb — из SHA256SUMS выпуска. tools/check.sh
+# (cream validate по новому пину, снимок) гоняется до коммита — PR с красным
+# пином не открывается. Коммит `build(tools): …` — релиза каталога не
+# вызывает: пин cream — инструмент проверок, не содержимое снимка.
+#
+# PR открывает GITHUB_TOKEN, события от него другие workflow не запускают,
+# поэтому проверки запускаются явно: `gh workflow run ci-release.yml --ref
+# <ветка>` (как в agent-bump.yml).
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: >-
+          Тег выпуска cream (vX.Y.Z). Пусто — последний выпуск.
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: cream-bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: Bump cream pin
+    runs-on: ubuntu-latest
+    env:
+      CREAM_REPO: iamletenkov/cream
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: main
+
+      - name: Resolve tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="$INPUT_TAG"
+          if [ -z "$tag" ]; then
+            tag="$(gh release view -R "$CREAM_REPO" --json tagName --jq .tagName)"
+            echo "Тег не задан — последний выпуск cream: $tag"
+          fi
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Тег должен иметь вид vX.Y.Z, получено: '$tag'"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "branch=chore/cream-$tag" >> "$GITHUB_OUTPUT"
+
+      # Открытый PR или ветка на этот тег уже есть — второй не открываем.
+      - name: Check for an existing bump
+        id: existing
+        env:
+          BRANCH: ${{ steps.tag.outputs.branch }}
+        run: |
+          set -euo pipefail
+          pr="$(gh pr list -R "$GITHUB_REPOSITORY" --head "$BRANCH" --state open \
+            --json url --jq '.[0].url // empty')"
+          if [ -n "$pr" ]; then
+            echo "::notice::PR на эту версию уже есть: $pr"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -n "$(git ls-remote --heads origin "refs/heads/$BRANCH")" ]; then
+            echo "Ветка $BRANCH уже есть, PR нет — открою PR по ней"
+            echo "branch_exists=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      # Выпуск опубликован и уже несёт оба .deb и SHA256SUMS: пин на сумму
+      # файла, которого нет, сломал бы проверки у всех.
+      - name: Fetch release checksums
+        id: release
+        if: steps.existing.outputs.skip == 'false' && steps.existing.outputs.branch_exists != 'true'
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          v="${TAG#v}"
+          info="$(gh release view "$TAG" -R "$CREAM_REPO" --json isDraft,assets)"
+          if [ "$(jq -r .isDraft <<<"$info")" != "false" ]; then
+            echo "::error::Выпуск $TAG cream не опубликован"
+            exit 1
+          fi
+          for f in "cream_${v}_amd64.deb" "cream_${v}_arm64.deb" SHA256SUMS; do
+            if ! jq -e --arg f "$f" 'any(.assets[]; .name == $f)' <<<"$info" >/dev/null; then
+              echo "::error::В выпуске $TAG cream нет файла $f"
+              exit 1
+            fi
+          done
+          dir="$RUNNER_TEMP/cream-release"
+          mkdir -p "$dir"
+          gh release download "$TAG" -R "$CREAM_REPO" -p SHA256SUMS -D "$dir" --clobber
+          echo "sums=$dir/SHA256SUMS" >> "$GITHUB_OUTPUT"
+
+      - name: Bump pin
+        id: bump
+        if: steps.release.outcome == 'success'
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          SUMS: ${{ steps.release.outputs.sums }}
+        run: |
+          set -euo pipefail
+          tools/cream-bump.sh "$TAG" "$SUMS" | tee -a "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        if: steps.bump.outputs.changed == 'true'
+        with:
+          python-version: "3.12"
+
+      # Соседняя копия stvor-agent для tools/check-contract-fixtures.sh — как
+      # в ci-release.yml.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        if: steps.bump.outputs.changed == 'true'
+        with:
+          repository: iamletenkov/stvor-agent
+          ref: ${{ vars.STVOR_AGENT_REF || 'main' }}
+          path: .stvor-agent
+          persist-credentials: false
+
+      # cream validate скачивает .deb по новому пину и сверяет sha256 —
+      # первая настоящая проверка пина.
+      - name: Run repository checks
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          STVOR_AGENT_DIR: ${{ github.workspace }}/.stvor-agent
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check pyyaml
+          tools/check.sh
+
+      - name: Commit and push branch
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          BRANCH: ${{ steps.tag.outputs.branch }}
+          VERSION: ${{ steps.bump.outputs.version }}
+          SHA256_AMD64: ${{ steps.bump.outputs.sha256_amd64 }}
+          SHA256_ARM64: ${{ steps.bump.outputs.sha256_arm64 }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git add -- tools/cream-pin.env
+          git -c core.hooksPath=/dev/null commit -m "build(tools): пин cream $VERSION" \
+            -m "Исполнитель cream $VERSION (выпуск $TAG), sha256 из SHA256SUMS выпуска." \
+            -m "amd64 $SHA256_AMD64" \
+            -m "arm64 $SHA256_ARM64"
+          git -c core.hooksPath=/dev/null push origin "refs/heads/$BRANCH"
+
+      - name: Open pull request and run checks
+        if: >-
+          steps.bump.outputs.changed == 'true' ||
+          steps.existing.outputs.branch_exists == 'true'
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          BRANCH: ${{ steps.tag.outputs.branch }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          body="$(mktemp)"
+          cat > "$body" <<BODY
+          Пин исполнителя cream в \`tools/cream-pin.env\` — $version: версия и суммы
+          \`cream_${version}_amd64.deb\` и \`_arm64.deb\` из \`SHA256SUMS\` выпуска.
+          \`tools/check.sh\` по новому пину прошёл до коммита.
+
+          Выпуск cream: https://github.com/$CREAM_REPO/releases/tag/$TAG
+
+          Если расширениям нужна новая версия, поднимите их \`cream:\` отдельным PR.
+          PR открыт workflow \`cream-bump.yml\` токеном GITHUB_TOKEN; проверки
+          запущены на ветке вручную (\`ci-release.yml\`). Нет проверок — Actions →
+          CI and Release → Run workflow → ветка \`$BRANCH\`.
+          BODY
+          gh pr create -R "$GITHUB_REPOSITORY" --base main --head "$BRANCH" \
+            --title "build(tools): пин cream $version" --body-file "$body"
+          gh workflow run ci-release.yml -R "$GITHUB_REPOSITORY" --ref "$BRANCH"
