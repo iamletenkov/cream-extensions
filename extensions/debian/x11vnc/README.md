@@ -13,10 +13,10 @@ VNC-доступ к рабочему столу X11 пользователя, с
 
 | Поле | Значение |
 |---|---|
-| `version` | `5.0.0`, `cream: ">=1.1.0"` |
+| `version` | `5.0.1`, `cream: ">=1.1.0"` |
 | `targets` | `build: exec`, `live: yes` |
 | `provides` / `requires` | `remote-desktop` / `x11-server`, `display-manager` |
-| `depends` | `cloud-user >=1.0.0 <2` |
+| `depends` | `cloud-user >=1.0.0 <2`, `apt-guard >=1.0.0 <2` |
 | хуки | `install`, `configure` (стадия `graphical`, `after: [display-manager.service]`), `apply`, `remove` |
 | `files` | `files/x11vnc@.service` → `/etc/systemd/system/x11vnc@.service` |
 
@@ -79,7 +79,8 @@ sudo cream set x11vnc X11VNC_LISTEN=all
 - **`configure`/`apply`**: файл пароля, `x11vnc@<пользователь>` включается и
   перезапускается (`--no-block`), экземпляры прежних пользователей гасятся.
 - **`remove`**: экземпляры выключены, файл пароля и маркер сняты; пакет `x11vnc` —
-  только если его поставил этот `install`.
+  только если его поставил этот `install`, после симуляции apt (`apt-guard`): если apt
+  снял бы что-то кроме `x11vnc` — отказ (1) до любых изменений.
 
 ## Как находится X authority
 
@@ -160,8 +161,8 @@ EXTENSION x11vnc X11VNC_PORT=5901
   `-nopw`; пароль не попадает в argv, окружение и журнал; смена пользователя; `apply`,
   `remove`; решение обёртки `-rfbauth`/`-nopw`/отказ; пустой пароль без ключа — нет маркера, сервер
   выключен; ключ — маркер и предупреждение; унаследованный файл без секрета — выключено,
-  файл не тронут.
-- **L** — `make test-live EXT=x11vnc` (`tests/live.env`: deps `cloud-user desktop xfce4`,
+  файл не тронут; `remove` — отказ, если симуляция apt снимает чужой пакет.
+- **L** — `make test-live EXT=x11vnc` (`tests/live.env`: deps `apt-guard cloud-user desktop xfce4`,
   секрет `X11VNC_PASSWORD`, debian-12): установка, повтор, `--reinstall` без изменений,
   секрета нет в `ps`, журнале, реестре, `config`; configure на загрузке, `remove`.
   Сессии в контейнере нет — включение сервера пользователю проверяет H.

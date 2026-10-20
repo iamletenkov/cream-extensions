@@ -32,7 +32,8 @@ cream/v1 (план 2026-10-19, Task 17).
   настроек не пишет. Повтор при распакованном дереве сеть не трогает.
 - **`configure`** — на каждой загрузке (стадия `graphical`, после менеджера входа),
   после `install` на живой машине:
-  1. проверка аутентификации (ниже); нет — объявление для Teleport снимается,
+  1. проверка значений (адрес, порт, `SELKIES_ENABLE_HTTPS`, `SELKIES_ALLOW_NO_AUTH`;
+     иначе сбой, код 1) и аутентификации (ниже); нет аутентификации — объявление для Teleport снимается,
      запущенные `selkies@*` гасятся (`--no-block`), предупреждение, код 0;
   2. объявление `/etc/cream/teleport/apps.d/selkies.conf`;
   3. менеджер входа не запущен — предупреждение, код 0 (рулинг Р11);
@@ -111,6 +112,8 @@ cream/v1 (план 2026-10-19, Task 17).
 | `SELKIES_MICROPHONE_ENABLED`, `SELKIES_WEBCAM_ENABLED`, `SELKIES_GAMEPAD_ENABLED` | `false` | машине не нужны |
 | `SELKIES_COMMAND_ENABLED`, `SELKIES_ENABLE_SHARING`, `SELKIES_SECOND_SCREEN` | `false` | API команд, ссылки для просмотра, второй монитор |
 | `SELKIES_MODE` | `websockets` | WebRTC через веб-приложение Teleport не проходит |
+| `SELKIES_ENABLE_DUAL_MODE` | `false` | оба режима сразу |
+| `SELKIES_UI_SIDEBAR_SHOW_GAMEPADS`, `…_WEBCAM`, `…_SHARING`, `…_APPS` | `false` | пункты боковой панели |
 | `SELKIES_DISPLAY` | пусто (`:0`) | ключ обёртки |
 | `SELKIES_HTTPS_CERT`, `SELKIES_HTTPS_KEY` | пусто | пара выпускается на машине в `~/.local/state/selkies/` пользователя |
 

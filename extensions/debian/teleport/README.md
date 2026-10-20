@@ -34,7 +34,7 @@ cream install teleport TELEPORT_TARBALL=/media/teleport-v18.10.0-linux-arm64-bin
 | `TELEPORT_MIRROR` | пусто | база зеркала: `<база>/binaries/teleport/<версия>/teleport-v<версия>-linux-<arch>-bin.tar.gz`; пусто — `cdn.teleport.dev` |
 | `TELEPORT_TARBALL` | пусто | локальный тарбол; нужен `TELEPORT_SHA256`; взаимоисключим с `TELEPORT_MIRROR` |
 
-Хук `install` ставит только `teleport` (без `tsh`, `tctl`, `tbot`), включает
+Хук `install` (и `upgrade` — тот же код) ставит только `teleport` (без `tsh`, `tctl`, `tbot`), включает
 `teleport-apps.path` и `teleport-token.path` и **не регистрирует** узел и не
 запускает агента. Та же версия уже стоит — пропуск без скачивания. Смена
 ключа — повтор `cream install teleport KEY=…`: новый бинарь, и работавший агент
@@ -249,9 +249,9 @@ merged-usr не годится, нужен `/usr/bin/…`); команда по�
 (`join-retry`), `teleport-token.service` (`scrub-token`) и `teleport-apps.service`
 (`reload-apps`, с 4.0.2): их `ExecStart` зовёт
 действие с `lock: exclusive`. Это допустимо: правило ловит юнит, который
-перезапускает держатель блокировки и сам ждёт её, — а эти два никто под
+перезапускает держатель блокировки и сам ждёт её, — а эти три никто под
 блокировкой не стартует и не ждёт (`join` включает таймер `--no-block`, а
-`teleport-token.path` срабатывает сам). Им блокировка нужна: тик и стирание
+`teleport-token.path` и `teleport-apps.path` срабатывают сами). Им блокировка нужна: тик и стирание
 секрета не должны пересечься с идущим `join`, а `lock: none` запрещает им писать
 (тик пишет ожидание и регистрацию, стирание — удаляет секрет, который `join --force`
 мог только что записать заново). Что ни один держатель блокировки не ждёт job этих
@@ -265,7 +265,7 @@ merged-usr не годится, нужен `/usr/bin/…`); команда по�
 | `/opt/cream/ext/teleport/` | дерево расширения: `hooks/`, `actions/` (тонкие входы), `files/teleport.sh` (общая библиотека), `files/os-logins` (метка `os_logins`, её зовёт Teleport) |
 | `/etc/systemd/system/teleport{,-apps,-token,-join}.*` | юниты (раскладывает cream) |
 | `/etc/cream/teleport/{config,apps.d,command-labels.d}` | домен ручек и объявления |
-| `/var/lib/cream/ext/teleport/{registration-secret,join-pending,join-refused,managed-pending,rollback}` | состояние (каталог 0700, файлы 0600) |
+| `/var/lib/cream/ext/teleport/{registration-secret,join-pending,join-refused,managed-pending,reload-pending,rollback}` | состояние (каталог 0700, файлы 0600) |
 | `/etc/teleport.yaml`, `/var/lib/teleport/`, `/usr/local/bin/teleport` | Teleport, как прежде |
 
 Хук `remove`: `leave`, path-юниты выключены, бинарь и состояние стёрты; юниты
@@ -279,6 +279,10 @@ merged-usr не годится, нужен `/usr/bin/…`); команда по�
 `teleport`, `dpkg`, `cream`, `stat`, `sleep` через `PATH`; без root, systemd и
 сети. Тестовых переключателей в окружении у боевого скрипта нет. Запускаются
 из `tools/check.sh` вместе с `tools/check-contract-fixtures.sh`.
+
+Живой прогон — `make test-live EXT=teleport` (`tests/live.env`: без зависимостей,
+debian-12, ubuntu-20.04, ubuntu-24.04; тарбол с `cdn.teleport.dev`): установка, повтор,
+`--reinstall` без изменений, загрузка, `remove`; регистрации в кластере в нём нет.
 
 Версия кластера из `/webapi/find` — внешний ввод: до любой арифметики она
 проверяется как `X.Y.Z[-pre][+build]` (компоненты до 9 цифр) и обрезается до
