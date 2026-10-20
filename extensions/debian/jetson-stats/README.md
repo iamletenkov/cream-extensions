@@ -5,8 +5,8 @@
 
 > **3.0.0 — cream/v1.** Хуки `install`, `configure` (стадия `cloud-user` — после
 > `cloud-final`; нужен cream ≥ 1.1.1, рулинг Р14 плана) и `remove`; своего
-> `configure-jetson-stats.service` нет. pip — с `constraints.txt` (закреплённые
-> версии), без `--user`, с `HOME` во временном каталоге и без конфигурации pip:
+> `configure-jetson-stats.service` нет. pip — по хешам `requirements.txt` (с 3.1.0:
+> `--require-hashes`, закреплённые версии с sha256), без `--user`, с `HOME` во временном каталоге и без конфигурации pip:
 > в доме root ничего не остаётся. Не Jetson — код 20 («неприменимо»).
 
 ## Зачем
@@ -52,17 +52,31 @@ EXTENSION jetson-stats
 
 | Ключ | Умолчание | Что делает |
 |---|---|---|
-| `JETSON_STATS_VERSION` (`scope: install`) | пусто — версия из `constraints.txt` (7.2.1; на Python 3.6, L4T R32 — 4.3.2) | своя версия `X.Y[.Z]`; закреплённая строка `jetson-stats` из `constraints.txt` при этом не действует, зависимости — по-прежнему по нему |
+| `JETSON_STATS_VERSION` (`scope: install`) | пусто — версия из `requirements.txt` по Python (7.2.1; на Python 3.6, L4T R32 — 4.3.2) | одна из версий **с хешами** в `requirements.txt` (сейчас 7.2.1 и 4.3.2), маркер Python у неё снимается; другая версия — отказ до pip: новые хеши — строка в `requirements.txt` и новый релиз расширения |
 
 ```vmfile
 EXTENSION jetson-stats JETSON_STATS_VERSION=7.2.1
+```
+
+## Хеши PyPI (`--require-hashes`) — с 3.1.0
+
+`requirements.txt` — каждый пакет закреплён `==` с sha256 всех его файлов PyPI
+(колесо и sdist; всё — чистый Python, архитектура не важна); строки `jetson-stats`
+разведены маркерами Python (7.2.1 — от 3.7, 4.3.2 — 3.6, только sdist; ей нужны
+`smbus2` и `distro`, они закреплены для обеих). Файл — только ASCII: pip 9.0.1
+Ubuntu 18.04 (L4T R32) читает его как ASCII. Проверено 2026-10-20 в ubuntu:18.04
+(pip 9) и ubuntu:22.04 (pip 22): ставится, подменённый хеш — отказ. Поднять версию:
+
+```sh
+pip download --no-deps -d /tmp/js 'jetson-stats==X.Y.Z' && pip hash /tmp/js/*
+# остальные файлы версии — digests.sha256 из https://pypi.org/pypi/jetson-stats/X.Y.Z/json
 ```
 
 ## Что делает
 
 - **`install`** — нет `/etc/nv_tegra_release` — код 20; ставит
   `python3-pip`, `python3-setuptools` (только недостающие), затем
-  `python3 -m pip install --constraint constraints.txt jetson-stats` от root в
+  `python3 -m pip install --require-hashes -r requirements.txt` от root в
   системный префикс: `HOME` — временный каталог, `PIP_CONFIG_FILE=/dev/null`,
   `PIP_USER=0`, `PYTHONNOUSERSITE=1`, кеша нет; на PEP 668 — `--break-system-packages`.
   Что поставил pip, записывается в `/var/lib/cream/ext/jetson-stats/pip`. Затем

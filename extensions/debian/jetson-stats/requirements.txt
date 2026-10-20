@@ -1,0 +1,22 @@
+# Requirements of the pip install of jetson-stats (hooks/install,
+# pip install --require-hashes -r). Every package is pinned with == and the
+# sha256 of its PyPI files (wheel and sdist; all are pure Python), taken
+# 2026-10-20 from PyPI and checked with `pip download` + `pip hash`.
+# jetson-stats 7.x needs Python >= 3.7 (L4T R35/R36, Ubuntu 20.04+); on L4T R32
+# (Ubuntu 18.04, Python 3.6) the last fitting release is 4.3.2 (sdist only,
+# needs smbus2 and distro). Raising a pin is a release of the extension: new
+# hashes (README, section on PyPI hashes) and a check on a board (P).
+jetson-stats==7.2.1 ; python_version >= "3.7" \
+    --hash=sha256:0d2e13c09628a785c7d94f1daab9cc22b32cab90d2489ae1ef4d8a274cc7c2de \
+    --hash=sha256:90f74f817a2327d001fc0e9e2a348b78b048b718567a4236b3207a6b756f4d0f
+jetson-stats==4.3.2 ; python_version < "3.7" \
+    --hash=sha256:2b033cb02b9d4cf70d13cdb915b5cf58b864a742d612704513e196943dc0a397
+smbus2==0.6.1 \
+    --hash=sha256:2b043372abf8f6029a632c3aab36b641c5d5872b1cbad599fc68e17ac4fd90a5 \
+    --hash=sha256:650feeb27ca0ed58b07db4c10201c2a662c41305b7bf6e5fab9d888056f48180
+distro==1.9.0 \
+    --hash=sha256:2fa77c6fd8940f116ee1d6b94a2f90b13b5ea8d019b98bc8bafdcabcdd9bdbed \
+    --hash=sha256:7bffd925d65168f85027d8da9af6bddab658135b840670a223589bc0c8ef02b2
+nvidia-ml-py==13.615.71 ; python_version >= "3.7" \
+    --hash=sha256:959bf4adf6fe1308e4bd739e722236b0d1ec8392e2cefad33ff70c311380b9b6 \
+    --hash=sha256:bebe4e48f51b1dc75028c0815cb7bfa14a31a5bb80be70c9d980c6036953fc3d

@@ -3,7 +3,7 @@
 # not a desktop: the X server and the session come from gnome/xfce4/lxde.
 schema: cream/v1
 name: firefox
-version: 2.0.1
+version: 2.0.2
 summary: Firefox из APT-репозитория Mozilla — настоящий .deb, а не снап
 cream: ">=1.0.0"
 platform:

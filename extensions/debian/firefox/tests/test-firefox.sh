@@ -52,7 +52,7 @@ sum() { sha256sum "$@" | awk '{print $1}'; }
 echo "== манифест =="
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "мажор 2" 2.0.1 "$(mf 'm["version"]')"
+eq "версия 2.0.2" 2.0.2 "$(mf 'm["version"]')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
 eq "хуки install и remove" "['install', 'remove']" "$(mf 'sorted(m["hooks"])')"
 eq "FIREFOX_LANGPACK — scope install" install "$(mf 'm["config"]["keys"]["FIREFOX_LANGPACK"]["scope"]')"
@@ -131,6 +131,12 @@ check_not "firefox не ставился" ht_called '^apt-get install -y --allow
 fresh
 printf '%s\nDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF\n' "$FPR" > "$FAKE/fpr"
 ht_hook install; eq "два основных ключа — 1" 1 "$?"
+check "…отказ называет число ключей" grep -q '2 основных ключей' <(ht_out)
+# Many keys in the listing: the parse must not close gpg's pipe early (was 141).
+fresh
+{ echo "$FPR"; for i in $(seq 1 3000); do printf 'DEADBEEF%032d\n' "$i"; done; } > "$FAKE/fpr"
+ht_hook install; eq "длинный список ключей — отказ 1, не SIGPIPE 141" 1 "$?"
+check_not "статический скан: нет awk с exit на канале gpg" grep -qE "list-keys.*\\\$|exit \}'\)\"" "$EXT/hooks/install"
 check_not "ключ не записан" test -e "$K"
 
 fresh

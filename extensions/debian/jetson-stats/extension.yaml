@@ -1,7 +1,7 @@
 # jetson-stats — jtop, the monitor of NVIDIA Jetson, and its service
 # jtop.service; the cloud-init user in the group jtop (owner of /run/jtop.sock).
 #
-# install   — python3-pip, then jetson-stats by pip with constraints.txt (HOME
+# install   — python3-pip, then jetson-stats by pip --require-hashes (HOME
 #             in a temporary directory, no pip configuration, no --user),
 #             jtop.service in place (pip, `jtop --install-service`, the package
 #             template or a unit written here) and enabled, the group jtop.
@@ -15,12 +15,13 @@
 # Arm64 only: Jetson is an aarch64 module on Tegra; the wheel is py3-none-any
 # and would install on amd64 as dead weight.
 #
+# 3.1.0: pip --require-hashes -r requirements.txt (was constraints.txt).
 # 3.0.0: cream/v1; configure-jetson-stats.service → stage cloud-user (cream
-#        >= 1.1.1, ruling R14); pip with constraints and without traces in
+#        >= 1.1.1, ruling R14); pip pinned and without traces in
 #        root's home; remove.
 schema: cream/v1
 name: jetson-stats
-version: 3.0.1
+version: 3.1.0
 summary: jtop — монитор NVIDIA Jetson (CPU, GPU, память, питание) и служба jtop.service
 cream: ">=1.1.1"
 platform:
@@ -43,4 +44,4 @@ config:
       default: ""
       empty: true
       scope: install
-      description: "версия jetson-stats вместо закреплённой в constraints.txt (7.2.1; 4.3.2 на Python 3.6)"
+      description: "версия jetson-stats из тех, что с хешами в requirements.txt (7.2.1; 4.3.2 на Python 3.6)"
