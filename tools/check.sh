@@ -13,7 +13,8 @@
 # (live-matrix.sh). Сверка файлов-образцов контракта stvor-agent
 # (check-contract-fixtures.sh: пин набора — всегда, без сети; соседняя копия
 # stvor-agent — если есть, в CI её даёт checkout по ref). Тест
-# tools/agent-bump.sh (пин обёртки stvor-agent по SHA256SUMS релиза). Тест
+# tools/agent-bump.sh (пин обёртки stvor-agent по SHA256SUMS релиза) и
+# tools/cream-bump.sh (пин cream в tools/cream-pin.env). Тест
 # снимка каталога (test-snapshot.sh: две сборки tools/catalog-snapshot.sh дают
 # одни байты, cream принимает снимок через source add --archive и resolve).
 #
@@ -60,6 +61,9 @@ echo "== test-live-matrix =="
 
 echo "== test-agent-bump =="
 "$HERE/test-agent-bump.sh" || rc=1
+
+echo "== test-cream-bump =="
+"$HERE/test-cream-bump.sh" || rc=1
 
 echo "== test-snapshot =="
 "$HERE/test-snapshot.sh" || rc=1

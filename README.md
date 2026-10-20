@@ -111,6 +111,7 @@ tools/check-names.sh          # прежние имена bisquite по всем
 tools/live-test.sh <имя>      # живой прогон настоящим cream в контейнере с systemd (make test-live EXT=<имя>)
 tools/new-extension.sh <имя>  # каркас нового расширения cream/v1
 tools/agent-bump.sh <тег> <SHA256SUMS>  # пин stvor-agent в обёртке stvor-agent (его зовёт agent-bump.yml)
+tools/cream-bump.sh <тег> <SHA256SUMS>  # пин cream в tools/cream-pin.env (его зовёт cream-bump.yml)
 tools/catalog-snapshot.sh [OUT] # снимок каталога cream (make snapshot)
 tools/test-snapshot.sh          # воспроизводимость и приёмка снимка cream (make snapshot-check)
 ```
@@ -184,6 +185,23 @@ Workflow `CI and Release`, конфиг — `.github/release_please/`:
 с суммами обоих `.deb` из `SHA256SUMS` релиза. База PR — вход `base`, иначе
 переменная `AGENT_BUMP_BASE` (пока обёртка только в пилотной ветке —
 `feature/cream-v1-pilot`), иначе `main`.
+
+### Что тянет выпуск
+
+Цепочка выпусков целиком — runbook портала Stvor «цепочка выпусков cream».
+Здесь — входы и выходы этого репозитория:
+
+| Направление | Кто запускает | Что делает | Выключатель / секрет |
+|---|---|---|---|
+| выпуск cream → сюда | job `dispatch-extensions` в `iamletenkov/cream` | `cream-bump.yml`: PR `build(tools): пин cream X.Y.Z` (`tools/cream-pin.env`, суммы из `SHA256SUMS`) | там: `EXTENSIONS_BUMP_ENABLED`, `EXTENSIONS_DISPATCH_TOKEN` |
+| выпуск stvor-agent → сюда | job `dispatch-extensions` в `iamletenkov/stvor-agent` | `agent-bump.yml`: PR пина обёртки `stvor-agent` | там: `EXTENSIONS_BUMP_ENABLED`, `EXTENSIONS_DISPATCH_TOKEN` |
+| выпуск отсюда → bisquite | job `dispatch-bisquite` | `extensions-bump.yml` в bisquite | здесь: `BISQUITE_BUMP_ENABLED`, `BISQUITE_DISPATCH_TOKEN` <!-- check-names: allow: имена переменной и секрета GitHub --> |
+| выпуск отсюда → Stvor | job `dispatch-stvor` | `robot-pins-bump.yml` в stvor: PR `CREAM_EXTENSIONS_*` в `.env.example` | здесь: `STVOR_BUMP_ENABLED`, `STVOR_DISPATCH_TOKEN` |
+
+Выключатель — переменная репозитория (`gh variable set <ИМЯ> --body true`;
+выключить — `gh variable delete <ИМЯ>`). Без секрета job пишет предупреждение и
+выходит зелёным. Руками то же самое: Actions → Cream Bump → Run workflow
+(`tag` пустой — последний выпуск cream) или `tools/cream-bump.sh <тег> <SHA256SUMS>`.
 
 ### Снимок каталога cream
 
