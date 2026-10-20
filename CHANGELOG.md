@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.1.2](https://github.com/iamletenkov/cream-extensions/compare/v5.1.1...v5.1.2) (2026-10-20)
+
+
+### Исправлено
+
+* версия расширения растёт при каждом изменении его дерева ([#32](https://github.com/iamletenkov/cream-extensions/issues/32)) ([c5aeb4b](https://github.com/iamletenkov/cream-extensions/commit/c5aeb4b97016f283886753a9b3feabd297e6061a))
+
 ## [5.1.1](https://github.com/iamletenkov/cream-extensions/compare/v5.1.0...v5.1.1) (2026-10-20)
 
 
