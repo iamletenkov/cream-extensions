@@ -39,6 +39,7 @@ if [[ ! -f "$EXT_DIR/extlinux-root.sh" ]]; then
     log_error "в дереве расширения нет extlinux-root.sh ($EXT_DIR)"
     exit 1
 fi
+SUMS_FILE="$EXT_DIR/public-sources.sha256"
 # shellcheck source=../extlinux-root.sh
 . "$EXT_DIR/extlinux-root.sh"
 
@@ -199,7 +200,25 @@ if [[ "$SOC" != t210 ]]; then
 fi
 log_info "SoC t210 (определено по: $SOC_SRC)"
 
-# --- 1в. Корень по PARTUUID: проверка до сборки ------------------------------
+# --- 1в. Сумма исходников этой версии известна? ------------------------------
+# public_sources.tbz2 проверяется по sha256 из таблицы в дереве расширения;
+# версии без строки — отказ здесь, до apt-get и скачивания 160 МБ.
+L4T_VERSION="${L4T_MAJOR}.${L4T_REV}"
+[[ "$L4T_VERSION" == *.*.* ]] || L4T_VERSION="${L4T_VERSION}.0"
+if [[ ! -f "$SUMS_FILE" ]]; then
+    log_error "в дереве расширения нет таблицы сумм public-sources.sha256 ($EXT_DIR)"
+    exit 1
+fi
+SRC_SHA256="$(awk -v v="$L4T_VERSION" '$1 == v { print $2 }' "$SUMS_FILE")"
+SRC_SIZE="$(awk -v v="$L4T_VERSION" '$1 == v { print $3 }' "$SUMS_FILE")"
+if [[ ! "$SRC_SHA256" =~ ^[0-9a-f]{64}$ || ! "$SRC_SIZE" =~ ^[0-9]+$ ]]; then
+    log_error "для L4T ${L4T_VERSION} нет суммы public_sources.tbz2 в public-sources.sha256"
+    log_error "известные версии: $(awk '!/^#/ && NF { printf "%s ", $1 }' "$SUMS_FILE")"
+    log_error "новая версия: скачайте файл, sha256sum и размер — строкой в таблицу (README)"
+    exit 1
+fi
+
+# --- 1г. Корень по PARTUUID: проверка до сборки ------------------------------
 # Шаг 7 переписывает `root=` во ВСЕХ строках APPEND на `root=PARTUUID=<P>`
 # раздела, на котором лежит /. Отказать он может — чужой PARTUUID, UUID=,
 # LABEL=, два root= в строке, нет root= вовсе, — и всё это видно по файлу
@@ -260,6 +279,16 @@ if ! wget -q -O "$WORK/public_sources.tbz2" "$SRC_URL"; then
     log_error "проверьте, публикует ли NVIDIA public_sources для R${L4T_MAJOR}.${L4T_REV}"
     exit 1
 fi
+
+got_sha="$(sha256sum "$WORK/public_sources.tbz2" | awk '{print $1}')"
+if [[ "$got_sha" != "$SRC_SHA256" ]]; then
+    log_error "sha256 public_sources.tbz2 не сходится для L4T ${L4T_VERSION}:"
+    log_error "  ждали $SRC_SHA256 ($SRC_SIZE байт)"
+    log_error "  пришло $got_sha ($(stat -c %s "$WORK/public_sources.tbz2") байт)"
+    rm -f "$WORK/public_sources.tbz2"
+    exit 1
+fi
+log_info "sha256 исходников сошлась ($SRC_SHA256)"
 
 tar -xjf "$WORK/public_sources.tbz2" -C "$WORK" || exit 1
 rm -f "$WORK/public_sources.tbz2"
@@ -561,7 +590,7 @@ fi
 # — вендора, и писать их константой незачем. А `root=` у базы Q-engineering —
 # `/dev/mmcblk0p1`, имя устройства: образ с ним грузится только с SD, на
 # USB-SSD тот же раздел называется /dev/sda1. Поэтому корень переписывается
-# на `root=PARTUUID=<P>` раздела, на котором лежит / (шаг 1в), — во ВСЕХ
+# на `root=PARTUUID=<P>` раздела, на котором лежит / (шаг 1г), — во ВСЕХ
 # записях, запасная `primary` тоже. Запись kvm берёт APPEND уже из
 # переписанного файла, так что источник правды один.
 #
@@ -571,7 +600,7 @@ fi
 # уже изменённым — на плате без монитора эта копия весь запас отката.
 kvm_backup_once "$EXTLINUX" || { log_error "копия extlinux.conf не снята — правку не начинаю"; exit 1; }
 
-# Те же входы шаг 1в уже проверил, поэтому отказ здесь значит, что файл
+# Те же входы шаг 1г уже проверил, поэтому отказ здесь значит, что файл
 # изменился за время сборки; он громкий, а копия выше и есть исходный файл.
 if ! kvm_rewrite_root "$EXTLINUX" "$ROOT_PARTUUID"; then
     log_error "root= в extlinux.conf не переписан (причины выше); исходный файл — extlinux.conf.cream-orig"

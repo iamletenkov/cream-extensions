@@ -2,7 +2,7 @@
 # Tests for l4t-kernel-kvm — what can be checked without a board or an
 # appliance: rewriting `root=` to `root=PARTUUID=<P>` in every APPEND line of
 # extlinux.conf, the refusals, idempotency, the partition number cross-check,
-# and (a scanner, not a behaviour test) the position of step 1v in hooks/install.
+# and (a scanner, not a behaviour test) the position of step 1g in hooks/install.
 # The hook itself on a scratch root, the backup-once rule and the kvm entry —
 # tests/test-hooks.sh.
 #
@@ -144,7 +144,7 @@ er kvm_rewrite_root "$T/c11" "$P" >/dev/null 2>&1
 check   "11. rootwait, rootfstype=ext4, nfsroot=… не тронуты" \
         grep -qxF "      APPEND \${cbootargs} quiet nfsroot=192.168.0.1:/srv/nfs root=PARTUUID=$P $tail_tokens" "$T/c11"
 
-echo "== проверка без записи (шаг 1в) =="
+echo "== проверка без записи (шаг 1г) =="
 # 12. Partition number cross-check.
 conf2 "$T/c12" root=/dev/mmcblk0p1; cp "$T/c12" "$T/c12.orig"
 check   "12. /dev/mmcblk0p1 при разделе 1 — проходит"  er kvm_check_extlinux_roots "$T/c12" "$P" 1
@@ -182,7 +182,7 @@ I="$X/hooks/install"
 line() { grep -nE "$1" "$I" | head -1 | cut -d: -f1; }
 check   "14. помощник подключается из дерева расширения (CREAM_EXT_DIR)" \
         grep -qE '^\. "\$EXT_DIR/extlinux-root\.sh"' "$I"
-check   "14. шаг 1в стоит раньше первого apt-get" \
+check   "14. шаг 1г стоит раньше первого apt-get" \
         test "$(line '^[^#]*kvm_check_extlinux_roots ')" -lt "$(line '^[^#]*apt-get ')"
 check   "14. определение раздела — раньше первого apt-get" \
         test "$(line '^[^#]*kvm_root_partition')" -lt "$(line '^[^#]*apt-get ')"

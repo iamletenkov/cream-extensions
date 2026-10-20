@@ -1,0 +1,15 @@
+# sha256 of public_sources.tbz2 (sources/t210) per L4T version, as parsed from
+# /etc/nv_tegra_release: R<MAJOR> + REVISION -> <MAJOR>.<REVISION>.
+# Columns: version, sha256, size in bytes. Taken 2026-10-20 by downloading each
+# file from developer.nvidia.com (32.5.2 twice). NVIDIA publishes no t210
+# sources for 32.4.4, 32.5.1 and 32.7.3 (404) — those are refused.
+# A new version: download it, `sha256sum` + `wc -c`, add a line (README).
+32.4.3 dd2a264d532b9c0b632d1b2805c1225ded5cadc4fade6895778a10fa76ec24ec 149830549
+32.5.0 985276f9df525f7bdb8a02a5f2cfcc03cc399f2c5f0c2c2944955d4ebc120cec 161608490
+32.5.2 57f8b3269849640d3be0fcacae1d3b038997baddbd2700da6173c7d18e18d101 161601043
+32.6.1 b86a23f26be6e91927c7af66537004cbff319ab9fc5fd8d284f9d4e90030b9df 161774820
+32.7.1 fdf5fb80fca25d107bb1545f9f8985237404b621d751b1c1ddc9a25c1b25cd21 161736766
+32.7.2 4aaccdc4f51c969120ac9bcefe47522d519c7b00fe70a7c2d84bc95c77e56858 161767752
+32.7.4 d0a0dbdbbafa16f390ea8b4c80a1f41eab42bc72832717a8ebab9b5aa08dc22f 162093940
+32.7.5 c34fe01e91236329bd20cba5fbead8a35f8c09b42c546d5fdec50ce6d3a98e52 162112033
+32.7.6 8e2d10fb5a582ab9802d4014740a54140bc204fcdcc29794bfa020a856d807c7 162171868

@@ -12,6 +12,8 @@
 # No configure, no remove: the kernel belongs to the base image (live: no);
 # `cream remove --forget` drops the record (README).
 #
+# 2.1.0: public_sources.tbz2 checked by sha256 from public-sources.sha256;
+#        a version without a line is refused before apt.
 # 2.0.0: cream/v1; backup .cream-orig once instead of .before-kvm on every
 #        run; extlinux.conf written through rename; keys typed (scope install).
 # 1.4.0: CONFIG_SQUASHFS_LZO=y — снапы с lzo монтируются, snapd не крутит обновление.
@@ -19,7 +21,7 @@
 # 1.2.0: L4T_KERNEL_JOBS ограничен ядрами и памятью appliance, урезание вслух.
 schema: cream/v1
 name: l4t-kernel-kvm
-version: 2.0.0
+version: 2.1.0
 summary: Ядро L4T с KVM для Jetson Nano/TX1 (t210) — сборка из исходников NVIDIA, загрузка по умолчанию
 cream: ">=1.0.0"
 platform:
