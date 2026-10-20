@@ -212,7 +212,7 @@ ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0955", TEST=="power/control", 
 |---|---|
 | `01-fetch-l4t.sh` | Качает BSP, sample rootfs (кроме пар с `ROOTFS_SOURCE=vendor-image`) и оверлей QSPI профиля; сверяет SHA1 с эталонами |
 | `03-prepare-bsp.sh` | Распаковка, оверлей QSPI, `apply_binaries.sh`; при `vendor-image` — только дерево BSP, без `apply_binaries` |
-| `04-customize-rootfs.sh` | Пользователь без `oem-config`, узел `/dev/null` и `<SOC>` в источнике apt NVIDIA внутри rootfs |
+| `04-customize-rootfs.sh` | Пользователь (пароль — `-P` файл 0600 или stdin, не argv) без `oem-config`, узел `/dev/null` и `<SOC>` в источнике apt NVIDIA внутри rootfs |
 | `05-generate-images.sh` | `l4t_initrd_flash.sh --no-flash`; плата должна быть в recovery |
 | `06-flash.sh` | `--flash-only`; предполётно проверяет ufw, место и режим APX |
 | `07-flash-rootfs-ssh.sh` | Обход: rootfs в APP SSH-потоком, минуя NFS |
