@@ -68,7 +68,10 @@ EXTENSION network-manager
 - смотрит, что уже стоит: `network-manager` и `wpasupplicant`;
 - если оба на месте и юнит включён — сообщает и выходит, apt не трогая;
 - иначе ставит недостающее, записывает поставленное в
-  `/var/lib/cream/ext/network-manager/installed` и проверяет, что `NetworkManager.service`
+  `/var/lib/cream/ext/network-manager/installed` — вместе с пришедшими в той же
+  установке рекомендациями, которые зависят от `network-manager` (на Ubuntu —
+  `network-manager-pptp` и т. п.; `apt-get remove` снял бы их заодно, и `remove`
+  отказал бы) — и проверяет, что `NetworkManager.service`
   действительно включён;
 - предупреждает, если в образе включён ещё и `systemd-networkd`;
 - сообщает, нашлась ли в `/lib/firmware` прошивка Wi-Fi.
@@ -154,10 +157,14 @@ NetworkManager, а Ethernet может остаться за networkd.
 
 - **V** — `make cream-validate`, `tools/check-names.sh`.
 - **H** — `tests/test-network-manager.sh`: «уже стоит» без apt, недостающее, повтор,
-  отказы (нет пакета, юнит не включился), предупреждения, `remove` только своего.
-- **L** — `make test-live EXT=network-manager` (`tests/live.env`, `--accept-risk`) на `debian-12`;
-  на Ubuntu в контейнере не стартуют `polkit`/`systemd-hostnamed` (нет `CAP_SYS_ADMIN`) — причина в
-  стенде, не в расширении (`tests/live.env`).
+  отказы (нет пакета, юнит не включился), предупреждения, запись рекомендаций,
+  зависящих от `network-manager`, `remove` только своего.
+- **L** — `make test-live EXT=network-manager` (`tests/live.env`, `--accept-risk`) на `debian-12`,
+  `ubuntu-22.04`, `ubuntu-24.04` (с 2.1.0; прогон 2026-10-20 — 11/11 на каждом). На Ubuntu в
+  контейнере без `CAP_SYS_ADMIN` падают `polkit` (24.04) и `systemd-hostnamed` (22.04) — юниты
+  стенда, не расширения: им разрешено упасть (`LIVE_FAILED_IGNORE`), `NetworkManager` при этом
+  `active`. `SYS_ADMIN` не даём: с ним systemd под профилем AppArmor `docker-default` не
+  загружается, а `apparmor=unconfined` вместе с `SYS_ADMIN` на общем хосте — почти root хоста.
 
 ### Вручную
 
