@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# cream hook `configure` of the lint fixture: every account gets the file.
+set -euo pipefail
+while IFS=: read -r name _ _ _ _ home _; do
+    echo "$name $home" >&2
+done < <(getent passwd)
