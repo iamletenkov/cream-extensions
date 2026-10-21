@@ -1,4 +1,5 @@
-# Fixture of tools/test-live-test.sh: configure exits 20 — only install may (Р11), red.
+# Fixture of tools/test-live-test.sh: configure exits 20 at boot. Since cream 1.2.0
+# that is "skipped" (cream spec §10.8): the unit succeeds, the runner stays green.
 schema: cream/v1
 name: live-configure-20
 version: 1.0.0
