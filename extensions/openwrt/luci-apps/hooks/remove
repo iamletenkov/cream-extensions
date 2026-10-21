@@ -1,0 +1,4 @@
+#!/bin/sh
+# cream hook `remove` of luci-apps — the code is files/luci-apps.sh (its header).
+set -eu
+exec "${CREAM_EXT_DIR:?run by cream}/files/luci-apps.sh" remove

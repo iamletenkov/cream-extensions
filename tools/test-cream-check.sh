@@ -5,7 +5,8 @@
 # With cream (CREAM_DEB=<local .deb> or a filled tools/cream-pin.env), on
 # throw-away catalogs: a capability in requires is closed by its provider —
 # green; a missing depends — red with cream's answer; a capability nobody
-# provides — red from the matrix; platform.os narrows the OS matrix; a
+# provides — red from the matrix; platform.os narrows the OS matrix; the
+# family picks its OSes (openwrt — openwrt:25.12 only); no OS at all — red; a
 # `cream:` range above the pinned cream — red. Without cream that half is
 # skipped with a line, not silently.
 set -uo pipefail
@@ -108,6 +109,23 @@ provides: [cap-x]'
     out="$("$SCRIPT" "$T/cream" 2>&1)"; rc=$?
     code "cream: выше пина" 1 "$rc"
     has "cream: выше пина — случай назван" "FAIL app" "$out"
+
+    # 7. Family openwrt: only openwrt:25.12, never a deb OS; a deb extension
+    # without platform.os — no openwrt case.
+    catalog "$T/owrt"
+    ext "$T/owrt" wrt 'platform: {family: openwrt, arch: [amd64, arm64]}'
+    sed -i 's/^cream: .*/cream: ">=1.3.0"/' "$T/owrt/extensions/wrt/extension.yaml"
+    ext "$T/owrt" deb 'platform: {family: deb, arch: [amd64]}'
+    out="$("$SCRIPT" "$T/owrt" 2>&1)"; rc=$?
+    code "семейство openwrt" 0 "$rc"
+    has "openwrt + 4 deb ОС" "случаев 5, не прошло 0" "$out"
+
+    # 8. An extension that fits no OS of the matrix is a finding, not silence.
+    catalog "$T/none"
+    ext "$T/none" app 'platform: {family: deb, arch: [amd64], os: [{id: fedora}]}'
+    out="$("$SCRIPT" "$T/none" 2>&1)"; rc=$?
+    code "ни одной ОС" 1 "$rc"
+    has "ни одной ОС — названо" "ни одной ОС матрицы" "$out"
 else
     echo "  --   cream не задан (пин пуст, нет CREAM_DEB): проверки с cream пропущены"
 fi

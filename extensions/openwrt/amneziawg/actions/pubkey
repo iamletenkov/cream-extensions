@@ -1,0 +1,4 @@
+#!/bin/sh
+# cream action `pubkey` of amneziawg — the code is files/amneziawg.sh (its header).
+set -eu
+exec "${CREAM_EXT_DIR:?run by cream}/files/amneziawg.sh" pubkey

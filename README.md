@@ -60,10 +60,11 @@ RUN_COMMAND cream install --with-deps gnome x11vnc
 `tools/catalog-docs.sh` из манифестов; CI проверяет, что она не устарела.
 
 <!-- catalog:table -->
-Расширений — 43, библиотек — 3.
+Расширений — 46, библиотек — 3.
 
 | Расширение | Что делает | ОС | Архитектура | Параметры |
 |---|---|---|---|---|
+| [`amneziawg`](extensions/openwrt/amneziawg/README.md) | интерфейс AmneziaWG на OpenWrt — ключ на машине, интерфейс и пир через uci, пакеты из образа | OpenWrt ≥ 25.12 | amd64, arm64 | `AMNEZIAWG_IFACE`, `AMNEZIAWG_PRIVATE_KEY`, `AMNEZIAWG_ADDRESSES` и ещё 19 |
 | [`btop`](extensions/debian/btop/README.md) | TUI-монитор ресурсов btop — пакет apt или статическая сборка релиза по sha256 | Debian, Ubuntu | amd64, arm64 | — |
 | [`can`](extensions/debian/can/README.md) | Шина CAN — can-utils, модули ядра CAN для ядер машины и их автозагрузка | Debian, Ubuntu | amd64, arm64 | `CAN_MODULES_LOAD` |
 | [`can-usb`](extensions/debian/can-usb/README.md) | Модули адаптеров CAN gs_usb, peak_usb, slcan под ядро Sensing (Jetson AGX Orin, L4T 36.4.3) | Debian, Ubuntu | arm64 | — |
@@ -88,6 +89,7 @@ RUN_COMMAND cream install --with-deps gnome x11vnc
 | [`l4t-tensorflow`](extensions/debian/l4t-tensorflow/README.md) | TensorFlow с CUDA для NVIDIA Jetson — колесо NVIDIA 2.16.1, cuDNN 9 и keras 3.3.3 | Debian, Ubuntu | arm64 | — |
 | [`l4t-vendor-desktop`](extensions/debian/l4t-vendor-desktop/README.md) | Рабочий стол образа вендора L4T R32 (Jetson Nano) как x11-server, display-manager, desktop-session | Ubuntu ≥ 18.04 | arm64 | — |
 | [`locale`](extensions/debian/locale/README.md) | Системная локаль и раскладки клавиатуры — система, консоль, Xorg/GDM, умолчания GNOME | Debian, Ubuntu | amd64, arm64 | `LOCALE`, `KEYBOARD_LAYOUTS`, `KEYBOARD_TOGGLE` |
+| [`luci-apps`](extensions/openwrt/luci-apps/README.md) | приложения LuCI из подписанных фидов OpenWrt (apk) по списку; снимает только то, что поставило само | OpenWrt ≥ 25.12 | amd64, arm64 | `LUCI_APPS_PACKAGES` |
 | [`lxde`](extensions/debian/lxde/README.md) | LXDE и менеджер входа lightdm — X-сервер и сессия для x11vnc, kiosk, selkies | Debian, Ubuntu | amd64, arm64 | — |
 | [`network-manager`](extensions/debian/network-manager/README.md) | NetworkManager и wpasupplicant в образе — чтобы Wi-Fi из манифеста устройства поднялся | Debian, Ubuntu | amd64, arm64 | — |
 | [`nocloud-cidata`](extensions/debian/nocloud-cidata/README.md) | cloud-init читает NoCloud-seed с раздела с меткой cidata | Debian, Ubuntu | amd64, arm64 | — |
@@ -96,6 +98,7 @@ RUN_COMMAND cream install --with-deps gnome x11vnc
 | [`nvidia-jetpack`](extensions/debian/nvidia-jetpack/README.md) | Станция прошивки NVIDIA Jetson на amd64 — инструментарий L4T, NFS, binfmt aarch64, скрипты | Ubuntu, Debian | amd64 | — |
 | [`pixelflux-tegra`](extensions/debian/pixelflux-tegra/README.md) | Аппаратное кодирование Selkies на Jetson — подкладка libxcb, шим gbm, проверка бэкенда Tegra | Debian, Ubuntu | arm64 | — |
 | [`pixelflux-v4l2m2m`](extensions/debian/pixelflux-v4l2m2m/README.md) | Аппаратное кодирование Selkies через V4L2 M2M (Raspberry Pi) — проверка бэкенда на сборке и загрузке | Debian, Ubuntu | arm64 | — |
+| [`podkop`](extensions/openwrt/podkop/README.md) | выборочная маршрутизация podkop на OpenWrt — прокси по ссылке или VPN-интерфейс, списки сообществ, через uci | OpenWrt ≥ 25.12 | amd64, arm64 | `PODKOP_CONNECTION_TYPE`, `PODKOP_PROXY_STRING`, `PODKOP_INTERFACE` и ещё 4 |
 | [`rustdesk`](extensions/debian/rustdesk/README.md) | RustDesk — клиент и служба удалённой поддержки, адреса своего сервера из ключей домена | Debian, Ubuntu | amd64, arm64 | `RUSTDESK_VERSION`, `RUSTDESK_SHA256_AMD64`, `RUSTDESK_SHA256_ARM64` и ещё 6 |
 | [`selkies`](extensions/debian/selkies/README.md) | Selkies — рабочий стол X-сессии в браузере; без пароля не стартует, наружу — через Teleport | Debian, Ubuntu | amd64, arm64 | `SELKIES_ADDR`, `SELKIES_PORT`, `SELKIES_MODE` и ещё 26 |
 | [`sensing-gmsl2-camera`](extensions/debian/sensing-gmsl2-camera/README.md) | Камеры Sensing GMSL2 на Jetson AGX Orin (SG8A-AGON-G2Y-A1, L4T 36.4.3) — ядро, модули, оверлей, запуск на загрузке | Debian, Ubuntu | arm64 | `SENSING_GMSLMODE`, `SENSING_CAMERA_CONTROLS`, `SENSING_BOOST_CLOCK` |

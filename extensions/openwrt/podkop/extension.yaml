@@ -1,0 +1,70 @@
+# podkop — selective routing of OpenWrt (podkop + sing-box) set up with uci
+# from the keys: through a proxy (a link vless://, ss://, trojan://…) or through
+# a VPN interface (amneziawg). The packages podkop, luci-app-podkop and
+# sing-box come with the image (openwrt-builder v0.3.0).
+#
+# install   — checks the packages of the image; no package, no change (code 20).
+# configure — stage system (S95, before S99podkop): sections main and settings
+#             of /etc/config/podkop (0600: the link is a secret) through
+#             `uci batch` on stdin; fail-closed — proxy without a link or vpn
+#             without an interface disables podkop (a warning, exit 0). On the
+#             live machine (not at boot) — podkop restarted in the background.
+#             Not every boot: uci lives on the disk, the rules are podkop's own
+#             service (signs A1–A6 — none, README «Подробности»).
+# remove    — the link and the interface out of the config, podkop disabled and
+#             stopped; the packages stay (they belong to the image).
+schema: cream/v1
+name: podkop
+version: 1.0.0
+summary: выборочная маршрутизация podkop на OpenWrt — прокси по ссылке или VPN-интерфейс, списки сообществ, через uci
+cream: ">=1.3.0"
+platform:
+  family: openwrt
+  arch: [amd64, arm64]
+  os: [{id: openwrt, version: ">=25.12"}]
+targets:
+  build: exec
+  live: "yes"
+provides: [selective-routing]
+hooks:
+  install: {timeout: 1m}
+  configure: {stage: system, timeout: 2m}
+  remove: {timeout: 2m}
+# Every value lands in `uci batch` inside single quotes: the types admit no
+# quote, backslash, space or newline (tests/test-podkop.sh).
+config:
+  keys:
+    PODKOP_CONNECTION_TYPE:
+      type: "enum:proxy,vpn"
+      default: "proxy"
+      description: "proxy — через прокси по ссылке PODKOP_PROXY_STRING; vpn — через интерфейс PODKOP_INTERFACE"
+    PODKOP_PROXY_STRING:
+      type: 're:^(vless|vmess|trojan|ss|socks4|socks4a|socks5|hysteria2|hy2)://[!#-&(-\[\]-~]+$'
+      default: ""
+      empty: true
+      secret: file
+      description: "ссылка прокси (vless://…, ss://…, trojan://…); без неё режим proxy не включается"
+    PODKOP_INTERFACE:
+      type: 're:^[a-z][a-z0-9_.-]{0,14}$'
+      default: ""
+      empty: true
+      description: "интерфейс netifd для режима vpn (awg0 расширения amneziawg)"
+    PODKOP_COMMUNITY_LISTS:
+      type: 'list:re:^[a-z0-9_]{1,64}$'
+      default: "russia_inside"
+      empty: true
+      description: "списки сообществ podkop через пробел (russia_inside, youtube, telegram…)"
+    PODKOP_USER_DOMAINS:
+      type: 'list:re:^[A-Za-z0-9.-]{1,253}$'
+      default: ""
+      empty: true
+      description: "свои домены через туннель, через пробел"
+    PODKOP_USER_SUBNETS:
+      type: 'list:re:^[0-9.]{7,15}(/[0-9]{1,2})?$'
+      default: ""
+      empty: true
+      description: "свои подсети IPv4 через туннель (CIDR), через пробел"
+    PODKOP_SOURCE_INTERFACES:
+      type: 'list:re:^[a-z][a-z0-9_.-]{0,14}$'
+      default: "br-lan"
+      description: "устройства, трафик которых маршрутизирует podkop"
