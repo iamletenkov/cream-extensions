@@ -34,8 +34,10 @@
 # с временным каталогом (расширение и deps без tests/) → deps → install → повтор
 # install (changed: false) → снимок sha256/режимов /etc, /opt/cream, /usr/local,
 # /var/lib/cream/ext → install --reinstall → снимок совпал (идемпотентность §6.3) →
-# аудит секретов → docker restart (configure на загрузке) → systemctl --failed пуст,
-# cream-configure@<ext> успешен, нет «ordering cycle» (журнал, systemd-analyze verify) → аудит секретов →
+# аудит секретов → дважды docker restart (configure на загрузке) → systemctl --failed пуст,
+# cream-configure@<ext> успешен, отметка configure соблюдена (every_boot — хук шёл на
+# каждой загрузке, без него — пропуск по отметке), нет «ordering cycle» (журнал,
+# systemd-analyze verify) → аудит секретов →
 # remove (если есть хук) → расширения нет в cream list, --failed пуст.
 # С --expect-skip после install (skipped) — только перезапуск и проверки загрузки.
 #
@@ -145,11 +147,15 @@ if what == "schema":
     print(m.get("schema", ""))
 elif what in ("remove", "configure"):
     print("1" if what in hooks else "")
+elif what == "every_boot":
+    conf = hooks.get("configure")
+    print("1" if isinstance(conf, dict) and conf.get("every_boot") is True else "")
 PY
 }
 [[ "$(manifest "$ext_dir" schema)" == cream/v1 ]] || die "$ext: не cream/v1 (layout 2 живьём не проверяется)"
 has_remove="$(manifest "$ext_dir" remove)"
 has_configure="$(manifest "$ext_dir" configure)"
+every_boot="$(manifest "$ext_dir" every_boot)"
 dep_dirs=()
 for d in "${dep_list[@]}"; do
     dd="$(find_ext "$d")" || die "зависимость $d: нет в каталоге"
@@ -416,45 +422,87 @@ if [[ -z "$expect_skip" ]]; then
     secrets_audit "после install"
 fi
 
-echo "== загрузка =="
-docker restart "$NAME" > /dev/null || abort "docker restart"
-wait_boot || abort "systemd не загрузился после перезапуска"
-failed="$(failed_units)"
-if [[ -z "$failed" ]]; then
-    ok "после перезапуска systemctl --failed пуст"
-else
-    bad "после перезапуска есть упавшие юниты:"
-    printf '%s\n' "$failed" | sed 's/^/    /'
-    while read -r unit _; do
-        [[ -n "$unit" ]] && cx journalctl -b -u "$unit" --no-pager -n 10 2>/dev/null | sed 's/^/    /'
-    done <<< "$failed"
-fi
-# Ordering cycles: the journal of this boot, and systemd-analyze verify of the
-# default target — in a container the cycles broken at boot are logged before
-# journald and can be lost, the verify transaction finds them again.
-{
-    cx journalctl -b --no-pager 2>/dev/null
-    cx systemd-analyze verify default.target 2>&1
-} | grep -i 'ordering cycle' > "$LOGDIR/cycles.log"
-if [[ ! -s "$LOGDIR/cycles.log" ]]; then
-    ok "нет «ordering cycle» (журнал загрузки, systemd-analyze verify default.target)"
-else
-    bad "«ordering cycle» в журнале или systemd-analyze verify default.target:"
-    head -n 5 "$LOGDIR/cycles.log" | sed 's/^/    /'
-fi
-if [[ -n "$has_configure" && -z "$expect_skip" ]]; then
-    u="cream-configure@$ext.service"
-    state="$(cx systemctl show -p ActiveState --value "$u" 2>/dev/null)"
-    result="$(cx systemctl show -p Result --value "$u" 2>/dev/null)"
-    if [[ "$result" == success && "$state" == active ]]; then
-        ok "configure на загрузке: $u active, success"
-    elif [[ "$state" == inactive && "$result" == success && "$boot_configure" == optional ]]; then
-        ok "configure на загрузке не запускался (LIVE_BOOT_CONFIGURE=optional)"
+boot_cursor=""
+# mark_check ROUND UNIT: cream 1.2.0 runs configure at boot only past a stale
+# configure mark (cream spec 2026-10-21 §10.7). every_boot: true — the hook ran
+# on this boot (no «пропуск, отметка совпала» in the unit journal of this boot);
+# without it — the mark written by install/the previous boot matched, unless
+# the hook said 20 (the mark is taken away, the next boot runs it again).
+mark_check() {
+    local round="$1" u="$2" j
+    # Not -b: a container shares the boot id of the host kernel, so «this boot»
+    # also holds the runs of install and of the previous restart; the journal
+    # cursor taken before the restart cuts them off.
+    local from=()
+    [[ -n "$boot_cursor" ]] && from=(--after-cursor "$boot_cursor")
+    j="$(cx journalctl -u "$u" "${from[@]}" --no-pager -o cat 2>/dev/null)"
+    if grep -qF "configure $ext: пропуск, отметка совпала" <<< "$j"; then
+        if [[ -n "$every_boot" ]]; then
+            bad "$round: configure пропущен по отметке, а у $ext every_boot: true"
+        else
+            ok "$round: configure пропущен по отметке"
+        fi
+    elif grep -qF "configure $ext: пропущено (код 20)" <<< "$j"; then
+        ok "$round: configure вернул 20 — отметка снята, повтор на следующей загрузке"
+    elif [[ -n "$every_boot" ]]; then
+        ok "$round: configure отработал (every_boot)"
     else
-        bad "configure на загрузке: $u — $state/$result (configure выходит 0 и без устройства, рулинг Р11)"
+        bad "$round: configure шёл на загрузке без every_boot — отметка не совпала (хук меняет свой вход?)"
+        tail -n 5 <<< "$j" | sed 's/^/    /'
     fi
-fi
-[[ -n "$expect_skip" ]] || secrets_audit "после загрузки"
+}
+
+# boot_round ROUND: docker restart, then what a boot must give — no failed
+# units, no ordering cycle, configure of the extension succeeded, the
+# configure mark honoured, secrets not leaked.
+boot_round() {
+    local round="$1" failed unit _ u state result
+    echo "== $round =="
+    boot_cursor="$(cx journalctl -n 1 --show-cursor --no-pager -q 2>/dev/null | sed -n 's/^-- cursor: //p')"
+    docker restart "$NAME" > /dev/null || abort "docker restart"
+    wait_boot || abort "systemd не загрузился после перезапуска"
+    failed="$(failed_units)"
+    if [[ -z "$failed" ]]; then
+        ok "$round: systemctl --failed пуст"
+    else
+        bad "$round: после перезапуска есть упавшие юниты:"
+        printf '%s\n' "$failed" | sed 's/^/    /'
+        while read -r unit _; do
+            [[ -n "$unit" ]] && cx journalctl -b -u "$unit" --no-pager -n 10 2>/dev/null | sed 's/^/    /'
+        done <<< "$failed"
+    fi
+    # Ordering cycles: the journal of this boot, and systemd-analyze verify of the
+    # default target — in a container the cycles broken at boot are logged before
+    # journald and can be lost, the verify transaction finds them again.
+    {
+        cx journalctl -b --no-pager 2>/dev/null
+        cx systemd-analyze verify default.target 2>&1
+    } | grep -i 'ordering cycle' > "$LOGDIR/cycles.log"
+    if [[ ! -s "$LOGDIR/cycles.log" ]]; then
+        ok "$round: нет «ordering cycle» (журнал загрузки, systemd-analyze verify default.target)"
+    else
+        bad "$round: «ordering cycle» в журнале или systemd-analyze verify default.target:"
+        head -n 5 "$LOGDIR/cycles.log" | sed 's/^/    /'
+    fi
+    if [[ -n "$has_configure" && -z "$expect_skip" ]]; then
+        u="cream-configure@$ext.service"
+        state="$(cx systemctl show -p ActiveState --value "$u" 2>/dev/null)"
+        result="$(cx systemctl show -p Result --value "$u" 2>/dev/null)"
+        if [[ "$result" == success && "$state" == active ]]; then
+            ok "$round: configure $u active, success"; mark_check "$round" "$u"
+        elif [[ "$state" == inactive && "$result" == success && "$boot_configure" == optional ]]; then
+            ok "$round: configure не запускался (LIVE_BOOT_CONFIGURE=optional)"
+        else
+            bad "$round: configure $u — $state/$result (configure выходит 0 и без устройства, рулинг Р11)"
+        fi
+    fi
+    [[ -n "$expect_skip" ]] || secrets_audit "$round"
+}
+
+boot_round "загрузка"
+# The second boot: an every_boot hook runs again, a hook without it is skipped
+# by the mark of the first boot (plan 2026-10-21, Task 19).
+boot_round "вторая загрузка"
 
 if [[ -n "$has_remove" && -z "$expect_skip" ]]; then
     echo "== remove =="

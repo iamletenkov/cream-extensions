@@ -14,11 +14,13 @@
 # remove    — the stamp.
 #
 # 2.0.0: cream/v1 (plan 2026-10-19, Task 27); rename table — README.md.
+# 2.1.0: hooks.configure.every_boot — configure runs every boot (cream 1.2.0
+#        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: pixelflux-v4l2m2m
-version: 2.0.0
+version: 2.1.0
 summary: Аппаратное кодирование Selkies через V4L2 M2M (Raspberry Pi) — проверка бэкенда на сборке и загрузке
-cream: ">=1.1.0"
+cream: ">=1.2.0"
 platform:
   family: deb
   # The backend is generic, but the M2M boards of the fleet are arm64.
@@ -35,5 +37,6 @@ hooks:
   install: {timeout: 5m}
   configure:
     stage: graphical
+    every_boot: true
     timeout: 2m
   remove: {timeout: 1m}

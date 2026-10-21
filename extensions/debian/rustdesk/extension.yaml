@@ -18,11 +18,14 @@
 # 2.0.0: cream/v1; configure-rustdesk.service → stage system; the domain is
 #        /etc/cream/rustdesk; the identity is wiped in the build only; the
 #        follow-up re-render restarts cream-configure@rustdesk.
+# 2.1.0: hooks.configure.every_boot — configure runs every boot (cream 1.2.0
+#        otherwise skips it by the configure mark; audit 2026-10-21); the
+#        follow-up re-render is `cream configure --again rustdesk` 30 s later.
 schema: cream/v1
 name: rustdesk
-version: 2.0.1
+version: 2.1.0
 summary: RustDesk — клиент и служба удалённой поддержки, адреса своего сервера из ключей домена
-cream: ">=1.0.0"
+cream: ">=1.2.0"
 platform:
   family: deb
   # One release asset per architecture with its own pinned sum; armhf (the
@@ -39,6 +42,7 @@ hooks:
   install: {timeout: 20m}
   configure:
     stage: system
+    every_boot: true
     after: [cloud-init.service, cloud-init-network.service, systemd-user-sessions.service]
     before: [rustdesk.service]
     timeout: 3m

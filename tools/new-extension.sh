@@ -32,7 +32,8 @@ usage() {
                            cloud-user — >=1.1.1)
   --live <yes|confirm|no>  targets.live (умолчание yes); confirm и no — с live_note
   --cloud-user             configure узнаёт пользователя cloud-init библиотекой cloud-user
-                           (depends; без --stage — стадия system)
+                           (depends; без --stage — стадия system; every_boot: true и
+                           cream >=1.2.0 — признак А3 аудита configure)
   --library                kind: library — только файлы, без хуков
   -h, --help               эта справка
 
@@ -108,6 +109,13 @@ case "$stage" in
     cloud-user) cream_min="1.1.1" ;;
     *) cream_min="1.0.0" ;;
 esac
+# configure that waits for the cloud-init user (sign A3 of the configure audit,
+# docs/research/2026-10-21-configure-audit.md) runs every boot: every_boot
+# needs cream >=1.2.0 (cream spec 2026-10-21 §10.9).
+every_boot=""
+if [[ -n "$stage" ]] && (( want_cloud_user )); then
+    every_boot=", every_boot: true"; cream_min="1.2.0"
+fi
 arch_yaml="[$(printf '%s, ' "${arch_list[@]}" | sed 's/, $//')]"
 # Key prefix: the name in capitals, dashes to underscores (code-server ->
 # CODE_SERVER). CREAM_* is the hook environment and is never a key.
@@ -148,7 +156,7 @@ EOF
         if (( want_cloud_user )); then printf 'depends: [{name: cloud-user, version: ">=1.0.0"}]\n'; fi
         echo "hooks:"
         echo "  install: {timeout: 10m}"
-        if [[ -n "$stage" ]]; then echo "  configure: {stage: $stage}"; fi
+        if [[ -n "$stage" ]]; then echo "  configure: {stage: $stage$every_boot}"; fi
         echo "  remove: {}"
         cat <<EOF
 config:

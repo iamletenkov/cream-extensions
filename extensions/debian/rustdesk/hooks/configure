@@ -23,9 +23,11 @@
 # The first start of RustDesk may write RustDesk2.toml back from its own state
 # AFTER this render (seen on the first boot of a fresh image). While an account
 # has not run RustDesk yet, or this run had to change something, a transient
-# timer restarts cream-configure@rustdesk a minute later — at most 10 times per
-# boot (the counter lives in /run/rustdesk, which a reboot empties; not in the
-# state — the state must not change on a repeated install).
+# timer runs `cream configure --again rustdesk` 30 s later (reason followup: the
+# run goes past the configure mark of cream 1.2.0) — at most 10 times per boot
+# (the counter lives in /run/rustdesk, which a reboot empties; not in the
+# state — the state must not change on a repeated install). Never a restart of
+# the configure unit from here: the call is deferred, the hook has exited.
 set -euo pipefail
 
 R="${CREAM_ROOT:-}"; R="${R%/}"
@@ -137,9 +139,9 @@ if [[ -n "$running" ]] && (( first_run || changed )) && command -v systemd-run >
         install -d -m 0755 "${FOLLOWUP%/*}"
         [[ -L "$FOLLOWUP" ]] && rm -f -- "$FOLLOWUP"
         printf '%s\n' "$step" > "$FOLLOWUP"
-        systemd-run --quiet --no-block --on-active=60 --unit="rustdesk-followup-$step" \
-            systemctl --no-block restart cream-configure@rustdesk.service >/dev/null 2>&1 \
-            && log "повторная сверка через минуту ($step/10)"
+        systemd-run --quiet --no-block --on-active=30 --timer-property=AccuracySec=1s \
+            --unit="rustdesk-followup-$step" cream configure --again rustdesk >/dev/null 2>&1 \
+            && log "повторная сверка через 30 с ($step/10)"
     fi
 fi
 exit "$rc"

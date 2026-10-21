@@ -72,7 +72,8 @@ PY
 }
 eq "schema" cream/v1 "$(man 'm["schema"]')"
 eq "мажор версии — 2" 2 "$(man 'm["version"].split(".")[0]')"
-eq "cream >= 1.1.0 (стадия early)" ">=1.1.0" "$(man 'm["cream"]')"
+eq "cream >=1.2.0 (every_boot, спека cream §10.9)" ">=1.2.0" "$(man 'm["cream"]')"
+eq "configure на каждой загрузке (аудит 2026-10-21)" True "$(man 'm["hooks"]["configure"].get("every_boot")')"
 eq "configure: стадия early" early "$(man 'm["hooks"]["configure"]["stage"]')"
 eq "configure: после nftables.service" "[nftables.service]" "$(man 'm["hooks"]["configure"].get("after")')"
 eq "живая установка — confirm" confirm "$(man 'm["targets"]["live"]')"

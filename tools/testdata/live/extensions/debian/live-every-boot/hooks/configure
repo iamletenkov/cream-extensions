@@ -1,0 +1,5 @@
+#!/bin/sh
+# Writes nothing (install --reinstall must not change files): the runner sees
+# the run by the absence of «пропуск, отметка совпала» in the unit journal.
+echo "live-every-boot: configure, reason ${CREAM_REASON:-}" >&2
+exit 0

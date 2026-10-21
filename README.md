@@ -13,7 +13,7 @@
 
 ```sh
 # 1. cream — .deb из релиза iamletenkov/cream (версия и суммы — tools/cream-pin.env, SHA256SUMS релиза)
-V=1.1.3; A="$(dpkg --print-architecture)"
+V=1.2.0; A="$(dpkg --print-architecture)"
 curl -fLO "https://github.com/iamletenkov/cream/releases/download/v$V/cream_${V}_${A}.deb"
 curl -fsSL "https://github.com/iamletenkov/cream/releases/download/v$V/SHA256SUMS" | grep "cream_${V}_${A}.deb" | sha256sum -c -
 sudo apt-get install -y "./cream_${V}_${A}.deb"
@@ -56,8 +56,8 @@ extensions/
     ├── can/  firewall/  locale/  rustdesk/   # рабочая машина робота
     └── l4t-*/  nvidia-jetpack/  cuda-toolkit/  tensorrt/  …   # Jetson (L4T): ядро, CUDA, ML, сборка BSP
 cream-catalog.yaml           # корень каталога cream: roots, version (ведёт release-please)
-tools/                       # check.sh, cream-validate.sh, lint-hooks.sh, check-names.sh, live-test.sh,
-                             #   live-matrix.sh, hooktest.sh, new-extension.sh, catalog-snapshot.sh,
+tools/                       # check.sh, cream-validate.sh, cream-check.sh, lint-hooks.sh, check-names.sh,
+                             #   live-test.sh, live-matrix.sh, hooktest.sh, new-extension.sh, catalog-snapshot.sh,
                              #   cream-deb.sh, agent-bump.sh, cream-pin.env (пин cream)
 .github/workflows/ci-release.yml  # CI: tools/check.sh на PR и push в main, выпуск — release-please
 .github/workflows/live.yml        # живые прогоны L-расширений: изменённые на PR, все — ночью
@@ -141,6 +141,7 @@ cream remove <name>
 make ci                       # shellcheck + tools/check.sh — то же, что CI
 tools/check.sh                # cream validate, гейт имён, линт хуков, тесты инструментов и расширений (make test)
 tools/cream-validate.sh       # cream validate --catalog . по корню (make cream-validate)
+tools/cream-check.sh          # cream check: каждое расширение строкой образа (make cream-check)
 tools/lint-hooks.sh           # линт хуков и действий: шапки, --no-block, lock: none, секреты, CREAM_*
 tools/check-names.sh          # прежние имена bisquite по всему репозиторию, кроме истории (make check-names)
 tools/live-test.sh <имя>      # живой прогон настоящим cream в контейнере с systemd (make test-live EXT=<имя>)

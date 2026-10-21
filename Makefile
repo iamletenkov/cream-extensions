@@ -4,7 +4,7 @@
 # (контейнер debian:12, tools/cream-validate.sh).
 
 .DEFAULT_GOAL := help
-.PHONY: help lint test check ci cream-validate check-names test-live test-live-self snapshot snapshot-check
+.PHONY: help lint test check ci cream-validate cream-check check-names test-live test-live-self snapshot snapshot-check
 
 help: ## список целей
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-15s %s\n", $$1, $$2}'
@@ -31,6 +31,9 @@ test-live-self: ## самопроверка L-раннера на фикстур
 
 cream-validate: ## cream validate --catalog . по корню (пин tools/cream-pin.env или CREAM_DEB=<.deb>)
 	tools/cream-validate.sh
+
+cream-check: ## cream check: каждое расширение строкой образа (пин tools/cream-pin.env или CREAM_DEB=<.deb>)
+	tools/cream-check.sh
 
 snapshot: ## снимок каталога из HEAD: dist/cream-extensions-<v>.tar.gz + dist/SHA256SUMS (tools/catalog-snapshot.sh)
 	tools/catalog-snapshot.sh

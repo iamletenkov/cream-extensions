@@ -17,13 +17,16 @@
 # remove    — takes away the dconf, X and xfconf files and the autologin; the
 #             groups stay.
 # Actions   — apply (now or as at boot), status, defaults (write without applying).
+#
+# 1.1.0: hooks.configure.every_boot — configure runs every boot (cream 1.2.0
+#        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: desktop
-version: 1.0.1
+version: 1.1.0
 # 1.0.1: только README (выпуск 5.1.1 изменил дерево без подъёма версии —
 #        cream отвергал обновление с 1.0.0: version.same_digest).
 summary: Ручки рабочего стола — автологин gdm3/lightdm, без автоблокировки и затемнения, группы пользователя
-cream: ">=1.0.0"
+cream: ">=1.2.0"
 platform:
   family: deb
   arch: [amd64, arm64]
@@ -38,6 +41,7 @@ hooks:
   # 30 s of waiting for the cloud-init user at boot, then the rest is files.
   configure:
     stage: system
+    every_boot: true
     after: [cloud-init.service, guestfs-firstboot.service]
     before: [display-manager.service, gdm.service, gdm3.service, lightdm.service]
     timeout: 2m

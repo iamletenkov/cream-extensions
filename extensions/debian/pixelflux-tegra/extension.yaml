@@ -22,11 +22,13 @@
 # remove    — the drop-in, the shim, the stamp.
 #
 # 3.0.0: cream/v1 (plan 2026-10-19, Task 27); rename table — README.md.
+# 3.1.0: hooks.configure.every_boot — configure runs every boot (cream 1.2.0
+#        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: pixelflux-tegra
-version: 3.0.1
+version: 3.1.0
 summary: Аппаратное кодирование Selkies на Jetson — подкладка libxcb, шим gbm, проверка бэкенда Tegra
-cream: ">=1.1.0"
+cream: ">=1.2.0"
 platform:
   family: deb
   # The encoder sits behind the vendor libnvv4l2.so, present only in L4T.
@@ -47,5 +49,6 @@ hooks:
   install: {timeout: 15m}
   configure:
     stage: graphical
+    every_boot: true
     timeout: 2m
   remove: {timeout: 1m}

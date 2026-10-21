@@ -17,7 +17,7 @@
 ```
 extensions/debian/   — расширения для Debian/Ubuntu: cream/v1 (extension.yaml, hooks/, actions/, files/, tests/)
 cream-catalog.yaml   — корень каталога cream (roots, version — ведёт release-please)
-tools/               — check.sh (все проверки make test), cream-validate.sh (V), check-names.sh, lint-hooks.sh, hooktest.sh (H), live-test.sh (L), live-matrix.sh (матрица live.yml), lint.sh, new-extension.sh, catalog-snapshot.sh, cream-deb.sh, cream-pin.env (cream 1.1.3), agent-bump.sh, check-contract-fixtures.sh + contract-fixtures.sha256; test-*.sh — тесты инструментов, testdata/ — фикстуры
+tools/               — check.sh (все проверки make test), cream-validate.sh (V), cream-check.sh (cream check по каталогу), check-names.sh, lint-hooks.sh, hooktest.sh (H), live-test.sh (L), live-matrix.sh (матрица live.yml), lint.sh, new-extension.sh, catalog-snapshot.sh, cream-deb.sh, cream-pin.env (cream 1.2.0), agent-bump.sh, check-contract-fixtures.sh + contract-fixtures.sha256; test-*.sh — тесты инструментов, testdata/ — фикстуры
 docs/                — README.md (индекс), STATUS.md, extensions.md, runbooks/, adr/, specs/, plans/, research/
 .claude/             — агенты, skills, правила, хуки Claude Code
 .github/             — ci-release.yml (gitleaks, check.sh, shellcheck, release-please, снимок к релизу), live.yml (живые прогоны), agent-bump.yml (подъём пина stvor-agent); release_please/

@@ -41,9 +41,9 @@
 #                     a quoted "nft". A5 and A6 are not
 #                     visible in the text — the audit
 #                     (docs/research/2026-10-21-configure-audit.md).
-#                     LINT_EVERY_BOOT=warn (default: the catalog pins cream
-#                     1.1.x, which has no every_boot) prints the finding and
-#                     keeps the code; LINT_EVERY_BOOT=error counts it.
+#                     LINT_EVERY_BOOT=error (default since the catalog pins
+#                     cream 1.2.0) counts the finding; LINT_EVERY_BOOT=warn
+#                     prints it and keeps the code.
 # Comment lines and tests/ are not linted. shellcheck of the same files at the
 # `warning` level is tools/lint.sh (make lint).
 #
@@ -52,7 +52,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(dirname "$HERE")"
 
-EVERY_BOOT_MODE="${LINT_EVERY_BOOT:-warn}"
+EVERY_BOOT_MODE="${LINT_EVERY_BOOT:-error}"
 case "$EVERY_BOOT_MODE" in
     warn | error) ;;
     *) echo "lint-hooks: LINT_EVERY_BOOT=$EVERY_BOOT_MODE — ожидается warn или error" >&2; exit 2 ;;
@@ -309,7 +309,7 @@ if (( found )); then
     exit 1
 fi
 if (( warned )); then
-    echo "lint-hooks: ок, расширений: ${#dirs[@]}; предупреждений every-boot: $warned (LINT_EVERY_BOOT=error сделает их ошибками)"
+    echo "lint-hooks: ок, расширений: ${#dirs[@]}; предупреждений every-boot: $warned (LINT_EVERY_BOOT=warn; по умолчанию — ошибки)"
 else
     echo "lint-hooks: ок, расширений: ${#dirs[@]}"
 fi

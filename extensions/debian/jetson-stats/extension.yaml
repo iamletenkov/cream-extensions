@@ -19,11 +19,13 @@
 # 3.0.0: cream/v1; configure-jetson-stats.service → stage cloud-user (cream
 #        >= 1.1.1, ruling R14); pip pinned and without traces in
 #        root's home; remove.
+# 3.2.0: hooks.configure.every_boot — configure runs every boot (cream 1.2.0
+#        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: jetson-stats
-version: 3.1.0
+version: 3.2.0
 summary: jtop — монитор NVIDIA Jetson (CPU, GPU, память, питание) и служба jtop.service
-cream: ">=1.1.1"
+cream: ">=1.2.0"
 platform:
   family: deb
   arch: [arm64]
@@ -35,7 +37,7 @@ depends:
 hooks:
   install: {timeout: 20m}
   # Up to 30 s of waiting for the cloud-init user at boot.
-  configure: {stage: cloud-user, timeout: 2m}
+  configure: {stage: cloud-user, timeout: 2m, every_boot: true}
   remove: {timeout: 10m}
 config:
   keys:

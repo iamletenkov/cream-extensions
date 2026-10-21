@@ -107,19 +107,19 @@ eq "комментарии и tests/ — код 0" 0 "$rc"
 
 # every-boot (spec 2026-10-21 §10.7): a configure hook with a text sign of
 # A1-A4 needs hooks.configure.every_boot: true or the exception comment
-# `# cream-lint: every-boot-not-needed <причина>`. LINT_EVERY_BOOT=warn (the
-# default until the catalog moves to cream 1.2.0) prints the finding and keeps
-# code 0; LINT_EVERY_BOOT=error fails the run.
+# `# cream-lint: every-boot-not-needed <причина>`. LINT_EVERY_BOOT=error (the
+# default since the catalog pins cream 1.2.0) fails the run;
+# LINT_EVERY_BOOT=warn prints the finding and keeps code 0.
 EB="$HERE/testdata/lint-hooks"
 out="$(LINT_EVERY_BOOT=error "$LINT" "$FX" 2>&1)"; rc=$?
 eq "every-boot: без признаков, error — код 0" 0 "$rc"
 out="$("$LINT" "$EB/every-boot-missing" 2>&1)"; rc=$?
-eq "every-boot: без every_boot, warn по умолчанию — код 0" 0 "$rc"
-has "every-boot: warn — находка видна" "[every-boot]" "$out"
-has "every-boot: warn — место и признак" "hooks/configure:6" "$out"
-has "every-boot: warn — помечено" "предупреждение" "$out"
+eq "every-boot: без every_boot, error по умолчанию — код 1" 1 "$rc"
+has "every-boot: по умолчанию — находка видна" "[every-boot]" "$out"
 out="$(LINT_EVERY_BOOT=warn "$LINT" "$EB/every-boot-missing" 2>&1)"; rc=$?
 eq "every-boot: warn явно — код 0" 0 "$rc"
+has "every-boot: warn — место и признак" "hooks/configure:6" "$out"
+has "every-boot: warn — помечено" "предупреждение" "$out"
 out="$(LINT_EVERY_BOOT=error "$LINT" "$EB/every-boot-missing" 2>&1)"; rc=$?
 eq "every-boot: error — код 1" 1 "$rc"
 has "every-boot: error — правило" "[every-boot]" "$out"

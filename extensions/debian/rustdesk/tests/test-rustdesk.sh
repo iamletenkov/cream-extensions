@@ -72,8 +72,9 @@ echo "== манифест =="
 # eval: test-only literal expressions over our own manifest, as in nvidia-jetpack.
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "мажор 2" 2.0.1 "$(mf 'm["version"]')"
-eq "cream >=1.0.0" ">=1.0.0" "$(mf 'm["cream"]')"
+eq "версия 2.1.0 (every_boot)" 2.1.0 "$(mf 'm["version"]')"
+eq "cream >=1.2.0 (every_boot, спека cream §10.9)" ">=1.2.0" "$(mf 'm["cream"]')"
+eq "configure на каждой загрузке (аудит 2026-10-21)" True "$(mf 'm["hooks"]["configure"].get("every_boot")')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
 eq "стадия system" system "$(mf 'm["hooks"]["configure"]["stage"]')"
 eq "до rustdesk.service" "['rustdesk.service']" "$(mf 'm["hooks"]["configure"]["before"]')"
@@ -169,8 +170,9 @@ rroot; live_systemd; : > "$FAKE/active"
 ht_hook configure CREAM_REASON=apply "RUSTDESK_ID_SERVER=$SRV"; eq "live — 0" 0 "$?"
 check "rustdesk перезапуск --no-block" ht_called '^systemctl --no-block restart rustdesk\.service$'
 check_not "блокирующего systemctl нет" ht_called '^systemctl (start|restart|stop) '
-check "повторная сверка через минуту — перезапуск configure" \
-    ht_called '^systemd-run --quiet --no-block --on-active=60 --unit=rustdesk-followup-1 systemctl --no-block restart cream-configure@rustdesk\.service$'
+check "повторная сверка через 30 с — cream configure --again (мимо отметки)" \
+    ht_called '^systemd-run --quiet --no-block --on-active=30 --timer-property=AccuracySec=1s --unit=rustdesk-followup-1 cream configure --again rustdesk$'
+check_not "юнит configure хук сам не перезапускает" ht_called 'restart cream-configure@'
 echo 10 > "$ROOT/run/rustdesk/followup"
 : > "$FAKE/calls"
 ht_hook configure CREAM_REASON=apply "RUSTDESK_ID_SERVER=other.example.com"; eq "предел сверок — 0" 0 "$?"

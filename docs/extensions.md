@@ -105,15 +105,31 @@ cream зовёт хук с очищенным окружением: `PATH`, `LAN
 стадией `cloud-user` выходит в каталоге только с `cream: ">=1.1.1"` (рулинг Р14
 плана); `tools/lint-hooks.sh` отказывает манифесту, где это не так, а
 `tools/new-extension.sh` ставит нужную версию сам. Пин проверок
-(`tools/cream-pin.env`) — 1.1.3.
+(`tools/cream-pin.env`) — 1.2.0.
+
+### configure по отметке и `every_boot` (cream 1.2.0)
+
+С cream 1.2.0 хук configure на загрузке идёт, только если нет отметки выполнения
+или она устарела (версия, дерево, параметры, ротация секрета, `machine_id`; спека
+cream 2026-10-21 §10.7). Хуку, которому одного успешного прогона мало (признаки
+А1–А6: состояние в ядре или `/run`, перебор пользователей, пользователь
+cloud-init, свой повтор, файлы, которые переписывает приложение, железо), нужен
+`hooks.configure.every_boot: true` и `cream: ">=1.2.0"` (§10.9) — иначе после
+перезагрузки он не запустится. Решения по каждому хуку — [аудит](research/2026-10-21-configure-audit.md);
+осознанное «не нужен» — строка `# cream-lint: every-boot-not-needed <причина>`
+в хуке (`wallpaper`). Хук, который ставит себе повтор, зовёт его отложенно и мимо
+отметки — `systemd-run --on-active=30 --timer-property=AccuracySec=1s cream
+configure --again <имя>`, никогда не `systemctl restart cream-configure@<имя>`
+(эталон — `rustdesk`). Код 20 из configure cream 1.2.0 считает «пропущено»: юнит
+успешен, отметка снимается, хук повторится на следующей загрузке.
 
 ### Пин cream
 
 `tools/cream-pin.env` — единственное место версии cream для проверок каталога:
-`cream validate` (`tools/cream-validate.sh`), снимок (`tools/cream-deb.sh`), живые
+`cream validate` (`tools/cream-validate.sh`), `cream check` (`tools/cream-check.sh`), снимок (`tools/cream-deb.sh`), живые
 прогоны (`tools/live-test.sh`). В нём `CREAM_VERSION`, `CREAM_SHA256`
 (`cream_<v>_amd64.deb` — его гоняют инструменты), `CREAM_SHA256_ARM64` (для
-учёта) и необязательный `CREAM_URL` (пусто — ассет релиза на GitHub); сейчас — cream 1.1.3; суммы — из `SHA256SUMS` релиза
+учёта) и необязательный `CREAM_URL` (пусто — ассет релиза на GitHub); сейчас — cream 1.2.0; суммы — из `SHA256SUMS` релиза
 (`gh release download v<v> -R iamletenkov/cream -p SHA256SUMS`). Поднять cream —
 поправить три строки и прогнать `make ci`, `make cream-validate`; изменение пина
 CI считает изменением всех L-расширений (`tools/live-matrix.sh`).
@@ -135,7 +151,7 @@ CI считает изменением всех L-расширений (`tools/l
 | `secret-argv` | секретный ключ (`config.keys.*.secret`, `params.*.secret: true`) в argv cream не как `KEY=-` |
 | `cream-env` | присваивание `CREAM_*` или имя `CREAM_*`, которого cream не задаёт (опечатка) |
 | `stage-cream` | `hooks.configure.stage: cloud-user` при `cream:` ниже `">=1.1.1"` |
-| `every-boot` | хук configure (и файл расширения, которому он передаёт работу через `"${CREAM_EXT_DIR…}/путь"`) с текстовым признаком А1–А4 (`ip link`, `iptables`, `nft`, `modprobe`, запись в `/run/`; `getent passwd`, `/home/`, UID 1000; `get_cloud_user`; `cream-configure@`) без `hooks.configure.every_boot: true` и без `# cream-lint: every-boot-not-needed <причина>` в хуке. `LINT_EVERY_BOOT=warn` (умолчание, пока пин cream 1.1.x) — предупреждение с кодом 0; `error` — находка. Признаки и решения — [research/2026-10-21-configure-audit.md](research/2026-10-21-configure-audit.md) |
+| `every-boot` | хук configure (и файл расширения, которому он передаёт работу через `"${CREAM_EXT_DIR…}/путь"`) с текстовым признаком А1–А4 (`ip link`, `iptables`, `nft`, `modprobe`, запись в `/run/`; `getent passwd`, `/home/`, UID 1000; `get_cloud_user`; `cream-configure@`) без `hooks.configure.every_boot: true` и без `# cream-lint: every-boot-not-needed <причина>` в хуке. `LINT_EVERY_BOOT=error` (умолчание с пином cream 1.2.0; так гоняет `tools/check.sh`) — находка; `warn` — предупреждение с кодом 0. Признаки и решения — [research/2026-10-21-configure-audit.md](research/2026-10-21-configure-audit.md) |
 
 Комментарии и `tests/` не проверяются. Рядом — `make lint`: скрипты расширений
 (хуки, действия, `files/`, `tests/`) проходят shellcheck на уровне `warning`,
@@ -533,7 +549,8 @@ tools/new-extension.sh <имя> [--stage system|early|cloud-user|graphical]
 `configure` нужной стадии, пример ключа домена `<ИМЯ>_EXAMPLE`, H-тест
 `tests/test-<имя>.sh` на `tools/hooktest.sh` и README с таблицей ключей.
 `--cloud-user` объявляет `depends` на библиотеку `cloud-user` и зовёт
-`"${CREAM_ROOT:-}/opt/cream/ext/cloud-user/get_cloud_user.sh"` из `configure`;
+`"${CREAM_ROOT:-}/opt/cream/ext/cloud-user/get_cloud_user.sh"` из `configure`
+(и `every_boot: true` с `cream: ">=1.2.0"`: признак А3);
 `--library` даёт `kind: library` без хуков. `tests/live.env` каркас не кладёт:
 с ним расширение попадает в живые прогоны CI, и заводит его автор, когда
 `install` делает настоящую работу.
@@ -556,6 +573,7 @@ tools/check.sh                # всё сразу: cream validate, гейт им
 tools/lint.sh                 # shellcheck: скрипты расширений — warning, остальное — error (make lint)
 tools/lint-hooks.sh           # линт хуков и действий (см. «Формат cream/v1»)
 tools/cream-validate.sh       # cream validate --catalog . по корню (make cream-validate)
+tools/cream-check.sh          # cream check: каждое расширение строкой образа (make cream-check)
 tools/check-names.sh          # прежние имена bisquite по всему репозиторию (make check-names)
 tools/live-test.sh <имя>      # живой прогон настоящим cream (make test-live EXT=<имя>)
 tools/catalog-snapshot.sh     # снимок каталога (make snapshot; проверка — make snapshot-check)
@@ -583,10 +601,12 @@ tools/check-contract-fixtures.sh  # образцы контракта stvor-agen
   cream: без `--privileged`, `--cgroupns=host`, cgroup на запись, `--tmpfs /run`, явный `--memory`),
   настоящий cream по пину, источник `path`. Сценарий: зависимости → `install` → повтор (`changed: false`)
   → `install --reinstall` не меняет ни одного файла в `/etc`, `/opt/cream`, `/usr/local`,
-  `/var/lib/cream/ext` → перезапуск (configure на загрузке успешен, `systemctl --failed` пуст, нет
-  `ordering cycle`) → `remove` (если есть хук); значения секретов не видны в `ps`, журнале, реестре.
+  `/var/lib/cream/ext` → два перезапуска (на каждом: configure на загрузке успешен и соблюдает
+  отметку cream 1.2.0 — с `every_boot` хук отработал, без него пропущен по отметке, код 20 — снял
+  отметку; `systemctl --failed` пуст, нет `ordering cycle`) → `remove` (если есть хук); значения секретов не видны в `ps`, журнале, реестре.
   Код 20 допустим только от хука `install` и только с `--expect-skip` (рулинг Р11): `configure` без
-  устройства пишет предупреждение и выходит 0. Умолчания прогона — `tests/live.env` расширения (данные
+  устройства пишет предупреждение и выходит 0. (Код 20 от `configure` cream 1.2.0 сам считает
+  «пропущено» — юнит успешен, L-раннер пишет это строкой ok; правило Р11 держит ревью и H-тест.) Умолчания прогона — `tests/live.env` расширения (данные
   `KEY=value`): `LIVE_DEPS`, `LIVE_ACCEPT_RISK=1`, `LIVE_EXPECT_SKIP=1`, `LIVE_PARAMS`, `LIVE_SECRETS`,
   `LIVE_MEMORY`, `LIVE_CAPS` (`firewall` — `NET_ADMIN`), `LIVE_SNAPSHOT_IGNORE`, `LIVE_BOOT_CONFIGURE=optional`,
   `LIVE_FAILED_IGNORE` (ERE с якорями `^…$` по имени юнита целиком: юниты, которые роняет контейнер, а не
@@ -613,6 +633,19 @@ cream берётся по пину `tools/cream-pin.env` (см. «Пин cream»
 пропуск со строкой «cream/v1 пропущен: пин cream не задан». Локально без
 релиза — `CREAM_DEB=<путь к .deb> tools/cream-validate.sh [каталог…]` (пин не
 проверяется, об этом печатается предупреждение).
+
+`tools/cream-check.sh` гоняет `cream check` (cream ≥ 1.2.0, офлайн, без root) так,
+как его увидит предсборочная проверка bisquite: каждое расширение под `roots` —
+строкой `install --with-deps <имя>` будущего образа на пустой базе
+(`--installed []`), для каждой ОС матрицы `debian:12`, `debian:13`,
+`ubuntu:22.04`, `ubuntu:24.04`, которую допускает его `platform.os`, на `amd64`
+(или первой своей архитектуре). Каждую способность из `requires` (его, его `depends` и поставщиков — транзитивно)
+закрывает строка `install --with-deps` первого по имени поставщика для той же ОС
+и архитектуры; способность без поставщика — находка самого скрипта. Проверяется
+то же, что ответит гость: `depends`, `requires`, `conflicts`, платформа, диапазон
+`cream:`, обязательные ключи `scope: build`. Матрица строится на хосте (python3 +
+PyYAML), cream — по пину в контейнере `debian:12` без сети; пустой пин — пропуск
+со строкой. Тест — `tools/test-cream-check.sh` на временных каталогах.
 
 `tools/check-names.sh` без аргументов проверяет каждый файл, который git
 отслеживает или отследил бы (`.gitignore` соблюдается), кроме истории —
