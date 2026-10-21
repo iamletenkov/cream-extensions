@@ -115,9 +115,17 @@ step "remove: интерфейс и ссылка убраны, пакеты об
 CREAM_PHASE=live cream remove podkop
 eq "ссылка снята" "" "$(uget podkop.main.proxy_string)"
 hasnt /etc/rc.d/S99podkop
+# анонимный пир, как его заводит LuCI: remove снимает и его (вместе с PSK)
+uci batch <<'EOF2' >/dev/null
+add network amneziawg_awg0
+set network.@amneziawg_awg0[-1].public_key='luci-peer'
+commit network
+EOF2
+eq "анонимный пир заведён" luci-peer "$(uget 'network.@amneziawg_awg0[-1].public_key')"
 CREAM_PHASE=live cream remove amneziawg
 eq "интерфейса нет" "" "$(uget network.awg0)"
 eq "пира нет" "" "$(uget network.awg0_peer)"
+eq "анонимного пира нет" "" "$(uci -q -X show network | grep '=amneziawg_awg0$' || true)"
 hasnt /lib/upgrade/keep.d/amneziawg
 apk info -e kmod-amneziawg >/dev/null || fail "пакет образа снят"
 echo "OK"

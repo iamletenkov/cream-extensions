@@ -43,9 +43,10 @@ live() { [ "${CREAM_PHASE:-}" = live ] && [ "${CREAM_REASON:-}" != boot ]; }
 # ubus_up: netifd answers (not in a container, not in the image).
 ubus_up() { command -v ubus >/dev/null 2>&1 && ubus -t 2 list network >/dev/null 2>&1; }
 
-# peer_sections IFACE: the names of the peer sections of the interface.
+# peer_sections IFACE: the names of the peer sections of the interface; -X
+# names the anonymous ones (LuCI, manual edits) cfgXXXXXX, which delete accepts.
 peer_sections() {
-	uci -q -c "$CONF" show network 2>/dev/null |
+	uci -q -X -c "$CONF" show network 2>/dev/null |
 		sed -n "s/^network\.\([A-Za-z0-9_]*\)=amneziawg_$1\$/\1/p"
 }
 

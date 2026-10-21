@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # H-тест amneziawg: хуки на подменённом корне (tools/hooktest.sh). uci, apk, awg,
 # ubus подставные: uci пишет пакет команд batch (stdin) в журнал, show отдаёт
-# заготовку $FAKE/network.show. Настоящий uci и netifd — L (контейнер OpenWrt).
+# заготовку $FAKE/network.show (show -X — $FAKE/network.showx, если есть:
+# анонимные секции под именами cfgXXXXXX, как у настоящего uci). Настоящий uci и netifd — L (контейнер OpenWrt).
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../../../../tools/hooktest.sh
@@ -24,6 +25,7 @@ setup() {
     # get: the last `set` of the batch, else the line of network.show (uci show format).
     ht_fake uci 'case "$*" in
 *" batch") cat >> "$FAKE/uci.batch" ;;
+*"-X "*" show network") cat "$FAKE/network.showx" 2>/dev/null || cat "$FAKE/network.show" ;;
 *" show network") cat "$FAKE/network.show" ;;
 *" get "*) k="${!#}"
     v="$(sed -n -e "s/^set $k=.\(.*\).\$/\1/p" -e "s/^set $k=\([a-z_]*\)\$/\1/p" "$FAKE/uci.batch" 2>/dev/null | tail -n1)"
@@ -168,6 +170,13 @@ ht_hook remove; eq "remove — 0" 0 "$?"
 check "интерфейс удалён" has_line "delete network.awg0"
 check "пир удалён" has_line "delete network.awg0_peer"
 check "commit" has_line "commit network"
+# анонимный пир (LuCI, ручная правка): без -X uci show даёт @amneziawg_awg0[0]
+setup
+printf 'awg0\n' > "$ROOT/var/lib/cream/ext/amneziawg/iface"
+printf '%s\n' "network.awg0=interface" "network.awg0.proto=amneziawg" "network.@amneziawg_awg0[0]=amneziawg_awg0" > "$FAKE/network.show"
+printf '%s\n' "network.awg0=interface" "network.awg0.proto=amneziawg" "network.cfg0a1b2c=amneziawg_awg0" > "$FAKE/network.showx"
+ht_hook remove; eq "remove с анонимным пиром — 0" 0 "$?"
+check "анонимный пир удалён" has_line "delete network.cfg0a1b2c"
 
 # --- pubkey
 setup
