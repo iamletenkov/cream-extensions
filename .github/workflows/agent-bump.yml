@@ -78,6 +78,8 @@ jobs:
         with:
           # PAT, если задан: push ветки от него запускает CI на PR.
           token: ${{ secrets.RELEASE_PR_TOKEN || github.token }}
+          # Полная история и теги: tools/check.sh сравнивает версии с последним v*.
+          fetch-depth: 0
           ref: ${{ env.BASE }}
 
       - name: Resolve tag
