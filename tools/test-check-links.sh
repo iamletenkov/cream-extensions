@@ -9,6 +9,8 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GATE="$HERE/check-links.sh"
+# Inside a git hook GIT_DIR points to the hook's repository, not to the test one.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TMP="$(mktemp -d)"
 trap 'rm -r -f -- "$TMP"' EXIT

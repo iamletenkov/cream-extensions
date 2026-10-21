@@ -49,7 +49,7 @@ enabled() { ln -sf /lib/systemd/system/NetworkManager.service "$WANTS/NetworkMan
 echo "== манифест =="
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "версия 2.1.0" 2.1.0 "$(mf 'm["version"]')"
+eq "версия 2.1.1" 2.1.1 "$(mf 'm["version"]')"
 eq "build: exec" exec "$(mf 'm["targets"]["build"]')"
 eq "live: confirm" confirm "$(mf 'm["targets"]["live"]')"
 check "live_note про сетевой стек" grep -q 'сет' <<< "$(mf 'm["targets"]["live_note"]')"

@@ -35,7 +35,7 @@ has_user() { grep -qE "^$1:" "$FAKE/passwd"; }
 echo "== манифест =="
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "мажор 5" 5.0.0 "$(mf 'm["version"]')"
+eq "мажор 5" 5.0.1 "$(mf 'm["version"]')"
 eq "cream >= 1.0.0" '>=1.0.0' "$(mf 'm["cream"]')"
 eq "build: exec" exec "$(mf 'm["targets"]["build"]')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
