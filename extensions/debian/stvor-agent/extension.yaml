@@ -5,7 +5,8 @@
 # file goes away on `cream remove stvor-agent`).
 schema: cream/v1
 name: stvor-agent
-version: 4.1.1
+version: 4.1.2
+# 4.1.2: пин пакета stvor-agent 4.0.1.
 # 4.1.1: только README (выпуск 5.1.1 изменил дерево без подъёма версии —
 #        cream отвергал обновление с 4.1.0: version.same_digest).
 # 4.1.0: Ubuntu 20.04 (Jetson Nano, L4T R32): агент — статический Go, юнит
