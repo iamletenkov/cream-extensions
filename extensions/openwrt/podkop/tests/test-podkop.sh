@@ -24,7 +24,7 @@ setup() {
 batch() { cat "$FAKE/uci.batch" 2>/dev/null; }
 has_line() { batch | grep -qxF -- "$1"; }
 has_re() { batch | grep -q -- "$1"; }
-wait_bg() { local i; for i in 1 2 3 4 5 6 7 8 9 10; do ht_called "$1" && return 0; sleep 0.1; done; return 1; }
+wait_bg() { local _i; for _i in 1 2 3 4 5 6 7 8 9 10; do ht_called "$1" && return 0; sleep 0.1; done; return 1; }
 
 # --- install
 setup
