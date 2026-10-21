@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.3.1](https://github.com/iamletenkov/cream-extensions/compare/v5.3.0...v5.3.1) (2026-10-21)
+
+
+### Исправлено
+
+* **catalog:** документация по задачам и README расширений по единому шаблону ([#44](https://github.com/iamletenkov/cream-extensions/issues/44)) ([ceb5263](https://github.com/iamletenkov/cream-extensions/commit/ceb52631b1487c895387edbb13522d664c46224f))
+
 ## [5.3.0](https://github.com/iamletenkov/cream-extensions/compare/v5.2.0...v5.3.0) (2026-10-21)
 
 
