@@ -2,10 +2,11 @@
 # Самопроверка L-раннера tools/live-test.sh на фикстурах
 # tools/testdata/live/extensions/debian: верное расширение — зелёное, каждое
 # нарушение — красное своей проверкой (сбой install, код 20 без --expect-skip,
-# --expect-skip у применимого, упавший юнит после загрузки, configure с кодом 20,
+# --expect-skip у применимого, упавший юнит после загрузки,
 # неидемпотентный --reinstall, секрет в журнале, цикл порядка), код 20 install
 # с --expect-skip — зелёный (skipped); зависимость с кодом 20 — «пропущена (skipped)»,
-# упавшая зависимость — красная с кодом cream. LIVE_FAILED_IGNORE: разрешённый юнит —
+# упавшая зависимость — красная с кодом cream; configure с кодом 20 на загрузке — зелёный
+# (cream ≥ 1.2.0: «пропущено», юнит успешен, спека cream §10.8). LIVE_FAILED_IGNORE: разрешённый юнит —
 # зелёный с пометкой «разрешено упасть», юнит не из списка — красный, выражение без
 # якорей ^…$ — отказ (код 2). Плюс приёмка плана: настоящее расширение
 # stvor-agent (с teleport) — LIVE_REAL=1 (сеть: тарбол Teleport, .deb агента).
@@ -56,7 +57,7 @@ run unit-allowed 0 "разрешено упасть: live-unit-allowed.service" 
 run unit-not-listed 1 "FAIL после перезапуска есть упавшие юниты" \
     --failed-ignore '^other\.service$' live-unit-failed
 run ignore-unanchored 2 "LIVE_FAILED_IGNORE" --failed-ignore 'live-unit-failed\.service' live-unit-failed
-run configure-20 1 "FAIL configure на загрузке: cream-configure@live-configure-20.service — failed" live-configure-20
+run configure-20 0 "ok   configure на загрузке: cream-configure@live-configure-20.service active, success" live-configure-20
 run not-idempotent 1 "FAIL --reinstall изменил файлы" live-nonidem
 run secret-leak 1 "FAIL после install: секрет LIVE_LEAK_TOKEN виден: журнал" --secret LIVE_LEAK_TOKEN live-leak
 run ordering-cycle 1 "FAIL «ordering cycle» в журнале или systemd-analyze" live-cycle

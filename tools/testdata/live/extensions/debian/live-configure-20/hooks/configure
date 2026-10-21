@@ -1,5 +1,5 @@
 #!/bin/sh
-# Wrong by ruling Р11: configure without a device must warn and exit 0. At
-# install it passes (the device "is there"), at boot it says 20.
+# At install it passes (the device "is there"), at boot it says 20: cream
+# 1.2.0 records "skipped" and the unit succeeds (until 1.2.0 it failed, ruling Р11).
 [ "${CREAM_REASON:-}" = boot ] || exit 0
 [ -e /dev/live-configure0 ] || exit 20
