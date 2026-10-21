@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Lint of the hooks and actions of the extensions (plan 2026-10-19, Task 7):
 # the script rules of the former layout 2 validator, carried over to cream/v1,
-# plus the convention of the catalog (docs/extensions.md, "Проверки").
+# plus the convention of the catalog (docs/reference/lint-rules.md).
 #
 #   tools/lint-hooks.sh            every extensions/<family>/<name>/ with an
 #                                  extension.yaml
@@ -305,7 +305,7 @@ for d in "${dirs[@]}"; do
 done
 
 if (( found )); then
-    echo "lint-hooks: нарушения в хуках и действиях cream/v1 (см. выше; правила — docs/extensions.md)" >&2
+    echo "lint-hooks: нарушения в хуках и действиях cream/v1 (см. выше; правила — docs/reference/lint-rules.md)" >&2
     exit 1
 fi
 if (( warned )); then

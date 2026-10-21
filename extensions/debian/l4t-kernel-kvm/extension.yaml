@@ -21,7 +21,8 @@
 # 1.2.0: L4T_KERNEL_JOBS ограничен ядрами и памятью appliance, урезание вслух.
 schema: cream/v1
 name: l4t-kernel-kvm
-version: 2.1.0
+version: 2.1.1
+# 2.1.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: Ядро L4T с KVM для Jetson Nano/TX1 (t210) — сборка из исходников NVIDIA, загрузка по умолчанию
 cream: ">=1.0.0"
 platform:

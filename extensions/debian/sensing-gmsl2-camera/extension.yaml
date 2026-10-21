@@ -18,7 +18,8 @@
 # and the udev rule are `files` and call them by absolute path (ruling R7).
 schema: cream/v1
 name: sensing-gmsl2-camera
-version: 5.0.1
+version: 5.0.2
+# 5.0.2: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: Камеры Sensing GMSL2 на Jetson AGX Orin (SG8A-AGON-G2Y-A1, L4T 36.4.3) — ядро, модули, оверлей, запуск на загрузке
 cream: ">=1.0.0"
 platform:

@@ -15,7 +15,8 @@
 #        every run; L4T_BOARD is an install parameter; code 10.
 schema: cream/v1
 name: l4t-board-fdt
-version: 2.0.0
+version: 2.0.1
+# 2.0.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: Дерево устройств платы Jetson — строка FDT в записи kvm файла extlinux.conf
 cream: ">=1.0.0"
 platform:

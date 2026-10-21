@@ -2,47 +2,22 @@
 
 Docker CE из официального apt-репозитория Docker (`download.docker.com`).
 
-```
-cream install --accept-risk docker      # живая машина (live: confirm)
-cream remove docker
-EXTENSION docker                        # образ bisquite
-```
-
-> **С 4.0.0 — cream/v1.** `install.sh` и `configure.sh` стали хуками
-> `hooks/install` и `hooks/configure`, появился хук `remove`.
-> `configure-docker.service` больше нет: донастройку на загрузке запускает
-> `cream-configure@docker` (стадия `system`, `after: [docker.service]`).
-> Проверка iptables raw и drop-in для `docker.service` — `files` манифеста
-> (их раскладывает и снимает cream). Имя пользователя — библиотека
-> `cloud-user` (`depends`), а не общий скрипт источника. Каталог
-> в госте — `/opt/cream/ext/docker/`.
-
-Ключей настроек у расширения нет (см. «Параметров нет»), переименовывать нечего.
-
-## Манифест
-
-| Поле | Значение |
+<!-- catalog:facts -->
+| | |
 |---|---|
-| `cream` | `>=1.0.0` — стадия `system` есть в 1.0 |
-| `platform.arch` | `amd64`, `arm64` (`binary-armhf` в репозитории есть, но проект его не собирает) |
-| `platform.os` | `debian`, `ubuntu` (любая версия: сюиту проверяет гейт кандидата) |
-| `targets` | `build: exec`, `live: confirm` — `live_note` ниже |
-| `provides` | `container-runtime` |
-| `depends` | `cloud-user >=1.0.0 <2` — имя пользователя для группы `docker`; `apt-guard >=1.0.0 <2` — `remove` снимает только свои пакеты |
-| `requires` | пусто — всё, что нужно, расширение ставит само |
-| `conflicts` | пусто: бывший близнец `docker-ce` слит сюда 2026-09-03, конфликтовать не с кем |
-| `hooks` | `install` (30 мин), `configure` (стадия `system`, после `docker.service`, 5 мин), `remove` (15 мин) |
-| `files` | `docker-iptables-raw-check` (0755) и drop-in `10-docker-iptables-raw.conf` |
+| ОС | Debian, Ubuntu |
+| Архитектура | amd64, arm64 |
+| cream | ≥ 1.2.0 |
+| Даёт | `container-runtime` |
+| Требует | — |
+| Зависит от | [`cloud-user`](../cloud-user/README.md), [`apt-guard`](../apt-guard/README.md) |
+| Конфликтует с | — |
+| Хуки | `install`, `configure`, `remove` |
+| Настройка на загрузке | стадия `system`, на каждой загрузке (`every_boot`) |
+| Живая машина | с `--accept-risk` |
 
-### Почему `live: confirm`
-
-На живой машине `install` снимает конкурирующие пакеты (`docker.io`,
-`docker-cli`, `docker-compose`, `docker-compose-v2`, `docker-doc`,
-`docker-buildx`, `podman-docker`, `containerd`, `runc`), и их контейнеры
-останавливаются; `remove` их обратно не ставит. Пользователь cloud-init получает
-группу `docker`, а она равносильна root. На Raspberry Pi правится `cmdline.txt`
-(нужна перезагрузка), на Jetson перезапускается `dockerd`. Поэтому без
-`--accept-risk` cream не ставит; текст риска — `targets.live_note`.
+> **Живая машина — с `--accept-risk`.** Снимает конкурирующие пакеты, если стоят: docker.io, docker-cli, docker-compose, docker-compose-v2, docker-doc, docker-buildx, podman-docker, containerd, runc — их контейнеры останавливаются, обратно remove их не ставит; пользователь cloud-init получает группу docker (равносильно root); на Raspberry Pi правит cmdline.txt (нужна перезагрузка); на Jetson перезапускает dockerd под среду выполнения NVIDIA
+<!-- /catalog:facts -->
 
 ## Что делает
 
@@ -67,14 +42,21 @@ EXTENSION docker                        # образ bisquite
   postinst сразу стартует `docker.service`, и drop-in проверки iptables raw,
   который cream разложил до хука, должен быть уже виден.
 
-**Каждая загрузка и сразу после установки** (`hooks/configure` в `cream-configure@docker`, стадия `system`, после `docker.service`)
+cream раскладывает файлы расширения (`files`): проверку
+`/usr/local/libexec/docker-iptables-raw-check` (0755) и drop-in
+`/etc/systemd/system/docker.service.d/10-docker-iptables-raw.conf` — см. «Ядро без
+таблицы iptables raw».
+
+**Каждая загрузка и сразу после установки** (`hooks/configure` в
+`cream-configure@docker`, стадия `system`, `after: [docker.service]` — группа уже
+заведена postinst, а перезапуск под NVIDIA видит демон)
 
 - добавляет пользователя cloud-init в группу `docker` — при сборке имя
   пользователя ещё неизвестно;
 - на Raspberry Pi добавляет `cgroup_enable=memory` в
   `/boot/firmware/cmdline.txt` (копия `.before-docker` снимается один раз и
   не перезаписывается) и выходит с кодом 10 — нужна перезагрузка; на сборке
-  этот файл недостижим, см. отдельный раздел;
+  этот файл недостижим, см. «Почему правка cmdline.txt — в configure»;
 - на Jetson перезапускает демон (`systemctl --no-block try-restart`), чтобы
   подхватилась среда выполнения NVIDIA (`nvidia-ctk` правил `daemon.json`
   в chroot, где демона не было). Перезапуск — только когда `daemon.json`
@@ -82,7 +64,7 @@ EXTENSION docker                        # образ bisquite
   `/var/lib/cream/ext/docker/daemon-json.sha256`), а не на каждой загрузке.
 
 Все три шага идемпотентны и проверяют факт перед правкой. Нет пользователя,
-группы `docker` или устройства — предупреждение и код 0 (рулинг Р11).
+группы `docker` или устройства — предупреждение и код 0.
 
 **Снятие** (`hooks/remove`, `cream remove docker`)
 
@@ -110,9 +92,104 @@ Ubuntu. Неудачное удаление остаётся предупреж�
 `-o Dpkg::Options::=--force-confnew`: сборка не может ответить на
 интерактивный вопрос про конфиг.
 
-## Почему один путь, а не два
+## Параметры
 
-Расширение слито с бывшим `docker-ce` 2026-09-03. Довод «на старых системах
+<!-- catalog:params -->
+Параметров нет.
+<!-- /catalog:params -->
+
+### Параметров нет
+
+Расширение не читает ни одного ключа: всё, на что оно
+ветвится, оно спрашивает у самой машины — `/etc/os-release` для сюиты
+репозитория, `apt-cache policy docker-ce` для наличия пакета,
+`/etc/rpi-issue`, `/boot/firmware/cmdline.txt` и `/etc/nv_tegra_release`
+для железа. Ручка здесь означала бы второй источник правды рядом с ответом,
+который и так точен.
+
+## Установка
+
+На машине с подключённым каталогом ([как подключить](../../../docs/getting-started.md));
+`live: confirm` — нужен `--accept-risk` (см. «Почему `live: confirm`»), библиотеки
+`cloud-user` и `apt-guard` cream поставит сам, по `depends`:
+
+```bash
+sudo cream install --with-deps --accept-risk docker
+sudo cream remove docker
+```
+
+В образе bisquite (VMFILE):
+
+```dockerfile
+RUN_COMMAND cream install --with-deps docker
+```
+
+`hooks/install` при сборке запускается внутри `virt-customize`, то есть под
+барьером архитектуры: arm64-образ собирается только на arm64-хосте.
+
+**Предупреждения этого расширения по умолчанию не видны.** `virt-customize`
+не печатает вывод гостевых команд вовсе, а расширение говорит вслух и про
+заморозку сюиты, и про то, что членство в группе `docker` равносильно root.
+Читать их — `bs image build -v`. На живой машине они идут в stderr `cream`
+и в журнал `cream-configure@docker`.
+
+`yq` (`RUN_COMMAND cream install --with-deps yq` в VMFILE, `cream install yq` на
+машине) раньше этого расширения не обязателен, но **желателен** — см. «Как
+определяется пользователь для группы `docker`».
+
+## Этапы
+
+| Когда | Что происходит |
+|---|---|
+| сборка образа / `cream install` | конкуренты сняты, репозиторий и пять пакетов, NVIDIA на Jetson, запись своих пакетов |
+| загрузка (`cream-configure@docker`, каждая) | группа `docker`, `cmdline.txt` на Pi (код 10), перезапуск под NVIDIA при смене `daemon.json` |
+| старт `docker.service` | `ExecStartPre` проверки iptables raw |
+| `cream remove` | свои пакеты, источники и ключи сняты; данные Docker остаются |
+
+Что править на живой машине и чем перезапускать:
+
+| Надо | Править | Применять |
+|---|---|---|
+| настройки демона (среды выполнения, логи, зеркала) | `/etc/docker/daemon.json` | `sudo systemctl restart docker` |
+| ограничения памяти на Pi | `/boot/firmware/cmdline.txt` | перезагрузка |
+| ещё одного пользователя в группу | `sudo usermod -aG docker <имя>` | новый сеанс пользователя (`usermod` не меняет уже открытый) |
+
+Своего файла настроек расширение не держит: повторный прогон
+`sudo cream configure docker` только перепроверит группу,
+`cmdline.txt` и необходимость перезапуска демона. `daemon.json` он не
+перезаписывает — его правил `nvidia-ctk` один раз, на сборке.
+
+## Известные ограничения
+
+- Только amd64 и arm64: `binary-armhf` в репозитории есть, но проект его не собирает.
+- **Членство в группе `docker` равносильно root на этой машине** — через сокет
+  поднимается привилегированный контейнер. Расширение говорит это вслух, чтобы
+  это было решением, а не случайностью.
+- Нет кандидата `docker-ce` — громкий отказ, без отката на `docker.io` (см.
+  «Гейт вместо таблицы»). Замороженные сюиты дают старый Docker.
+- На Raspberry Pi лимиты памяти заработают только после перезагрузки; для сборки
+  raspios с Docker нужен `RESIZE` минимум до 16 ГБ.
+- На ядре без таблицы iptables raw защита прямого доступа к контейнерам снята
+  (см. «Ядро без таблицы iptables raw»).
+- В гонке «cloud-init есть, userdata ещё нет» группа на первой загрузке не
+  назначается; назначится на следующей.
+- OpenWrt этим расширением не поддерживается; образы OpenWrt собирает bisquite отдельно.
+
+## Подробности
+
+### Почему `live: confirm`
+
+На живой машине `install` снимает конкурирующие пакеты (`docker.io`,
+`docker-cli`, `docker-compose`, `docker-compose-v2`, `docker-doc`,
+`docker-buildx`, `podman-docker`, `containerd`, `runc`), и их контейнеры
+останавливаются; `remove` их обратно не ставит. Пользователь cloud-init получает
+группу `docker`, а она равносильна root. На Raspberry Pi правится `cmdline.txt`
+(нужна перезагрузка), на Jetson перезапускается `dockerd`. Поэтому без
+`--accept-risk` cream не ставит; текст риска — `targets.live_note`.
+
+### Почему один путь, а не два
+
+Отдельного пути через `get.docker.com` нет. Довод «на старых системах
 нужен `get.docker.com`, на новых репозиторий» оказался неверен дважды:
 
 - **скрипт ставит из того же репозитория**, только пишет однострочный `.list`
@@ -123,7 +200,7 @@ Ubuntu. Неудачное удаление остаётся предупреж�
   безусловно попадает `docker-model-plugin`, которого в репозитории bionic нет
   ни для amd64, ни для arm64. При `set -e` это фатально.
 
-## Почему нет ветвления по дистрибутиву
+### Почему нет ветвления по дистрибутиву
 
 Замеры 2026-09-03:
 
@@ -145,13 +222,13 @@ Ubuntu. Неудачное удаление остаётся предупреж�
 в pi-gen), и без неё apt пойдёт ещё и за индексом, которого в репозитории
 может не быть.
 
-## Гейт вместо таблицы
+### Гейт вместо таблицы
 
 Перед установкой скрипт спрашивает `apt-cache policy docker-ce`. Нет
 кандидата — **громкий отказ**, без отката на дистрибутивный `docker.io`.
 Заодно это ловит опечатку в кодовом имени и молча не отработавший
 `apt-get update`; сверяться с таблицей поддерживаемых сюит нельзя —
-таблица устарела бы молча.
+таблица устарела бы молча. Поэтому `platform.os` — любая версия Debian и Ubuntu.
 
 Откат был бы тихим: VMFILE один, а на флот уехали бы образы с разными
 движками (`download.docker.com` даёт 29.7.2, `docker.io` — 26.1.5 на
@@ -159,7 +236,7 @@ Debian 13 и 20.10.12 на Ubuntu 22.04). Это та же подмена гар
 из-за которой установку не переносят на первую загрузку. Нужен
 `docker.io` — заводите отдельное расширение под своим именем.
 
-## Замороженные сюиты
+### Замороженные сюиты
 
 Наличие пакета и его свежесть — разные вопросы. Репозиторий для bionic
 существует и работает, но заморожен:
@@ -172,7 +249,7 @@ dists/noble/Release    Date: 02 Sep 2026   docker-ce 29.7.2
 Скрипт предупреждает вслух для `trusty`, `xenial`, `bionic`, `focal`,
 `stretch`, `buster`. Это потолок цели, а не выбор способа.
 
-## Почему правка cmdline.txt — в configure
+### Почему правка cmdline.txt — в configure
 
 Ядро Pi умеет memcg (`CONFIG_MEMCG=y` во всех ветках), но DTB его гасит:
 `bcm2711-rpi-ds.dtsi` и `bcm2712-rpi.dtsi` несут `cgroup_disable=memory`
@@ -205,7 +282,7 @@ raspios 8 ГБ, Docker с зависимостями туда не влез
 (`cannot copy extracted data for './usr/bin/git' … No space left on device`).
 Для сборки с Docker нужен `RESIZE` минимум до 16 ГБ.
 
-## Jetson: среда выполнения NVIDIA
+### Jetson: среда выполнения NVIDIA
 
 Берётся из джетсоновского репозитория (`repo.download.nvidia.com/jetson/common`,
 сюита `r<release>.<major revision>` из `/etc/nv_tegra_release`), а не из общего
@@ -235,7 +312,7 @@ Nano: сборка дошла до расширения `vino-vnc` и упала
 Неустановившийся `nvidia-container-toolkit` — предупреждение, а не отказ:
 Docker работает, GPU в контейнерах не будет.
 
-## Ядро без таблицы iptables raw
+### Ядро без таблицы iptables raw
 
 Docker 28+ ставит в `raw/PREROUTING` правило DROP на пакеты, адресованные
 прямо IP контейнера мимо `docker0`. Если в ядре нет таблицы raw, он не
@@ -271,51 +348,31 @@ journalctl -u docker -b | grep "iptables raw"
 стартует в bridge-сети, работают DNS, `apt-get update` внутри и проброс
 порта — и с платы, и по сети.
 
-## OpenWrt
+### Как определяется пользователь для группы `docker`
 
-Сюда не входит: там `opkg` (24.10) или `apk` (25.12) и нет systemd, то есть
-фазы первой загрузки не существует. `hooks/install` отказывает явно, если
-`ID` не `debian`/`ubuntu` (и раньше него — `platform.os`). Вдобавок в 25.12 пакета `dockerd` нет вовсе для
-`x86_64`, `aarch64_generic`, `aarch64_cortex-a53` и `aarch64_cortex-a76` —
-проверено по шести точечным релизам.
-
-## Параметров нет
-
-Расширение не читает ни одной переменной окружения: всё, на что оно
-ветвится, оно спрашивает у самой машины — `/etc/os-release` для сюиты
-репозитория, `apt-cache policy docker-ce` для наличия пакета,
-`/etc/rpi-issue`, `/boot/firmware/cmdline.txt` и `/etc/nv_tegra_release`
-для железа. Ручка здесь означала бы второй источник правды рядом с ответом,
-который и так точен.
-
-## Как определяется пользователь для группы `docker`
-
-`hooks/configure` зовёт библиотеку `cloud-user` по её постоянному пути
-`${CREAM_ROOT:-}/opt/cream/ext/cloud-user/get_cloud_user.sh` (cream ставит её
-раньше по `depends`): имя берётся из userdata cloud-init, а при отсутствии `cloud-init`
-или `yq` — первая по порядку `/etc/passwd` учётка с uid 1000..65533 и
-домашним каталогом. Не определился никто — предупреждение, группа не
+`hooks/configure` зовёт библиотеку [`cloud-user`](../cloud-user/README.md) по её
+постоянному пути `${CREAM_ROOT:-}/opt/cream/ext/cloud-user/get_cloud_user.sh`
+(cream ставит её раньше по `depends`): имя берётся из userdata cloud-init, а при
+отсутствии `cloud-init` или `yq` — первая по порядку `/etc/passwd` учётка с uid
+1000..65533 и домашним каталогом. Не определился никто — предупреждение, группа не
 назначена; отказа нет, потому что Docker от этого работать не перестаёт.
 
-**Своего запасного пути у расширения больше нет.** Его локальная копия (тот
-же перебор «uid ≥ 1000 и домашний каталог») жила прямо в `configure.sh` — и
-это та самая копия, которая когда-то переехала в общий скрипт, ныне библиотеку
-`cloud-user`:
-замер 2026-09-04 на живом Jetson, вендорский образ без cloud-init, где
-`vino-vnc` и `jetson-stats` не настроились, а `docker` настроился, потому
-что запасной путь был только у него. Довод записан в самой библиотеке: её
-и централизовали, чтобы не держать девять расходящихся копий.
+**Своего запасного пути у расширения нет** — только библиотека. Довод — замер
+2026-09-04 на живом Jetson, вендорский образ без cloud-init: `vino-vnc` и
+`jetson-stats` не настроились, а `docker` настроился, потому что запасной путь
+(тот же перебор «uid ≥ 1000 и домашний каталог») был только у него. Довод записан
+в самой библиотеке: её и централизовали, чтобы не держать девять расходящихся копий.
 
-Копия **расходилась** по поведению, и расхождение было в худшую сторону.
+Локальная копия **расходилась** по поведению, и расхождение было в худшую сторону.
 Общий скрипт различает два случая: «`cloud-init` нет» — запасной путь, и
 «`cloud-init` есть, userdata пока нет» — отказ, потому что вендорская учётка
 сейчас не та, которую cloud-init создаст через секунду. Копия различия не
 делала и в этой гонке выдавала группу `docker` вендорской учётке, то есть
 **давала ей права, равносильные root**.
 
-Следствие, которое надо знать: в такой гонке на первой загрузке группа теперь
+Следствие, которое надо знать: в такой гонке на первой загрузке группа
 не назначается вовсе, и в журнале стоят два предупреждения об этом. Цикла
-ожидания здесь нет и не нужно — юнит `Type=oneshot` прогоняется на каждой
+ожидания здесь нет и не нужно — configure прогоняется на каждой
 загрузке, а userdata cloud-init остаётся лежать в `/var/lib/cloud/instance`,
 поэтому на следующей загрузке имя определяется и группа назначается.
 Стадия `system`, а не `cloud-user`, намеренно: `cloud-user` (cream 1.1) дала бы
@@ -330,46 +387,23 @@ journalctl -u docker -b | grep "iptables raw"
 пошёл запасным путём и какую учётку выбрал, — ровно то, что надо видеть
 в журнале, если группу получил не тот пользователь.
 
-`yq` (`EXTENSION yq` в VMFILE, `cream install yq` на машине) раньше этого расширения не обязателен, но
-**желателен**: без `yq` имя берётся запасным путём, а он угадывает, тогда
-как userdata знает точно.
+`yq` раньше этого расширения не обязателен, но **желателен**: без `yq` имя
+берётся запасным путём, а он угадывает, тогда как userdata знает точно.
 
-**Членство в группе `docker` равносильно root на этой машине** — через сокет
-поднимается привилегированный контейнер. Расширение говорит это вслух, чтобы
-это было решением, а не случайностью.
+### Проверено на
 
-## Что править на живой машине и чем перезапускать
+| Система | Архитектура | Что получилось | Дата |
+|---|---|---|---|
+| Debian 13 trixie | amd64 | `docker-ce 5:29.7.2-1~debian.13~trixie`, `containerd.io 2.3.4`, плагины `buildx` и `compose` на месте | 2026-09-03 |
+| Ubuntu 18.04 bionic | amd64 | `docker-ce 5:24.0.2-1~ubuntu.18.04~bionic` — замороженная версия, оба плагина на месте | 2026-09-03 |
+| Raspberry Pi OS trixie | arm64 (Jetson) | `docker-ce 5:29.7.2-1~debian.13~trixie`, `Architectures: arm64`, репозиторий `linux/debian` — отображение Pi OS сработало | 2026-09-03 |
 
-| Надо | Править | Применять |
-|---|---|---|
-| настройки демона (среды выполнения, логи, зеркала) | `/etc/docker/daemon.json` | `sudo systemctl restart docker` |
-| ограничения памяти на Pi | `/boot/firmware/cmdline.txt` | перезагрузка |
-| ещё одного пользователя в группу | `sudo usermod -aG docker <имя>` | новый сеанс пользователя (`usermod` не меняет уже открытый) |
-
-Своего файла настроек расширение не держит: повторный прогон
-`sudo cream configure docker` только перепроверит группу,
-`cmdline.txt` и необходимость перезапуска демона. `daemon.json` он не
-перезаписывает — его правил `nvidia-ctk` один раз, на сборке.
-
-## Подключение
-
-В образ bisquite:
-
-```vmfile
-EXTENSION docker
-```
-
-На живую машину — `sudo cream install --accept-risk docker` (библиотеки
-`cloud-user` и `apt-guard` cream поставит сам, по `depends`).
-
-`hooks/install` при сборке запускается внутри `virt-customize`, то есть под
-барьером архитектуры: arm64-образ собирается только на arm64-хосте.
-
-**Предупреждения этого расширения по умолчанию не видны.** `virt-customize`
-не печатает вывод гостевых команд вовсе, а расширение говорит вслух и про
-заморозку сюиты, и про то, что членство в группе `docker` равносильно root.
-Читать их — `bs image build -v`. На живой машине они идут в stderr `cream`
-и в журнал `cream-configure@docker`.
+Проверялось не по коду возврата, а по содержимому образа: `virt-ls` нашёл
+`docker`, `dockerd`, `containerd` в `/usr/bin` и оба плагина в
+`/usr/libexec/docker/cli-plugins`, а `virt-cat` подтвердил, что
+`/etc/apt/sources.list.d/docker.sources` указывает на
+`download.docker.com/linux/debian` — то есть движок пришёл из репозитория
+Docker, а не дистрибутивный `docker.io 26.1.5`.
 
 ## Проверки
 
@@ -394,18 +428,3 @@ EXTENSION docker
   `tools/live-test.sh --catalog` с временным расширением, ставившим `docker.io`
   раньше `docker`, — `docker.io`, `containerd` и `runc` сняты, установка и
   `remove` прошли.
-
-## Проверено на
-
-| Система | Архитектура | Что получилось | Дата |
-|---|---|---|---|
-| Debian 13 trixie | amd64 | `docker-ce 5:29.7.2-1~debian.13~trixie`, `containerd.io 2.3.4`, плагины `buildx` и `compose` на месте | 2026-09-03 |
-| Ubuntu 18.04 bionic | amd64 | `docker-ce 5:24.0.2-1~ubuntu.18.04~bionic` — замороженная версия, оба плагина на месте | 2026-09-03 |
-| Raspberry Pi OS trixie | arm64 (Jetson) | `docker-ce 5:29.7.2-1~debian.13~trixie`, `Architectures: arm64`, репозиторий `linux/debian` — отображение Pi OS сработало | 2026-09-03 |
-
-Проверялось не по коду возврата, а по содержимому образа: `virt-ls` нашёл
-`docker`, `dockerd`, `containerd` в `/usr/bin` и оба плагина в
-`/usr/libexec/docker/cli-plugins`, а `virt-cat` подтвердил, что
-`/etc/apt/sources.list.d/docker.sources` указывает на
-`download.docker.com/linux/debian` — то есть движок пришёл из репозитория
-Docker, а не дистрибутивный `docker.io 26.1.5`.

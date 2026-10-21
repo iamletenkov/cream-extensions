@@ -13,7 +13,8 @@
 #        unit is kept in the state and returned by remove.
 schema: cream/v1
 name: l4t-boot-verify
-version: 2.0.0
+version: 2.0.1
+# 2.0.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: Отметка каждой загрузки Jetson (L4T) успешной — nvbootctrl verify вместо вендорской службы
 cream: ">=1.0.0"
 platform:

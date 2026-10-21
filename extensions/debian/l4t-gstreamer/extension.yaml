@@ -13,7 +13,8 @@
 # installed anyway and simply unused without X.
 schema: cream/v1
 name: l4t-gstreamer
-version: 2.0.1
+version: 2.0.2
+# 2.0.2: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: GStreamer для NVIDIA Jetson — аппаратные плагины NVIDIA по версии стека L4T, RTSP, WebRTC, Python
 cream: ">=1.0.0"
 platform:

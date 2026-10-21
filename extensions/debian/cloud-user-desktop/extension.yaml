@@ -18,7 +18,8 @@
 #        (depends).
 schema: cream/v1
 name: cloud-user-desktop
-version: 5.0.0
+version: 5.0.1
+# 5.0.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: Вендорский рабочий стол — удаление вендорской учётки и ручки desktop для пользователя cloud-init
 cream: ">=1.0.0"
 platform:

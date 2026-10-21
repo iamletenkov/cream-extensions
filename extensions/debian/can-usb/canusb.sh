@@ -100,7 +100,7 @@ canusb_gate_sensing_kernel(){
     fi
     if [[ ! -f "$backup" ]] || [[ "$got" == "$(_cu_sha "$backup")" ]]; then
         _cu_error "/boot/Image — штатное ядро NVIDIA, а не ядро Sensing:"
-        _cu_error "EXTENSION sensing-gmsl2-camera должен стоять в VMFILE РАНЬШЕ can-usb"
+        _cu_error "sensing-gmsl2-camera должен стоять в VMFILE РАНЬШЕ can-usb"
         return 1
     fi
     _cu_error "/boot/Image — ядро $kv неизвестной сборки (sha256 $got, проверена $image_sha):"

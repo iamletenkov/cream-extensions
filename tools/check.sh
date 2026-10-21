@@ -21,7 +21,10 @@
 # одни байты, cream принимает снимок через source add --archive и resolve).
 # Правило версий (check-version-bump.sh: дерево расширения изменилось с
 # последнего тега v* — version в extension.yaml выше, чем в теге; иначе cream
-# отвергает обновление version.same_digest) и его тест.
+# отвергает обновление version.same_digest) и его тест. Документация:
+# сгенерированные из манифестов блоки README и справочника не устарели
+# (catalog-docs.sh --check), относительные ссылки и якоря .md целы
+# (check-links.sh), и тесты обоих.
 #
 # Тесты расширений находятся сами: каждый исполняемый
 # extensions/<семейство>/<имя>/tests/test-*.sh (рулинг Р13 плана
@@ -84,6 +87,18 @@ echo "== check-version-bump =="
 
 echo "== test-check-version-bump =="
 "$HERE/test-check-version-bump.sh" || rc=1
+
+echo "== catalog-docs =="
+"$HERE/catalog-docs.sh" --check || rc=1
+
+echo "== test-catalog-docs =="
+"$HERE/test-catalog-docs.sh" || rc=1
+
+echo "== check-links =="
+"$HERE/check-links.sh" || rc=1
+
+echo "== test-check-links =="
+"$HERE/test-check-links.sh" || rc=1
 
 echo "== check-contract-fixtures =="
 "$HERE/check-contract-fixtures.sh" || rc=1

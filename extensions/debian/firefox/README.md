@@ -3,33 +3,27 @@
 Firefox из APT-репозитория Mozilla (`packages.mozilla.org`) — настоящий
 `.deb`, а не снап.
 
-```
-cream install firefox FIREFOX_LANGPACK=ru           # живая машина
-cream remove firefox
-EXTENSION firefox FIREFOX_LANGPACK=ru               # образ bisquite
-```
+<!-- catalog:facts -->
+| | |
+|---|---|
+| ОС | Debian, Ubuntu |
+| Архитектура | amd64, arm64 |
+| cream | ≥ 1.0.0 |
+| Даёт | `web-browser` |
+| Требует | — |
+| Зависит от | [`apt-guard`](../apt-guard/README.md) |
+| Конфликтует с | — |
+| Хуки | `install`, `remove` |
+| Настройка на загрузке | — |
+| Живая машина | да |
+<!-- /catalog:facts -->
 
-> **С 2.0.0 — cream/v1.** `install.sh` стал хуком `hooks/install`, появился хук
-> `remove`; `FIREFOX_LANGPACK` — ключ настроек `config.keys` (`scope: install`:
-> смена ключа через `cream set` перезапускает `install`). Каталог в госте —
-> `/opt/cream/ext/firefox/`.
+## Что делает
 
-## Зачем
-
-На Ubuntu 22.04 и новее пакет `firefox` из дистрибутива транзитный
-(`1:1snap1-0ubuntu2`): он ставит снап при первом запуске. В образах bisquite
-snapd не посеян, и без сети на первой загрузке браузера нет. Так было на
-роботе AGX Orin: ярлык есть, запуск отвечает «requires the firefox snap».
-Chromium на arm64 устроен так же. Mozilla собирает amd64 и arm64 сама,
-поэтому браузер ставится на сборке и работает без сети.
-
-## Параметры
-
-| Ключ | Умолчание | Что делает |
-|---|---|---|
-| `FIREFOX_LANGPACK` | пусто | языковой пакет: `ru` → `firefox-l10n-ru` (код вида `ru`, `pt-BR`) |
-
-## Что кладётся в систему
+- **`install`** — подключает репозиторий Mozilla с пином и ставит `firefox`
+  (и языковой пакет, если задан `FIREFOX_LANGPACK`); для скачивания ключа ставит
+  `ca-certificates`, `curl`, `gnupg`. Если после установки остался snap-пакет —
+  отказ. Кладёт в систему:
 
 | Путь | Что |
 |---|---|
@@ -39,23 +33,74 @@ Chromium на arm64 устроен так же. Mozilla собирает amd64 �
 | `/usr/lib/firefox/` | сам браузер; `x-www-browser` указывает на него |
 | `/var/lib/cream/ext/firefox/packages` | пакеты, которые поставил `install` (не стоявшие до него) |
 
-Пин нужен, чтобы заменить транзитный пакет: у него эпоха `1:`, и без пина
-apt считает его новее. Пин ограничен пакетами `firefox*`, чтобы репозиторий
-Mozilla не перехватывал ничего другого.
+  Пин нужен, чтобы заменить транзитный пакет: у него эпоха `1:`, и без пина
+  apt считает его новее. Пин ограничен пакетами `firefox*`, чтобы репозиторий
+  Mozilla не перехватывал ничего другого.
+- **`remove`** — `apt-get purge` пакетов из `/var/lib/cream/ext/firefox/packages`,
+  затем ключ, источник и пин Mozilla и `apt-get update`.
 
-## Что снимает `remove`
+## Параметры
 
-`apt-get purge` пакетов из `/var/lib/cream/ext/firefox/packages`, затем ключ,
-источник и пин Mozilla и `apt-get update`. Firefox, стоявший до cream (на Ubuntu —
-транзитный пакет, который `install` заменил сборкой Mozilla), не удаляется:
-после `remove` остаётся сборка Mozilla без источника обновлений. `ca-certificates`,
-`curl`, `gnupg`, которые `install` ставит для скачивания ключа, остаются.
+<!-- catalog:params -->
+| Ключ | Тип | Умолчание | Что задаёт |
+|---|---|---|---|
+| `FIREFOX_LANGPACK` | строка `^[a-z]{2,3}(-[A-Za-z]{2,4})?$` | пусто | языковой пакет: ru → firefox-l10n-ru; пусто — без него *(только при установке)* |
+<!-- /catalog:params -->
 
-## Обновления
+`FIREFOX_LANGPACK` — код вида `ru`, `pt-BR`; `scope: install`: смена ключа через
+`cream set` перезапускает `install`.
 
-Браузер обновляется обычным `apt upgrade` из того же репозитория. Сборка
-фиксирует версию на момент сборки; разные образы, собранные в разные дни,
-получат разные версии Firefox.
+## Установка
+
+На машине с подключённым каталогом ([как подключить](../../../docs/getting-started.md)):
+
+```bash
+sudo cream install --with-deps firefox FIREFOX_LANGPACK=ru
+cream show firefox
+sudo cream remove firefox
+```
+
+В образе bisquite (VMFILE):
+
+```dockerfile
+RUN_COMMAND cream install --with-deps firefox FIREFOX_LANGPACK=ru
+```
+
+## Этапы
+
+| Когда | Что происходит |
+|---|---|
+| сборка образа / `cream install` | репозиторий, ключ и пин Mozilla, пакет `firefox` и языковой пакет |
+| загрузка | ничего: хука `configure` нет |
+| `cream set FIREFOX_LANGPACK=…` | ключ `scope: install` — `install` перезапускается |
+| `cream remove` | снимает свои пакеты, ключ, источник и пин |
+
+## Известные ограничения
+
+- Firefox, стоявший до cream (на Ubuntu — транзитный пакет, который `install`
+  заменил сборкой Mozilla), `remove` не удаляет: после `remove` остаётся сборка
+  Mozilla без источника обновлений. `ca-certificates`, `curl`, `gnupg` тоже
+  остаются.
+- Версия браузера фиксируется на момент сборки: разные образы, собранные в
+  разные дни, получат разные версии Firefox. Дальше браузер обновляется обычным
+  `apt upgrade` из того же репозитория.
+
+## Подробности
+
+### Зачем
+
+На Ubuntu 22.04 и новее пакет `firefox` из дистрибутива транзитный
+(`1:1snap1-0ubuntu2`): он ставит снап при первом запуске. В образах bisquite
+snapd не посеян, и без сети на первой загрузке браузера нет. Так было на
+роботе AGX Orin: ярлык есть, запуск отвечает «requires the firefox snap».
+Chromium на arm64 устроен так же. Mozilla собирает amd64 и arm64 сама,
+поэтому браузер ставится на сборке и работает без сети.
+
+### Проверено на
+
+AGX Orin, L4T 36.4.3 (Ubuntu 22.04, arm64), 2026-09-14: транзитный пакет
+заменён, `firefox --version` — `Mozilla Firefox 155.0.1`, установлен
+`firefox-l10n-ru`.
 
 ## Проверки
 
@@ -65,7 +110,3 @@ Mozilla не перехватывал ничего другого.
   файлов, `remove` только своего.
 - **L** — `make test-live EXT=firefox` на `debian-12` и `ubuntu-24.04`
   (`tests/live.env`; сеть до `packages.mozilla.org`).
-
-AGX Orin, L4T 36.4.3 (Ubuntu 22.04, arm64), 2026-09-14: транзитный пакет
-заменён, `firefox --version` — `Mozilla Firefox 155.0.1`, установлен
-`firefox-l10n-ru`.

@@ -22,12 +22,13 @@
 #        means no start unless CODE_SERVER_ALLOW_NO_AUTH=1; CODE_SERVER_BIND defaults
 #        to 127.0.0.1; the .deb by sha256 instead of the install script; mkcert is
 #        gone (code-server issues the certificate, cert: true); CODE_SERVER_VERSION
-#        is gone. Rename table — README.md.
+#        is gone. Renames — docs/history/cream-v1-migration.md.
 # 5.1.0: hooks.configure.every_boot — configure runs every boot (cream 1.2.0
 #        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: code-server
-version: 5.1.0
+version: 5.1.1
+# 5.1.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: code-server — VS Code в браузере от имени пользователя; без пароля не стартует, наружу — через Teleport
 cream: ">=1.2.0"
 platform:

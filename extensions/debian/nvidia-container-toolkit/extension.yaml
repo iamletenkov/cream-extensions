@@ -14,7 +14,8 @@
 #           source and the key.
 schema: cream/v1
 name: nvidia-container-toolkit
-version: 2.0.1
+version: 2.0.2
+# 2.0.2: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: NVIDIA Container Toolkit для Docker — среда выполнения nvidia без смены default-runtime
 cream: ">=1.0.0"
 platform:

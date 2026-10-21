@@ -1,6 +1,7 @@
 # 01. Выпуск каталога
 
-Версию, тег и `CHANGELOG.md` ведёт release-please; руками их не трогают. Runbook —
+Версию, тег и `CHANGELOG.md` ведёт release-please; руками их не трогают. Как
+устроены версии и цепочка — [выпуск](../guides/release.md). Runbook —
 что сделать и что проверить, чтобы релиз дошёл до потребителей (Stvor, bisquite).
 
 ## Шаги
@@ -35,12 +36,15 @@
 gh release view vX.Y.Z --json assets -q '.assets[].name'   # tar.gz и SHA256SUMS
 gh release download vX.Y.Z -p SHA256SUMS -O - | grep tar.gz
 # на машине с cream (или в контейнере debian:12 с cream по пину tools/cream-pin.env):
-cream source add cream-extensions \
+gh release download vX.Y.Z -p 'cream-extensions-*.tar.gz' -D /tmp/rel
+cream check --catalog core=/tmp/rel/cream-extensions-X.Y.Z.tar.gz --os debian:12 --arch amd64 \
+  --step 'install --with-deps teleport stvor-agent'
+sudo cream source add core \
   --archive https://github.com/iamletenkov/cream-extensions/releases/download/vX.Y.Z/cream-extensions-X.Y.Z.tar.gz \
   --sha256 <сумма из SHA256SUMS> --sync
-cream resolve --phase build --family deb --target-arch amd64 --host-arch amd64 teleport stvor-agent
 ```
 
 Результат верный, если: оба ассета на месте, `source add` принял сумму (неверная —
-отказ), `resolve` печатает порядок без ошибок, в bisquite открыт PR подъёма.
+отказ), `cream check` отвечает без ошибок, в README строка `CV=` показывает новую версию, в
+bisquite (и в stvor) открыт PR подъёма.
 Неудача `release-assets` — перезапуск job (`gh run rerun <id> --failed`); тег не трогать.

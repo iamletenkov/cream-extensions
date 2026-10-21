@@ -11,7 +11,8 @@
 # The name starts with zz-: cloud-init reads cloud.cfg.d in reverse order.
 schema: cream/v1
 name: nocloud-cidata
-version: 2.0.0
+version: 2.0.1
+# 2.0.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: cloud-init читает NoCloud-seed с раздела с меткой cidata
 cream: ">=1.0.0"
 platform:

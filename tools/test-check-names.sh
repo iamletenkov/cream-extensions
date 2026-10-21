@@ -4,7 +4,7 @@
 # с file:line каждого имени, исключения (строка `check-names: allow`, блок
 # `check-names: off…on`) не считаются; двоичные файлы пропускаются молча; без
 # аргументов гейт проверяет весь репозиторий (на копии с подложенным грязным),
-# кроме истории — CHANGELOG.md, docs/research/, docs/plans/ — и самого себя.
+# кроме истории — CHANGELOG.md, docs/history/, docs/research/, docs/plans/ — и самого себя.
 #
 #   tools/test-check-names.sh        код 0 — все проверки прошли
 set -uo pipefail
@@ -62,10 +62,11 @@ hasnt "двоичный файл — без шума awk" "multibyte" "$out"
 
 # Discovery: a copy of the gate in a fake git repository — every file of the
 # repository is checked (an extension without `schema: cream/v1`, the root
-# README, a workflow), the history (CHANGELOG.md, docs/research/, docs/plans/)
+# README, a workflow), the history (CHANGELOG.md, docs/history/, docs/research/,
+# docs/plans/)
 # and the gate itself are not.
 R="$TMP/repo"
-mkdir -p "$R/tools" "$R/extensions/debian" "$R/docs/research" "$R/docs/plans"
+mkdir -p "$R/tools" "$R/extensions/debian" "$R/docs/research" "$R/docs/plans" "$R/docs/history"
 git -C "$R" init -q
 cp "$GATE" "$HERE/test-check-names.sh" "$R/tools/"
 cp -a "$FX/clean" "$R/extensions/debian/clean"
@@ -73,6 +74,7 @@ cp -a "$TMP/bin/ext/images" "$R/extensions/debian/clean/images"
 printf 'see /opt/bisquite/old\n' > "$R/CHANGELOG.md"
 printf 'was /etc/bisquite/x\n' > "$R/docs/research/2026-01-01-old.md"
 printf 'was bisquite-conf\n' > "$R/docs/plans/2026-01-01-old.md"
+printf 'was BISQUITE_KEY\n' > "$R/docs/history/old.md"
 printf 'ignored /opt/bisquite\n' > "$R/build.log"
 printf '*.log\n' > "$R/.gitignore"
 out="$("$R/tools/check-names.sh" 2>&1)"; rc=$?
@@ -89,6 +91,7 @@ has "поиск: README корня проверяется" "README.md:2: " "$out
 hasnt "поиск: CHANGELOG — история" "CHANGELOG.md" "$out"
 hasnt "поиск: docs/research — история" "docs/research" "$out"
 hasnt "поиск: docs/plans — история" "docs/plans" "$out"
+hasnt "поиск: docs/history — история" "docs/history" "$out"
 hasnt "поиск: .gitignore соблюдается" "build.log" "$out"
 hasnt "поиск: гейт и его тест не проверяются" "tools/" "$out"
 

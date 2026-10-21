@@ -1,31 +1,134 @@
 # l4t-pytorch
 
-PyTorch и torchvision с CUDA для Jetson (JetPack 6, L4T 36.4, Orin).
+PyTorch и torchvision с CUDA для Jetson (JetPack 6, L4T 36.4, Orin). На Jetson
+Nano (L4T R32) проверяет PyTorch, уже собранный в образе.
 
-```
-EXTENSION l4t-pytorch          # образ bisquite (основной путь), после cuda-toolkit
-sudo cream install l4t-pytorch # живая плата Jetson; l4t — по depends, cuda — поставщик requires
+<!-- catalog:facts -->
+| | |
+|---|---|
+| ОС | Debian, Ubuntu |
+| Архитектура | arm64 |
+| cream | ≥ 1.0.0 |
+| Даёт | `pytorch` |
+| Требует | `cuda` |
+| Зависит от | [`l4t`](../l4t/README.md), [`apt-guard`](../apt-guard/README.md) |
+| Конфликтует с | — |
+| Хуки | `install`, `remove` |
+| Настройка на загрузке | — |
+| Живая машина | да |
+<!-- /catalog:facts -->
+
+## Что делает
+
+- **`install`** — нет `/etc/nv_tegra_release` (не Jetson) — код **20** до apt.
+  Ветка выбирается по первой строке `/etc/nv_tegra_release`, разбор общий —
+  `l4t_major` библиотеки [`l4t`](../l4t/README.md) (файл читается как данные).
+  - **R36** — ставит (см. «Что ставится и откуда») колесо torch NVIDIA, cuDNN и
+    cuSPARSELt, собирает torchvision из исходников с CUDA (`nvcc` даёт поставщик
+    `cuda`, обычно `cuda-toolkit`; он же даёт библиотеки тулкита для torch), ставит
+    pip-зависимости только по хешам `requirements.txt` из дерева расширения (см.
+    «Хеши PyPI») под root в `/usr/local`, с `HOME` во временном каталоге и без
+    конфигурации pip (`PIP_CONFIG_FILE=/dev/null`): в домашний каталог root ничего
+    не пишется. Загрузки NVIDIA сверяются по sha256. Временный каталог сборки —
+    `/var/tmp`, cuSPARSELt распаковывается рядом и подменяется переименованием.
+    После установки — проверка импорта и сторож системного Python
+    (`check-system-python.py`).
+  - **R32** — ничего не ставит, проверяет torch образа и пишет
+    `OPENBLAS_CORETYPE=ARMV8` (см. «Ветка R32»).
+
+  Записывает в `/var/lib/cream/ext/l4t-pytorch/` только своё: `packages` —
+  apt-пакеты, которых не было; `pip` — дистрибутивы, появившиеся в `/usr/local` за
+  установку (и при отказе на полпути; учёт — `pip-owned.py`); `cusparselt`;
+  `openblas` (R32). Повтор (`--reinstall`) записи не меняет.
+- **`remove`**:
+  1. спрашивает apt в режиме симуляции — если вместе со своими пакетами он снял бы
+     чужие, отказ до любых изменений (`cream remove --forget l4t-pytorch` или руками);
+  2. `pip uninstall` своих дистрибутивов, кроме тех, что ещё нужны другим в
+     `/usr/local` (`numpy`, `scipy` при `l4t-tensorflow`) — `pip-owned.py removable`;
+  3. `apt-get remove` своих пакетов; `libcudnn9-cuda-12` и `python3-pip` остаются,
+     пока в `/usr/local` стоит `tensorflow`;
+  4. `/usr/local/cusparselt` и `/etc/ld.so.conf.d/cusparselt.conf`, `ldconfig`;
+  5. R32 — drop-in `l4t-pytorch.conf`, строка `/etc/environment` — если её больше не
+     несёт ни один drop-in (`l4t-opencv`).
+
+Коды выхода `install`:
+
+| Код | Когда |
+|---|---|
+| 0 | поставлено (R36) или torch образа на месте (R32) |
+| 1 | неверный `TORCH_CUDA_ARCH_LIST`, нет библиотеки `l4t`, нет `nvcc`, Python не 3.10, sha256 не совпал, тег torchvision передвинут, сборка или pip не прошли, проверка импорта или системного Python не прошла; R32 — torch без CUDA |
+| 20 | нет `/etc/nv_tegra_release` — не Jetson, ставить неоткуда (до apt) |
+
+## Параметры
+
+<!-- catalog:params -->
+| Ключ | Тип | Умолчание | Что задаёт |
+|---|---|---|---|
+| `TORCH_CUDA_ARCH_LIST` | строка `^[0-9]+\.[0-9]+(\+PTX)?(;[0-9]+\.[0-9]+(\+PTX)?)*$` | `8.7` | вычислительные архитектуры сборки torchvision; 8.7 — Ampere в Orin (единственная в JetPack 6) *(только при установке)* |
+<!-- /catalog:params -->
+
+`TORCH_CUDA_ARCH_LIST` (`scope: install`) — `8.7` или `7.2;8.7`, допускается `+PTX`;
+8.7 — Ampere во всех Orin, другой JetPack 6 не поддерживает. На R32 не используется.
+
+## Установка
+
+На плате Jetson с подключённым каталогом ([как подключить](../../../docs/getting-started.md));
+`l4t` — по `depends`, `cuda` — поставщик `requires`:
+
+```bash
+sudo cream install --with-deps l4t-pytorch
 sudo cream remove l4t-pytorch
 ```
 
-> **2.0.0 — cream/v1.** `install.sh` стал хуком `hooks/install`, появился хук `remove`;
-> `live: yes`. Каталог в госте — `/opt/cream/ext/l4t-pytorch/` (`requirements.txt`,
-> `check-system-python.py`, `pip-owned.py` — в дереве расширения). Общий код L4T — библиотека [`l4t`](../l4t/README.md) (`depends: l4t >=1.0.0 <2`) вместо общего L4T-файла из `lib/` layout 2.
-> Нет `/etc/nv_tegra_release` (не Jetson) — код **20** до apt (рулинг Р11), а не
-> отказ 1. `TORCH_CUDA_ARCH_LIST` — прежнее имя, теперь ключ `config.keys`
-> (`scope: install`). Временный каталог сборки — `/var/tmp`, cuSPARSELt распаковывается
-> рядом и подменяется переименованием. `pip` — только по хешам `requirements.txt` из дерева расширения (с 2.1.0, см. «Хеши PyPI»), под root в `/usr/local`,
-> с `HOME` во временном каталоге и без конфигурации pip (`PIP_CONFIG_FILE=/dev/null`):
-> в домашний каталог root ничего не пишется. Загрузки NVIDIA сверяются по sha256.
+В образе bisquite (VMFILE; основной путь) — после `cuda-toolkit`:
 
-## Ветка R32 (Jetson Nano, JetPack 4.6) — с 1.2.0
+```dockerfile
+RUN_COMMAND cream install --with-deps l4t-pytorch
+```
 
-Ветка выбирается по первой строке `/etc/nv_tegra_release` (`# R32 …`),
-разбор общий — `l4t_major` библиотеки `l4t` (файл читается как данные).
+## Этапы
+
+| Когда | Что происходит |
+|---|---|
+| сборка образа / `cream install` (R36) | apt, cuSPARSELt, колесо torch, сборка torchvision, pip по хешам, проверки |
+| сборка образа / `cream install` (R32) | проверка torch образа, `OPENBLAS_CORETYPE=ARMV8` |
+| загрузка | ничего: хука `configure` нет |
+| `cream remove` | своё снято, чужое и нужное соседям оставлено |
+
+## Известные ограничения
+
+- Только arm64: колесо torch — сборка NVIDIA под JetPack; колесо PyPI для aarch64
+  без CUDA.
+- Версия torch — 2.5.0 nv24.08 (см. «Почему не новее»).
+- `requires: [cuda]` на R32 не выполняется и не нужен — CUDA в образе.
+- Сборка torchvision в appliance bisquite с ресурсами по умолчанию долгая (см.
+  «Почему torchvision из исходников»).
+- Падает ли импорт без `OPENBLAS_CORETYPE` на R32, на сборке не проверить.
+- Установка на живой плате R36 через `cream install` и сборка образа через bisquite
+  в CI не проверяются: платы Jetson в CI нет.
+
+## Подробности
+
+### Что ставится и откуда
+
+| Что | Версия | Откуда |
+|---|---|---|
+| torch | 2.5.0 nv24.08 | CDN NVIDIA, колесо под JetPack 6.1 (CUDA 12.6), sha256 закреплён |
+| torchvision | 0.20.0 | **исходники** с GitHub (тег сверяется с коммитом), сборка с CUDA 8.7 |
+| cuDNN | 9.3 | apt, `libcudnn9-cuda-12` |
+| cuSPARSELt | 0.6.2.3 | архив NVIDIA redist `linux-aarch64`, sha256 закреплён, в `/usr/local/cusparselt` |
+| numpy / scipy | 1.26.4 / 1.13.1 | PyPI, по хешам |
+| sympy, networkx, filelock, fsspec, mpmath, typing_extensions, pillow | `requirements.txt` | PyPI, по хешам |
+
+Проверено на плате 2026-09-14: `torch.cuda.is_available()`, свёртка на GPU,
+`torchvision.ops.nms` на `cuda:0`, `resnet18` на GPU, мост numpy↔CUDA,
+и вместе в одном процессе с `cv2` 4.8.0, TensorRT 10.3 и TensorFlow 2.16.
+
+### Ветка R32 (Jetson Nano, JetPack 4.6)
 
 В образе Q-engineering PyTorch 1.13 и torchvision 0.14 уже собраны с CUDA
 10.2 под Python 3.8. Ничего не ставится (всё про колесо 2.5.0, cuSPARSELt
-и сборку torchvision ниже — только r36); `requires: [cuda]` на R32 не
+и сборку torchvision — только r36); `requires: [cuda]` на R32 не
 выполняется и не нужен — CUDA в образе. Проверяются импорт `numpy`, `torch`,
 `torchvision`, версии и `torch.version.cuda`; `torch.cuda.is_available()` —
 нет, GPU в appliance нет.
@@ -43,36 +146,10 @@ instruction` (замер на Nano: rc=132). Вендорский образ э�
 импорт без переменной, на сборке не проверить: appliance видит CPU машины
 сборки (на AGX — Cortex-A78AE).
 
-Проверено на живом Nano (L4T R32.6.1, 2026-09-15) прогоном установки (1.2.0) на работающей системе.
+Проверено на живом Nano (L4T R32.6.1, 2026-09-15) прогоном установки на
+работающей системе (до перехода на cream/v1).
 
-## Манифест
-
-| Поле | Значение |
-|---|---|
-| `targets` | `build: exec`, `live: yes` |
-| `platform.arch` | `arm64` |
-| `provides` | `pytorch` |
-| `requires` | `cuda` — `nvcc` для сборки torchvision и библиотеки тулкита для torch |
-| `depends` | `l4t >=1.0.0 <2` (библиотека) |
-| `hooks` | `install` (4 ч — сборка torchvision в малом appliance), `remove` |
-| `config.keys` | `TORCH_CUDA_ARCH_LIST` |
-
-## Что ставится и откуда
-
-| Что | Версия | Откуда |
-|---|---|---|
-| torch | 2.5.0 nv24.08 | CDN NVIDIA, колесо под JetPack 6.1 (CUDA 12.6), sha256 закреплён |
-| torchvision | 0.20.0 | **исходники** с GitHub (тег сверяется с коммитом), сборка с CUDA 8.7 |
-| cuDNN | 9.3 | apt, `libcudnn9-cuda-12` |
-| cuSPARSELt | 0.6.2.3 | архив NVIDIA redist `linux-aarch64`, sha256 закреплён, в `/usr/local/cusparselt` |
-| numpy / scipy | 1.26.4 / 1.13.1 | PyPI, по хешам |
-| sympy, networkx, filelock, fsspec, mpmath, typing_extensions, pillow | `requirements.txt` | PyPI, по хешам |
-
-Проверено на плате 2026-09-14: `torch.cuda.is_available()`, свёртка на GPU,
-`torchvision.ops.nms` на `cuda:0`, `resnet18` на GPU, мост numpy↔CUDA,
-и вместе в одном процессе с `cv2` 4.8.0, TensorRT 10.3 и TensorFlow 2.16.
-
-## Почему не новее
+### Почему не новее
 
 torch 2.8–2.10 с готовым torchvision под Jetson есть только в индексе
 jetson-ai-lab, а из сети сборки он файлы не отдаёт (замер 2026-09-14:
@@ -80,7 +157,7 @@ jetson-ai-lab, а из сети сборки он файлы не отдаёт (
 что NVIDIA публикует на своём CDN: каталог `jp/v61/pytorch/` есть,
 `jp/v62/` — нет.
 
-## Почему torchvision из исходников
+### Почему torchvision из исходников
 
 NVIDIA его под JetPack 6 не публикует, а колесо с PyPI собрано под
 PyPI-torch, и его C++-операции с torch от NVIDIA несовместимы по ABI.
@@ -96,7 +173,7 @@ PyPI-torch, и его C++-операции с torch от NVIDIA несовмес
 bs image build --smp 8 --memsize 16000 -f jetson-orin-base.vmfile ...
 ```
 
-## numpy 1.26.4 перекрывает системный — и почему это правильно
+### numpy 1.26.4 перекрывает системный — и почему это правильно
 
 torch nv24.08 собран под C-API numpy 0x10 (ветка 1.23+), а в jammy numpy
 1.21.5. С системным numpy torch импортируется и считает на GPU, но любой
@@ -106,7 +183,7 @@ torch nv24.08 собран под C-API numpy 0x10 (ветка 1.23+), а в jam
 1.8.0 (его тянут matplotlib и pandas) с numpy 1.26 предупреждает на каждом
 импорте.
 
-## Хеши PyPI (`--require-hashes`) — с 2.1.0
+### Хеши PyPI (`--require-hashes`)
 
 Всё, что `pip` берёт из сети, проверяется по sha256: `requirements.txt` в дереве
 расширения — каждый пакет закреплён `==` и несёт хеши всех файлов PyPI, которые
@@ -133,7 +210,7 @@ pip hash /tmp/wh/*            # этот хеш обязан попасть в r
 Правка файла — новый минор расширения; `tests/test-*.sh` проверяет, что у каждой
 строки есть `==` и хотя бы один sha256.
 
-## Сторож системного Python
+### Сторож системного Python
 
 pip под root ставит в `/usr/local`, и оттуда пакеты перекрывают apt-овые
 для всех, кто зовёт `/usr/bin/python3`, — в том числе для cloud-init. Он
@@ -149,37 +226,6 @@ pip под root ставит в `/usr/local`, и оттуда пакеты пе�
   зависимости cloud-init импортируются из apt, и что cloud-init рендерит
   jinja-шаблон. Нарушение — отказ сборки.
 
-## Настройки
-
-| Ключ | Умолчание | Что делает |
-|---|---|---|
-| `TORCH_CUDA_ARCH_LIST` | `8.7` | архитектура CUDA для torchvision (`8.7` или `7.2;8.7`, допускается `+PTX`); 8.7 — Ampere во всех Orin, другой JetPack 6 не поддерживает |
-
-## Что снимает `remove`
-
-`install` записывает в `/var/lib/cream/ext/l4t-pytorch/` только своё: `packages` —
-apt-пакеты, которых не было; `pip` — дистрибутивы, появившиеся в `/usr/local` за
-установку (и при отказе на полпути); `cusparselt`; `openblas` (R32). Повтор
-(`--reinstall`) записи не меняет. `remove`:
-
-1. спрашивает apt в режиме симуляции — если вместе со своими пакетами он снял бы
-   чужие, отказ до любых изменений (`cream remove --forget l4t-pytorch` или руками);
-2. `pip uninstall` своих дистрибутивов, кроме тех, что ещё нужны другим в
-   `/usr/local` (`numpy`, `scipy` при `l4t-tensorflow`) — `pip-owned.py removable`;
-3. `apt-get remove` своих пакетов; `libcudnn9-cuda-12` и `python3-pip` остаются,
-   пока в `/usr/local` стоит `tensorflow`;
-4. `/usr/local/cusparselt` и `/etc/ld.so.conf.d/cusparselt.conf`, `ldconfig`;
-5. R32 — drop-in `l4t-pytorch.conf`, строка `/etc/environment` — если её больше не
-   несёт ни один drop-in (`l4t-opencv`).
-
-## Коды выхода `install`
-
-| Код | Когда |
-|---|---|
-| 0 | поставлено (R36) или torch образа на месте (R32) |
-| 1 | неверный `TORCH_CUDA_ARCH_LIST`, нет библиотеки `l4t`, нет `nvcc`, Python не 3.10, sha256 не совпал, тег torchvision передвинут, сборка или pip не прошли, проверка импорта или системного Python не прошла; R32 — torch без CUDA |
-| 20 | нет `/etc/nv_tegra_release` — не Jetson, ставить неоткуда (до apt) |
-
 ## Проверки
 
 - **V** — `make cream-validate`, `tools/check-names.sh`.
@@ -192,7 +238,6 @@ apt-пакеты, которых не было; `pip` — дистрибутив
   системный Python), запись pip и при отказе; R32; `remove` (своё, чужое, при
   `l4t-tensorflow`, отказ при чужих зависимых).
 - **P — ожидает.** Платы Jetson в CI нет: установка на живой плате (R36 — AGX Orin, R32 — Nano) через
-  `cream install` или сборка образа через bisquite проверяются вручную после плана
-  bisquite (Task 23 плана 2026-10-19 cream-v1-migration).
+  `cream install` или сборка образа через bisquite проверяются вручную.
 - **L** — не нужен: в контейнере нет `/etc/nv_tegra_release`, ответ — код 20, его
   проверяет H.

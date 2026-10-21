@@ -18,7 +18,8 @@
 #        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: pixelflux-v4l2m2m
-version: 2.1.0
+version: 2.1.1
+# 2.1.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: Аппаратное кодирование Selkies через V4L2 M2M (Raspberry Pi) — проверка бэкенда на сборке и загрузке
 cream: ">=1.2.0"
 platform:

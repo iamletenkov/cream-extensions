@@ -14,7 +14,8 @@
 # mutually exclusive by capability, not by a list of names.
 schema: cream/v1
 name: gnome
-version: 5.0.0
+version: 5.0.1
+# 5.0.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: GNOME на Xorg и менеджер входа gdm3 — X-сервер и сессия для x11vnc, kiosk, selkies
 cream: ">=1.0.0"
 platform:

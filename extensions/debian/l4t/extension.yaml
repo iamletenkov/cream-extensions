@@ -5,7 +5,8 @@
 schema: cream/v1
 name: l4t
 kind: library
-version: 1.0.0
+version: 1.0.1
+# 1.0.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: Общие функции расширений стека L4T — версия L4T и OPENBLAS_CORETYPE для Jetson
 cream: ">=1.0.0"
 platform:

@@ -23,7 +23,8 @@
 #        (every-boot-not-needed, audit 2026-10-21) — only its comments.
 schema: cream/v1
 name: wallpaper
-version: 3.0.1
+version: 3.0.2
+# 3.0.2: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: Обои рабочего стола — системное умолчание GNOME (dconf), Xfce (xfconf) и LXDE (pcmanfm) из картинок расширения
 cream: ">=1.1.1"
 platform:

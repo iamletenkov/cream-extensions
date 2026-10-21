@@ -23,7 +23,8 @@
 #        follow-up re-render is `cream configure --again rustdesk` 30 s later.
 schema: cream/v1
 name: rustdesk
-version: 2.1.0
+version: 2.1.1
+# 2.1.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: RustDesk — клиент и служба удалённой поддержки, адреса своего сервера из ключей домена
 cream: ">=1.2.0"
 platform:

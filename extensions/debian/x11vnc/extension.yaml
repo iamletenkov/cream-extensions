@@ -16,7 +16,8 @@
 #        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: x11vnc
-version: 5.1.0
+version: 5.1.1
+# 5.1.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 # 5.0.2: только README (выпуск 5.1.1 изменил дерево без подъёма версии —
 #        cream отвергал обновление с 5.0.1: version.same_digest).
 summary: VNC к рабочему столу X11 пользователя cloud-init — x11vnc@<пользователь>, по умолчанию только петля

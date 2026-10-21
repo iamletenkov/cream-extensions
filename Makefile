@@ -4,7 +4,7 @@
 # (контейнер debian:12, tools/cream-validate.sh).
 
 .DEFAULT_GOAL := help
-.PHONY: help lint test check ci cream-validate cream-check check-names test-live test-live-self snapshot snapshot-check
+.PHONY: help lint test check ci cream-validate cream-check check-names docs check-links test-live test-live-self snapshot snapshot-check
 
 help: ## список целей
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-15s %s\n", $$1, $$2}'
@@ -17,6 +17,12 @@ test: ## tools/check.sh: cream validate, гейт имён, линт хуков,
 
 check-names: ## гейт имён bisquite по репозиторию, кроме истории (tools/check-names.sh)
 	tools/check-names.sh
+
+docs: ## таблицы документации из манифестов: README, справочник, README расширений (tools/catalog-docs.sh)
+	tools/catalog-docs.sh
+
+check-links: ## ссылки документации: относительные и якоря; EXTERNAL=1 — и внешние адреса (tools/check-links.sh)
+	tools/check-links.sh $(if $(EXTERNAL),--external,)
 
 # Живой прогон: настоящий cream в контейнере с systemd, сеть, под замком flock.
 # Умолчания расширения — его tests/live.env; DISTRO=debian-12|debian-13|ubuntu-20.04|ubuntu-22.04|ubuntu-24.04;

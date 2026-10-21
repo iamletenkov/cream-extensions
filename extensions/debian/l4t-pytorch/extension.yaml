@@ -15,7 +15,8 @@
 # Tree: requirements.txt, check-system-python.py, pip-owned.py.
 schema: cream/v1
 name: l4t-pytorch
-version: 2.1.0
+version: 2.1.1
+# 2.1.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: PyTorch и torchvision с CUDA для NVIDIA Jetson — колесо NVIDIA и сборка torchvision (R36), проверка образа (R32)
 cream: ">=1.0.0"
 platform:

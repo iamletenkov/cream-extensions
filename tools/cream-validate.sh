@@ -18,7 +18,7 @@
 # is skipped with a fixed line and exit 0 (no cream release pinned).
 #
 # Exit: 0 — valid or skipped; cream's code when invalid (65 — bad manifest,
-# see cream docs/cli.md); 2 — setup failure (pin, download, docker).
+# see cream docs/reference/cli.md); 2 — setup failure (pin, download, docker).
 #
 # Test overrides: CREAM_PIN_FILE, CREAM_CACHE_DIR.
 set -euo pipefail

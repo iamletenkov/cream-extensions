@@ -19,7 +19,8 @@
 #        locale is not touched any more (the extension locale does that).
 schema: cream/v1
 name: chromium-kiosk
-version: 4.0.1
+version: 4.0.2
+# 4.0.2: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: Киоск пакета chromium-kiosk (Salamek) — своя графическая сессия, config.yml из ключей домена
 cream: ">=1.0.0"
 platform:
