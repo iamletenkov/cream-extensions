@@ -135,6 +135,7 @@ CI считает изменением всех L-расширений (`tools/l
 | `secret-argv` | секретный ключ (`config.keys.*.secret`, `params.*.secret: true`) в argv cream не как `KEY=-` |
 | `cream-env` | присваивание `CREAM_*` или имя `CREAM_*`, которого cream не задаёт (опечатка) |
 | `stage-cream` | `hooks.configure.stage: cloud-user` при `cream:` ниже `">=1.1.1"` |
+| `every-boot` | хук configure (и файл расширения, которому он передаёт работу через `"${CREAM_EXT_DIR…}/путь"`) с текстовым признаком А1–А4 (`ip link`, `iptables`, `nft`, `modprobe`, запись в `/run/`; `getent passwd`, `/home/`, UID 1000; `get_cloud_user`; `cream-configure@`) без `hooks.configure.every_boot: true` и без `# cream-lint: every-boot-not-needed <причина>` в хуке. `LINT_EVERY_BOOT=warn` (умолчание, пока пин cream 1.1.x) — предупреждение с кодом 0; `error` — находка. Признаки и решения — [research/2026-10-21-configure-audit.md](research/2026-10-21-configure-audit.md) |
 
 Комментарии и `tests/` не проверяются. Рядом — `make lint`: скрипты расширений
 (хуки, действия, `files/`, `tests/`) проходят shellcheck на уровне `warning`,

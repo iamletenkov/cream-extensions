@@ -1,0 +1,14 @@
+# Fixture of tools/lint-hooks.sh, rule every-boot: the configure hook walks the
+# accounts (sign A2, spec 2026-10-21 §10.7) and the manifest declares neither
+# hooks.configure.every_boot nor an exception — a finding.
+schema: cream/v1
+name: every-boot-missing
+version: 1.0.0
+summary: Фикстура линта хуков — признак без every_boot
+cream: ">=1.0.0"
+platform:
+  family: deb
+  arch: [amd64, arm64]
+targets: {build: exec, live: "yes"}
+hooks:
+  configure: {stage: system}

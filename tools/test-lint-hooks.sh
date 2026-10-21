@@ -105,6 +105,99 @@ mkdir -p "$v/tests"; printf '#!/usr/bin/env bash\nCREAM_ROOT=/tmp/x systemctl re
 out="$("$LINT" "$v" 2>&1)"; rc=$?
 eq "комментарии и tests/ — код 0" 0 "$rc"
 
+# every-boot (spec 2026-10-21 §10.7): a configure hook with a text sign of
+# A1-A4 needs hooks.configure.every_boot: true or the exception comment
+# `# cream-lint: every-boot-not-needed <причина>`. LINT_EVERY_BOOT=warn (the
+# default until the catalog moves to cream 1.2.0) prints the finding and keeps
+# code 0; LINT_EVERY_BOOT=error fails the run.
+EB="$HERE/testdata/lint-hooks"
+out="$(LINT_EVERY_BOOT=error "$LINT" "$FX" 2>&1)"; rc=$?
+eq "every-boot: без признаков, error — код 0" 0 "$rc"
+out="$("$LINT" "$EB/every-boot-missing" 2>&1)"; rc=$?
+eq "every-boot: без every_boot, warn по умолчанию — код 0" 0 "$rc"
+has "every-boot: warn — находка видна" "[every-boot]" "$out"
+has "every-boot: warn — место и признак" "hooks/configure:6" "$out"
+has "every-boot: warn — помечено" "предупреждение" "$out"
+out="$(LINT_EVERY_BOOT=warn "$LINT" "$EB/every-boot-missing" 2>&1)"; rc=$?
+eq "every-boot: warn явно — код 0" 0 "$rc"
+out="$(LINT_EVERY_BOOT=error "$LINT" "$EB/every-boot-missing" 2>&1)"; rc=$?
+eq "every-boot: error — код 1" 1 "$rc"
+has "every-boot: error — правило" "[every-boot]" "$out"
+has "every-boot: error — признак А2" "А2" "$out"
+out="$(LINT_EVERY_BOOT=error "$LINT" "$EB/every-boot-excepted" 2>&1)"; rc=$?
+eq "every-boot: исключение — код 0" 0 "$rc"
+if grep -qF "[every-boot]" <<< "$out"; then bad "every-boot: исключение — находки быть не должно"; else ok; fi
+out="$(LINT_EVERY_BOOT=bogus "$LINT" "$FX" 2>&1)"; rc=$?
+eq "every-boot: неизвестный режим — код 2" 2 "$rc"
+
+# ebvariant NAME: a fresh copy of every-boot-missing (path on stdout).
+ebvariant(){ rm -r -f -- "${TMP:?}/$1"; cp -a "$EB/every-boot-missing" "$TMP/$1"; printf '%s\n' "$TMP/$1"; }
+# ebline NAME LINE: every-boot-missing with the hook body replaced by LINE (line 3).
+ebline(){
+    local v; v="$(ebvariant "$1")"
+    printf '#!/usr/bin/env bash\nset -euo pipefail\n%s\n' "$2" > "$v/hooks/configure"
+}
+# eb_red NAME SIGN WHERE: error mode — code 1, names the sign and the place.
+eb_red(){
+    local out rc
+    out="$(LINT_EVERY_BOOT=error "$LINT" "$TMP/$1" 2>&1)"; rc=$?
+    eq "$1 — код 1" 1 "$rc"
+    has "$1 — правило" "[every-boot]" "$out"
+    has "$1 — признак" "$2" "$out"
+    has "$1 — место" "$3" "$out"
+}
+eb_clean(){
+    local out rc
+    out="$(LINT_EVERY_BOOT=error "$LINT" "$TMP/$1" 2>&1)"; rc=$?
+    eq "$1 — код 0" 0 "$rc"
+}
+
+# every_boot: true in the manifest — clean.
+v="$(ebvariant eb-declared)"; sed -i 's/configure: {stage: system}/configure: {stage: system, every_boot: true}/' "$v/extension.yaml"
+eb_clean eb-declared
+# every_boot: false is the default, not a declaration.
+v="$(ebvariant eb-false)"; sed -i 's/configure: {stage: system}/configure: {stage: system, every_boot: false}/' "$v/extension.yaml"
+eb_red eb-false А2 "hooks/configure:6"
+# The exception without a reason is no exception.
+v="$(ebvariant eb-noreason)"
+sed -i '2a # cream-lint: every-boot-not-needed' "$v/hooks/configure"
+eb_red eb-noreason А2 "hooks/configure:"
+# The text signs, one per variant.
+ebline eb-home 'ls /home/ >/dev/null';                                   eb_red eb-home А2 "hooks/configure:3"
+ebline eb-uid '(( uid >= 1000 )) && echo x';                             eb_red eb-uid А2 "hooks/configure:3"
+ebline eb-cloud 'u="$(/opt/cream/ext/cloud-user/get_cloud_user.sh)"';    eb_red eb-cloud А3 "hooks/configure:3"
+ebline eb-again 'systemctl --no-block restart cream-configure@x.service'; eb_red eb-again А4 "hooks/configure:3"
+ebline eb-iplink 'ip link set can0 up';                                  eb_red eb-iplink А1 "hooks/configure:3"
+ebline eb-ipt 'iptables-legacy -w -A INPUT -j ACCEPT';                   eb_red eb-ipt А1 "hooks/configure:3"
+ebline eb-nft 'nft -f /etc/x.nft';                                       eb_red eb-nft А1 "hooks/configure:3"
+ebline eb-modprobe 'modprobe can';                                       eb_red eb-modprobe А1 "hooks/configure:3"
+ebline eb-run-redir 'echo 1 > "$R/run/x/state"';                         eb_red eb-run-redir А1 "hooks/configure:3"
+ebline eb-run-var 'RUN_DIR="$R/run/firewall"';                           eb_red eb-run-var А1 "hooks/configure:3"
+ebline eb-run-mkdir 'install -d -m 0700 /run/x';                         eb_red eb-run-mkdir А1 "hooks/configure:3"
+# Reading /run (is systemd up?) is not a sign; neither are comments, nor the
+# same text in another hook.
+ebline eb-run-read '[[ -d "$R/run/systemd/system" ]] && echo up';        eb_clean eb-run-read
+ebline eb-comment '# getent passwd, ip link, /home/';                    eb_clean eb-comment
+v="$(ebvariant eb-other-hook)"
+mv "$v/hooks/configure" "$v/hooks/install"
+sed -i 's/configure: {stage: system}/install: {}/' "$v/extension.yaml"
+eb_clean eb-other-hook
+# The hook hands over to a file of the extension (exec "$CREAM_EXT_DIR/…"):
+# that file is read too, and the finding names it.
+v="$(ebvariant eb-delegated)"; mkdir -p "$v/files"
+printf '#!/usr/bin/env bash\nset -euo pipefail\nexec "${CREAM_EXT_DIR:?run by cream}/files/x.sh" configure\n' > "$v/hooks/configure"
+printf '#!/usr/bin/env bash\n# x.sh of the fixture\nset -euo pipefail\ngetent passwd >&2\n' > "$v/files/x.sh"
+chmod +x "$v/files/x.sh"
+eb_red eb-delegated А2 "files/x.sh:4"
+v="$(ebvariant eb-delegated-fallback)"
+printf '#!/usr/bin/env bash\nset -euo pipefail\nexec "${CREAM_EXT_DIR:-$(dirname "$0")/..}/x.sh" apply\n' > "$v/hooks/configure"
+printf '#!/usr/bin/env bash\nset -euo pipefail\nnft -f /x\n' > "$v/x.sh"
+chmod +x "$v/x.sh"
+eb_red eb-delegated-fallback А1 "x.sh:3"
+# The exception lives in the hook even when the sign is in the delegated file.
+sed -i '2a # cream-lint: every-boot-not-needed правила сохраняет nftables.service' "$v/hooks/configure"
+eb_clean eb-delegated-fallback
+
 # Several directories: one bad makes the run red, every problem is listed.
 out="$("$LINT" "$FX" "$TMP/no-set" "$TMP/blocking" 2>&1)"; rc=$?
 eq "чистое + два плохих — код 1" 1 "$rc"

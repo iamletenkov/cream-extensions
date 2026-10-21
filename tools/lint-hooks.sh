@@ -26,7 +26,24 @@
 #                     assigned, and only the names cream defines;
 #   [stage-cream]     `hooks.configure.stage: cloud-user` needs
 #                     `cream: ">=1.1.1"` (cream 1.1.0 does not start that stage
-#                     with cloud-init disabled; plan ruling R14).
+#                     with cloud-init disabled; plan ruling R14);
+#   [every-boot]      a configure hook with a text sign of A1-A4 (spec
+#                     2026-10-21 §10.7: A1 `ip link`, `iptables`, `nft`,
+#                     `modprobe`, a write to /run/; A2 `getent passwd`,
+#                     `/home/`, UID 1000; A3 `get_cloud_user`; A4
+#                     `cream-configure@`) declares `hooks.configure.every_boot:
+#                     true` or carries `# cream-lint: every-boot-not-needed
+#                     <причина>`. The hook and the files of the extension it
+#                     hands over to (`"${CREAM_EXT_DIR…}/<path>"`) are read; the
+#                     exception is a line of the hook. Not followed: a
+#                     hand-over through another variable or `$CREAM_EXT_DIR/`
+#                     without braces; not seen: a /run/ write by cp/ln/mv,
+#                     a quoted "nft". A5 and A6 are not
+#                     visible in the text — the audit
+#                     (docs/research/2026-10-21-configure-audit.md).
+#                     LINT_EVERY_BOOT=warn (default: the catalog pins cream
+#                     1.1.x, which has no every_boot) prints the finding and
+#                     keeps the code; LINT_EVERY_BOOT=error counts it.
 # Comment lines and tests/ are not linted. shellcheck of the same files at the
 # `warning` level is tools/lint.sh (make lint).
 #
@@ -34,6 +51,12 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(dirname "$HERE")"
+
+EVERY_BOOT_MODE="${LINT_EVERY_BOOT:-warn}"
+case "$EVERY_BOOT_MODE" in
+    warn | error) ;;
+    *) echo "lint-hooks: LINT_EVERY_BOOT=$EVERY_BOOT_MODE — ожидается warn или error" >&2; exit 2 ;;
+esac
 
 HOOKS=(install upgrade configure apply secret remove check)
 # Hook and action environment of cream (spec §6.3, §7) and of its CLI (§12).
@@ -73,6 +96,8 @@ for h in hooks:
 conf = hooks.get("configure") or {}
 if isinstance(conf, dict) and conf.get("stage"):
     print("stage", conf["stage"])
+if isinstance(conf, dict) and conf.get("every_boot") is True:
+    print("everyboot", "true")
 if m.get("cream") is not None:
     print("cream", m["cream"])
 for k, v in ((m.get("config") or {}).get("keys") or {}).items():
@@ -149,6 +174,66 @@ CREAM_CALL='(^|[^[:alnum:]_-])cream[[:space:]]'
 SOURCE_LIB='(^|[[:space:];&|(])(source|\.)[[:space:]]+[^;&|]*(^|[/"'"'"'[:space:]])lib/'
 CREAM_ASSIGN='(^|[[:space:];&|(])((export|local|readonly|declare|typeset)([[:space:]]+-[A-Za-z]+)*[[:space:]]+)?CREAM_[A-Z0-9_]+(\+)?='
 
+# Text signs of the configure audit (spec 2026-10-21 §10.7): "label|text|regex".
+# A /run/ path counts when it is written: a redirection, a directory or file
+# made there, or a path variable set to it; a test such as -d /run/systemd/system
+# is a read.
+RUN_PATH='"?[^[:space:]"]*/run/'
+EVERY_BOOT_SIGNS=(
+    "А1|ip link|(^|[^[:alnum:]_-])ip[[:space:]]+(-[^[:space:]]+[[:space:]]+)*link([[:space:]]|$)"
+    "А1|iptables|(^|[^[:alnum:]_-])ip6?tables"
+    "А1|nft|(^|[^[:alnum:]_.-])nft([[:space:]]|$)"
+    "А1|modprobe|(^|[^[:alnum:]_-])(modprobe|insmod)([[:space:]]|$)"
+    "А1|запись в /run/|>[[:space:]]*${RUN_PATH}"
+    "А1|запись в /run/|(^|[^[:alnum:]_-])(mkdir|install|touch|tee|mktemp)([[:space:]][^;&|]*)?[[:space:]]${RUN_PATH}"
+    "А1|путь в /run/|^[[:space:]]*((local|readonly|export|declare)[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*=${RUN_PATH}"
+    "А2|getent passwd|getent[[:space:]]+passwd"
+    "А2|/home/|/home/"
+    "А2|UID 1000|[Uu][Ii][Dd][^[:alnum:]]{0,8}1000([^0-9]|$)"
+    "А3|get_cloud_user|get_cloud_user"
+    "А4|cream-configure@|cream-configure@"
+)
+EXCEPT_RE='^[[:space:]]*#[[:space:]]*cream-lint:[[:space:]]*every-boot-not-needed[[:space:]]+[^[:space:]]'
+EXT_REF_RE='CREAM_EXT_DIR[^}]*\}/[A-Za-z0-9_./-]+'
+
+# check_every_boot DIR: the rule every-boot for one extension.
+check_every_boot(){
+    local d="$1" hook="$1/hooks/configure" f line n sign label text re where="" found_signs="" ref
+    local -a files=("$hook")
+    [[ -f "$hook" ]] || return 0
+    grep -Eq "$EXCEPT_RE" "$hook" && return 0
+    # Files of the extension the hook hands over to, one level deep.
+    while IFS= read -r ref; do
+        ref="${ref#*\}/}"
+        [[ "$ref" == *..* ]] && continue
+        [[ -f "$d/$ref" ]] && ! in_list "$d/$ref" "${files[@]}" && files+=("$d/$ref")
+    done < <(grep -Ev '^[[:space:]]*#' "$hook" | grep -oE "$EXT_REF_RE" || true)
+    for f in "${files[@]}"; do
+        n=0
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            n=$((n + 1))
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            for sign in "${EVERY_BOOT_SIGNS[@]}"; do
+                label="${sign%%|*}"; text="${sign#*|}"; re="${text#*|}"; text="${text%%|*}"
+                [[ "$line" =~ $re ]] || continue
+                [[ -n "$where" ]] || where="$(rel_of "$f"):$n"
+                [[ "$found_signs" == *"$label $text "* ]] && continue
+                found_signs+="$label $text ($(rel_of "$f"):$n); "
+            done
+        done < "$f"
+    done
+    [[ -n "$found_signs" ]] || return 0
+    found_signs="${found_signs%; }"
+    local msg="признаки $found_signs — нужен hooks.configure.every_boot: true или «# cream-lint: every-boot-not-needed <причина>» в хуке"
+    if [[ "$EVERY_BOOT_MODE" == error ]]; then
+        report "$where" every-boot "$msg"
+    else
+        printf '%s: [%s] %s (предупреждение, LINT_EVERY_BOOT=warn)\n' "$where" every-boot "$msg"
+        warned=$((warned + 1))
+    fi
+}
+warned=0
+
 for d in "${dirs[@]}"; do
     facts="$(python3 -I -c "$FACTS_PY" "$d/extension.yaml")" \
         || { echo "lint-hooks: $(rel_of "$d")/extension.yaml: не разбирается" >&2; exit 2; }
@@ -156,6 +241,7 @@ for d in "${dirs[@]}"; do
     cream_range="$(sed -n 's/^cream //p' <<< "$facts")"
     mapfile -t locknone < <(awk '$1 == "locknone" { print $2 }' <<< "$facts")
     mapfile -t secrets < <(awk '$1 == "secret" { print $2 }' <<< "$facts")
+    grep -qx 'everyboot true' <<< "$facts" || check_every_boot "$d"
 
     if [[ "$stage" == cloud-user ]] \
         && ! version_ge "$(range_min "$cream_range")" "$CLOUD_USER_CREAM"; then
@@ -222,4 +308,8 @@ if (( found )); then
     echo "lint-hooks: нарушения в хуках и действиях cream/v1 (см. выше; правила — docs/extensions.md)" >&2
     exit 1
 fi
-echo "lint-hooks: ок, расширений: ${#dirs[@]}"
+if (( warned )); then
+    echo "lint-hooks: ок, расширений: ${#dirs[@]}; предупреждений every-boot: $warned (LINT_EVERY_BOOT=error сделает их ошибками)"
+else
+    echo "lint-hooks: ок, расширений: ${#dirs[@]}"
+fi
