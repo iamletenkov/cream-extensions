@@ -35,7 +35,10 @@
 #                     true` or carries `# cream-lint: every-boot-not-needed
 #                     <причина>`. The hook and the files of the extension it
 #                     hands over to (`"${CREAM_EXT_DIR…}/<path>"`) are read; the
-#                     exception is a line of the hook. A5 and A6 are not
+#                     exception is a line of the hook. Not followed: a
+#                     hand-over through another variable or `$CREAM_EXT_DIR/`
+#                     without braces; not seen: a /run/ write by cp/ln/mv,
+#                     a quoted "nft". A5 and A6 are not
 #                     visible in the text — the audit
 #                     (docs/research/2026-10-21-configure-audit.md).
 #                     LINT_EVERY_BOOT=warn (default: the catalog pins cream
