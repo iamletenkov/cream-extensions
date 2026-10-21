@@ -40,7 +40,7 @@ mkdir -p "$dir/btop/bin"; printf "#!/bin/sh\necho btop 1.4.4\n" > "$dir/btop/bin
 echo "== манифест =="
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "мажор 2" 2.0.1 "$(mf 'm["version"]')"
+eq "мажор 2" 2.0.2 "$(mf 'm["version"]')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
 eq "хуки install и remove" "['install', 'remove']" "$(mf 'sorted(m["hooks"])')"
 check "install с явным timeout" test -n "$(mf 'm["hooks"]["install"].get("timeout", "")')"

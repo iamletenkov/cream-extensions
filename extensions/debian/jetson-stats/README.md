@@ -3,13 +3,101 @@
 Ставит `jtop` — монитор NVIDIA Jetson: загрузка CPU и GPU, память, частоты,
 питание, температуры, вентилятор, режим `nvpmodel`.
 
-> **3.0.0 — cream/v1.** Хуки `install`, `configure` (стадия `cloud-user` — после
-> `cloud-final`; нужен cream ≥ 1.1.1, рулинг Р14 плана) и `remove`; своего
-> `configure-jetson-stats.service` нет. pip — по хешам `requirements.txt` (с 3.1.0:
-> `--require-hashes`, закреплённые версии с sha256), без `--user`, с `HOME` во временном каталоге и без конфигурации pip:
-> в доме root ничего не остаётся. Не Jetson — код 20 («неприменимо»).
+<!-- catalog:facts -->
+| | |
+|---|---|
+| ОС | Debian, Ubuntu |
+| Архитектура | arm64 |
+| cream | ≥ 1.2.0 |
+| Даёт | `jetson-monitor` |
+| Требует | — |
+| Зависит от | [`cloud-user`](../cloud-user/README.md), [`apt-guard`](../apt-guard/README.md) |
+| Конфликтует с | — |
+| Хуки | `install`, `configure`, `remove` |
+| Настройка на загрузке | стадия `cloud-user`, на каждой загрузке (`every_boot`) |
+| Живая машина | да |
+<!-- /catalog:facts -->
 
-## Зачем
+## Что делает
+
+- **`install`** — нет `/etc/nv_tegra_release` — код 20 («неприменимо»); ставит
+  `python3-pip`, `python3-setuptools` (только недостающие), затем
+  `python3 -m pip install --require-hashes -r requirements.txt` от root в
+  системный префикс, без `--user`: `HOME` — временный каталог,
+  `PIP_CONFIG_FILE=/dev/null`, `PIP_USER=0`, `PYTHONNOUSERSITE=1`, кеша нет; на
+  PEP 668 — `--break-system-packages`. В доме root ничего не остаётся. Что поставил
+  pip, записывается в `/var/lib/cream/ext/jetson-stats/pip`. Затем `jtop.service`
+  (см. «Откуда берётся `jtop.service`») и группа `jtop`; служба включена.
+- **`configure`** (стадия `cloud-user` — после `cloud-final`, на каждой загрузке) —
+  вносит пользователя cloud-init (библиотека [`cloud-user`](../cloud-user/README.md))
+  в группу `jtop` (на загрузке ждёт его до 30 с) и, если демон не работает,
+  запускает его (`--no-block`). Нет пользователя или не Jetson — предупреждение и 0.
+- **`remove`** — служба выключена, наш юнит снят, поставленное pip и apt снято
+  (pip — в том же окружении, что при установке); группа `jtop` остаётся.
+
+## Параметры
+
+<!-- catalog:params -->
+| Ключ | Тип | Умолчание | Что задаёт |
+|---|---|---|---|
+| `JETSON_STATS_VERSION` | строка `^[0-9]{1,3}(\.[0-9]{1,3}){1,3}$` | пусто | версия jetson-stats из тех, что с хешами в requirements.txt (7.2.1; 4.3.2 на Python 3.6) *(только при установке)* |
+<!-- /catalog:params -->
+
+`JETSON_STATS_VERSION` (`scope: install`): пусто — версия из `requirements.txt` по
+Python (7.2.1; на Python 3.6, L4T R32 — 4.3.2). Допустима только одна из версий
+**с хешами** в `requirements.txt` (сейчас 7.2.1 и 4.3.2), маркер Python у неё
+снимается; другая версия — отказ до pip: новые хеши — строка в `requirements.txt`
+и новый релиз расширения (см. «Хеши PyPI»).
+
+## Установка
+
+На плате с подключённым каталогом ([как подключить](../../../docs/getting-started.md)):
+
+```bash
+sudo cream install --with-deps jetson-stats
+sudo cream install --with-deps jetson-stats JETSON_STATS_VERSION=7.2.1
+```
+
+В образе bisquite (VMFILE):
+
+```dockerfile
+RUN_COMMAND cream install --with-deps jetson-stats
+RUN_COMMAND cream install --with-deps jetson-stats JETSON_STATS_VERSION=7.2.1
+```
+
+## Этапы
+
+| Когда | Что происходит |
+|---|---|
+| сборка образа / `cream install` | pip по хешам, `jtop.service`, группа `jtop`; не Jetson — код 20 |
+| загрузка (`cream-configure@jetson-stats`, стадия `cloud-user`) | пользователь cloud-init в группе `jtop`, запуск демона |
+| смена `JETSON_STATS_VERSION` | ключ `scope: install` — хук `install` перезапускается сам |
+| `cream remove` | служба, юнит, пакеты pip и apt сняты; группа остаётся |
+
+Что править и чем перезапускать:
+
+| Что менять | Где | Чем применить |
+|---|---|---|
+| версию пакета | `cream install jetson-stats JETSON_STATS_VERSION=X.Y.Z` | хук `install` перезапускается сам |
+| донастройка (группа, запуск демона) | — | `systemctl restart cream-configure@jetson-stats` |
+| сам демон | `/etc/systemd/system/jtop.service` | `systemctl restart jtop.service` |
+
+## Известные ограничения
+
+- **`arch: [arm64]`** — собирать надо на **arm64-хосте**: хук выполняется внутри
+  гостя, а libguestfs не выполняет код гостя чужой архитектуры. Только arm64:
+  Jetson — это aarch64-модуль на Tegra, а с PyPI приезжает колесо `py3-none-any`,
+  которое на amd64 встало бы мёртвым грузом. Случай «arm64, но не Jetson» ловит
+  `install` по `/etc/nv_tegra_release` (код 20).
+- В госте нужна сеть: пакет качается с PyPI в момент сборки.
+- **Членство в группе применяется при входе.** Если автологин уже случился,
+  текущая сессия группу не видит, и `jtop` в ней отвечает отказом доступа —
+  помогает новый вход или перезагрузка.
+- Сборка образа целиком на Jetson Nano не проверялась (см. «Проверено на»).
+
+## Подробности
+
+### Зачем
 
 На Jetson нет ни `nvidia-smi`, ни `nvtop`, которые работали бы: и то и другое
 опирается на NVML, а NVML на Tegra до JetPack 7 не существует (разбор ниже).
@@ -26,39 +114,7 @@ tegrastats: /usr/bin/tegrastats   (из L4T)
 nvtop:      нет, и в apt-репозиториях этой машины его нет вовсе
 ```
 
-## Манифест
-
-| Поле | Значение |
-|---|---|
-| `platform.arch` | `arm64` |
-| `targets` | `build: exec`, `live: yes` |
-| `provides` | `jetson-monitor` |
-| `depends` | `cloud-user` (библиотека: пользователь cloud-init) |
-| хуки | `install`, `configure` (`cloud-user`), `remove` |
-
-Только arm64: Jetson — это aarch64-модуль на Tegra, а с PyPI приезжает колесо
-`py3-none-any`, которое на amd64 встало бы мёртвым грузом. Случай «arm64, но
-не Jetson» ловит `install` по `/etc/nv_tegra_release` (код 20).
-
-## Подключение
-
-```vmfile
-EXTENSION jetson-stats
-```
-
-На живой плате — `cream install jetson-stats`.
-
-## Параметры
-
-| Ключ | Умолчание | Что делает |
-|---|---|---|
-| `JETSON_STATS_VERSION` (`scope: install`) | пусто — версия из `requirements.txt` по Python (7.2.1; на Python 3.6, L4T R32 — 4.3.2) | одна из версий **с хешами** в `requirements.txt` (сейчас 7.2.1 и 4.3.2), маркер Python у неё снимается; другая версия — отказ до pip: новые хеши — строка в `requirements.txt` и новый релиз расширения |
-
-```vmfile
-EXTENSION jetson-stats JETSON_STATS_VERSION=7.2.1
-```
-
-## Хеши PyPI (`--require-hashes`) — с 3.1.0
+### Хеши PyPI (`--require-hashes`)
 
 `requirements.txt` — каждый пакет закреплён `==` с sha256 всех его файлов PyPI
 (колесо и sdist; всё — чистый Python, архитектура не важна); строки `jetson-stats`
@@ -71,22 +127,6 @@ Ubuntu 18.04 (L4T R32) читает его как ASCII. Проверено 2026
 pip download --no-deps -d /tmp/js 'jetson-stats==X.Y.Z' && pip hash /tmp/js/*
 # остальные файлы версии — digests.sha256 из https://pypi.org/pypi/jetson-stats/X.Y.Z/json
 ```
-
-## Что делает
-
-- **`install`** — нет `/etc/nv_tegra_release` — код 20; ставит
-  `python3-pip`, `python3-setuptools` (только недостающие), затем
-  `python3 -m pip install --require-hashes -r requirements.txt` от root в
-  системный префикс: `HOME` — временный каталог, `PIP_CONFIG_FILE=/dev/null`,
-  `PIP_USER=0`, `PYTHONNOUSERSITE=1`, кеша нет; на PEP 668 — `--break-system-packages`.
-  Что поставил pip, записывается в `/var/lib/cream/ext/jetson-stats/pip`. Затем
-  `jtop.service` (см. «Откуда берётся») и группа `jtop`; служба включена.
-- **`configure`** (стадия `cloud-user`, на каждой загрузке) — вносит пользователя
-  cloud-init в группу `jtop` (на загрузке ждёт его до 30 с) и, если демон не
-  работает, запускает его (`--no-block`). Нет пользователя или не Jetson —
-  предупреждение и 0.
-- **`remove`** — служба выключена, наш юнит снят, поставленное pip и apt снято
-  (pip — в том же окружении, что при установке); группа `jtop` остаётся.
 
 ### Почему pip, а не apt
 
@@ -140,7 +180,7 @@ jetson-stats`, а перед ним `apt install python3-pip python3-setuptools`
 Не помог ни один — **отказ сборки**. «Поставилось, но не работает»
 обнаружилось бы на плате, после записи карты.
 
-## Почему НЕ nvtop
+### Почему НЕ nvtop
 
 Коротко: `nvtop` не умеет Tegra ни в одной версии, а не «умеет начиная
 с 3.x». Проверено по исходникам и по архиву Ubuntu 2026-09-03.
@@ -191,7 +231,7 @@ $ ldconfig -p | grep libnvidia-ml   # на Nano пусто
 1.x в focal — да (с уточнением про multiverse), опора на NVML — да,
 3.3.2 — последний релиз — да.
 
-## Откуда берётся `jtop.service`
+### Откуда берётся `jtop.service`
 
 Пакет его **не поставляет**. С 7.2.0 на PyPI лежит готовое колесо
 `py3-none-any`, а хук `build_py`, который раньше ставил юнит, из колеса
@@ -214,7 +254,7 @@ $ ldconfig -p | grep libnvidia-ml   # на Nano пусто
 резолвится через `command -v`, а не прибивается: `sudo pip3` кладёт его
 в `/usr/local/bin`, а pip в venv — в другое место.
 
-## Отказы
+### Отказы
 
 **Нет `/etc/nv_tegra_release`** — образ не L4T, код 20 («неприменимо»): `jtop`
 там не заработает никогда. Это тот же файл, по которому опознаёт плату сам
@@ -226,40 +266,21 @@ jetson-stats (`jtop/core/jetson_variables.py:240`).
 **Не появился `jtop.service`** — четвёртый заход невозможен, если `jtop` не
 нашёлся в `PATH` после установки: писать юнит не на что.
 
-`configure` не отказывает: без пользователя или без Tegra — предупреждение и 0
-(рулинг Р11); незапустившийся демон виден в `systemctl --failed` как
-`jtop.service`.
+`configure` не отказывает: без пользователя или без Tegra — предупреждение и 0;
+незапустившийся демон виден в `systemctl --failed` как `jtop.service`.
 
-## Ограничения
+### Почему configure не упорядочен относительно jtop.service
 
-**`arch: [arm64]`** — собирать надо на **arm64-хосте**: хук выполняется внутри
-гостя, а libguestfs не выполняет код гостя чужой архитектуры. В госте нужна
-сеть: пакет качается с PyPI в момент сборки.
-
-**Членство в группе применяется при входе.** Если автологин уже случился,
-текущая сессия группу не видит, и `jtop` в ней отвечает отказом доступа —
-помогает новый вход или перезагрузка.
-
-## Почему configure не упорядочен относительно jtop.service
-
-`jtop.service` (вендорский юнит) объявлен `After=multi-user.target`, а прежний
-`configure-jetson-stats.service` стоял `WantedBy=multi-user.target` с
-`After=jtop.service`: кольцо, которое systemd разрывает, **молча** выбрасывая
-задачу (замер 2026-09-04, Jetson Nano). Второе кольцо — `After=cloud-final`
-при `WantedBy=multi-user.target` (замер 2026-09-06). Стадия `cloud-user` cream
+`jtop.service` (вендорский юнит) объявлен `After=multi-user.target`, а служба
+донастройки, стоявшая `WantedBy=multi-user.target` с `After=jtop.service`,
+образовывала кольцо, которое systemd разрывает, **молча** выбрасывая задачу
+(замер 2026-09-04, Jetson Nano). Второе кольцо — `After=cloud-final` при
+`WantedBy=multi-user.target` (замер 2026-09-06). Стадия `cloud-user` cream
 привязывает configure к `cloud-init.target` (или к `multi-user.target` без
 cloud-init) с `After=cloud-final.service`, а относительно `jtop.service` не
 упорядочивает его вовсе: хуку нужны пакет и группа, а не запущенный демон.
 
-## Что править и чем перезапускать
-
-| Что менять | Где | Чем применить |
-|---|---|---|
-| версию пакета | `cream install jetson-stats JETSON_STATS_VERSION=X.Y.Z` | хук `install` перезапускается сам |
-| донастройка (группа, запуск демона) | — | `systemctl restart cream-configure@jetson-stats` |
-| сам демон | `/etc/systemd/system/jtop.service` | `systemctl restart jtop.service` |
-
-## Проверка
+### Проверка на образе и плате
 
 На собранном образе:
 
@@ -278,7 +299,7 @@ $ jtop                                     # без sudo
 $ jetson_release                           # сводка по плате
 ```
 
-## Проверено на
+### Проверено на
 
 | Что | Как | Дата |
 |---|---|---|
@@ -292,3 +313,9 @@ $ jetson_release                           # сводка по плате
 Последняя строка честная: хуки прогнаны на подменённом корне
 (`tests/test-jetson-stats.sh`: подменённые `pip`, `jtop`, `systemctl`,
 `usermod`), но живой платы в проверке не было — P (AGX Orin) ожидает.
+
+## Проверки
+
+- **H** — `tests/test-jetson-stats.sh`: хуки на подменённом корне (подменённые `pip`,
+  `jtop`, `systemctl`, `usermod`).
+- **P** — живая плата (AGX Orin) ожидает.

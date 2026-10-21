@@ -19,7 +19,8 @@
 #        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: vino-vnc
-version: 5.1.0
+version: 5.1.1
+# 5.1.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: VNC через vino (GNOME) в сессии пользователя cloud-init — настройки системным dconf, по умолчанию только петля
 cream: ">=1.2.0"
 platform:

@@ -4,40 +4,93 @@ GNOME на Xorg (Wayland выключен), менеджер входа gdm3. Д
 расширениям, которым они нужны, — `x11vnc`, `kiosk`, `selkies`. Автологин,
 автоблокировка и затемнение — ручки расширения [`desktop`](../desktop/README.md) (`depends`).
 
-> **С 5.0.0 — формат cream/v1** (план 2026-10-19, Task 13). Каталог в госте —
-> `/opt/cream/ext/gnome/`; ручки — домен `desktop` (`/etc/cream/desktop/config`),
-> применяет их `cream-configure@desktop` до gdm. Взаимоисключение с `xfce4`/`lxde` —
-> по способности `desktop-session`, а не перечнем имён.
-
-## Манифест
-
-| Поле | Значение |
+<!-- catalog:facts -->
+| | |
 |---|---|
-| `version` | `5.0.0`, `cream: ">=1.0.0"` |
-| `platform` | `deb`, `amd64`/`arm64`, Debian и Ubuntu |
-| `targets` | `build: exec`, `live: confirm` (на живой машине — `--accept-risk`) |
-| `provides` | `x11-server`, `display-manager`, `desktop-session` |
-| `depends` | `desktop >=1.0.0 <2` |
-| `conflicts` | `capabilities: [desktop-session]` — любой другой рабочий стол |
-| хуки | `install`, `remove` (без `configure`: ручки применяет `desktop`) |
-| `files` | нет — см. «Какой файл читает gdm3» |
+| ОС | Debian, Ubuntu |
+| Архитектура | amd64, arm64 |
+| cream | ≥ 1.0.0 |
+| Даёт | `x11-server`, `display-manager`, `desktop-session` |
+| Требует | — |
+| Зависит от | [`desktop`](../desktop/README.md) |
+| Конфликтует с | способность `desktop-session` |
+| Хуки | `install`, `remove` |
+| Настройка на загрузке | — |
+| Живая машина | с `--accept-risk` |
+
+> **Живая машина — с `--accept-risk`.** Ставит рабочий стол GNOME (гигабайты пакетов), выключает Wayland в gdm3 и включает менеджер входа gdm и graphical.target: после перезагрузки экран машины занимает экран входа; другой уже включённый менеджер входа не перехватывается (предупреждение); remove возвращает цель загрузки и менеджер входа, пакеты остаются
+<!-- /catalog:facts -->
 
 ## Что делает
 
-**`install`**: ставит `task-gnome-desktop`, `gdm3`, `gnome-shell`, `gnome-session`,
-`xorg`, `xinput`, `x11-xserver-utils`, `dconf-cli`, `usbutils`, `dbus-x11`; пробует
-нативный `chromium` (только его, см. ниже); выключает Wayland в конфиге gdm3; включает
-gdm и `graphical.target`. На живой машине, если менеджер входа или цель загрузки
-поменялись, — код 10: экран входа появится после перезагрузки. На сборке — 0.
-Другой уже включённый менеджер входа (`display-manager.service` → не gdm) не
-перехватывается — предупреждение.
+- **`install`** — ставит `task-gnome-desktop`, `gdm3`, `gnome-shell`, `gnome-session`,
+  `xorg`, `xinput`, `x11-xserver-utils`, `dconf-cli`, `usbutils`, `dbus-x11`; пробует
+  нативный `chromium` (только его, см. «Браузер — только нативный»); выключает Wayland
+  в конфиге gdm3; включает gdm и `graphical.target`. На живой машине, если менеджер
+  входа или цель загрузки поменялись, — код 10: экран входа появится после
+  перезагрузки. На сборке — 0. Другой уже включённый менеджер входа
+  (`display-manager.service` → не gdm) не перехватывается — предупреждение.
+- Хука `configure` нет: ручки (домен `/etc/cream/desktop/config`) применяет
+  `cream-configure@desktop` до gdm. Своих `files` у расширения нет — см. «Какой файл
+  читает gdm3».
+- **`remove`** — возвращает цель загрузки (что было до `install`; неизвестно —
+  `multi-user.target`) и выключает gdm, если до `install` менеджером входа был не он.
+  **Пакеты остаются** (`apt-get remove` — вручную), `WaylandEnable=false` в конфиге gdm3
+  тоже. На живой машине при смене цели — код 10.
 
-**`remove`**: возвращает цель загрузки (что было до `install`; неизвестно —
-`multi-user.target`) и выключает gdm, если до `install` менеджером входа был не он.
-**Пакеты остаются** (`apt-get remove` — вручную), `WaylandEnable=false` в конфиге gdm3
-тоже. На живой машине при смене цели — код 10.
+Взаимоисключение с `xfce4`/`lxde` — по способности `desktop-session`: любой
+другой рабочий стол.
 
-## Какой файл читает gdm3
+## Параметры
+
+<!-- catalog:params -->
+Параметров нет.
+<!-- /catalog:params -->
+
+Своих ключей нет. Автологин, блокировка и затемнение — ключи `DESKTOP_*`
+расширения [`desktop`](../desktop/README.md).
+
+## Установка
+
+На машине с подключённым каталогом ([как подключить](../../../docs/getting-started.md));
+`live: confirm` — нужен `--accept-risk`:
+
+```bash
+sudo cream install --with-deps --accept-risk gnome          # desktop и cloud-user — по depends
+sudo cream set desktop DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_LOCK=1 DESKTOP_DISABLE_SCREEN_BLANK=1
+sudo reboot                                                 # код 10 install: экран входа — после перезагрузки
+```
+
+В образе bisquite (VMFILE):
+
+```dockerfile
+RUN_COMMAND cream install --with-deps desktop DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_LOCK=1 DESKTOP_DISABLE_SCREEN_BLANK=1
+RUN_COMMAND cream install --with-deps gnome
+```
+
+Поверх `x11vnc` или `kiosk` без `DESKTOP_AUTOLOGIN=1` им не к чему подключаться:
+сессии пользователя нет.
+
+## Этапы
+
+| Когда | Что происходит |
+|---|---|
+| сборка образа | пакеты, `WaylandEnable=false`, gdm и `graphical.target` включены; код 0 |
+| `cream install` на живой машине | то же; при смене менеджера входа или цели — код 10, нужна перезагрузка |
+| загрузка | своего хука нет; `cream-configure@desktop` применяет ручки до gdm |
+| `cream remove` | цель загрузки и менеджер входа возвращены; пакеты и `WaylandEnable=false` остаются |
+
+## Известные ограничения
+
+- На Ubuntu браузера нет (см. «Браузер — только нативный»).
+- `remove` пакеты не снимает.
+- В формате cream/v1 на железе ещё не собирался.
+- В L-прогоне gdm в контейнере не стартует (нет VT и X) — его упавший юнит раннер
+  пока не умеет пропускать.
+
+## Подробности
+
+### Какой файл читает gdm3
 
 Решено при сборке **пакета**, дистрибутивы расходятся (замер 2026-09-03 распаковкой,
 повторён 2026-10-19): Debian — `/etc/gdm3/daemon.conf`, Ubuntu 22.04/24.04 —
@@ -50,34 +103,33 @@ gdm и `graphical.target`. На живой машине, если менедже
 раскладка поверх них дала бы 67 `conflict.file_unowned` на любой машине, где gdm3 уже
 стоит, а drop-in каталога у gdm нет. Автологин в те же файлы пишет `desktop`.
 
-## Wayland выключен, и это несущая связь
+### Wayland выключен, и это несущая связь
 
 `x11vnc`, `xset` и захват экрана (`ximagesrc`) работают только в X11.
 
-## Браузер — только нативный
+### Браузер — только нативный
 
 В Debian `chromium` — обычный deb. В Ubuntu пакета нет, а `chromium-browser` —
 переходник на snap: он тянет `snapd`, а сам браузер в госте сборки не ставится (замер
 2026-09-12 на AGX Orin). Поэтому на Ubuntu браузера нет; нужен — `epiphany-browser`
 или `falkon` отдельным расширением.
 
-## Подключение
+### Проверено на (до перехода на cream/v1)
 
-```vmfile
-EXTENSION desktop DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_LOCK=1 DESKTOP_DISABLE_SCREEN_BLANK=1
-EXTENSION gnome
-```
+AGX Orin, Ubuntu 22.04 / L4T 36.4.3, 2026-09-14: ручки `0` — экран входа, служба ручек
+стартует перед gdm3, циклов упорядочения нет; автологин на лету — сессия, ключи dconf
+заблокированы, `xset q` — `DPMS is Disabled`, x11vnc поднимается. В формате cream/v1
+на железе ещё не собирался.
 
-На работающей машине:
+### Диагностика
 
 ```bash
-sudo cream install --accept-risk gnome          # desktop и cloud-user — по depends
-sudo cream set desktop DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_LOCK=1 DESKTOP_DISABLE_SCREEN_BLANK=1
-sudo reboot                                     # код 10 install: экран входа — после перезагрузки
+cream show desktop; cream run desktop status
+grep -E 'AutomaticLogin|WaylandEnable' /etc/gdm3/custom.conf /etc/gdm3/daemon.conf 2>/dev/null
+systemctl get-default; readlink /etc/systemd/system/display-manager.service
+journalctl -b -u gdm -u cream-configure@desktop
+journalctl -b | grep -E 'Failed to initialize the NVIDIA|Session never registered'
 ```
-
-Поверх `x11vnc` или `kiosk` без `DESKTOP_AUTOLOGIN=1` им не к чему подключаться:
-сессии пользователя нет.
 
 ## Проверки
 
@@ -87,22 +139,5 @@ sudo reboot                                     # код 10 install: экран 
   живой машине), `remove` (возврат цели и менеджера входа, испорченное состояние не
   исполняется).
 - **L** — в ночном прогоне (`tests/live.env`: deps `cloud-user desktop`, debian-12,
-  2 ГБ), в PR — только `xfce4` (план, Task 13). gdm в контейнере не стартует (нет VT и
+  2 ГБ), в PR — только `xfce4`. gdm в контейнере не стартует (нет VT и
   X) — его упавший юнит раннер пока не умеет пропускать.
-
-## Проверено (layout 2)
-
-AGX Orin, Ubuntu 22.04 / L4T 36.4.3, 2026-09-14: ручки `0` — экран входа, служба ручек
-стартует перед gdm3, циклов упорядочения нет; автологин на лету — сессия, ключи dconf
-заблокированы, `xset q` — `DPMS is Disabled`, x11vnc поднимается. В формате cream/v1
-на железе ещё не собирался.
-
-## Диагностика
-
-```bash
-cream show desktop; cream run desktop status
-grep -E 'AutomaticLogin|WaylandEnable' /etc/gdm3/custom.conf /etc/gdm3/daemon.conf 2>/dev/null
-systemctl get-default; readlink /etc/systemd/system/display-manager.service
-journalctl -b -u gdm -u cream-configure@desktop
-journalctl -b | grep -E 'Failed to initialize the NVIDIA|Session never registered'
-```

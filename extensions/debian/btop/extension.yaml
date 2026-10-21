@@ -4,7 +4,8 @@
 # Not Tegra-specific, unlike jetson-stats; the two install side by side.
 schema: cream/v1
 name: btop
-version: 2.0.1
+version: 2.0.2
+# 2.0.2: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: TUI-монитор ресурсов btop — пакет apt или статическая сборка релиза по sha256
 cream: ">=1.0.0"
 platform:

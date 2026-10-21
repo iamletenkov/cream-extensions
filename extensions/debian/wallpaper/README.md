@@ -1,45 +1,38 @@
 # wallpaper
 
-Обои рабочего стола — **системным умолчанием** в `/etc` из картинки, которая
-лежит в дереве расширения (`/opt/cream/ext/wallpaper/images/`).
+Обои рабочего стола — **системным умолчанием** в `/etc` для GNOME (dconf),
+Xfce (xfconf) и LXDE (pcmanfm) из картинки, которая лежит в дереве расширения
+(`/opt/cream/ext/wallpaper/images/`). В домашний каталог root не пишет.
 
-> **3.0.0 — cream/v1.** Хуки `install`, `configure` (стадия `cloud-user` — после
-> `cloud-final`, как прежняя служба первой загрузки; без порядка относительно
-> менеджера входа; нужен cream ≥ 1.1.1, рулинг Р14 плана) и `remove`; своего
-> `configure-wallpaper.service` нет. Обои больше не пишутся в dconf пользователя
-> через `gsettings` — root не заходит в домашний каталог: GNOME получает системную
-> базу dconf **с замками**, Xfce — системный канал xfconf, LXDE — `pcmanfm.conf`.
-> Поэтому расширение больше не «только GNOME». `WALLPAPER_IMAGE` — имя файла в
-> `images/`, без каталогов; новый ключ `WALLPAPER_MODE`.
-
-## Манифест
-
-| Поле | Значение |
+<!-- catalog:facts -->
+| | |
 |---|---|
-| `platform.arch` | `amd64`, `arm64` |
-| `targets` | `build: exec`, `live: yes` |
-| `provides` | `wallpaper` |
-| `requires` | `desktop-session` — без стола ключи читать некому; отказ приходит на сборке |
-| `depends` | `cloud-user` (библиотека: пользователь cloud-init — только для предупреждения) |
-| хуки | `install`, `configure` (`cloud-user`), `remove` |
+| ОС | Debian, Ubuntu |
+| Архитектура | amd64, arm64 |
+| cream | ≥ 1.1.1 |
+| Даёт | `wallpaper` |
+| Требует | `desktop-session` |
+| Зависит от | [`cloud-user`](../cloud-user/README.md) |
+| Конфликтует с | — |
+| Хуки | `install`, `configure`, `remove` |
+| Настройка на загрузке | стадия `cloud-user`, по отметке выполнения |
+| Живая машина | да |
+<!-- /catalog:facts -->
 
-## Подключение
+## Что делает
 
-```vmfile
-EXTENSION wallpaper WALLPAPER_IMAGE=dst_1080.jpg WALLPAPER_MODE=zoom
-```
+- **`install`** — ставит `dconf-cli`, если dconf нет; отказ (код 1), если
+  выбранной картинки нет в `images/`.
+- **`configure`** (стадия `cloud-user` — после `cloud-final`; без порядка
+  относительно менеджера входа) — пишет три системных умолчания (таблица ниже) и
+  предупреждает, если у пользователя cloud-init есть свои настройки Xfce/LXDE,
+  которые их перекрывают; стола нет — предупреждение и 0. Пользователь
+  cloud-init (библиотека [`cloud-user`](../cloud-user/README.md)) нужен только
+  для этого предупреждения. Своей службы первой загрузки нет.
+- **`remove`** — снимает наши файлы и возвращает `pcmanfm.conf` прежние значения.
 
-На живой машине — `sudo cream install wallpaper`; сменить — `sudo cream set wallpaper
-WALLPAPER_MODE=scaled` (`configure` перезапускается сам).
-
-## Параметры
-
-| Ключ | Умолчание | Что делает |
-|---|---|---|
-| `WALLPAPER_IMAGE` | `dst_1080.jpg` | имя файла в `/opt/cream/ext/wallpaper/images/`: буквы, цифры, `.` `_` `-`, расширение `.jpg` `.jpeg` `.png` `.svg`; каталогов, абсолютных путей и ссылок нет |
-| `WALLPAPER_MODE` | `zoom` | `zoom` — заполнить с обрезкой, `scaled` — целиком, `centered`, `stretched`, `spanned`, `wallpaper` — плиткой |
-
-## Что и куда пишется
+Без рабочего стола (`requires: desktop-session`) ключи читать некому — отказ
+приходит на сборке.
 
 | Стол | Файл | Как |
 |---|---|---|
@@ -52,28 +45,67 @@ WALLPAPER_MODE=scaled` (`configure` перезапускается сам).
 (предупреждение). Режим и владелец `pcmanfm.conf` сохраняются. Повтор не меняет
 ни одного файла и не зовёт `dconf update`.
 
-## Почему замок в GNOME
+## Параметры
+
+<!-- catalog:params -->
+| Ключ | Тип | Умолчание | Что задаёт |
+|---|---|---|---|
+| `WALLPAPER_IMAGE` | строка `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.(jpg\|jpeg\|png\|svg)$` | `dst_1080.jpg` | картинка — имя файла в /opt/cream/ext/wallpaper/images (без каталогов) |
+| `WALLPAPER_MODE` | `zoom` \| `scaled` \| `centered` \| `stretched` \| `spanned` \| `wallpaper` | `zoom` | как вписать: zoom — заполнить с обрезкой, scaled — целиком, centered, stretched, spanned, wallpaper — плиткой |
+<!-- /catalog:params -->
+
+`WALLPAPER_IMAGE` — имя файла в `/opt/cream/ext/wallpaper/images/`: буквы,
+цифры, `.` `_` `-`, расширение `.jpg` `.jpeg` `.png` `.svg`; каталогов,
+абсолютных путей и ссылок нет. Картинки — в `images/` дерева расширения: cream
+кладёт его в `/opt/cream/ext/wallpaper/` целиком, и обои ссылаются туда же, без
+копии.
+
+## Установка
+
+На машине с подключённым каталогом ([как подключить](../../../docs/getting-started.md)):
+
+```bash
+sudo cream install --with-deps wallpaper WALLPAPER_IMAGE=dst_1080.jpg WALLPAPER_MODE=zoom
+sudo cream set wallpaper WALLPAPER_MODE=scaled   # configure перезапускается сам
+cream show wallpaper
+```
+
+В образе bisquite (VMFILE):
+
+```dockerfile
+RUN_COMMAND cream install --with-deps wallpaper WALLPAPER_IMAGE=dst_1080.jpg WALLPAPER_MODE=zoom
+```
+
+## Этапы
+
+| Когда | Что происходит |
+|---|---|
+| сборка образа / `cream install` | `dconf-cli` при необходимости; проверка, что картинка есть |
+| загрузка (`cream-configure@wallpaper`, стадия `cloud-user`) | системные умолчания трёх столов, предупреждение о пользовательских настройках |
+| `cream set` | cream перезапускает `configure` |
+| `cream remove` | наши файлы сняты, замок GNOME снят, `pcmanfm.conf` возвращён |
+
+## Известные ограничения
+
+- В GNOME пользователь не сменит обои сам, пока расширение стоит (замок; см.
+  ниже). `cream remove wallpaper` снимает замок.
+- В Xfce и LXDE замка нет: это умолчание, и **собственные настройки пользователя
+  побеждают**. `configure` смотрит (только наличие файла, ничего не читая и не
+  правя), есть ли у пользователя cloud-init свой `xfce4-desktop.xml` или
+  `desktop-items-0.conf`, и предупреждает.
+- **Нет файла картинки — отказ `install`** (и `configure`): слой ставят затем,
+  чтобы на столе была заданная картинка, и молча собрать образ без неё значит
+  отдать роботу не то, что просили.
+
+## Подробности
+
+### Почему замок в GNOME
 
 На L4T пакет `nvidia-l4t-configs` кладёт `/etc/xdg/autostart/nvbackground.sh`, и тот
 на **каждом** старте сессии делает `gsettings set … NVIDIA_Wallpaper.jpg`. Замеры на
 платах 2026-09-12 и 2026-09-15: наши значения переписывались через минуту-другую.
-Прежде это обходилось маркерами в доме пользователя; замок системной базы делает
-ключ незаписываемым для любого `gsettings` сеанса — и для вендорского скрипта, и для
-старого значения в базе пользователя. Цена: в GNOME пользователь не сменит обои сам,
-пока расширение стоит (`cream remove wallpaper` снимает замок).
-
-В Xfce и LXDE замка нет: это умолчание, и **собственные настройки пользователя
-побеждают**. `configure` смотрит (только наличие файла, ничего не читая и не правя),
-есть ли у пользователя cloud-init свой `xfce4-desktop.xml` или `desktop-items-0.conf`,
-и предупреждает.
-
-## Картинки
-
-Картинки — в `images/` дерева расширения: cream кладёт его в
-`/opt/cream/ext/wallpaper/` целиком, и обои ссылаются туда же, без копии.
-**Нет файла — отказ `install`** (и `configure`): слой ставят затем, чтобы на столе
-была заданная картинка, и молча собрать образ без неё значит отдать роботу не то,
-что просили.
+Замок системной базы делает ключ незаписываемым для любого `gsettings` сеанса —
+и для вендорского скрипта, и для старого значения в базе пользователя.
 
 ## Проверки
 

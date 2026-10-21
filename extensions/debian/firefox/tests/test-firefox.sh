@@ -52,7 +52,7 @@ sum() { sha256sum "$@" | awk '{print $1}'; }
 echo "== манифест =="
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "версия 2.0.2" 2.0.2 "$(mf 'm["version"]')"
+eq "версия 2.0.3" 2.0.3 "$(mf 'm["version"]')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
 eq "хуки install и remove" "['install', 'remove']" "$(mf 'sorted(m["hooks"])')"
 eq "FIREFOX_LANGPACK — scope install" install "$(mf 'm["config"]["keys"]["FIREFOX_LANGPACK"]["scope"]')"

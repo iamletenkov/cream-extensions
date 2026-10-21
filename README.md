@@ -1,315 +1,159 @@
 # cream-extensions
 
-Каталог расширений провизии формата cream/v1 (бывший bisquite-extensions): их
-ставит [cream](https://github.com/iamletenkov/cream) на живую машину
-(`cream install`) и в образ, собираемый
-[bisquite](https://github.com/iamletenkov/bisquite) (инструкция `EXTENSION` в VMFILE).
-Расширение — каталог `extensions/debian/<имя>/` с манифестом `extension.yaml`,
-хуками и файлами: Docker, узел Teleport и агент портала Stvor, рабочие столы и
-удалённый доступ, драйверы NVIDIA и стек Jetson (L4T), сеть, firewall и прочее для
-машин на Debian/Ubuntu.
+[![CI](https://github.com/iamletenkov/cream-extensions/actions/workflows/ci-release.yml/badge.svg)](https://github.com/iamletenkov/cream-extensions/actions/workflows/ci-release.yml)
+[![Выпуск](https://img.shields.io/github/v/release/iamletenkov/cream-extensions?label=%D0%B2%D1%8B%D0%BF%D1%83%D1%81%D0%BA)](https://github.com/iamletenkov/cream-extensions/releases/latest)
+[![Лицензия](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](LICENSE)
+
+Каталог расширений для [cream](https://github.com/iamletenkov/cream) — исполнителя
+расширений для машин на Debian и Ubuntu. Расширение ставит и настраивает одну
+вещь: Docker, узел Teleport, рабочий стол и удалённый доступ к нему, драйверы
+NVIDIA, стек Jetson (L4T), файрвол, локаль и прочее. Одно и то же расширение
+работает на живой машине (`cream install`) и при сборке образа
+[bisquite](https://github.com/iamletenkov/bisquite)
+(`RUN_COMMAND cream install` в VMFILE).
 
 ## Быстрый старт
 
-```sh
-# 1. cream — .deb из релиза iamletenkov/cream (версия и суммы — tools/cream-pin.env, SHA256SUMS релиза)
-V=1.2.0; A="$(dpkg --print-architecture)"
-curl -fLO "https://github.com/iamletenkov/cream/releases/download/v$V/cream_${V}_${A}.deb"
-curl -fsSL "https://github.com/iamletenkov/cream/releases/download/v$V/SHA256SUMS" | grep "cream_${V}_${A}.deb" | sha256sum -c -
-sudo apt-get install -y "./cream_${V}_${A}.deb"
-
-# 2. каталог — снимок релиза по sha256 (SHA256SUMS релиза vX.Y.Z этого репозитория)
-sudo cream source add cream-extensions \
-  --archive https://github.com/iamletenkov/cream-extensions/releases/download/vX.Y.Z/cream-extensions-X.Y.Z.tar.gz \
-  --sha256 <сумма> --sync
-
-# 3. расширение: установка с параметрами, настройки, действия, снятие
-sudo cream install docker
-sudo cream install x11vnc X11VNC_PORT=5901 X11VNC_LISTEN=all
-cream show x11vnc                         # настройки домена
-sudo cream set x11vnc X11VNC_PORT=5902    # проверка по схеме, хук apply
-sudo cream remove x11vnc
-```
-
-Ключи, действия и ограничения расширения — в его `README.md`
-(`extensions/debian/<имя>/README.md`); расширения с `targets.live: confirm` ставятся
-с `--accept-risk`. Документация репозитория — [docs/README.md](docs/README.md):
-конвенция [docs/extensions.md](docs/extensions.md), runbooks выпуска, нового
-расширения, пина cream и живых прогонов — [docs/runbooks/](docs/runbooks/).
-
-
-## Структура
-
-```
-extensions/
-└── debian/                  # для Debian/Ubuntu, все — cream/v1
-    ├── docker/
-    ├── teleport/            # узел Teleport (join, render, apps.d, метки)
-    ├── stvor-agent/         # обёртка пакета stvor-agent (пин по архитектурам)
-    ├── cloud-user/  l4t/  apt-guard/   # библиотеки (kind: library) — общий код других расширений
-    ├── code-server/
-    ├── chromium-kiosk/  kiosk/
-    ├── desktop/  gnome/  xfce4/  lxde/  l4t-vendor-desktop/
-    ├── x11vnc/  vino-vnc/  selkies/
-    ├── network-manager/  nocloud-cidata/  cloud-growroot/
-    ├── nvidia/  nvidia-container-toolkit/  jetson-stats/
-    ├── can/  firewall/  locale/  rustdesk/   # рабочая машина робота
-    └── l4t-*/  nvidia-jetpack/  cuda-toolkit/  tensorrt/  …   # Jetson (L4T): ядро, CUDA, ML, сборка BSP
-cream-catalog.yaml           # корень каталога cream: roots, version (ведёт release-please)
-tools/                       # check.sh, cream-validate.sh, cream-check.sh, lint-hooks.sh, check-names.sh,
-                             #   live-test.sh, live-matrix.sh, hooktest.sh, new-extension.sh, catalog-snapshot.sh,
-                             #   cream-deb.sh, agent-bump.sh, cream-pin.env (пин cream)
-.github/workflows/ci-release.yml  # CI: tools/check.sh на PR и push в main, выпуск — release-please
-.github/workflows/live.yml        # живые прогоны L-расширений: изменённые на PR, все — ночью
-docs/extensions.md           # конвенция целиком: формат cream/v1, линт хуков, пин cream, проверки
-docs/runbooks/               # выпуск каталога, новое расширение, пин cream, живые прогоны
-```
-
-Ubuntu-образы используют расширения из `debian/` (Ubuntu — Debian-совместима).
-
-**Teleport — под cream.** Обёртка `teleport-agent` (пакет
-`bisquite-teleport-agent` 3.x) удалена: узел Teleport ведёт расширение
-`teleport` формата `cream/v1` (join, render `teleport.yaml`, приложения,
-управляемые и командные метки), агент портала ставит обёртка `stvor-agent`
-по пину версии и sha256 на архитектуру (`files/pin.env`). Объявления
-приложений других расширений (`code-server`, `selkies`) лежат в
-`/etc/cream/teleport/apps.d/<имя>.conf`, формат прежний (`NAME`, `URI`,
-`ICON`).
-
-**Каталог группировки — удобство автора, а не контракт резолвера.** Расширение
-ищется по полю `name` манифеста, а не по имени каталога: bisquite обходит кеш
-источника целиком (`rglob extension.yaml`) и берёт тот манифест, чьё `name`
-совпало со ссылкой. Другой источник вправе разложить дерево иначе.
-
-Каталог называется `debian/`, а семейство внутри манифеста — `deb`; это разные
-вещи, и совмещать их не надо. Контракт — имя каталога расширения равно `name`
-(cream/v1 этого требует) и `cream-catalog.yaml` в корне (`roots: [extensions/debian]`).
-
-## Конвенция
-
-Формат — **cream/v1**: расширение ставит и настраивает cream (исполнитель
-расширений), сборщик bisquite зовёт тот же cream в госте. Конвенция целиком —
-[docs/extensions.md](docs/extensions.md#формат-creamv1), спека — в репозитории cream
-(`docs/specs/2026-10-18-cream-core.md`).
-
-```
-extensions/debian/<name>/
-├── extension.yaml      # schema: cream/v1, name, version, summary, cream, platform, targets,
-│                       # provides/requires/depends/conflicts, hooks, config.keys, actions, files
-├── hooks/              # install, upgrade, configure, apply, secret, remove, check — объявленные
-├── actions/<действие>  # cream run <name> <действие>
-├── files/…             # юниты, udev, шаблоны — раскладывает cream (поле files)
-├── tests/              # H-тесты (tests/test-*.sh) и live.env; в снимок не попадают
-└── README.md
-```
-
-```
-cream install <name>                 # живая машина (EXTENSION <name> — образ bisquite)
-cream show <name>                    # настройки домена
-sudo cream set <name> KEY=VALUE      # проверка по схеме, атомарная запись, хук apply
-cream run <name> <действие> [аргументы]
-cream remove <name>
-```
-
-- **Настройки** — `config.keys` манифеста; в хук приходят переменными окружения
-  (по имени расширения, без префикса `CREAM_` — это окружение cream), секреты — только
-  в `$CREAM_SECRETS_FILE`, дальше через stdin (`KEY=-`), не через argv.
-- **Донастройка на машине** — хук `configure` на стадии `system`, `early`,
-  `cloud-user` или `graphical` (юнит `cream-configure@<name>` ставит cream).
-  Стадии `early`/`graphical` требуют `cream: ">=1.1.0"`, `cloud-user` —
-  **`">=1.1.1"`** (в 1.1.0 стадия не стартует при выключенном cloud-init).
-- **Общий код** — библиотеки `kind: library` (`cloud-user` — пользователь
-  cloud-init, `l4t`): потребитель объявляет `depends` и зовёт
-  `"${CREAM_ROOT:-}/opt/cream/ext/<lib>/…"`. Копий общего кода в расширении нет.
-- **Коды хука:** 10 — нужна перезагрузка, 20 — неприменимо здесь (только `install`);
-  `configure` без устройства — предупреждение и 0. `remove` обязателен при
-  `targets.live: yes`.
-- **Новое расширение** — только `tools/new-extension.sh <name>` (каркас cream/v1).
-
-### Раскладка в госте
-
-| Что | Где |
-|---|---|
-| код и данные расширения | `/opt/cream/ext/<name>/` |
-| настройки домена (`config`, `secrets`, `apps.d`) | `/etc/cream/<name>/` |
-| состояние | `/var/lib/cream/ext/<name>/` |
-| донастройка на загрузке | `cream-configure@<name>.service` |
-
-## Проверки
+Нужен cream 1.2.0 или новее ([установка](https://github.com/iamletenkov/cream#установка)).
+Подключить каталог — снимок выпуска, проверенный по sha256:
 
 ```bash
-make ci                       # shellcheck + tools/check.sh — то же, что CI
-tools/check.sh                # cream validate, гейт имён, линт хуков, тесты инструментов и расширений (make test)
-tools/cream-validate.sh       # cream validate --catalog . по корню (make cream-validate)
-tools/cream-check.sh          # cream check: каждое расширение строкой образа (make cream-check)
-tools/lint-hooks.sh           # линт хуков и действий: шапки, --no-block, lock: none, секреты, CREAM_*
-tools/check-names.sh          # прежние имена bisquite по всему репозиторию, кроме истории (make check-names)
-tools/live-test.sh <имя>      # живой прогон настоящим cream в контейнере с systemd (make test-live EXT=<имя>)
-tools/new-extension.sh <имя>  # каркас нового расширения cream/v1
-tools/agent-bump.sh <тег> <SHA256SUMS>  # пин stvor-agent в обёртке stvor-agent (его зовёт agent-bump.yml)
-tools/cream-bump.sh <тег> <SHA256SUMS>  # пин cream в tools/cream-pin.env (его зовёт cream-bump.yml)
-tools/catalog-snapshot.sh [OUT] # снимок каталога cream (make snapshot)
-tools/test-snapshot.sh          # воспроизводимость и приёмка снимка cream (make snapshot-check)
+CV=5.3.0 # x-release-please-version
+URL="https://github.com/iamletenkov/cream-extensions/releases/download/v$CV"
+curl -fLO "$URL/cream-extensions-$CV.tar.gz"
+curl -fLO "$URL/SHA256SUMS"
+sha256sum -c --ignore-missing SHA256SUMS           # cream-extensions-<версия>.tar.gz: OK
+SUM=$(awk -v f="cream-extensions-$CV.tar.gz" '$2 == f {print $1}' SHA256SUMS)
+sudo cream source add core --archive "$URL/cream-extensions-$CV.tar.gz" --sha256 "$SUM" --sync
 ```
 
-`cream validate --catalog .` проверяет каждый манифест, повторяющиеся имена,
-граф (`depends` на отсутствующее расширение или цикл — ошибка, `requires` без
-поставщика — предупреждение) и сверку юнитов с действиями; cream — по пину
-`tools/cream-pin.env` в контейнере `debian:12`.
+Поставить, настроить, снять:
 
-**Проверки автоматические.** `tools/check.sh` гоняет GitHub Actions на каждый
-pull request и push в `main` — `.github/workflows/ci-release.yml`. Локально перед
-пушем — `make ci` (его же зовёт pre-push lefthook). Нужны bash, git, Python 3 с
-PyYAML (`apt install python3-yaml`) и docker.
-
-Тесты расширения лежат в его `tests/` и находятся сами: `tools/check.sh` гоняет
-каждый исполняемый `extensions/*/*/tests/test-*.sh` (в снимок каталога `tests/` не
-попадает). Живой прогон — отдельно (контейнер с systemd, сеть, по одному под
-замком): `make test-live EXT=<имя> [DISTRO=ubuntu-24.04]`, умолчания — в
-`tests/live.env` расширения. Подробно — [docs/extensions.md](docs/extensions.md#проверки).
-
-## Подключение в образ и на машину
-
-На живой машине — `cream install <name> [KEY=VALUE…]` из источника, в который
-подключён снимок каталога (см. «Снимок каталога cream»). В образе — инструкция
-bisquite в VMFILE:
-
-```vmfile
-EXTENSION docker
-EXTENSION x11vnc X11VNC_PORT=5901 X11VNC_LISTEN=all
+```bash
+sudo cream install --with-deps btop                # --with-deps добирает depends из каталога
+sudo cream install --with-deps locale LOCALE=ru_RU.UTF-8
+cream show locale                                  # настройки и их значения
+sudo cream set locale KEYBOARD_LAYOUTS=us,ru       # проверка по схеме, хук apply
+sudo cream install --with-deps --accept-risk docker   # заметно меняет машину — только с флагом
+sudo cream remove locale
 ```
 
-Форма: `EXTENSION [источник/]имя [КЛЮЧ=ЗНАЧЕНИЕ ...]`; применимость слоя считает
-`cream resolve --phase build`, ставит расширение cream в госте. Параметры — ключи
-`config.keys` манифеста под теми же именами, без таблицы соответствия: README
-каждого расширения называет их именами манифеста. Ручной доставки каталога в
-гостя (`COPY_IN` + запуск скрипта) нет.
+В образе bisquite 3 каталог уже подключён источником `core` — строки VMFILE:
 
-## Версионирование
+```dockerfile
+FROM ubuntu2404:dst-base
+RUN_COMMAND cream install --with-deps desktop DESKTOP_AUTOLOGIN=1
+RUN_COMMAND cream install --with-deps gnome x11vnc
+```
 
-Версия набора расширений — git-тег этого репозитория и `version` в
-`cream-catalog.yaml`; потребители пинят снимок релиза по sha256. Теги — semver,
-их ставит release-please, руками не тегают.
+Расширения, у которых в README сказано «Живая машина — с `--accept-risk`»,
+заметно меняют работающую машину (сеть, экран входа, ядро); на живой машине они
+ставятся только с этим флагом. `--with-deps` добирает `depends`, но не
+способности из `requires`: `x11vnc` ставится после рабочего стола (`gnome`,
+`xfce4`, `lxde`). Секреты — `KEY=-` со stdin или `--params-file`, не в argv. Подробно — [первые шаги](docs/getting-started.md)
+и [расширения в образе bisquite](docs/guides/use-in-bisquite.md).
 
-### Как выпустить версию
+## Расширения
 
-Пошагово с проверками — [runbook 01](docs/runbooks/01_release-catalog.md).
-Workflow `CI and Release`, конфиг — `.github/release_please/`:
+Параметры, этапы и ограничения — в README каждого расширения. Связи (кто что даёт
+и требует) — [справочник каталога](docs/reference/catalog.md). Таблицу строит
+`tools/catalog-docs.sh` из манифестов; CI проверяет, что она не устарела.
 
-1. Сливаешь в `main` коммиты по [Conventional Commits](https://www.conventionalcommits.org/ru/):
-   `fix:` поднимает patch, `feat:` — minor, `!` или `BREAKING CHANGE:` — major;
-   `docs:`, `ci:`, `chore:` версию не трогают.
-   Тип и область — латиницей, текст заголовка и тела — на русском
-   (`feat(rustdesk): пакет для arm64`); подробнее — [CLAUDE.md](CLAUDE.md).
-2. После проверок на `main` release-please открывает (и дальше обновляет)
-   PR «chore(main): release X.Y.Z» с секцией `CHANGELOG.md`.
-3. Владелец сливает этот PR — release-please создаёт тег `vX.Y.Z` и
-   опубликованный релиз с заметками; job `release-assets` собирает на теге
-   снимок каталога и прикладывает к релизу `cream-extensions-X.Y.Z.tar.gz`
-   и `SHA256SUMS` (см. «Снимок каталога cream» ниже).
-4. Тот же прогон запускает в `iamletenkov/bisquite` workflow `extensions-bump.yml`
-   (job `dispatch-bisquite`): там открывается PR, поднимающий подмодуль и
-   `EXT_VERSION`/`ref` в примерах до нового тега. Токен — секрет
-   `BISQUITE_DISPATCH_TOKEN` этого репозитория: fine-grained PAT только на <!-- check-names: allow: имя секрета GitHub -->
-   bisquite с правом Actions: Read and write, действует до 16.10.2027 —
-   до этой даты перевыпустить, иначе job релиза покраснеет.
-   Job идёт, пока переменная репозитория `BISQUITE_BUMP_ENABLED=true` <!-- check-names: allow: имя переменной GitHub -->
-   (включена 2026-10-20); `false` его выключает.
+<!-- catalog:table -->
+Расширений — 43, библиотек — 3.
 
-Пин агента в обёртке `stvor-agent` руками не поднимают: релиз
-`iamletenkov/stvor-agent` запускает здесь `agent-bump.yml` (правки —
-`tools/agent-bump.sh`), и тот открывает PR `feat(stvor-agent): пин агента X.Y.Z`
-с суммами обоих `.deb` из `SHA256SUMS` релиза. База PR — вход `base`, иначе
-переменная `AGENT_BUMP_BASE` (сейчас `main`), иначе `main`.
+| Расширение | Что делает | ОС | Архитектура | Параметры |
+|---|---|---|---|---|
+| [`btop`](extensions/debian/btop/README.md) | TUI-монитор ресурсов btop — пакет apt или статическая сборка релиза по sha256 | Debian, Ubuntu | amd64, arm64 | — |
+| [`can`](extensions/debian/can/README.md) | Шина CAN — can-utils, модули ядра CAN для ядер машины и их автозагрузка | Debian, Ubuntu | amd64, arm64 | `CAN_MODULES_LOAD` |
+| [`can-usb`](extensions/debian/can-usb/README.md) | Модули адаптеров CAN gs_usb, peak_usb, slcan под ядро Sensing (Jetson AGX Orin, L4T 36.4.3) | Debian, Ubuntu | arm64 | — |
+| [`chromium-kiosk`](extensions/debian/chromium-kiosk/README.md) | Киоск пакета chromium-kiosk (Salamek) — своя графическая сессия, config.yml из ключей домена | Debian, Ubuntu | amd64, arm64 | `CHROMIUM_KIOSK_HOME_PAGE`, `CHROMIUM_KIOSK_WINDOW_MODE`, `CHROMIUM_KIOSK_TOUCHSCREEN` и ещё 13 |
+| [`cloud-growroot`](extensions/debian/cloud-growroot/README.md) | Модули cloud-init growpart и resizefs в cloud.cfg — корень растёт до размера носителя | Debian, Ubuntu | amd64, arm64 | — |
+| [`cloud-user-desktop`](extensions/debian/cloud-user-desktop/README.md) | Вендорский рабочий стол — удаление вендорской учётки и ручки desktop для пользователя cloud-init | Debian, Ubuntu | amd64, arm64 | `CLOUD_USER_DESKTOP_REMOVE` |
+| [`code-server`](extensions/debian/code-server/README.md) | code-server — VS Code в браузере от имени пользователя; без пароля не стартует, наружу — через Teleport | Debian, Ubuntu | amd64, arm64 | `CODE_SERVER_USER`, `CODE_SERVER_PASSWORD`, `CODE_SERVER_PORT` и ещё 2 |
+| [`cuda-toolkit`](extensions/debian/cuda-toolkit/README.md) | CUDA Toolkit для NVIDIA Jetson из репозитория jetson/common и системный профиль PATH | Debian, Ubuntu | arm64 | — |
+| [`desktop`](extensions/debian/desktop/README.md) | Ручки рабочего стола — автологин gdm3/lightdm, без автоблокировки и затемнения, группы пользователя | Debian, Ubuntu | amd64, arm64 | `DESKTOP_AUTOLOGIN`, `DESKTOP_AUTOLOGIN_USER`, `DESKTOP_DISABLE_SCREEN_LOCK` и ещё 1 |
+| [`docker`](extensions/debian/docker/README.md) | Docker CE из официального apt-репозитория Docker (download.docker.com) | Debian, Ubuntu | amd64, arm64 | — |
+| [`firefox`](extensions/debian/firefox/README.md) | Firefox из APT-репозитория Mozilla — настоящий .deb, а не снап | Debian, Ubuntu | amd64, arm64 | `FIREFOX_LANGPACK` |
+| [`firewall`](extensions/debian/firewall/README.md) | Файрвол машины — своя таблица nftables inet cream или цепочка iptables-legacy CREAM-INPUT | Debian, Ubuntu | amd64, arm64 | `FIREWALL_ENABLE`, `FIREWALL_BACKEND`, `FIREWALL_SSH_PORTS` |
+| [`gnome`](extensions/debian/gnome/README.md) | GNOME на Xorg и менеджер входа gdm3 — X-сервер и сессия для x11vnc, kiosk, selkies | Debian, Ubuntu | amd64, arm64 | — |
+| [`jetson-stats`](extensions/debian/jetson-stats/README.md) | jtop — монитор NVIDIA Jetson (CPU, GPU, память, питание) и служба jtop.service | Debian, Ubuntu | arm64 | `JETSON_STATS_VERSION` |
+| [`kiosk`](extensions/debian/kiosk/README.md) | Chromium в режиме киоска поверх графического сеанса — от пользователя сеанса, на весь экран | Debian | amd64, arm64 | `KIOSK_USER`, `KIOSK_URL`, `KIOSK_DISPLAY` и ещё 2 |
+| [`l4t-board-fdt`](extensions/debian/l4t-board-fdt/README.md) | Дерево устройств платы Jetson — строка FDT в записи kvm файла extlinux.conf | Debian, Ubuntu | arm64 | `L4T_BOARD` |
+| [`l4t-boot-verify`](extensions/debian/l4t-boot-verify/README.md) | Отметка каждой загрузки Jetson (L4T) успешной — nvbootctrl verify вместо вендорской службы | Debian, Ubuntu | arm64 | — |
+| [`l4t-gstreamer`](extensions/debian/l4t-gstreamer/README.md) | GStreamer для NVIDIA Jetson — аппаратные плагины NVIDIA по версии стека L4T, RTSP, WebRTC, Python | Debian, Ubuntu | arm64 | `GSTREAMER_DEV` |
+| [`l4t-kernel-kvm`](extensions/debian/l4t-kernel-kvm/README.md) | Ядро L4T с KVM для Jetson Nano/TX1 (t210) — сборка из исходников NVIDIA, загрузка по умолчанию | Debian, Ubuntu | arm64 | `L4T_KERNEL_JOBS`, `L4T_KERNEL_LOCALVERSION`, `L4T_KERNEL_CC` и ещё 2 |
+| [`l4t-opencv`](extensions/debian/l4t-opencv/README.md) | OpenCV 4.8.0 для NVIDIA Jetson (cv2 с GStreamer) — пакеты NVIDIA на R36, проверка образа на R32 | Debian, Ubuntu | arm64 | — |
+| [`l4t-pytorch`](extensions/debian/l4t-pytorch/README.md) | PyTorch и torchvision с CUDA для NVIDIA Jetson — колесо NVIDIA и сборка torchvision (R36), проверка образа (R32) | Debian, Ubuntu | arm64 | `TORCH_CUDA_ARCH_LIST` |
+| [`l4t-tensorflow`](extensions/debian/l4t-tensorflow/README.md) | TensorFlow с CUDA для NVIDIA Jetson — колесо NVIDIA 2.16.1, cuDNN 9 и keras 3.3.3 | Debian, Ubuntu | arm64 | — |
+| [`l4t-vendor-desktop`](extensions/debian/l4t-vendor-desktop/README.md) | Рабочий стол образа вендора L4T R32 (Jetson Nano) как x11-server, display-manager, desktop-session | Ubuntu ≥ 18.04 | arm64 | — |
+| [`locale`](extensions/debian/locale/README.md) | Системная локаль и раскладки клавиатуры — система, консоль, Xorg/GDM, умолчания GNOME | Debian, Ubuntu | amd64, arm64 | `LOCALE`, `KEYBOARD_LAYOUTS`, `KEYBOARD_TOGGLE` |
+| [`lxde`](extensions/debian/lxde/README.md) | LXDE и менеджер входа lightdm — X-сервер и сессия для x11vnc, kiosk, selkies | Debian, Ubuntu | amd64, arm64 | — |
+| [`network-manager`](extensions/debian/network-manager/README.md) | NetworkManager и wpasupplicant в образе — чтобы Wi-Fi из манифеста устройства поднялся | Debian, Ubuntu | amd64, arm64 | — |
+| [`nocloud-cidata`](extensions/debian/nocloud-cidata/README.md) | cloud-init читает NoCloud-seed с раздела с меткой cidata | Debian, Ubuntu | amd64, arm64 | — |
+| [`nvidia`](extensions/debian/nvidia/README.md) | Драйвер NVIDIA заданной ветки (по умолчанию 580, открытые модули) под ядра машины | Debian, Ubuntu | amd64 | `NVIDIA_DRIVER_VERSION`, `NVIDIA_KERNEL_MODULES`, `NVIDIA_SOURCE` |
+| [`nvidia-container-toolkit`](extensions/debian/nvidia-container-toolkit/README.md) | NVIDIA Container Toolkit для Docker — среда выполнения nvidia без смены default-runtime | Debian, Ubuntu | amd64 | `NVIDIA_CTK_VERSION` |
+| [`nvidia-jetpack`](extensions/debian/nvidia-jetpack/README.md) | Станция прошивки NVIDIA Jetson на amd64 — инструментарий L4T, NFS, binfmt aarch64, скрипты | Ubuntu, Debian | amd64 | — |
+| [`pixelflux-tegra`](extensions/debian/pixelflux-tegra/README.md) | Аппаратное кодирование Selkies на Jetson — подкладка libxcb, шим gbm, проверка бэкенда Tegra | Debian, Ubuntu | arm64 | — |
+| [`pixelflux-v4l2m2m`](extensions/debian/pixelflux-v4l2m2m/README.md) | Аппаратное кодирование Selkies через V4L2 M2M (Raspberry Pi) — проверка бэкенда на сборке и загрузке | Debian, Ubuntu | arm64 | — |
+| [`rustdesk`](extensions/debian/rustdesk/README.md) | RustDesk — клиент и служба удалённой поддержки, адреса своего сервера из ключей домена | Debian, Ubuntu | amd64, arm64 | `RUSTDESK_VERSION`, `RUSTDESK_SHA256_AMD64`, `RUSTDESK_SHA256_ARM64` и ещё 6 |
+| [`selkies`](extensions/debian/selkies/README.md) | Selkies — рабочий стол X-сессии в браузере; без пароля не стартует, наружу — через Teleport | Debian, Ubuntu | amd64, arm64 | `SELKIES_ADDR`, `SELKIES_PORT`, `SELKIES_MODE` и ещё 26 |
+| [`sensing-gmsl2-camera`](extensions/debian/sensing-gmsl2-camera/README.md) | Камеры Sensing GMSL2 на Jetson AGX Orin (SG8A-AGON-G2Y-A1, L4T 36.4.3) — ядро, модули, оверлей, запуск на загрузке | Debian, Ubuntu | arm64 | `SENSING_GMSLMODE`, `SENSING_CAMERA_CONTROLS`, `SENSING_BOOST_CLOCK` |
+| [`stvor-agent`](extensions/debian/stvor-agent/README.md) | Агент портала Stvor — метки env и space узла Teleport с портала | Debian ≥ 12, Ubuntu ≥ 20.04 | amd64, arm64 | `STVOR_AGENT_VERSION`, `STVOR_AGENT_SHA256`, `STVOR_AGENT_MIRROR` и ещё 3 |
+| [`teleport`](extensions/debian/teleport/README.md) | Узел Teleport — бинарь, регистрация (join), рендер teleport.yaml, приложения apps.d | Debian ≥ 12, Ubuntu ≥ 20.04 | amd64, arm64 | `TELEPORT_VERSION`, `TELEPORT_SHA256`, `TELEPORT_MIRROR` и ещё 14 |
+| [`tensorrt`](extensions/debian/tensorrt/README.md) | TensorRT для NVIDIA Jetson — движок, биндинги Python и компилятор DLA (R36), проверка движка образа (R32) | Debian, Ubuntu | arm64 | — |
+| [`vino-vnc`](extensions/debian/vino-vnc/README.md) | VNC через vino (GNOME) в сессии пользователя cloud-init — настройки системным dconf, по умолчанию только петля | Debian, Ubuntu | amd64, arm64 | `VINO_PORT`, `VINO_LISTEN`, `VINO_ENCRYPTION` и ещё 2 |
+| [`wallpaper`](extensions/debian/wallpaper/README.md) | Обои рабочего стола — системное умолчание GNOME (dconf), Xfce (xfconf) и LXDE (pcmanfm) из картинок расширения | Debian, Ubuntu | amd64, arm64 | `WALLPAPER_IMAGE`, `WALLPAPER_MODE` |
+| [`x11vnc`](extensions/debian/x11vnc/README.md) | VNC к рабочему столу X11 пользователя cloud-init — x11vnc@<пользователь>, по умолчанию только петля | Debian, Ubuntu | amd64, arm64 | `X11VNC_PORT`, `X11VNC_DISPLAY`, `X11VNC_LISTEN` и ещё 2 |
+| [`xfce4`](extensions/debian/xfce4/README.md) | Xfce4 и менеджер входа lightdm — X-сервер и сессия для x11vnc, kiosk, selkies | Debian, Ubuntu | amd64, arm64 | — |
+| [`yq`](extensions/debian/yq/README.md) | Статический бинарь mikefarah/yq в /usr/local/bin по пину версии и sha256 | Debian ≥ 12, Ubuntu ≥ 18.04 | amd64, arm64 | `YQ_VERSION`, `YQ_SHA256` |
 
-### Что тянет выпуск
+Библиотеки — общий код, который другие расширения объявляют в `depends`; сами по себе их не ставят:
 
-Цепочка выпусков целиком — runbook портала Stvor «цепочка выпусков cream».
-Здесь — входы и выходы этого репозитория:
-
-| Направление | Кто запускает | Что делает | Выключатель / секрет |
+| Библиотека | Что даёт | ОС | Архитектура |
 |---|---|---|---|
-| выпуск cream → сюда | job `dispatch-extensions` в `iamletenkov/cream` | `cream-bump.yml`: PR `build(tools): пин cream X.Y.Z` (`tools/cream-pin.env`, суммы из `SHA256SUMS`) | там: `EXTENSIONS_BUMP_ENABLED`, `EXTENSIONS_DISPATCH_TOKEN` |
-| выпуск stvor-agent → сюда | job `dispatch-extensions` в `iamletenkov/stvor-agent` | `agent-bump.yml`: PR пина обёртки `stvor-agent` | там: `EXTENSIONS_BUMP_ENABLED`, `EXTENSIONS_DISPATCH_TOKEN` |
-| выпуск отсюда → bisquite | job `dispatch-bisquite` | `extensions-bump.yml` в bisquite | здесь: `BISQUITE_BUMP_ENABLED`, `BISQUITE_DISPATCH_TOKEN` <!-- check-names: allow: имена переменной и секрета GitHub --> |
-| выпуск отсюда → Stvor | job `dispatch-stvor` | `robot-pins-bump.yml` в stvor: PR `CREAM_EXTENSIONS_*` в `.env.example` | здесь: `STVOR_BUMP_ENABLED`, `STVOR_DISPATCH_TOKEN` |
+| [`apt-guard`](extensions/debian/apt-guard/README.md) | Библиотека — remove снимает только свои пакеты apt, с проверкой симуляцией | Debian, Ubuntu | amd64, arm64 |
+| [`cloud-user`](extensions/debian/cloud-user/README.md) | Библиотека — имя пользователя cloud-init для хуков других расширений | Debian, Ubuntu | amd64, arm64 |
+| [`l4t`](extensions/debian/l4t/README.md) | Общие функции расширений стека L4T — версия L4T и OPENBLAS_CORETYPE для Jetson | Debian, Ubuntu | arm64 |
+<!-- /catalog:table -->
 
-Выключатель — переменная репозитория (`gh variable set <ИМЯ> --body true`;
-выключить — `gh variable delete <ИМЯ>`). Без секрета job пишет предупреждение и
-выходит зелёным. Руками то же самое: Actions → Cream Bump → Run workflow
-(`tag` пустой — последний выпуск cream) или `tools/cream-bump.sh <тег> <SHA256SUMS>`.
+## Документация
 
-### Снимок каталога cream
+- [Первые шаги](docs/getting-started.md) — подключить каталог, поставить и настроить расширение.
+- Руководства: [расширения в образе bisquite](docs/guides/use-in-bisquite.md) ·
+  [настройки на работающей машине](docs/guides/settings.md) ·
+  [написать расширение](docs/guides/write-extension.md) ·
+  [настройка на загрузке и `every_boot`](docs/guides/configure-lifecycle.md) ·
+  [тестирование](docs/guides/testing.md) · [выпуск](docs/guides/release.md)
+- Справочник: [каталог](docs/reference/catalog.md) ·
+  [способности](docs/reference/capabilities.md) ·
+  [структура репозитория](docs/reference/layout.md) ·
+  [правила проверок](docs/reference/lint-rules.md) ·
+  [переменные](docs/reference/environment.md) ·
+  [шаблон README расширения](docs/reference/extension-readme.md)
+- [Все документы](docs/README.md) · [изменения по версиям](CHANGELOG.md) ·
+  [история каталога](docs/history/README.md)
 
-Потребители cream (портал Stvor, bisquite) берут каталог не git-чекаутом,
-а снимком — `tar.gz`, собранным `cream catalog pack` (спека cream §9):
+Формат расширения, команды и коды cream — в документации cream:
+[манифест](https://github.com/iamletenkov/cream/blob/main/docs/reference/manifest.md),
+[CLI](https://github.com/iamletenkov/cream/blob/main/docs/reference/cli.md).
 
-```bash
-make snapshot        # dist/cream-extensions-<v>.tar.gz + dist/SHA256SUMS из HEAD
-make snapshot-check  # две сборки дают одни байты; cream принимает снимок
-```
+## Совместимость
 
-Снимок собирается из коммита (`REF`, по умолчанию `HEAD`), а не из рабочего
-дерева; `SOURCE_DATE_EPOCH` — время коммита, cream — по пину
-`tools/cream-pin.env` в контейнере `debian:12`, поэтому сборка одного коммита
-воспроизводима побайтно. В снимок попадают `cream-catalog.yaml`, `LICENSE`,
-`NOTICE` и `roots` каталога (все расширения, без `tests/`); `tools/`, `docs/` и
-прочее — нет. Версия каталога —
-`version` в `cream-catalog.yaml`, её поднимает release-please вместе с тегом.
+| | |
+|---|---|
+| cream | ≥ 1.2.0 для каталога целиком; у каждого расширения своё `cream:` в манифесте; проверки идут на пине [`tools/cream-pin.env`](tools/cream-pin.env) |
+| bisquite | ≥ 3.0 — везёт cream и снимок каталога сам; строки `RUN_COMMAND cream install` |
+| ОС | Debian 12 и 13, Ubuntu 18.04–24.04 — по `platform.os` расширения (таблица выше) |
+| Архитектуры | `amd64`, `arm64` — по `platform.arch` расширения |
+| Версии | каталог — semver, тег `vX.Y.Z` и снимок в выпуске; у расширения своя версия, она растёт при любом изменении его дерева |
 
-Готовый снимок лежит в релизе `vX.Y.Z`; подключение:
+## Участие
 
-```bash
-cream source add cream-extensions \
-  --archive https://github.com/iamletenkov/cream-extensions/releases/download/vX.Y.Z/cream-extensions-X.Y.Z.tar.gz \
-  --sha256 <сумма из SHA256SUMS релиза> --sync
-```
-
-Stvor раздаёт тот же файл со своего зеркала (`--archive file://…`) по пину
-sha256. Подробнее — [docs/extensions.md](docs/extensions.md#снимок-каталога-для-cream).
-
-## Зависимости и применимость
-
-Объявлены в `extension.yaml` (спека cream §4): `platform` (`family: deb`, `arch`),
-`targets` (`build`, `live`), `depends` (расширения, которые ставятся раньше,
-с диапазоном версий), `provides`/`requires` (способности), `conflicts` (по имени
-или по способности). Применимость слоя и порядок по `depends` считает
-`cream resolve`; граф целиком проверяет `cream validate --catalog .` при каждом
-`make ci`. Коротко, что объявлено:
-
-- `gnome`, `xfce4`, `lxde` дают `x11-server` + `display-manager` + `desktop-session`
-  и взаимоисключающи (конфликт по способности `desktop-session`); ручки
-  рабочего стола — домен расширения `desktop`, от которого они зависят;
-- `l4t-vendor-desktop` даёт те же три способности на Jetson Nano (L4T R32),
-  ничего не ставя: проверяет рабочий стол образа вендора; с тремя
-  остальными взаимоисключающ так же;
-- `x11vnc`, `vino-vnc` и `kiosk` требуют `x11-server` и `display-manager` —
-  то самое отношение, которое держится только порядком слоёв в VMFILE.
-  `x11vnc` и `vino-vnc` дают одну способность `remote-desktop`, но конфликта
-  не объявляют: мешают друг другу их умолчания (порт 5900), а это лечится
-  параметром — разбор в `extensions/debian/vino-vnc/README.md`;
-- `jetson-stats` даёт `jetson-monitor` и объявляет только `arm64`: Jetson
-  бывает только aarch64, и вдобавок расширение отказывает на образе без
-  `/etc/nv_tegra_release`;
-- `nvidia` 2.0.0 даёт `gpu-driver-nvidia`: драйвер строго под ядро образа,
-  настройки `NVIDIA_DRIVER_VERSION` (580), `NVIDIA_KERNEL_MODULES`
-  (`open`|`proprietary`), `NVIDIA_SOURCE` (`archive`|`ppa`);
-  `nvidia-container-toolkit` 1.0.0 (`NVIDIA_CTK_VERSION`) требует
-  `gpu-driver-nvidia` и `container-runtime`, регистрирует среду `nvidia`
-  в Docker без смены `default-runtime`;
-- рабочая машина робота: `can` (модули CAN под ядро образа, `can-bus`),
-  `firewall` (своя таблица nftables `inet cream` или цепочка iptables-legacy
-  `CREAM-INPUT` на ядрах без `nft_ct`, Docker не задевает,
-  `host-firewall`), `locale` (локаль и раскладки, `system-locale`), `rustdesk`
-  (`.deb` по sha256, адреса своего сервера — на устройстве, `remote-support`);
-  ничего не требуют и ни с чем не конфликтуют;
-- `docker` даёт `container-runtime` и ни с чем не конфликтует: расширения
-  слиты 2026-09-03, когда замер показал, что `get.docker.com` ставит из того
-  же `download.docker.com` и вдобавок ломает сборку на bionic. Разбор —
-  в `extensions/debian/docker/README.md`.
-
-Полная таблица «кто что даёт и из какого кода это выведено» —
-в `docs/extensions.md`.
+Изменения — pull request в `main` по [Conventional Commits](https://www.conventionalcommits.org/ru/)
+(тип латиницей, текст по-русски). Перед PR — `make ci`; новое расширение —
+только каркасом `tools/new-extension.sh` ([руководство](docs/guides/write-extension.md)).
+Регламент для людей и агентов — [AGENTS.md](AGENTS.md).
 
 ## Лицензия
 

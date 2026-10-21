@@ -20,7 +20,8 @@
 # Mutually exclusive with gnome, xfce4, lxde by capability (desktop-session).
 schema: cream/v1
 name: l4t-vendor-desktop
-version: 1.0.0
+version: 1.0.1
+# 1.0.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: Рабочий стол образа вендора L4T R32 (Jetson Nano) как x11-server, display-manager, desktop-session
 cream: ">=1.0.0"
 platform:

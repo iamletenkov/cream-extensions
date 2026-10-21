@@ -4,32 +4,35 @@
 (`ip link set can0 type can bitrate …`), модули ядра CAN **для ядер машины** и
 их автозагрузка через `/etc/modules-load.d/can.conf`.
 
-```
-cream install can                                       # живая машина (live: yes)
-cream install can CAN_MODULES_LOAD="can can_raw vcan mttcan"
-cream remove can
-EXTENSION can                                           # образ bisquite
-```
+<!-- catalog:facts -->
+| | |
+|---|---|
+| ОС | Debian, Ubuntu |
+| Архитектура | amd64, arm64 |
+| cream | ≥ 1.0.0 |
+| Даёт | `can-bus` |
+| Требует | — |
+| Зависит от | [`apt-guard`](../apt-guard/README.md) |
+| Конфликтует с | — |
+| Хуки | `install`, `apply`, `remove` |
+| Настройка на загрузке | — |
+| Живая машина | да |
+<!-- /catalog:facts -->
 
-> **С 2.0.0 — cream/v1.** `install.sh` стал хуком `hooks/install`, `knobs.apply`
-> и `render-modules-load.sh` — одним хуком `hooks/apply` (его же зовёт `install`),
-> схема `knobs` — `config.keys` манифеста; появился хук `remove`. Настройки —
-> домен cream `/etc/cream/can/config` (`cream show/set can`), ключ не
-> переименован. Без ядер в `/lib/modules` (контейнер) `install` выходит с
-> кодом 20 — «неприменимо», а не 1. Каталог в госте — `/opt/cream/ext/can/`.
+## Что делает
 
-## Манифест
-
-| Поле | Значение | Почему |
-|---|---|---|
-| `targets` | `build: exec`, `live: yes` | пакеты и один файл; ядро не меняется: на Ubuntu добавляется только `linux-modules-extra` **уже установленного** ядра, `apt-mark hold`, смены и удаления ядра нет |
-| хуки | `install`, `apply`, `remove` | собственный `apply` (спека cream §8.4): переписать `can.conf` и поставить в очередь `systemd-modules-load`; `configure` на загрузке не нужен — модули грузит `systemd-modules-load` |
-| `provides` | `can-bus` | модули CAN для ядер машины, `candump`/`cansend` |
-
-USB/serial-адаптеры на ядре Sensing для AGX Orin — отдельное расширение
-[`can-usb`](../can-usb/README.md) (сборка модулей под ядро), а не это.
-
-## Что ставится
+- **`install`** — ставит пакеты и проверяет модули для каждого ядра машины (таблица
+  ниже), затем зовёт `apply`. Ядро не меняется: на Ubuntu добавляется только
+  `linux-modules-extra` **уже установленного** ядра, смены и удаления ядра нет.
+  Без ядер в `/lib/modules` (контейнер) — код 20 («неприменимо») до любого apt.
+- **`apply`** (собственный, спека cream §8.4; его же зовёт `install`) — переписывает
+  `/etc/modules-load.d/can.conf` из `CAN_MODULES_LOAD` и, если файл изменился, ставит
+  в очередь `systemctl --no-block restart systemd-modules-load`. Своего `configure`
+  на загрузке нет: модули грузит `systemd-modules-load`.
+- **`remove`** — снимает `/etc/modules-load.d/can.conf` и `can-utils`, если его
+  поставил `install` (запись в `/var/lib/cream/ext/can/packages`). **Не**
+  снимаются: `iproute2`, `kmod`, `linux-modules-extra-*` и всё, что относится к
+  ядрам; загруженные модули — до перезагрузки.
 
 | Что | Откуда |
 |---|---|
@@ -44,14 +47,78 @@ USB/serial-адаптеры на ядре Sensing для AGX Orin — отдел
 `modinfo -k <ядро> <модуль>`; на Ubuntu недостающее ставит пакетом
 `linux-modules-extra-<ядро>`. Модуля нет и после этого (облачное ядро Debian,
 `linux-kvm` Ubuntu) — **отказ** со списком модулей, а не немой образ без CAN.
-Ядер нет вовсе (контейнер) — код 20 до любого apt.
 
-Если на Ubuntu нет метапакета `linux-image-generic*` (база на
-`linux-image-virtual`), `install` предупреждает: следующее ядро из
-`apt upgrade` придёт без `linux-modules-extra`, и CAN после перезагрузки
-пропадёт. Машины на `linux-generic` (Ubuntu Desktop) это не касается.
+USB/serial-адаптеры на ядре Sensing для AGX Orin — отдельное расширение
+[`can-usb`](../can-usb/README.md) (сборка модулей под ядро), а не это.
 
-## Jetson / L4T
+## Параметры
+
+<!-- catalog:params -->
+| Ключ | Тип | Умолчание | Что задаёт |
+|---|---|---|---|
+| `CAN_MODULES_LOAD` | строка `^[a-z0-9_-]+( [a-z0-9_-]+)*$` | `can can_raw vcan` | модули для автозагрузки через пробел; каждый проверяется для ядер машины; пусто — /etc/modules-load.d/can.conf удаляется |
+<!-- /catalog:params -->
+
+Домен `can`, файл `/etc/cream/can/config`. При `install` каждый модуль
+`CAN_MODULES_LOAD` проверяется для всех ядер машины. При `cream set` хук `apply`
+грузит новые модули сразу; модуль, которого нет для текущего ядра, —
+предупреждение. Убранные из списка остаются загруженными до перезагрузки
+или `sudo modprobe -r <модуль>`. Новый список при `cream set` не сверяется со
+всеми ядрами (это делает только `install`); проверить заново —
+`sudo cream install --reinstall can`.
+
+## Установка
+
+На живой машине:
+
+```bash
+sudo cream install --with-deps can
+sudo cream install --with-deps can CAN_MODULES_LOAD="can can_raw vcan mttcan"
+cream show can
+sudo cream set can CAN_MODULES_LOAD="can can_raw vcan gs_usb"
+sudo cream remove can
+```
+
+В образе bisquite (VMFILE):
+
+```dockerfile
+RUN_COMMAND cream install --with-deps can
+RUN_COMMAND cream install --with-deps can CAN_MODULES_LOAD="can can_raw vcan gs_usb"
+```
+
+Манифест записи / развёртывания: обычно ничего не нужно — модули и автозагрузка
+уже в образе. Свой список — строкой первой загрузки (`firstboot-commands`
+манифеста записи, `firstboot_commands` манифеста развёртывания ВМ):
+
+```yaml
+firstboot-commands:
+  - 'cream set can CAN_MODULES_LOAD="can can_raw vcan peak_usb"'
+```
+
+Хук `apply` не ждёт systemd (`systemctl --no-block`), поэтому `cream set`
+безопасен и на первой загрузке.
+
+## Этапы
+
+| Когда | Что происходит |
+|---|---|
+| сборка образа / `cream install` | пакеты, проверка модулей для всех ядер, `can.conf` (через `apply`) |
+| загрузка | модули грузит `systemd-modules-load` по `can.conf` |
+| `cream set` (хук `apply`) | `can.conf` переписан, `systemd-modules-load` перезапущен без ожидания |
+| `cream remove` | `can.conf` и свой `can-utils` сняты |
+
+## Известные ограничения
+
+- На Ubuntu без метапакета `linux-image-generic*` (база на
+  `linux-image-virtual`) `install` предупреждает: следующее ядро из
+  `apt upgrade` придёт без `linux-modules-extra`, и CAN после перезагрузки
+  пропадёт. Машины на `linux-generic` (Ubuntu Desktop) это не касается.
+- На ядре L4T нет `slcan`, `gs_usb`, `peak_usb` — предупреждение, а не отказ (см.
+  «Jetson / L4T»). На самой плате Jetson не запускалось.
+
+## Подробности
+
+### Jetson / L4T
 
 Ядро L4T (`<версия>-tegra`, например `5.15.148-tegra` у r36.4.3 / JetPack 6.2)
 ставится пакетами NVIDIA, `linux-modules-extra` для него нет — `hooks/install`
@@ -89,65 +156,14 @@ USB/serial-адаптеры на ядре Sensing для AGX Orin — отдел
 Рекомендованный список автозагрузки для Jetson (не умолчание —
 умолчание общее для всех платформ):
 
-```vmfile
-EXTENSION can CAN_MODULES_LOAD="can can_raw vcan mttcan"
+```dockerfile
+RUN_COMMAND cream install --with-deps can CAN_MODULES_LOAD="can can_raw vcan mttcan"
 ```
 
 `mttcan` — драйвер контроллеров CAN самого SoC (интерфейсы `can0`, `can1`;
 трансивер на шину — внешний).
 
-## Настройки
-
-Домен `can`, файл `/etc/cream/can/config`, схема — `config.keys` манифеста.
-
-| Ключ | Умолчание | Что |
-|---|---|---|
-| `CAN_MODULES_LOAD` | `can can_raw vcan` | модули автозагрузки через пробел; при `install` каждый проверяется для ядер машины; пусто — `can.conf` удаляется |
-
-## Сборка
-
-```vmfile
-EXTENSION can
-EXTENSION can CAN_MODULES_LOAD="can can_raw vcan gs_usb"
-```
-
-## Манифест записи / развёртывания
-
-Обычно ничего не нужно: модули и автозагрузка уже в образе. Свой список —
-строкой первой загрузки (`firstboot-commands` манифеста записи,
-`firstboot_commands` манифеста развёртывания ВМ):
-
-```yaml
-firstboot-commands:
-  - 'cream set can CAN_MODULES_LOAD="can can_raw vcan peak_usb"'
-```
-
-Хук `apply` не ждёт systemd (`systemctl --no-block`), поэтому `cream set`
-безопасен и на первой загрузке.
-
-## На работающей машине
-
-```bash
-cream show can
-sudo cream set can CAN_MODULES_LOAD="can can_raw vcan gs_usb"
-```
-
-Хук `apply` переписывает `/etc/modules-load.d/can.conf` и, если файл
-изменился, ставит в очередь `systemctl --no-block restart systemd-modules-load`
-— новые модули грузятся сразу; модуль, которого нет для текущего ядра, —
-предупреждение. Убранные из списка остаются загруженными до перезагрузки
-или `sudo modprobe -r <модуль>`. Новый список при `cream set` не сверяется со
-всеми ядрами (это делает только `install`); проверить заново —
-`sudo cream install --reinstall can`.
-
-## Удаление
-
-`cream remove can` снимает `/etc/modules-load.d/can.conf` и `can-utils`, если
-его поставил `install` (запись в `/var/lib/cream/ext/can/packages`). **Не**
-снимаются: `iproute2`, `kmod`, `linux-modules-extra-*` и всё, что относится к
-ядрам; загруженные модули — до перезагрузки.
-
-## Проверка
+### Проверка
 
 ```bash
 which candump cansend                         # обе утилиты
@@ -158,17 +174,13 @@ sudo ip link add dev vcan0 type vcan && sudo ip link set vcan0 up
 candump vcan0 &  cansend vcan0 123#DEADBEEF   # кадр виден в candump
 ```
 
-Тесты: H — `tests/test-can.sh` (хуки на подменённом корне: нет ядер — 20,
-Debian, Ubuntu с `linux-modules-extra`, несколько ядер, `modules.builtin`,
-L4T с `mttcan` и без USB-модулей, `apply` с systemd и без, `remove`);
-L — `make test-live EXT=can` (`debian-12`, `ubuntu-24.04`): в контейнере ядер
-нет, `install` обязан вернуть 20 (`LIVE_EXPECT_SKIP=1`).
+### Проверено на
 
-Проверено в 1.x (раскладка 2) в контейнерах `ubuntu:24.04` (ядро
+До перехода на cream/v1 — в контейнерах `ubuntu:24.04` (ядро
 6.8.0-147-generic, модули доставлены `linux-modules-extra`) и `debian:12`
 (6.1.0-53-amd64) с ядром, поставленным в контейнер.
 
-arm64 / L4T (1.1.0, 2026-10-15) — контейнер `ubuntu:22.04` arm64 (qemu-user)
+arm64 / L4T (до перехода на cream/v1, 2026-10-15) — контейнер `ubuntu:22.04` arm64 (qemu-user)
 с раскладкой ядра L4T r36.4.3: `/lib/modules/5.15.148-tegra` из
 `nvidia-l4t-kernel` плюс `updates/` из `nvidia-l4t-kernel-oot-modules`
 (`modules.dep` пакета уже знает `mttcan`). Умолчание — успех, три
@@ -177,3 +189,11 @@ arm64 / L4T (1.1.0, 2026-10-15) — контейнер `ubuntu:22.04` arm64 (qem
 успех; с `gs_usb` — отказ; `can_raw`, перенесённый во встроенные
 (`modules.builtin`, без файла `.ko`), — найден; удалённый `vcan` — отказ.
 На самой плате не запускалось.
+
+## Проверки
+
+- **H** — `tests/test-can.sh` (хуки на подменённом корне: нет ядер — 20,
+  Debian, Ubuntu с `linux-modules-extra`, несколько ядер, `modules.builtin`,
+  L4T с `mttcan` и без USB-модулей, `apply` с systemd и без, `remove`).
+- **L** — `make test-live EXT=can` (`debian-12`, `ubuntu-24.04`): в контейнере ядер
+  нет, `install` обязан вернуть 20 (`LIVE_EXPECT_SKIP=1`).

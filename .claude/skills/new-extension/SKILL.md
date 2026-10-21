@@ -5,7 +5,7 @@ argument-hint: <имя> [--stage system|early|cloud-user|graphical] [--live yes|
 ---
 # /new-extension $ARGUMENTS
 
-Формат — cream/v1: [docs/extensions.md](../../../docs/extensions.md) («Формат cream/v1»), спека — `cream:docs/specs/2026-10-18-cream-core.md` §4–§8. Пути — `/opt/cream/ext/<имя>`, `/etc/cream/<имя>`, `/var/lib/cream/ext/<имя>`; имён `bisquite-*` и `lib/` в новом расширении нет (гейт `tools/check-names.sh`).
+Формат — cream/v1: [docs/guides/write-extension.md](../../../docs/guides/write-extension.md), README — по [шаблону](../../../docs/reference/extension-readme.md); формат — документация cream (`docs/guides/write-extension.md`, `docs/reference/manifest.md`). Пути — `/opt/cream/ext/<имя>`, `/etc/cream/<имя>`, `/var/lib/cream/ext/<имя>`; имён `bisquite-*` и `lib/` в новом расширении нет (гейт `tools/check-names.sh`).
 
 1. Классифицируй: новое расширение — минимум bounded; новая библиотека (`kind: library`) или способность — архитектурная (спека).
 2. Каркас: `tools/new-extension.sh <имя> [ключи]` (`--help` — справка). Копировать соседний каталог нельзя: вместе с ним копируются чужие способности и пути. Стадия `cloud-user` даёт `cream: ">=1.1.1"`, `early`/`graphical` — `">=1.1.0"`.

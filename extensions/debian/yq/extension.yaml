@@ -3,7 +3,8 @@
 # is another program (kislyuk, a jq wrapper) with an incompatible query language.
 schema: cream/v1
 name: yq
-version: 2.1.0
+version: 2.1.1
+# 2.1.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: Статический бинарь mikefarah/yq в /usr/local/bin по пину версии и sha256
 cream: ">=1.0.0"
 platform:

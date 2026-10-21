@@ -26,7 +26,7 @@ echo "== манифест =="
 # shellcheck disable=SC2016  # the python expression is the test data
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "мажор 2" 2.0.0 "$(mf 'm["version"]')"
+eq "мажор 2" 2.0.1 "$(mf 'm["version"]')"
 eq "build: exec" exec "$(mf 'm["targets"]["build"]')"
 eq "live: no" no "$(mf 'm["targets"]["live"]')"
 check "live_note есть" test -n "$(mf 'm["targets"].get("live_note", "")')"

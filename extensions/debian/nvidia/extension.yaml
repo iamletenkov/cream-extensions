@@ -14,7 +14,8 @@
 # `cream remove --forget nvidia` drops the record (ruling R9, live: confirm).
 schema: cream/v1
 name: nvidia
-version: 3.0.0
+version: 3.0.1
+# 3.0.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: Драйвер NVIDIA заданной ветки (по умолчанию 580, открытые модули) под ядра машины
 cream: ">=1.0.0"
 platform:

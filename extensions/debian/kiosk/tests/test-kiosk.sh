@@ -65,7 +65,7 @@ echo "== манифест =="
 # eval: test-only literal expressions over our own manifest, as in nvidia-jetpack.
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "версия 4.1.0 (every_boot)" 4.1.0 "$(mf 'm["version"]')"
+eq "версия 4.1.1 (every_boot)" 4.1.1 "$(mf 'm["version"]')"
 eq "cream >=1.2.0 (every_boot, спека cream §10.9)" ">=1.2.0" "$(mf 'm["cream"]')"
 eq "configure на каждой загрузке (аудит 2026-10-21)" True "$(mf 'm["hooks"]["configure"].get("every_boot")')"
 eq "live: confirm" confirm "$(mf 'm["targets"]["live"]')"

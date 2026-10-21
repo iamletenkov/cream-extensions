@@ -23,7 +23,8 @@
 # 2.0.0: камеры ушли из базового образа в расширение sensing-gmsl2-camera.
 schema: cream/v1
 name: nvidia-jetpack
-version: 3.1.0
+version: 3.1.1
+# 3.1.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: Станция прошивки NVIDIA Jetson на amd64 — инструментарий L4T, NFS, binfmt aarch64, скрипты
 cream: ">=1.0.0"
 platform:

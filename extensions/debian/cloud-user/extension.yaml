@@ -5,7 +5,8 @@
 schema: cream/v1
 name: cloud-user
 kind: library
-version: 1.0.1
+version: 1.0.2
+# 1.0.2: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: Библиотека — имя пользователя cloud-init для хуков других расширений
 cream: ">=1.0.0"
 platform:

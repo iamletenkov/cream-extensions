@@ -3,64 +3,42 @@
 Драйверы камер Sensing GMSL2 для **Jetson AGX Orin Developer Kit** (модуль
 p3701-0000, носитель p3737-0000) с адаптером **SG8A-AGON-G2Y-A1** на
 **L4T 36.4.3** (JetPack 6.2): библиотека ISP из оверлея камер NVIDIA, замена
-ядра, модули `.ko`, DTB-оверлей, новая запись в загрузочном меню.
+ядра, модули `.ko`, DTB-оверлей, новая запись в загрузочном меню, запуск камер
+на загрузке.
 
-> **С 4.0.0 — всё про камеры только здесь.** Базовый образ из
-> `nvidia-jetpack` камер больше не несёт (решение владельца 2026-09-18):
-> ни `/opt/sensing`, ни подменённой `libnvisppg.so`, ни пакетов камер.
-> Расширение само скачивает оверлей камер NVIDIA `overlay_camera_36.4.3.tbz2`,
-> сверяет его с закреплённой sha256 и подменяет `libnvisppg.so` через
-> `dpkg-divert`. Два следствия для VMFILE: сборке нужна сеть до
-> `developer.nvidia.com`, и расширение **отказывает на любом L4T, кроме
-> 36.4.3** — раньше оно проверяло только плату.
-
-> **С 4.1.0 — ядро закреплено от apt.** Установка делает `apt-mark hold`
-> пакетов ядра L4T (список и причины — «Обновления apt»): в репозитории
-> NVIDIA уже лежат 36.4.4 и 36.4.7, и `apt upgrade` вернул бы штатное ядро
-> без драйверов Sensing.
-
-> **С 5.0.0 — cream/v1.** `install.sh` стал хуком `hooks/install`, появились хуки
-> `apply` и `remove`; `live: confirm` (живая плата — с подтверждением). Каталог в госте —
-> `/opt/cream/ext/sensing-gmsl2-camera/`. Нет `/etc/nv_tegra_release` — код **20**
-> (рулинг Р11); что-то на пути загрузки поменялось — код **10** (перезагрузка), повтор
-> без изменений — 0. Настройки — ключи cream (`/etc/cream/sensing-gmsl2-camera/config`)
-> вместо домена `sensing-camera` библиотеки layout 2.
->
-> Юниты зовут действия по абсолютному пути `/opt/cream/ext/sensing-gmsl2-camera/actions/…`
-> с `EnvironmentFile=/etc/cream/sensing-gmsl2-camera/config` (рулинг Р7); действия
-> заново проверяют имя узла и значения, прежде чем они дойдут до `v4l2-ctl`. Файлы
-> пишутся через временный файл и переименование; сборка — во временном каталоге под
-> `/var/tmp`.
-
-## Манифест
-
-| Поле | Значение |
+<!-- catalog:facts -->
+| | |
 |---|---|
-| `targets` | `build: exec`, `live: confirm` |
-| `platform.arch` | `arm64` |
-| `provides` | `gmsl2-camera` |
-| `hooks` | `install` (30 мин), `apply`, `remove` |
-| `files` | `sensing-gmsl2-camera@.service`, `sensing-gmsl2-clock.service`, `99-sensing-gmsl2-camera.rules` |
-| `actions` | `camera-profile`, `boost-clock` (`lock: none` — их зовут юниты) |
-| `config.keys` | `SENSING_GMSLMODE` (`scope: install`), `SENSING_CAMERA_CONTROLS`, `SENSING_BOOST_CLOCK` |
+| ОС | Debian, Ubuntu |
+| Архитектура | arm64 |
+| cream | ≥ 1.0.0 |
+| Даёт | `gmsl2-camera` |
+| Требует | — |
+| Зависит от | [`apt-guard`](../apt-guard/README.md) |
+| Конфликтует с | — |
+| Хуки | `install`, `apply`, `remove` |
+| Настройка на загрузке | — |
+| Действия | `cream run sensing-gmsl2-camera camera-profile`, `cream run sensing-gmsl2-camera boost-clock` |
+| Живая машина | с `--accept-risk` |
 
-## Зачем это слой, а не часть базового образа
-
-Камеры — свойство конкретного адаптера на конкретных роботах, а не платы
-Jetson вообще. Образ из BSP (`jetson-orin-bsp`) остаётся общим для всего
-флота; этот слой ложится только на VMFILE тех машин, где адаптер физически
-установлен.
+> **Живая машина — с `--accept-risk`.** Заменяет ядро платы (/boot/Image — ядро Sensing, штатное — в Image.backup), модули камер и libnvisppg.so (dpkg-divert), добавляет загрузочную запись с оверлеем камер и делает её основной, закрепляет пакеты ядра L4T (apt-mark hold); камеры заработают после перезагрузки; откат — пункт backup загрузочного меню или cream remove
+<!-- /catalog:facts -->
 
 ## Что делает
+
+**`install`** (код **20** без `/etc/nv_tegra_release`; что-то на пути загрузки
+поменялось — код **10**, перезагрузка; повтор без изменений — 0; файлы — через
+временный файл и переименование; сборка — во временном каталоге под `/var/tmp`):
 
 1. Проверяет, что это именно AGX Orin с адаптером `p3737-0000+p3701-0000` —
    по наличию `/boot/dtb/kernel_tegra234-p3737-0000+p3701-0000-nv.dtb` в
    уже собранном базовом образе. `/proc/device-tree` для этого не годится:
    внутри `virt-customize` гость не загружен, это chroot поверх файловой
    системы, а не работающая Tegra. Там же, до сети, — релиз: первая строка
-   `/etc/nv_tegra_release` обязана дать ровно `36.4.3`.
-2. Скачивает оверлей камер NVIDIA и подменяет `libnvisppg.so` — раздел
-   «Библиотека ISP» ниже.
+   `/etc/nv_tegra_release` обязана дать ровно `36.4.3`, на любом другом L4T — отказ.
+2. Скачивает оверлей камер NVIDIA `overlay_camera_36.4.3.tbz2`, сверяет его с
+   закреплённой sha256 и подменяет `libnvisppg.so` через `dpkg-divert` — раздел
+   «Библиотека ISP» ниже. Сборке нужна сеть до `developer.nvidia.com`.
 3. Клонирует `SENSING-Technology/nvidia-jetson-camera-drivers` и берёт
    пакет `..._GMSL2x8_...` (не `_YUV_` — разбор ниже, «Почему пакет GMSL2x8»).
 4. Бэкапит штатное ядро в `/boot/Image.backup` (идемпотентно — `cp -n`),
@@ -77,15 +55,105 @@ Jetson вообще. Образ из BSP (`jetson-orin-bsp`) остаётся о
    (вендор в своём примере даёт `backup` без `root=` вовсе — такая запись
    не загрузится). Существующий `root=PARTUUID=...` не трогает: он
    переносится дословно в обе новые записи.
-8. Кладёт неинтерактивную замену `quick_bring_up.sh`, которая срабатывает
-   сама на каждой загрузке (разбор ниже).
+8. Настраивает неинтерактивный запуск камер на каждой загрузке — раздел
+   «Запуск камер» ниже: `/etc/modprobe.d/sensing-gmsl2-camera.conf`, а через
+   `files` — `sensing-gmsl2-camera@.service`, `sensing-gmsl2-clock.service`,
+   `99-sensing-gmsl2-camera.rules`.
 
-## Библиотека ISP
+**`apply`** — после `cream set`: проверка значения, запись, перезапуск юнитов
+профиля и частот.
+
+**`remove`** — полный возврат, см. «Как снять».
+
+**Действия** `camera-profile` и `boost-clock` (`lock: none` — их зовут юниты по
+абсолютному пути `/opt/cream/ext/sensing-gmsl2-camera/actions/…` с
+`EnvironmentFile=/etc/cream/sensing-gmsl2-camera/config`) заново проверяют имя узла и
+значения, прежде чем они дойдут до `v4l2-ctl`.
+
+## Параметры
+
+<!-- catalog:params -->
+| Ключ | Тип | Умолчание | Что задаёт |
+|---|---|---|---|
+| `SENSING_GMSLMODE` | строка `^[012](,[012]){7}$` | `1,1,1,1,1,1,1,1` | режим линка на 8 портах через запятую: 0 — GMSL1, 1 — GMSL2 6 Гбит/с, 2 — GMSL2 3 Гбит/с; параметр модуля — действует после перезагрузки *(только при установке)* |
+| `SENSING_CAMERA_CONTROLS` | строка `^[a-z_]+=[0-9a-fx]+(,[a-z_]+=[0-9a-fx]+)*$` | `sensor_mode=1,trig_mode=0,trig_pin=0x00020007` | профиль камеры: контролы v4l2 имя=число через запятую; умолчание — пункт 3 меню вендора (SG2-AR0233-5200-G-Hxxx) |
+| `SENSING_BOOST_CLOCK` | `bool` | `1` | 1 — частоты VI/ISP/NVCSI/EMC на максимум |
+<!-- /catalog:params -->
+
+- `SENSING_GMSLMODE` — `scope: install`: параметр модуля, после смены — повтор
+  `install` (код 10) и перезагрузка.
+- `SENSING_CAMERA_CONTROLS` — умолчание — пункт 3 меню вендора,
+  `SG2-AR0233-5200-G-Hxxx`. Другая модель — строка из `quick_bring_up.sh` для её
+  номера.
+- `SENSING_BOOST_CLOCK` — `0`: не фиксировать частоты SoC на максимуме (меньше
+  потребление, вендор так не делает).
+
+Неверный формат — отказ `cream set`, а при ручной правке файла — отказ действия
+(в журнале юнита), а не молча неработающие камеры.
+
+## Установка
+
+На живой плате (`live: confirm`; код 10 — перезагрузка):
+
+```bash
+sudo cream install --with-deps --accept-risk sensing-gmsl2-camera
+```
+
+В образе bisquite (VMFILE):
+
+```dockerfile
+RUN_COMMAND cream install --with-deps sensing-gmsl2-camera
+```
+
+Поменять на работающей машине:
+
+```bash
+# профиль и частоты: проверка значения, запись, перезапуск юнитов (хук apply)
+sudo cream set sensing-gmsl2-camera SENSING_CAMERA_CONTROLS=sensor_mode=1,trig_mode=0,trig_pin=0x00020007
+sudo cream set sensing-gmsl2-camera SENSING_BOOST_CLOCK=0
+# режим линка — параметр модуля: повтор install (код 10), затем перезагрузка
+sudo cream set sensing-gmsl2-camera SENSING_GMSLMODE=1,1,1,1,2,2,2,2
+sudo reboot
+```
+
+## Этапы
+
+| Когда | Что происходит |
+|---|---|
+| сборка образа / `cream install` | проверка платы и релиза, оверлей ISP, ядро и модули Sensing, закрепление ядра, оверлей DTB, записи `extlinux.conf`, запуск камер; код 10 при изменении |
+| загрузка | модули с `GMSLMODE`; udev → `sensing-gmsl2-camera@videoN.service` → `camera-profile`; `sensing-gmsl2-clock.service` → `boost-clock` |
+| `cream set` (хук `apply`) | профиль и частоты — сразу; `SENSING_GMSLMODE` — повтор install и перезагрузка |
+| `cream remove` | полный возврат штатного ядра, модулей, `extlinux.conf`, `libnvisppg.so`; код 10 |
+
+## Известные ограничения
+
+- Только AGX Orin Devkit с адаптером SG8A-AGON-G2Y-A1 и L4T 36.4.3; на любом
+  другом L4T — отказ.
+- Сборке нужна сеть до `developer.nvidia.com` (оверлей камер) и до GitHub (пакет
+  Sensing).
+- Ветки под JetPack 6.2.1 (L4T 36.4.4) и 7.2.1 в репозитории Sensing есть;
+  переход на них — отдельная задача: вместе с пакетом меняются оверлей камер
+  NVIDIA и все закрепления `NVISPPG_*` в `hooks/install`.
+- Стабильно работает только YUV422; RAW12 заявлен недоступным.
+- Само расширение до конца пайплайна сборки образа bisquite на реальной плате не
+  прогонялось (см. «Проверено»).
+
+## Подробности
+
+### Зачем это слой, а не часть базового образа
+
+Камеры — свойство конкретного адаптера на конкретных роботах, а не платы
+Jetson вообще. Образ из BSP (`jetson-orin-bsp`, станция
+[`nvidia-jetpack`](../nvidia-jetpack/README.md)) остаётся общим для всего флота и
+камер не несёт: ни `/opt/sensing`, ни подменённой `libnvisppg.so`, ни пакетов камер
+(решение владельца 2026-09-18). Этот слой ложится только на VMFILE тех машин, где
+адаптер физически установлен.
+
+### Библиотека ISP
 
 Штатная `libnvisppg.so` из пакета `nvidia-l4t-camera` с этими камерами не
 годится; NVIDIA выпускает замену отдельным архивом на каждый релиз —
-«оверлеем камер». До 2026-09-19 её подкладывала станция прошивки (шаг `03`
-`nvidia-jetpack`), теперь — это расширение:
+«оверлеем камер»:
 
 | Что | Значение (замер 2026-09-19) |
 |---|---|
@@ -116,16 +184,15 @@ sudo rm /usr/lib/aarch64-linux-gnu/nvidia/libnvisppg.so
 sudo dpkg-divert --rename --remove /usr/lib/aarch64-linux-gnu/nvidia/libnvisppg.so
 ```
 
-## Почему пакет GMSL2x8, а не YUV
+### Почему пакет GMSL2x8, а не YUV
 
 Под JetPack 6.2 у Sensing на эту плату лежат четыре пакета, и различаются
 они серединой имени: `_YUV_`, `_GMSL2x8_`, `_AR2020MX4_VB1940X4_`,
-`_SDV11NM1x2_SHW3Gx4_`. Прежде был зашит `_YUV_` — по имени он выглядит
-«тем самым», потому что камера отдаёт YUV422, — и с ним камера
-`SG2-AR0233C-5200-G2A` **не работает**: на всех восьми портах
-`sensor_probe camera sgx-yuv-gmsl2-N detect error`, `/dev/video*` создаются,
-но поток пустой. Проверено на живой плате 2026-09-11: с `_GMSL2x8_` та же
-камера опознаётся и даёт живое видео.
+`_SDV11NM1x2_SHW3Gx4_`. `_YUV_` по имени выглядит «тем самым», потому что
+камера отдаёт YUV422, — но с ним камера `SG2-AR0233C-5200-G2A` **не работает**:
+на всех восьми портах `sensor_probe camera sgx-yuv-gmsl2-N detect error`,
+`/dev/video*` создаются, но поток пустой. Проверено на живой плате 2026-09-11:
+с `_GMSL2x8_` та же камера опознаётся и даёт живое видео.
 
 Пакеты расходятся по существу: `Version.md` 20260317 против 20251217 у YUV;
 разное `/boot/Image` при одинаковом размере; I²C-адреса камер `0x20..0x23`
@@ -134,15 +201,9 @@ sudo dpkg-divert --rename --remove /usr/lib/aarch64-linux-gnu/nvidia/libnvisppg.
 `0xffff0007`; есть `pwm-gpio.ko`, `sgcam-gmsl2.ko` и генератор оверлея.
 Имя файла DTB-оверлея у обоих **одно и то же**
 (`tegra234-camera-yuv-gmsl2x8-overlay.dtbo`), поэтому отличить пакеты по
-`extlinux.conf` нельзя. Не возвращай `_YUV_`. Разбор перенесён сюда из
-шапки шага `02` станции прошивки (`nvidia-jetpack`), удалённого вместе
-с камерами базового образа.
+`extlinux.conf` нельзя. Не возвращай `_YUV_`.
 
-Ветки под JetPack 6.2.1 (L4T 36.4.4) и 7.2.1 в репозитории Sensing есть;
-переход на них — отдельная задача: вместе с пакетом меняются оверлей камер
-NVIDIA и все закрепления `NVISPPG_*` в `hooks/install`.
-
-## Запуск камер: без него кадров нет
+### Запуск камер: без него кадров нет
 
 Модули ядро грузит само, по дереву устройств, — **без параметров**. Замер
 на плате 2026-09-14, образ без шага 8: `/dev/video0..7` на месте,
@@ -161,8 +222,7 @@ GMSL1, а камеры — GMSL2. Узлы есть, картинки нет, и
 | профиль камеры (`v4l2-ctl -c sensor_mode=…`) | правило udev → `sensing-gmsl2-camera@videoN.service` → действие `camera-profile` | на появление каждого узла, в том числе после `rmmod`/`modprobe` |
 | частоты VI/ISP/NVCSI/EMC на максимум (`boost_clock.sh`) | `sensing-gmsl2-clock.service` → действие `boost-clock` | на каждой загрузке |
 
-**Номер порта знать не нужно** — прежний довод «порт известен только на
-месте» к запуску не относится. Профиль ставится на все узлы драйвера:
+**Номер порта знать не нужно**: профиль ставится на все узлы драйвера:
 на пустом порту `v4l2-ctl` проходит без вреда (rc=0), а узлы чужих
 драйверов (USB-камеры) действие опознаёт по `Card type` и пропускает.
 Модель камеры — параметр: на роботах одного профиля она одна.
@@ -171,29 +231,18 @@ GMSL1, а камеры — GMSL2. Узлы есть, картинки нет, и
 без `detect error`, 10 разных кадров по ~217 КБ, аппаратная запись H.265
 1080p с камеры через `nvv4l2h265enc`.
 
-**Поменять на работающей машине:**
+### Обновления apt
 
-```bash
-# профиль и частоты: проверка значения, запись, перезапуск юнитов (хук apply)
-sudo cream set sensing-gmsl2-camera SENSING_CAMERA_CONTROLS=sensor_mode=1,trig_mode=0,trig_pin=0x00020007
-sudo cream set sensing-gmsl2-camera SENSING_BOOST_CLOCK=0
-# режим линка — параметр модуля: повтор install (код 10), затем перезагрузка
-sudo cream set sensing-gmsl2-camera SENSING_GMSLMODE=1,1,1,1,2,2,2,2
-sudo reboot
-```
-
-## Обновления apt
-
-**С 4.1.0 ядро закрепляется само**, при сборке, сразу после подмены:
+Ядро закрепляется само, при сборке, сразу после подмены:
 `apt-mark hold` каждого установленного пакета из списка ниже
 (`kernel-hold.sh`), затем сверка с `apt-mark showhold` — не закрепилось
-хоть что-то из установленного — отказ сборки. Руками больше ничего делать
-не нужно.
+хоть что-то из установленного — отказ сборки. Руками ничего делать не нужно.
 
 Зачем: suite `r36.4` репозитория NVIDIA, прописанный в L4T, несёт не только
 36.4.3 — в индексе 2026-10-15 у `nvidia-l4t-kernel` есть 36.4.0, 36.4.3,
-36.4.4 и 36.4.7. Первый же `apt upgrade` на роботе поставил бы 36.4.7.
-`libnvisppg.so` защищена отведением dpkg, ядро — только этим закреплением.
+36.4.4 и 36.4.7. Первый же `apt upgrade` на роботе поставил бы 36.4.7 —
+штатное ядро без драйверов Sensing. `libnvisppg.so` защищена отведением dpkg,
+ядро — только этим закреплением.
 
 | Пакет | Почему закреплён |
 |---|---|
@@ -231,12 +280,42 @@ sudo apt-mark unhold nvidia-l4t-kernel nvidia-l4t-kernel-dtbs nvidia-l4t-kernel-
 штатным ядром NVIDIA и без камер — тогда заодно выбрать в загрузочном меню
 запись `backup`.
 
-## Диагностика на плате
+### Как снять
 
-Перенесено из README станции прошивки (`nvidia-jetpack/scripts/README.md`),
-когда камеры ушли из базового образа.
+`install` сохраняет в `/var/lib/cream/ext/sensing-gmsl2-camera/` всё, что заменяет:
+модули — каждый файл один раз как был (`orig/`) или отметкой «не было», исходный
+`extlinux.conf` (`extlinux.conf.orig`) и сумму того, что оставил сам, имена
+оверлеев, закрепления, которые добавил (`held`), отметку отведения `libnvisppg.so`
+и поставленные пакеты. Штатное ядро — в `/boot/Image.backup` (его грузит запись
+`backup`). `sudo cream remove sensing-gmsl2-camera` возвращает штатные `Image`,
+модули (`depmod`), `extlinux.conf` и `libnvisppg.so` (отведение снимается), убирает
+оверлеи, `/opt/sensing`, `modprobe.d`, автозапуск частот и снимает **свои**
+закрепления — кроме тех, что стояли до cream или записаны другим расширением
+(`/var/lib/cream/ext/*/held`, например `can-usb`); код 10 — перезагрузка.
 
-### Какой разъём — какой `/dev/video*`
+`remove` **отказывает до любых изменений**, если:
+
+- под ядро Sensing собраны модули [`can-usb`](../can-usb/README.md) — сначала
+  `sudo cream remove can-usb`;
+- `extlinux.conf` правили после установки — правка оператора не затирается;
+- `libnvisppg.so` уже не из оверлея;
+- apt вместе с поставленными пакетами (`v4l-utils`) снял бы чужие.
+
+Тогда — руками и `sudo cream remove --forget sensing-gmsl2-camera`:
+
+```bash
+sudo cp /boot/Image.backup /boot/Image          # штатное ядро
+sudoedit /boot/extlinux/extlinux.conf           # DEFAULT — прежняя запись
+sudo dpkg-divert --rename --remove /usr/lib/aarch64-linux-gnu/nvidia/libnvisppg.so
+sudo apt-mark unhold nvidia-l4t-kernel nvidia-l4t-kernel-dtbs nvidia-l4t-kernel-oot-modules nvidia-l4t-initrd
+sudo apt-get install --reinstall nvidia-l4t-kernel nvidia-l4t-kernel-oot-modules  # штатные модули
+sudo cream remove --forget sensing-gmsl2-camera
+sudo reboot
+```
+
+### Диагностика на плате
+
+#### Какой разъём — какой `/dev/video*`
 
 Из `Readme_yuv.md` пакета GMSL2x8, подтверждено железом:
 
@@ -250,7 +329,7 @@ CN2 (CAM4..CAM7) -> /dev/video4..video7   дешериализатор Der-1, ш
 единственная камера во «втором кабеле» (CN2) оказалась на `CAM6`, то есть
 `/dev/video6`. Перебор наугад тут стоит много времени — ищи по признакам.
 
-### Как найти порт камеры
+#### Как найти порт камеры
 
 ```bash
 # рабочий порт — тот, где НЕТ detect error
@@ -269,7 +348,7 @@ sudo dmesg | grep -E 'sensor_probe|dser_link_check'
 v4l2-ctl -d /dev/video6 --get-fmt-video   # 1280x960 у AR0233; 1280x720 = пусто
 ```
 
-### Проверка потока без монитора
+#### Проверка потока без монитора
 
 `quick_bring_up.sh` заканчивается `gst-launch-1.0 ... ! xvimagesink`,
 которому нужен X. По SSH он падает с `Could not open display (null)` —
@@ -296,7 +375,7 @@ ls -l /tmp/f_*.jpg
 Предупреждение `Signal lost` от gstreamer остаётся и при рабочем потоке —
 само по себе оно не значит ничего. Судить надо по хешам.
 
-### Диагностика по I2C
+#### Диагностика по I2C
 
 Отделяет «камеры нет» от «драйвер не тот»: ответы ниже приходят от железа
 и от драйверов не зависят.
@@ -317,67 +396,9 @@ i2ctransfer -y -f 10 w2@0x2d 0x00 0x0d r1
 
 Номера I²C-шин на схеме платы **не совпадают** с номерами в софте — это
 оговорено в документации Sensing; в софте это `i2c-9` (CN1) и `i2c-10`
-(CN2). Стабильно работает только YUV422; RAW12 заявлен недоступным.
+(CN2).
 
-## Настройки
-
-| Ключ | Умолчание | Что делает |
-|---|---|---|
-| `SENSING_GMSLMODE` | `1,1,1,1,1,1,1,1` | режим линка по портам 0–7: `0`=GMSL1, `1`=GMSL2 6 Гбит/с, `2`=GMSL2 3 Гбит/с; `scope: install` — параметр модуля, после смены перезагрузка |
-| `SENSING_CAMERA_CONTROLS` | `sensor_mode=1,trig_mode=0,trig_pin=0x00020007` | профиль камеры; умолчание — пункт 3 меню вендора, `SG2-AR0233-5200-G-Hxxx`. Другая модель — строка из `quick_bring_up.sh` для её номера |
-| `SENSING_BOOST_CLOCK` | `1` | `0` — не фиксировать частоты SoC на максимуме (меньше потребление, вендор так не делает) |
-
-Неверный формат — отказ `cream set`, а при ручной правке файла — отказ действия
-(в журнале юнита), а не молча неработающие камеры.
-
-## Как снять
-
-`install` сохраняет в `/var/lib/cream/ext/sensing-gmsl2-camera/` всё, что заменяет:
-модули — каждый файл один раз как был (`orig/`) или отметкой «не было», исходный
-`extlinux.conf` (`extlinux.conf.orig`) и сумму того, что оставил сам, имена
-оверлеев, закрепления, которые добавил (`held`), отметку отведения `libnvisppg.so`
-и поставленные пакеты. Штатное ядро — в `/boot/Image.backup` (его грузит запись
-`backup`). `sudo cream remove sensing-gmsl2-camera` возвращает штатные `Image`,
-модули (`depmod`), `extlinux.conf` и `libnvisppg.so` (отведение снимается), убирает
-оверлеи, `/opt/sensing`, `modprobe.d`, автозапуск частот и снимает **свои**
-закрепления — кроме тех, что стояли до cream или записаны другим расширением
-(`/var/lib/cream/ext/*/held`, например `can-usb`); код 10 — перезагрузка.
-
-`remove` **отказывает до любых изменений**, если:
-
-- под ядро Sensing собраны модули `can-usb` — сначала `sudo cream remove can-usb`;
-- `extlinux.conf` правили после установки — правка оператора не затирается;
-- `libnvisppg.so` уже не из оверлея;
-- apt вместе с поставленными пакетами (`v4l-utils`) снял бы чужие.
-
-Тогда — руками и `sudo cream remove --forget sensing-gmsl2-camera`:
-
-```bash
-sudo cp /boot/Image.backup /boot/Image          # штатное ядро
-sudoedit /boot/extlinux/extlinux.conf           # DEFAULT — прежняя запись
-sudo dpkg-divert --rename --remove /usr/lib/aarch64-linux-gnu/nvidia/libnvisppg.so
-sudo apt-mark unhold nvidia-l4t-kernel nvidia-l4t-kernel-dtbs nvidia-l4t-kernel-oot-modules nvidia-l4t-initrd
-sudo apt-get install --reinstall nvidia-l4t-kernel nvidia-l4t-kernel-oot-modules  # штатные модули
-sudo cream remove --forget sensing-gmsl2-camera
-sudo reboot
-```
-
-## Проверки
-
-- **V** — `make cream-validate`, `tools/check-names.sh`.
-- **H** — `tests/test-sensing-gmsl2-camera.sh`: функции `nvisppg.sh` (релиз, оверлей,
-  подмена и снятие) и `kernel-hold.sh` (порт прежнего теста), манифест, `files`,
-  действия (узел Sensing и чужой, имя узла и контролы с чужими символами, частоты),
-  `apply`, `install` на подменённом корне (20, отказы до сети, установка, код 10 и
-  повтор с теми же файлами, смена режима GMSL, v4l-utils), `remove` (полный возврат,
-  чужие и прежние закрепления остаются, отказы до изменений).
-- **P — ожидает.** Плата AGX Orin с адаптером: сборка образа через bisquite после
-  плана bisquite и `cream install`/`remove` на живой плате (Task 26 плана
-  2026-10-19 cream-v1-migration).
-- **L** — не нужен: в контейнере нет `/etc/nv_tegra_release`, ответ — код 20, его
-  проверяет H.
-
-## Проверено
+### Проверено
 
 Ручной прогон той же последовательности — живая плата, JetPack 6.2,
 L4T 36.4.3, 2026-09-11: живое видео 1920×1080 UYVY с `/dev/video6`,
@@ -388,3 +409,17 @@ L4T 36.4.3, 2026-09-11: живое видео 1920×1080 UYVY с `/dev/video6`,
 на момент написания не прогонялось до конца пайплайна `bs image build` —
 см. `docs/plans/2026-09-11-jetson-image-pipeline.md` в основном
 репозитории.
+
+## Проверки
+
+- **V** — `make cream-validate`, `tools/check-names.sh`.
+- **H** — `tests/test-sensing-gmsl2-camera.sh`: функции `nvisppg.sh` (релиз, оверлей,
+  подмена и снятие) и `kernel-hold.sh`, манифест, `files`,
+  действия (узел Sensing и чужой, имя узла и контролы с чужими символами, частоты),
+  `apply`, `install` на подменённом корне (20, отказы до сети, установка, код 10 и
+  повтор с теми же файлами, смена режима GMSL, v4l-utils), `remove` (полный возврат,
+  чужие и прежние закрепления остаются, отказы до изменений).
+- **P — ожидает.** Плата AGX Orin с адаптером: сборка образа через bisquite и
+  `cream install`/`remove` на живой плате.
+- **L** — не нужен: в контейнере нет `/etc/nv_tegra_release`, ответ — код 20, его
+  проверяет H.

@@ -24,7 +24,8 @@
 #        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: kiosk
-version: 4.1.0
+version: 4.1.1
+# 4.1.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: Chromium в режиме киоска поверх графического сеанса — от пользователя сеанса, на весь экран
 cream: ">=1.2.0"
 platform:

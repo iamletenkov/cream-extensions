@@ -4,57 +4,38 @@ Chromium в режиме киоска поверх работающего гра
 занимает весь экран от имени пользователя сеанса, которого менеджер входа
 пустил автологином (`desktop`, `DESKTOP_AUTOLOGIN=1`).
 
-> **4.0.0 — cream/v1.** Хуки `install`, `configure` (стадия `graphical`, нужен
-> cream ≥ 1.1.0) и `remove`; настройки — домен cream `/etc/cream/kiosk/config`,
-> юнит читает его как `EnvironmentFile`; своего `configure-kiosk.service` нет.
-> В домашний каталог пользователя расширение больше **не пишет**: панель и
-> рабочий стол Xfce4 — системные умолчания xfconf в `/etc/xdg`, экранная
-> клавиатура GNOME — системный ключ dconf. Только Debian (на Ubuntu `chromium` —
-> snap, и киоск там не работал).
-
-## Манифест
-
-| Поле | Значение |
+<!-- catalog:facts -->
+| | |
 |---|---|
-| `platform` | `deb`, `amd64`/`arm64`, Debian |
-| `targets` | `build: exec`, `live: confirm` (`--accept-risk`: захват экрана) |
-| `provides` | `kiosk-browser` |
-| `requires` | `x11-server`, `display-manager` — их дают `gnome`, `xfce4`, `lxde` |
-| `depends` | `cloud-user` (библиотека: пользователь cloud-init) |
-| `conflicts.extensions` | `chromium-kiosk` (оба забирают экран; установка поверх — отказ cream 67) |
-| хуки | `install`, `configure` (`graphical`), `remove` |
-| `files` | `kiosk-chromium@.service`, `run-kiosk.sh`, `xfce4-panel.xml`, `xfce4-desktop.xml` |
+| ОС | Debian |
+| Архитектура | amd64, arm64 |
+| cream | ≥ 1.2.0 |
+| Даёт | `kiosk-browser` |
+| Требует | `x11-server`, `display-manager` |
+| Зависит от | [`cloud-user`](../cloud-user/README.md), [`apt-guard`](../apt-guard/README.md) |
+| Конфликтует с | [`chromium-kiosk`](../chromium-kiosk/README.md) |
+| Хуки | `install`, `configure`, `remove` |
+| Настройка на загрузке | стадия `graphical`, на каждой загрузке (`every_boot`) |
+| Живая машина | с `--accept-risk` |
 
-## Подключение
+> **Живая машина — с `--accept-risk`.** Захватывает экран: браузер Chromium на весь экран поверх сеанса пользователя (KIOSK_USER или пользователь cloud-init), без панели и рабочего стола Xfce4 — системные умолчания xfconf для всех пользователей машины; перезапускается сам при закрытии; ставит chromium; снимается cream remove kiosk
+<!-- /catalog:facts -->
 
-```vmfile
-EXTENSION xfce4
-EXTENSION desktop DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_LOCK=1 DESKTOP_DISABLE_SCREEN_BLANK=1
-EXTENSION kiosk KIOSK_URL=https://dashboard.example.org
-```
-
-На живой машине — `cream install --accept-risk kiosk KIOSK_URL=…`; сменить
-страницу — `cream set kiosk KIOSK_URL=…` (cream перезапускает configure, тот —
-браузер).
-
-| Ключ | Умолчание | Что делает |
-|---|---|---|
-| `KIOSK_USER` | пусто — пользователь cloud-init | пользователь киоска (`[a-z_][a-z0-9_-]*`); root — отказ |
-| `KIOSK_URL` | `https://github.com/iamletenkov/bisquite` | страница: `http(s)://` или `file://`, без пробелов, кавычек и `$` |
-| `KIOSK_DISPLAY` | `:0` | X-дисплей |
-| `KIOSK_KEYBOARD_ENABLED` | `true` | экранная клавиатура — только под GNOME |
-| `KIOSK_CHROMIUM_FLAGS` | `--disable-pinch --overscroll-history-navigation=0` | флаги `--имя[=значение]` через пробел к базовому набору; заданное значение **заменяет** умолчание |
-
-## Что делают хуки
+## Что делает
 
 - **`install`** — `chromium`, `x11-utils` (`xdpyinfo`), `x11-xserver-utils`,
   `xauth`, `dbus-x11`; только недостающие, поставленные записываются для
-  `remove`. X-сервер и менеджер входа **не** ставит.
-- **`configure`** (на каждой загрузке после менеджера входа, после установки
-  и после `cream set`):
+  `remove`. X-сервер и менеджер входа **не** ставит: их дают `gnome`, `xfce4`,
+  `lxde` (`requires`). cream раскладывает файлы расширения: юнит
+  `/etc/systemd/system/kiosk-chromium@.service`, обёртку
+  `/usr/local/lib/kiosk/run-kiosk.sh`, системные умолчания xfconf
+  `xfce4-panel.xml` и `xfce4-desktop.xml` в `/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/`.
+- **`configure`** (стадия `graphical`, на каждой загрузке после менеджера входа,
+  после установки и после `cream set`):
   1. нет менеджера входа (`display-manager.service`) — предупреждение и 0,
      экземпляры браузера выключаются;
-  2. пользователь — `KIOSK_USER`, иначе cloud-init (на загрузке ждёт до 60 с);
+  2. пользователь — `KIOSK_USER`, иначе cloud-init (библиотека
+     [`cloud-user`](../cloud-user/README.md); на загрузке ждёт до 60 с);
      нет, неизвестен или root — предупреждение и 0;
   3. экранная клавиатура под GNOME — системный ключ dconf (профиль `user` с
      `system-db:local`, то же правило, что у `desktop` и `locale`);
@@ -65,7 +46,73 @@ EXTENSION kiosk KIOSK_URL=https://dashboard.example.org
 - **`remove`** — все экземпляры выключены, ключ клавиатуры снят (если наш),
   свои пакеты удалены; юнит, обёртку и умолчания xfconf снимает cream.
 
-## Безопасность
+Настройки — домен cream `/etc/cream/kiosk/config`; юнит читает его как
+`EnvironmentFile`. В домашний каталог пользователя расширение не пишет: панель
+и рабочий стол Xfce4 — системные умолчания xfconf в `/etc/xdg`, экранная
+клавиатура GNOME — системный ключ dconf.
+
+## Параметры
+
+<!-- catalog:params -->
+| Ключ | Тип | Умолчание | Что задаёт |
+|---|---|---|---|
+| `KIOSK_USER` | строка `^[a-z_][a-z0-9_-]{0,31}$` | пусто | пользователь киоска; пусто — пользователь cloud-init (библиотека cloud-user) |
+| `KIOSK_URL` | строка `^(https?\|file)://[A-Za-z0-9._~:/?#@!&()*+,;=%-]+$` | `https://github.com/iamletenkov/bisquite` | страница киоска: http(s):// или file://, без пробелов, кавычек и $ |
+| `KIOSK_DISPLAY` | строка `^:[0-9]{1,3}(\.[0-9]{1,2})?$` | `:0` | X-дисплей браузера |
+| `KIOSK_KEYBOARD_ENABLED` | `true` \| `false` | `true` | экранная клавиатура — только под GNOME (системный dconf) |
+| `KIOSK_CHROMIUM_FLAGS` | список через пробел, элемент `^--[a-z0-9][a-z0-9-]*(=[A-Za-z0-9._,:/=+-]*)?$` | `--disable-pinch --overscroll-history-navigation=0` | флаги Chromium через пробел, к базовому набору; заменяют умолчание |
+<!-- /catalog:params -->
+
+- `KIOSK_USER` — пусто означает пользователя cloud-init; root — отказ.
+- `KIOSK_URL` — `http(s)://` или `file://`, без пробелов, кавычек и `$`.
+- `KIOSK_KEYBOARD_ENABLED` — экранная клавиатура только под GNOME.
+- `KIOSK_CHROMIUM_FLAGS` — флаги `--имя[=значение]` через пробел к базовому
+  набору; заданное значение **заменяет** умолчание.
+
+Смена любого ключа через `cream set kiosk KEY=…` перезапускает configure, тот —
+браузер.
+
+## Установка
+
+На машине с подключённым каталогом ([как подключить](../../../docs/getting-started.md));
+`live: confirm` (захват экрана) — нужен `--accept-risk`:
+
+```bash
+sudo cream install --with-deps --accept-risk kiosk KIOSK_URL=https://dashboard.example.org
+sudo cream set kiosk KIOSK_URL=https://other.example.org
+cream show kiosk
+```
+
+В образе bisquite (VMFILE):
+
+```dockerfile
+RUN_COMMAND cream install --with-deps xfce4
+RUN_COMMAND cream install --with-deps desktop DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_LOCK=1 DESKTOP_DISABLE_SCREEN_BLANK=1
+RUN_COMMAND cream install --with-deps kiosk KIOSK_URL=https://dashboard.example.org
+```
+
+## Этапы
+
+| Когда | Что происходит |
+|---|---|
+| сборка образа / `cream install` | недостающие пакеты, файлы юнита, обёртки и умолчаний xfconf |
+| загрузка (`cream-configure@kiosk`, стадия `graphical`) | пользователь, клавиатура, включение `kiosk-chromium@<пользователь>` |
+| `cream set` | тот же `configure`; на работающей машине браузер перезапускается |
+| `cream remove` | экземпляры выключены, ключ клавиатуры и свои пакеты сняты, файлы снимает cream |
+
+## Известные ограничения
+
+- Только Debian: на Ubuntu `chromium` — snap (`chromium-browser` — переходной
+  пакет), и киоск там не работал.
+- Конфликтует с `chromium-kiosk`: оба забирают экран; установка поверх — отказ
+  cream 67.
+- Умолчания xfconf прячут панель и иконки для **всех** пользователей машины без
+  своего канала xfconf (см. «Рабочий стол»).
+- Экрана в L-контейнере нет, браузер там не запускается.
+
+## Подробности
+
+### Безопасность
 
 - Браузер — **от пользователя сеанса** (`User=%i`); обёртка от root отказывает.
 - Значения настроек доходят до браузера как переменные окружения юнита
@@ -74,7 +121,7 @@ EXTENSION kiosk KIOSK_URL=https://dashboard.example.org
   руками) и отказывает громко; адрес — отдельный последний аргумент `chromium`.
 - В `$HOME` пользователя root не пишет ничего.
 
-## X authority ищется в рантайме
+### X authority ищется в рантайме
 
 `run-kiosk.sh` перебирает кандидатов (`$XAUTHORITY`, `~/.Xauthority`,
 `/run/user/<uid>/gdm/Xauthority`, `/run/lightdm/<user>/xauthority`, `-auth`
@@ -82,14 +129,14 @@ EXTENSION kiosk KIOSK_URL=https://dashboard.example.org
 дисплей до 60 с и при неудаче печатает весь список: путь под LightDM и GDM ≥ 42
 разный, и прибитый в юните `~/.Xauthority` прежде давал немой цикл рестарта.
 
-## Рабочий стол
+### Рабочий стол
 
 Окно киоска полноэкранное поверх всего. Под Xfce4 системные умолчания прячут
 панель и иконки и делают фон чёрным — для **всех** пользователей машины, у
 которых нет своего канала xfconf (свой `~/.config/xfce4/xfconf/…` их
 перекрывает). Под GNOME и LXDE эти файлы никто не читает.
 
-## Диагностика
+### Диагностика
 
 ```bash
 systemctl status 'cream-configure@kiosk' 'kiosk-chromium@*'
@@ -106,5 +153,6 @@ cream show kiosk
 
 ## Проверки
 
-H — `tests/test-kiosk.sh`; L — `make test-live EXT=kiosk` (поверх `xfce4`,
-`tests/live.env`); экрана в контейнере нет, браузер там не запускается.
+- **H** — `tests/test-kiosk.sh`.
+- **L** — `make test-live EXT=kiosk` (поверх `xfce4`, `tests/live.env`); экрана в
+  контейнере нет, браузер там не запускается.

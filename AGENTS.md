@@ -1,11 +1,11 @@
 # cream-extensions — регламент для агентов и людей
 
-**cream-extensions** (бывший bisquite-extensions) — каталог расширений провизии формата **cream/v1**: `extensions/<семейство>/<имя>/` с манифестом `extension.yaml` (`schema: cream/v1`), хуками `hooks/` (`install`, `configure`, `apply`, `remove`, …), действиями `actions/` и файлами `files/`; ставит и настраивает их cream. Общий код — библиотеки `kind: library` (`cloud-user`, `l4t`, `apt-guard`). Конвенция целиком — [docs/extensions.md](docs/extensions.md). Лицензия PolyForm Noncommercial (не менять без решения владельца).
+**cream-extensions** (бывший bisquite-extensions) — каталог расширений провизии формата **cream/v1**: `extensions/<семейство>/<имя>/` с манифестом `extension.yaml` (`schema: cream/v1`), хуками `hooks/` (`install`, `configure`, `apply`, `remove`, …), действиями `actions/` и файлами `files/`; ставит и настраивает их cream. Общий код — библиотеки `kind: library` (`cloud-user`, `l4t`, `apt-guard`). Как писать расширение — [docs/guides/write-extension.md](docs/guides/write-extension.md), все документы — [docs/README.md](docs/README.md). Лицензия PolyForm Noncommercial (не менять без решения владельца).
 
 Состояние работ — [docs/STATUS.md](docs/STATUS.md).
 
 ## Место в экосистеме
-- **bisquite** — собирает образы ВМ, подключает расширения инструкцией `EXTENSION` и поднимает их версию после релиза этого репозитория.
+- **bisquite** — собирает образы ВМ; с 3.0 везёт cream и снимок этого каталога, расширения ставятся строками `RUN_COMMAND cream install` VMFILE; снимок поднимает после релиза этого репозитория.
 - **cream** — новый исполнитель расширений (Go): формат `extension.yaml` (cream/v1), жизненный цикл, `cream set/show`, действия. Пин версии для проверок — `tools/cream-pin.env`. Прежних имён bisquite (пути, ключи, юниты, таблицы nft) в репозитории нет — гейт `tools/check-names.sh`, кроме истории.
 - **stvor-agent** — агент портала Stvor на машине; ставится обёрткой `stvor-agent` (`cream/v1`) по пину версии и sha256 на архитектуру.
 - **Stvor** — приватный портал (identity & access hub).
@@ -17,11 +17,11 @@
 ```
 extensions/debian/   — расширения для Debian/Ubuntu: cream/v1 (extension.yaml, hooks/, actions/, files/, tests/)
 cream-catalog.yaml   — корень каталога cream (roots, version — ведёт release-please)
-tools/               — check.sh (все проверки make test), cream-validate.sh (V), cream-check.sh (cream check по каталогу), check-names.sh, lint-hooks.sh, hooktest.sh (H), live-test.sh (L), live-matrix.sh (матрица live.yml), lint.sh, new-extension.sh, catalog-snapshot.sh, cream-deb.sh, cream-pin.env (cream 1.2.0), agent-bump.sh, check-contract-fixtures.sh + contract-fixtures.sha256; test-*.sh — тесты инструментов, testdata/ — фикстуры
-docs/                — README.md (индекс), STATUS.md, extensions.md, runbooks/, adr/, specs/, plans/, research/
+tools/               — check.sh (все проверки make test), catalog-docs.sh (таблицы документации из манифестов), check-links.sh (ссылки .md), cream-validate.sh (V), cream-check.sh (cream check по каталогу), check-names.sh, lint-hooks.sh, hooktest.sh (H), live-test.sh (L), live-matrix.sh (матрица live.yml), lint.sh, new-extension.sh, catalog-snapshot.sh, cream-deb.sh, cream-pin.env (cream 1.2.0), agent-bump.sh, check-contract-fixtures.sh + contract-fixtures.sha256; test-*.sh — тесты инструментов, testdata/ — фикстуры
+docs/                — README.md (индекс), STATUS.md, getting-started.md, guides/, reference/, runbooks/, history/, adr/, specs/, plans/, research/
 .claude/             — агенты, skills, правила, хуки Claude Code
 .github/             — ci-release.yml (gitleaks, check.sh, shellcheck, release-please, снимок к релизу), live.yml (живые прогоны), agent-bump.yml (подъём пина stvor-agent); release_please/
-Makefile             — публичный API (`make help`): lint, test, check, ci, check-names, cream-validate, test-live, test-live-self, snapshot, snapshot-check
+Makefile             — публичный API (`make help`): lint, test, check, ci, check-names, cream-validate, cream-check, docs, check-links, test-live, test-live-self, snapshot, snapshot-check
 ```
 
 ## Как работать
@@ -31,7 +31,7 @@ Makefile             — публичный API (`make help`): lint, test, check
 4. Хост общий и нагруженный: один `make ci` за раз.
 
 ## Definition of Done
-Подтверждено **выводом**: `make ci` (shellcheck + `tools/check.sh`) зелёный; README расширения и `docs/` обновлены; новый документ — строка в `docs/README.md`; чекбокс плана отмечен в том же коммите.
+Подтверждено **выводом**: `make ci` (shellcheck + `tools/check.sh`) зелёный; README расширения (по шаблону, блоки — `tools/catalog-docs.sh`) и `docs/` обновлены; новый документ — строка в `docs/README.md`; чекбокс плана отмечен в том же коммите.
 
 ## Git и выпуск
 - Ветки `feature/`, `fix/`, `chore/`, `docs/`, `ci/` от свежего `origin/main`; в `main` — PR со squash.

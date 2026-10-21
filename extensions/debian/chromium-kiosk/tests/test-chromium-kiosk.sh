@@ -32,7 +32,7 @@ echo "== манифест =="
 # eval: test-only literal expressions over our own files, as in nvidia-jetpack.
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "мажор 4" 4.0.1 "$(mf 'm["version"]')"
+eq "мажор 4" 4.0.2 "$(mf 'm["version"]')"
 eq "cream >=1.0.0 (стадия system)" ">=1.0.0" "$(mf 'm["cream"]')"
 eq "live: confirm" confirm "$(mf 'm["targets"]["live"]')"
 check "live_note про сторонний репозиторий" grep -q 'salamek' <<< "$(mf 'm["targets"]["live_note"]')"

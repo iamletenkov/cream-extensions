@@ -1,34 +1,40 @@
 # code-server
 
 [code-server](https://github.com/coder/code-server) — VS Code в браузере от имени
-пользователя машины (`code-server@<пользователь>`). Формат cream/v1 (план
-2026-10-19, Task 15).
+пользователя машины (`code-server@<пользователь>`). **Без пароля не стартует**;
+по умолчанию слушает `127.0.0.1:9001` (TLS), снаружи — через Teleport или
+ssh-туннель.
 
-**Без пароля не стартует.** Пока не задан `CODE_SERVER_PASSWORD` или явно не
-разрешено `CODE_SERVER_ALLOW_NO_AUTH=1`, служба не запускается ни на каком адресе,
-включая петлю: code-server — это шелл пользователя, и петля не защищает его от
-других учёток и служб той же машины. По умолчанию слушает `127.0.0.1:9001` (TLS);
-снаружи — через Teleport или ssh-туннель.
-
-## Манифест
-
-| Поле | Значение |
+<!-- catalog:facts -->
+| | |
 |---|---|
-| `version` | `5.0.0`, `cream: ">=1.1.1"` (стадия `cloud-user`, рулинг Р14) |
-| `platform.arch` | `amd64`, `arm64` (`.deb` релиза; `armhf` не собирается и не объявлен) |
-| `targets` | `build: exec`, `live: yes` |
-| `provides` | `web-ide` |
-| `depends` | `cloud-user >=1.0.0 <2` — пользователь по умолчанию |
-| хуки | `install`, `configure` (стадия `cloud-user`), `apply` (свой), `remove` |
-| `files` | `code-server@.service` → `/etc/systemd/system/code-server@.service` (перекрывает юнит пакета) |
+| ОС | Debian, Ubuntu |
+| Архитектура | amd64, arm64 |
+| cream | ≥ 1.2.0 |
+| Даёт | `web-ide` |
+| Требует | — |
+| Зависит от | [`cloud-user`](../cloud-user/README.md) |
+| Конфликтует с | — |
+| Хуки | `install`, `configure`, `apply`, `remove` |
+| Настройка на загрузке | стадия `cloud-user`, на каждой загрузке (`every_boot`) |
+| Живая машина | да |
+<!-- /catalog:facts -->
 
 ## Что делает
+
+Пока не задан `CODE_SERVER_PASSWORD` или явно не разрешено
+`CODE_SERVER_ALLOW_NO_AUTH=1`, служба не запускается ни на каком адресе, включая
+петлю: code-server — это шелл пользователя, и петля не защищает его от других
+учёток и служб той же машины.
 
 - **`install`** — `.deb` code-server **4.135.0** из релиза GitHub по закреплённому
   sha256 на архитектуру (`apt-get install` проверенного файла; чужая сумма — отказ,
   ничего не ставится); `openssl` — им code-server выпускает свой сертификат.
   Службу не запускает, настроек и домашних каталогов не трогает. Повтор при
-  установленной версии сеть не трогает.
+  установленной версии сеть не трогает. Найдены остатки 4.x — отказ до любых
+  изменений (см. «Остатки 4.x»).
+- **`files`** — `code-server@.service` → `/etc/systemd/system/code-server@.service`
+  (перекрывает юнит пакета).
 - **`configure`** — на каждой загрузке (стадия `cloud-user`: после `cloud-final`,
   пользователь уже есть; без cloud-init — после `multi-user.target`) и после
   `install` на живой машине:
@@ -38,8 +44,8 @@
      переписывается с `auth: none` без пароля (снятый пароль не остаётся в домашнем
      каталоге, ручной `systemctl start` обёртка отклонит), предупреждение, код 0;
   3. пользователь: `CODE_SERVER_USER` или пользователь cloud-init (библиотека
-     `cloud-user`; на загрузке ждёт до 30 с); нет, root, нет домашнего каталога
-     или имя не годится для юнита — предупреждение, код 0 (рулинг Р11);
+     [`cloud-user`](../cloud-user/README.md); на загрузке ждёт до 30 с); нет, root,
+     нет домашнего каталога или имя не годится для юнита — предупреждение, код 0;
   4. `~/.config/code-server/config.yaml` пишется **от имени пользователя** (ниже);
      не вышло — предупреждение, служба не запускается, код 0;
   5. объявление `/etc/cream/teleport/apps.d/code-server.conf`;
@@ -58,7 +64,27 @@
   (`RestartPreventExitStatus=78`, без цикла перезапусков); запускает code-server
   с чистым окружением и одним `--config`.
 
-## Аутентификация и пароль
+## Параметры
+
+<!-- catalog:params -->
+| Ключ | Тип | Умолчание | Что задаёт |
+|---|---|---|---|
+| `CODE_SERVER_USER` | строка `^[a-z_][a-z0-9_-]{0,31}$` | пусто | пользователь; пусто — из cloud-init (библиотека cloud-user); root — нельзя |
+| `CODE_SERVER_PASSWORD` | строка `^[A-Za-z0-9!#%&()*+,./:;<=>?@^_{\|}~\[\]-]{8,128}$` | пусто | пароль: 8–128 знаков без пробелов, кавычек, $ и обратной косой; без него служба не стартует *(секрет: `KEY=-` со stdin или `--params-file`, не в argv)* |
+| `CODE_SERVER_PORT` | `port` | `9001` | порт |
+| `CODE_SERVER_BIND` | строка `^[A-Za-z0-9.:-]{1,253}$` | `127.0.0.1` | адрес прослушивания; снаружи — через Teleport или ssh-туннель |
+| `CODE_SERVER_ALLOW_NO_AUTH` | `bool` | `0` | 1 — запускать без пароля (шелл пользователя любому, кто достаёт до адреса; предупреждение при каждом старте) |
+<!-- /catalog:params -->
+
+Файл домена — `/etc/cream/code-server/config`. `CODE_SERVER_BIND=0.0.0.0`
+открывает сети (с паролем и TLS), `::1` — петля IPv6. Версия code-server — не
+ключ: она закреплена вместе с sha256 в `files/code-server.sh` (`CS_VERSION`,
+`DEB_SHA256`); обновление — правка расширения.
+
+Правка `~/.config/code-server/config.yaml` руками живёт до следующего configure
+(загрузка, `cream set`): файл принадлежит расширению.
+
+### Аутентификация и пароль
 
 | Пароль | `CODE_SERVER_ALLOW_NO_AUTH` | Что будет |
 |---|---|---|
@@ -69,7 +95,7 @@
 
 - Пароль — `secret: file` в `/etc/cream/code-server/secrets` (0600, root; пишет
   cream): 8–128 знаков `A-Za-z0-9` и `!#%&()*+,./:;<=>?@^_{|}~[]-` (без пробелов,
-  кавычек, `$`, обратной косой — значение ложится в YAML). Прежнее `none` под тип
+  кавычек, `$`, обратной косой — значение ложится в YAML). `none` под тип
   не подходит: «без пароля» — только `CODE_SERVER_ALLOW_NO_AUTH=1`.
 - Хук читает пароль из `CREAM_SECRETS_FILE` в переменную оболочки (не
   экспортируется) и отдаёт его **только на stdin** процессу, который пишет
@@ -84,52 +110,53 @@
 - Сам code-server пароль видит в своём `config.yaml` (его читает и пользователь —
   это его шелл); в окружение службы пароль не кладётся (`EnvironmentFile` — только
   несекретный `config`), `PASSWORD`/`HASHED_PASSWORD` из окружения не доходят.
-- Пароль задают на машине, а не в VMFILE (строка VMFILE остаётся в образе):
-
-  ```bash
-  echo '<пароль>' | sudo cream set code-server CODE_SERVER_PASSWORD=-
-  ```
 
 TLS всегда: `cert: true` — code-server при первом старте выпускает самоподписанный
 сертификат на `localhost` в `~/.local/share/code-server` (через `openssl`). Браузер
 на другой машине его не признает: TLS закрывает петлю, а не публикует сервис.
 
-## Ручки (`/etc/cream/code-server/config`)
+## Установка
 
-| Ключ | Умолчание | Что делает |
-|---|---|---|
-| `CODE_SERVER_USER` | пусто | пользователь; пусто — пользователь cloud-init; root — нельзя |
-| `CODE_SERVER_PASSWORD` | пусто | пароль (секрет, `secrets`); без него служба не стартует |
-| `CODE_SERVER_PORT` | `9001` | порт |
-| `CODE_SERVER_BIND` | `127.0.0.1` | адрес; `0.0.0.0` открывает сети (с паролем и TLS), `::1` — петля IPv6 |
-| `CODE_SERVER_ALLOW_NO_AUTH` | `0` | `1` — запускать без пароля (предупреждение при каждом старте) |
-
-Версия code-server — не ручка: она закреплена вместе с sha256 в
-`files/code-server.sh` (`CS_VERSION`, `DEB_SHA256`); обновление — правка
-расширения.
-
-## Подключение
-
-```vmfile
-EXTENSION code-server CODE_SERVER_PORT=9002
-```
-
-Пароль — на машине (см. выше). На работающей машине:
+На работающей машине:
 
 ```bash
-sudo cream install code-server
+sudo cream install --with-deps code-server
 echo '<пароль>' | sudo cream set code-server CODE_SERVER_PASSWORD=-
 sudo cream set code-server CODE_SERVER_BIND=0.0.0.0     # открыть в сеть (TLS, пароль)
 ```
 
-Правка `~/.config/code-server/config.yaml` руками живёт до следующего configure
-(загрузка, `cream set`): файл принадлежит расширению.
+В образе bisquite (VMFILE):
 
-## Веб-приложение Teleport
+```dockerfile
+RUN_COMMAND cream install --with-deps code-server CODE_SERVER_PORT=9002
+```
+
+Пароль задают на машине, а не в VMFILE (строка VMFILE остаётся в образе) — см.
+команды выше.
+
+## Этапы
+
+| Когда | Что происходит |
+|---|---|
+| сборка образа / `cream install` | проверка остатков 4.x, `.deb` по sha256, `openssl`; служба не запускается |
+| загрузка (`cream-configure@code-server`, стадия `cloud-user`, каждая загрузка) | проверка значений и пароля, `config.yaml` от имени пользователя, объявление Teleport, запуск экземпляра |
+| `cream set` (хук `apply`) | то же без ожидания пользователя, `restart --no-block` или останов |
+| `cream remove` | экземпляры остановлены, объявление снято, пакет удалён; данные пользователя остаются |
+
+## Известные ограничения
+
+- Формат cream/v1 на железе (P) не проверен: вход в code-server через Teleport с
+  паролем из `secrets`, `cert: true` на arm64.
+- `armhf` не собирается и не объявлен (`.deb` релиза — только `amd64`, `arm64`).
+- Самоподписанный сертификат браузер на другой машине не признает.
+
+## Подробности
+
+### Веб-приложение Teleport
 
 `configure` и `apply` кладут `/etc/cream/teleport/apps.d/code-server.conf` в
-формате расширения `teleport` (`files/teleport.sh`, `read_decl`; H-тест прогоняет
-настоящий `teleport.sh render` по этому файлу):
+формате расширения [`teleport`](../teleport/README.md) (`files/teleport.sh`,
+`read_decl`; H-тест прогоняет настоящий `teleport.sh render` по этому файлу):
 
 ```
 NAME=code-server
@@ -145,9 +172,9 @@ ICON=laptop
 `cream set teleport TELEPORT_APPS_DISABLE=code-server`. `ICON=laptop` — ближайшая
 к редактору кода иконка встроенного набора прокси.
 
-## Остатки 4.x — отказ установки и запуска
+### Остатки 4.x — отказ установки и запуска
 
-Переходной совместимости нет (рулинг Р1). Расширение 4.x оставляло то, что
+Переходной совместимости нет. Расширение 4.x оставляло то, что
 запускает code-server **в обход проверки пароля** или держит **доверенный
 корневой CA**. Пока хоть что-то из этого есть на машине, `install` отказывает
 (код 1) **до любых изменений**, а `configure` и `apply` — с кодом 1, служба не
@@ -183,7 +210,17 @@ sudo rm /usr/local/share/ca-certificates/mkcert_development_CA_*.crt && sudo upd
 ```
 
 После CA стоит убрать и сам каталог `~/.local/share/code-server/certs` (в нём
-закрытый ключ CA). Затем — `sudo cream install code-server` заново.
+закрытый ключ CA). Затем — `sudo cream install --with-deps code-server` заново.
+
+### Диагностика
+
+```bash
+systemctl status code-server@<пользователь>
+journalctl -u cream-configure@code-server -b
+journalctl -u code-server@<пользователь> -b
+sudo cream show code-server
+ss -ltnp | grep 9001
+```
 
 ## Проверки
 
@@ -211,18 +248,3 @@ sudo rm /usr/local/share/ca-certificates/mkcert_development_CA_*.crt && sudo upd
   в каталоге 700, вход верным паролем — 302, неверным — 200; пароля нет в `ps`,
   журнале, реестре и окружении процессов (включая code-server); `cream set
   code-server CODE_SERVER_PASSWORD=` гасит службу и снимает объявление.
-
-## Не проверено
-
-Формат cream/v1 на железе (P): вход в code-server через Teleport с паролем из
-`secrets`, `cert: true` на arm64.
-
-## Диагностика
-
-```bash
-systemctl status code-server@<пользователь>
-journalctl -u cream-configure@code-server -b
-journalctl -u code-server@<пользователь> -b
-sudo cream show code-server
-ss -ltnp | grep 9001
-```

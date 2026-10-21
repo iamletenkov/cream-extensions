@@ -3,23 +3,114 @@
 NetworkManager в образе — чтобы Wi-Fi, объявленный в манифесте устройства,
 на этом устройстве действительно поднялся.
 
-```
-cream install network-manager --accept-risk   # живая машина (live: confirm)
-cream remove network-manager
-EXTENSION network-manager                     # образ bisquite
+<!-- catalog:facts -->
+| | |
+|---|---|
+| ОС | Debian, Ubuntu |
+| Архитектура | amd64, arm64 |
+| cream | ≥ 1.0.0 |
+| Даёт | `network-manager` |
+| Требует | — |
+| Зависит от | [`apt-guard`](../apt-guard/README.md) |
+| Конфликтует с | — |
+| Хуки | `install`, `remove` |
+| Настройка на загрузке | — |
+| Живая машина | с `--accept-risk` |
+
+> **Живая машина — с `--accept-risk`.** Меняет сетевой стек работающей машины: пакет network-manager при установке сразу запускает NetworkManager, и он берёт под управление интерфейсы, которых не держат ifupdown или netplan, — соединение, по которому вы зашли, может оборваться; systemd-networkd не выключается (два менеджера на одних интерфейсах — предупреждение); remove снимает только поставленные этим расширением пакеты
+<!-- /catalog:facts -->
+
+## Что делает
+
+- **`install`** (сборка или живая машина):
+  - смотрит, что уже стоит: `network-manager` и `wpasupplicant`;
+  - если оба на месте и юнит включён — сообщает и выходит, apt не трогая;
+  - иначе ставит недостающее, записывает поставленное в
+    `/var/lib/cream/ext/network-manager/installed` — вместе с пришедшими в той же
+    установке рекомендациями, которые зависят от `network-manager` (на Ubuntu —
+    `network-manager-pptp` и т. п.; `apt-get remove` снял бы их заодно, и `remove`
+    отказал бы) — и проверяет, что `NetworkManager.service`
+    действительно включён;
+  - предупреждает, если в образе включён ещё и `systemd-networkd`;
+  - сообщает, нашлась ли в `/lib/firmware` прошивка Wi-Fi.
+- **`configure`** — нет: конфигурацию сети пишет cloud-init.
+- **`remove`** — снимает только пакеты из записи (через библиотеку
+  [`apt-guard`](../apt-guard/README.md)). Стоявшие до cream (случай Raspberry Pi
+  OS) остаются, профили соединений — тоже: они принадлежат cloud-init и
+  оператору.
+
+**`wpasupplicant` объявлен явно**, а не оставлен на `Recommends` пакета
+`network-manager`: образы собирают и с `--no-install-recommends`, и тогда
+ассоциация с точкой доступа отваливается уже на устройстве. Та же правка
+и по той же причине сделана у расширения `x11vnc` (`xauth`, `x11-utils`).
+
+Зависимостей, кроме библиотеки `apt-guard`, нет намеренно: NetworkManager нужен
+не расширению, а тому, кто объявил Wi-Fi в манифесте устройства, — и это
+отношение живёт не в дереве расширений, а между образом и `bs device write`.
+
+## Параметры
+
+<!-- catalog:params -->
+Параметров нет.
+<!-- /catalog:params -->
+
+Параметров нет.
+
+## Установка
+
+В образе bisquite (VMFILE) — безопаснее всего:
+
+```dockerfile
+RUN_COMMAND cream install --with-deps network-manager
 ```
 
-> **С 2.0.0 — cream/v1.** `install.sh` стал хуком `hooks/install`, появился хук
-> `remove`; каталог в госте — `/opt/cream/ext/network-manager/`, запись «что поставлено» —
-> `/var/lib/cream/ext/network-manager/installed`. Проверка `ID` из `/etc/os-release`
-> ушла в манифест (`platform.os`: debian, ubuntu) — на другой системе отказывает cream.
-> Настроек нет.
+На живой машине с подключённым каталогом ([как подключить](../../../docs/getting-started.md))
+— только с `--accept-risk`. Риск в том, что пакет `network-manager` при установке
+**сразу запускает** NetworkManager, и он берёт под управление интерфейсы, которых
+не держат ifupdown или netplan, — соединение, по которому вы зашли, может
+оборваться. `systemd-networkd` расширение не выключает (см. «Известные
+ограничения»).
 
-## Зачем
+```bash
+sudo cream install --with-deps --accept-risk network-manager
+sudo cream remove network-manager
+```
+
+## Этапы
+
+| Когда | Что происходит |
+|---|---|
+| сборка образа / `cream install` | «уже стоит» — ничего; иначе недостающие пакеты, запись поставленного, проверка юнита; предупреждения о networkd и прошивке |
+| загрузка | ничего: `configure` нет, профили раскладывает cloud-init |
+| `cream remove` | только пакеты из записи |
+
+## Известные ограничения
+
+**`systemd-networkd` не выключается.** Если в образе включены оба менеджера,
+расширение говорит об этом предупреждением и оставляет как есть: выключить
+networkd значило бы переписать сетевой стек чужого образа за его автора.
+Разбирайтесь на месте — cloud-init при наличии Wi-Fi кладёт профили
+NetworkManager, а Ethernet может остаться за networkd.
+
+**Ничего не настраивает.** Ни одного профиля соединения расширение
+не создаёт: SSID и пароль приходят из манифеста устройства через cloud-init.
+Расширение отвечает только за то, чтобы было **чем** их применить.
+
+**Прошивку Wi-Fi не ставит** — см. «Прошивку не ставим».
+
+**`build: exec`** — хук выполняется в госте, значит архитектуры хоста и образа
+обязаны совпасть: libguestfs не выполняет код в госте чужой архитектуры.
+Собрать arm64-образ с этим расширением на amd64-хосте нельзя, и отказ приходит
+до сборки.
+
+## Подробности
+
+### Зачем
 
 `bs device write` при наличии секции `wifi` у интерфейса генерирует
 `network-config` с `renderer: NetworkManager`: systemd-networkd Wi-Fi
-не поддерживает вовсе (`docs/guides/device.md`, раздел «WiFi интерфейсы»).
+не поддерживает вовсе (документация bisquite, `docs/guides/device.md`, раздел
+«WiFi интерфейсы»).
 
 Если NetworkManager в образе нет, cloud-init разложить профиль **некуда**,
 и устройство приходит без сети. Отказ тихий: карта записалась, система
@@ -33,61 +124,7 @@ Raspberry Pi OS (2026-09-03): `network-manager`, `wpasupplicant`
 Оно нужно для образов, где NetworkManager нет: собственные сборки Debian,
 урезанные cloud-образы, минимальные netinst.
 
-## Подключение
-
-```vmfile
-EXTENSION network-manager
-```
-
-Параметров нет.
-
-На живой машине — `cream install network-manager --accept-risk` (`targets.live: confirm`).
-Риск в том, что пакет `network-manager` при установке **сразу запускает** NetworkManager,
-и он берёт под управление интерфейсы, которых не держат ifupdown или netplan, —
-соединение, по которому вы зашли, может оборваться. `systemd-networkd` расширение
-не выключает (см. «Ограничения»). Безопаснее всего — сборка образа.
-
-## Манифест
-
-| Поле | Значение |
-|---|---|
-| `targets` | `build: exec`, `live: confirm` (`live_note` — смена сетевого стека) |
-| `platform` | `deb`, `amd64`/`arm64`, `os`: debian, ubuntu |
-| `provides` | `network-manager` |
-| `hooks` | `install` (20 мин), `remove`; `configure` нет — конфигурацию сети пишет cloud-init |
-| `depends`, `conflicts` | — |
-
-Зависимостей нет намеренно: NetworkManager нужен не расширению, а тому, кто
-объявил Wi-Fi в манифесте устройства, — и это отношение живёт не в дереве
-расширений, а между образом и `bs device write`.
-
-## Что делает
-
-**`hooks/install`** (сборка или живая машина)
-
-- смотрит, что уже стоит: `network-manager` и `wpasupplicant`;
-- если оба на месте и юнит включён — сообщает и выходит, apt не трогая;
-- иначе ставит недостающее, записывает поставленное в
-  `/var/lib/cream/ext/network-manager/installed` — вместе с пришедшими в той же
-  установке рекомендациями, которые зависят от `network-manager` (на Ubuntu —
-  `network-manager-pptp` и т. п.; `apt-get remove` снял бы их заодно, и `remove`
-  отказал бы) — и проверяет, что `NetworkManager.service`
-  действительно включён;
-- предупреждает, если в образе включён ещё и `systemd-networkd`;
-- сообщает, нашлась ли в `/lib/firmware` прошивка Wi-Fi.
-
-**`hooks/remove`** снимает только пакеты из этой записи. Стоявшие до cream
-(случай Raspberry Pi OS) остаются, профили соединений — тоже: они принадлежат
-cloud-init и оператору.
-
-Донастройки на загрузке у расширения нет: конфигурацию сети пишет cloud-init.
-
-**`wpasupplicant` объявлен явно**, а не оставлен на `Recommends` пакета
-`network-manager`: образы собирают и с `--no-install-recommends`, и тогда
-ассоциация с точкой доступа отваливается уже на устройстве. Та же правка
-и по той же причине сделана у расширения `x11vnc` (`xauth`, `x11-utils`).
-
-## Прошивку не ставим
+### Прошивку не ставим
 
 Прошивка Wi-Fi зависит от чипа: `firmware-brcm80211` для Raspberry Pi,
 `firmware-iwlwifi` для Intel, дальше — Realtek, MediaTek, Atheros.
@@ -115,15 +152,15 @@ cloud-init и оператору.
 для обоих семейств. Нужную прошивку добавляйте слоем `INSTALL` **до**
 этого расширения:
 
-```vmfile
+```dockerfile
 INSTALL firmware-brcm80211
-EXTENSION network-manager
+RUN_COMMAND cream install --with-deps network-manager
 ```
 
 На Debian компонент `non-free-firmware` при этом должен быть подключён
 в `sources.list` образа — на официальных образах Debian 12+ он подключён.
 
-## Отказы
+### Отказы
 
 | Когда | Что делает |
 |---|---|
@@ -136,37 +173,7 @@ EXTENSION network-manager
 и «оператор не сказал, какое у него железо». Прошивка нужна не всем:
 на устройстве без Wi-Fi NetworkManager осмыслен и без неё.
 
-## Ограничения
-
-**`systemd-networkd` не выключается.** Если в образе включены оба менеджера,
-расширение говорит об этом предупреждением и оставляет как есть: выключить
-networkd значило бы переписать сетевой стек чужого образа за его автора.
-Разбирайтесь на месте — cloud-init при наличии Wi-Fi кладёт профили
-NetworkManager, а Ethernet может остаться за networkd.
-
-**Ничего не настраивает.** Ни одного профиля соединения расширение
-не создаёт: SSID и пароль приходят из манифеста устройства через cloud-init.
-Расширение отвечает только за то, чтобы было **чем** их применить.
-
-**`build: exec`** — хук выполняется в госте, значит архитектуры хоста и образа
-обязаны совпасть: libguestfs не выполняет код в госте чужой архитектуры.
-Собрать arm64-образ с этим расширением на amd64-хосте нельзя, и отказ приходит
-до сборки.
-
-## Проверки
-
-- **V** — `make cream-validate`, `tools/check-names.sh`.
-- **H** — `tests/test-network-manager.sh`: «уже стоит» без apt, недостающее, повтор,
-  отказы (нет пакета, юнит не включился), предупреждения, запись рекомендаций,
-  зависящих от `network-manager`, `remove` только своего.
-- **L** — `make test-live EXT=network-manager` (`tests/live.env`, `--accept-risk`) на `debian-12`,
-  `ubuntu-22.04`, `ubuntu-24.04` (с 2.1.0; прогон 2026-10-20 — 11/11 на каждом). На Ubuntu в
-  контейнере без `CAP_SYS_ADMIN` падают `polkit` (24.04) и `systemd-hostnamed` (22.04) — юниты
-  стенда, не расширения: им разрешено упасть (`LIVE_FAILED_IGNORE`), `NetworkManager` при этом
-  `active`. `SYS_ADMIN` не даём: с ним systemd под профилем AppArmor `docker-default` не
-  загружается, а `apparmor=unconfined` вместе с `SYS_ADMIN` на общем хосте — почти root хоста.
-
-### Вручную
+### Как проверить вручную
 
 На собранном образе:
 
@@ -188,7 +195,9 @@ Wi-Fi виден как `disconnected`, а не `unavailable` — прошивк
 `unavailable` при наличии адаптера почти всегда значит именно её отсутствие;
 смотрите `dmesg | grep -i firmware`.
 
-## Проверено на
+### Проверено на
+
+До перехода на cream/v1:
 
 | Система | Архитектура | Дата | Как |
 |---|---|---|---|
@@ -197,3 +206,16 @@ Wi-Fi виден как `disconnected`, а не `unavailable` — прошивк
 | Ubuntu 24.04 (noble) | amd64 | 2026-09-03 | контейнер: ставит, прошивку опознаёт |
 | Alpine (чужое семейство) | amd64 | 2026-09-03 | контейнер: отказ с кодом 1 |
 | Raspberry Pi OS Trixie | arm64 | 2026-09-03 | замер собранного образа: уже стоит |
+
+## Проверки
+
+- **V** — `make cream-validate`, `tools/check-names.sh`.
+- **H** — `tests/test-network-manager.sh`: «уже стоит» без apt, недостающее, повтор,
+  отказы (нет пакета, юнит не включился), предупреждения, запись рекомендаций,
+  зависящих от `network-manager`, `remove` только своего.
+- **L** — `make test-live EXT=network-manager` (`tests/live.env`, `--accept-risk`) на `debian-12`,
+  `ubuntu-22.04`, `ubuntu-24.04` (прогон 2026-10-20 — 11/11 на каждом). На Ubuntu в
+  контейнере без `CAP_SYS_ADMIN` падают `polkit` (24.04) и `systemd-hostnamed` (22.04) — юниты
+  стенда, не расширения: им разрешено упасть (`LIVE_FAILED_IGNORE`), `NetworkManager` при этом
+  `active`. `SYS_ADMIN` не даём: с ним systemd под профилем AppArmor `docker-default` не
+  загружается, а `apparmor=unconfined` вместе с `SYS_ADMIN` на общем хосте — почти root хоста.

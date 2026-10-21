@@ -5,23 +5,26 @@ NVIDIA Container Toolkit для Docker: репозиторий NVIDIA с клю�
 **без смены `default-runtime`** — контейнеры по умолчанию остаются на `runc`,
 GPU получают только те, кого об этом попросили (`--gpus`, `--runtime=nvidia`).
 
-```
-EXTENSION nvidia-container-toolkit                                 # образ bisquite
-sudo cream install --accept-risk nvidia-container-toolkit          # живая машина (live: confirm)
-sudo cream remove nvidia-container-toolkit
-```
+<!-- catalog:facts -->
+| | |
+|---|---|
+| ОС | Debian, Ubuntu |
+| Архитектура | amd64 |
+| cream | ≥ 1.0.0 |
+| Даёт | `nvidia-container-runtime` |
+| Требует | `container-runtime`, `gpu-driver-nvidia` |
+| Зависит от | [`apt-guard`](../apt-guard/README.md) |
+| Конфликтует с | — |
+| Хуки | `install`, `remove` |
+| Настройка на загрузке | — |
+| Живая машина | с `--accept-risk` |
 
-> **2.0.0 — cream/v1.** `install.sh` стал хуком `hooks/install`, появился хук `remove`;
-> расширение ставится и при сборке, и на живую машину (`live: confirm`: на ней при
-> изменении `daemon.json` работающий docker перезапускается). `daemon.json` по-прежнему
-> **сливается** (`nvidia-ctk` дописывает `runtimes.nvidia`, остальные ключи остаются), а
-> файл, где runtime уже есть, не переписывается вовсе — повтор ничего не меняет и docker
-> не трогает. **Нет драйвера — больше не отказ:** запись `nvidia` со `status: skipped`
-> (нет ядра или GPU) — тоже поставщик `gpu-driver-nvidia`, и без `libnvidia-ml.so.1`
-> тулкит ставится с предупреждением. Ссылка вместо `/etc/docker` или `daemon.json` —
-> отказ. Ключ `NVIDIA_CTK_VERSION` прежний (`config.keys`, `scope: install`).
+> **Живая машина — с `--accept-risk`.** Подключает репозиторий NVIDIA, ставит тулкит и дописывает в /etc/docker/daemon.json среду выполнения nvidia (остальные ключи и default-runtime не трогаются); при изменении файла работающий docker перезапускается — его контейнеры останавливаются (без live-restore) и поднимаются по своей restart-политике; remove возвращает daemon.json, если его не правили после установки, и перезапускает docker снова
+<!-- /catalog:facts -->
 
-## Что ставится
+## Что делает
+
+**`install`:**
 
 - нет `curl`, `gpg`, `gpg-agent` или `ca-certificates` — ставятся (`gpg` без
   `gpg-agent` импортирует ключ, но выходит с кодом 2 — замер 2026-10-19 в `debian:12`,
@@ -40,10 +43,11 @@ sudo cream remove nvidia-container-toolkit
   четыре строго версии `NVIDIA_CTK_VERSION` (они выпускаются вместе, и пин
   одного верхнего дал бы apt собрать его с более новым `-base`);
 - `nvidia-ctk runtime configure --runtime=docker --config=/etc/docker/daemon.json` —
-  дописывает в `daemon.json` блок `runtimes.nvidia`; остальные ключи файла
+  **сливает**: дописывает в `daemon.json` блок `runtimes.nvidia`, остальные ключи файла
   сохраняются. `--set-as-default` не передаётся, и хук это проверяет: если
   `default-runtime` до и после вызова различается — код 1. Если runtime `nvidia`
-  в файле уже есть, `nvidia-ctk` не зовётся вовсе.
+  в файле уже есть, `nvidia-ctk` не зовётся вовсе — повтор ничего не меняет и docker
+  не трогает. Ссылка вместо `/etc/docker` или `daemon.json` — отказ.
 - перед первой правкой файл копируется в
   `/var/lib/cream/ext/nvidia-container-toolkit/daemon-json.before` (или отмечается,
   что его не было, — `daemon-json.absent`), а sha256 результата — в `daemon-json.sha256`;
@@ -55,51 +59,85 @@ sudo cream remove nvidia-container-toolkit
 (контейнеры без `live-restore` останавливаются и поднимаются по своей
 restart-политике), остановленный остаётся остановленным.
 
-**`hooks/remove`** возвращает `daemon.json` к состоянию до установки — копию или
+**`remove`** возвращает `daemon.json` к состоянию до установки — копию или
 отсутствие файла, — но только если файл с тех пор не правили (sha256 совпадает);
 иначе оставляет его и говорит, что runtime `nvidia` убирать руками. Затем снимает
 пакеты из записи (стоявшие до cream остаются), источник и ключ, обновляет списки apt;
 при изменении `daemon.json` перезапускает работающий docker.
 
-## Порядок слоёв — проверяется
-
-Обе способности требует манифест (`requires`), cream проверяет поставщиков. Сам хук:
+Своего `configure` нет. Обе способности (`container-runtime`, `gpu-driver-nvidia`)
+требует манифест, cream проверяет поставщиков. Сам хук:
 
 - отказывает без Docker (`/usr/bin/dockerd`; способность `container-runtime`,
-  расширение `docker`);
+  расширение [`docker`](../docker/README.md));
 - без драйвера (`libnvidia-ml.so.1`; способность `gpu-driver-nvidia`, расширение
-  `nvidia`) — **предупреждает и продолжает**: запись `nvidia` бывает `skipped`
-  (контейнер, ВМ без проброса GPU), а тулкиту и записи в `daemon.json` GPU не нужен.
+  [`nvidia`](../nvidia/README.md)) — **предупреждает и продолжает**: запись `nvidia`
+  со `status: skipped` (нет ядра или GPU: контейнер, ВМ без проброса GPU) — тоже
+  поставщик `gpu-driver-nvidia`, а тулкиту и записи в `daemon.json` GPU не нужен.
   GPU в контейнерах появится, когда драйвер встанет.
 
-## Настройки
+## Параметры
 
-| Переменная | Умолчание | Что |
-|---|---|---|
-| `NVIDIA_CTK_VERSION` | — (новейшая) | точная версия тулкита: `1.17.8` или `1.17.8-1`; нет такой в репозитории — ошибка со списком последних доступных |
+<!-- catalog:params -->
+| Ключ | Тип | Умолчание | Что задаёт |
+|---|---|---|---|
+| `NVIDIA_CTK_VERSION` | строка `^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.~+]+)?$` | пусто | точная версия тулкита (1.17.8 или 1.17.8-1); пусто — новейшая в репозитории *(только при установке)* |
+<!-- /catalog:params -->
 
-`scope: install`: смена — повтор `cream install nvidia-container-toolkit
+`NVIDIA_CTK_VERSION`: нет такой версии в репозитории — ошибка со списком последних
+доступных. `scope: install`: смена — повтор `cream install nvidia-container-toolkit
 NVIDIA_CTK_VERSION=…`. Другой конфигурации у расширения нет — среда выполнения
 описана в `/etc/docker/daemon.json`.
 
-## Подключение
+## Установка
 
-На живой машине (драйвер `nvidia` ставится раньше; без GPU — с `--allow-skip`):
+На живой машине (`live: confirm`; драйвер `nvidia` ставится раньше; без GPU — с
+`--allow-skip`):
 
 ```bash
-sudo cream install --accept-risk docker
-sudo cream install --accept-risk --allow-skip nvidia
-sudo cream install --accept-risk nvidia-container-toolkit
+sudo cream install --with-deps --accept-risk docker
+sudo cream install --with-deps --accept-risk --allow-skip nvidia
+sudo cream install --with-deps --accept-risk nvidia-container-toolkit
+sudo cream remove nvidia-container-toolkit
 ```
 
-В VMFILE:
+В образе bisquite (VMFILE):
 
-```vmfile
-EXTENSION docker
-EXTENSION nvidia
-EXTENSION nvidia-container-toolkit
-EXTENSION nvidia-container-toolkit NVIDIA_CTK_VERSION=1.17.8
+```dockerfile
+RUN_COMMAND cream install --with-deps docker
+RUN_COMMAND cream install --with-deps nvidia
+RUN_COMMAND cream install --with-deps nvidia-container-toolkit
 ```
+
+С закреплённой версией тулкита — последняя строка в виде:
+
+```dockerfile
+RUN_COMMAND cream install --with-deps nvidia-container-toolkit NVIDIA_CTK_VERSION=1.17.8
+```
+
+## Этапы
+
+| Когда | Что происходит |
+|---|---|
+| сборка образа / `cream install` | репозиторий, ключ, пакеты, `runtimes.nvidia` в `daemon.json`; на живой машине — `try-restart docker` при изменении |
+| загрузка | своего configure нет; `dockerd` читает `daemon.json` |
+| `cream remove` | `daemon.json` возвращён (если не правлен), пакеты, источник и ключ сняты; `try-restart docker` при изменении |
+
+## Известные ограничения
+
+- `platform.arch` — только amd64: репозиторий публикует и arm64, но драйвер
+  (`nvidia`) только amd64, а на Jetson тулкит ставит расширение `docker` из
+  репозитория L4T.
+- Secure Boot выключен — требование расширения `nvidia` (DKMS-модуль
+  драйвера без регистрации MOK не загрузится), к тулкиту отдельных
+  требований нет.
+- Тулкит 1.18+ ставит `nvidia-cdi-refresh` — спецификация CDI
+  (`/var/run/cdi/nvidia.yaml`) генерируется на машине, при сборке GPU нет.
+  Для `docker run --gpus` она не нужна.
+- Только Docker: containerd/CRI-O/podman расширение не настраивает.
+- На машине с GPU (P) не проверялось.
+
+## Подробности
 
 ### Как сменить версию драйвера
 
@@ -107,20 +145,7 @@ EXTENSION nvidia-container-toolkit NVIDIA_CTK_VERSION=1.17.8
 с другой `NVIDIA_DRIVER_VERSION` в его строке. Тулкит от ветки драйвера не
 зависит: он берёт библиотеки того драйвера, что стоит на машине.
 
-## Манифест
-
-| Поле | Значение |
-|---|---|
-| `version` | `2.0.0`, `cream: ">=1.0.0"` |
-| `targets` | `build: exec`, `live: confirm` (`live_note` — `daemon.json` и перезапуск docker) |
-| `platform` | `deb`, `arch: [amd64]` — репозиторий публикует и arm64, но драйвер (`nvidia`) только amd64, а на Jetson тулкит ставит расширение `docker` из репозитория L4T; `os`: debian, ubuntu |
-| `hooks` | `install` (20 мин), `remove` (10 мин); `configure` нет |
-| `provides` | `nvidia-container-runtime` |
-| `requires` | `container-runtime`, `gpu-driver-nvidia` |
-| `config.keys` | `NVIDIA_CTK_VERSION` (`scope: install`, может быть пустым) |
-| `depends`, `conflicts` | — |
-
-## Проверка на машине
+### Проверка на машине
 
 ```bash
 nvidia-smi                                              # драйвер отвечает
@@ -151,13 +176,3 @@ cat /etc/docker/daemon.json
   снимает всё, `systemctl --failed` пуст.
 - **P** — ВМ с GPU: `docker run --rm --gpus all … nvidia-smi` (раздел «Проверка на
   машине»). **Не выполнялась** при переводе на cream/v1 (машины с GPU нет).
-
-## Ограничения
-
-- Secure Boot выключен — требование расширения `nvidia` (DKMS-модуль
-  драйвера без регистрации MOK не загрузится), к тулкиту отдельных
-  требований нет.
-- Тулкит 1.18+ ставит `nvidia-cdi-refresh` — спецификация CDI
-  (`/var/run/cdi/nvidia.yaml`) генерируется на машине, при сборке GPU нет.
-  Для `docker run --gpus` она не нужна.
-- Только Docker: containerd/CRI-O/podman расширение не настраивает.

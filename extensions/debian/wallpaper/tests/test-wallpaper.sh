@@ -64,7 +64,7 @@ ini_get() { awk -F= -v s="$2" -v k="$3" '/^\[/{c=($0=="["s"]")} c && $1==k {prin
 echo "== манифест =="
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "версия 3.0.1" 3.0.1 "$(mf 'm["version"]')"
+eq "версия 3.0.2" 3.0.2 "$(mf 'm["version"]')"
 eq "configure по отметке — every_boot нет (аудит 2026-10-21)" None "$(mf 'm["hooks"]["configure"].get("every_boot")')"
 check "исключение every-boot в хуке" grep -q "^# cream-lint: every-boot-not-needed " "$EXT/hooks/configure"
 eq "cream >= 1.1.1 (стадия cloud-user, Р14)" '>=1.1.1' "$(mf 'm["cream"]')"

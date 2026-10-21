@@ -14,7 +14,8 @@
 # Tree: requirements.txt, check-system-python.py, pip-owned.py.
 schema: cream/v1
 name: l4t-tensorflow
-version: 2.1.0
+version: 2.1.1
+# 2.1.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: TensorFlow с CUDA для NVIDIA Jetson — колесо NVIDIA 2.16.1, cuDNN 9 и keras 3.3.3
 cream: ">=1.0.0"
 platform:

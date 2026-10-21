@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Scaffold a new cream/v1 extension (docs/extensions.md, "Формат cream/v1").
+# Scaffold a new cream/v1 extension (docs/guides/write-extension.md).
 #
 # Without this, a new extension is written by copying a neighbour — together
 # with its capabilities in the manifest and its paths in the unit file. Those
@@ -103,7 +103,7 @@ fi
 ext_dir="$REPO_ROOT/extensions/debian/$name"
 [[ -e "$ext_dir" ]] && { echo "Уже существует: extensions/debian/$name" >&2; exit 1; }
 
-# Minimal cream of a stage (cream docs/cli.md; cloud-user: plan ruling R14).
+# Minimal cream of a stage (cream docs/reference/manifest.md; cloud-user: plan ruling R14).
 case "$stage" in
     early | graphical) cream_min="1.1.0" ;;
     cloud-user) cream_min="1.1.1" ;;
@@ -149,7 +149,7 @@ EOF
     if (( ! library )); then
         cat <<'EOF'
 # Capabilities, not names: derive them FROM THE CODE — what the hooks really
-# install and what the units really need (docs/extensions.md, «Словарь способностей»).
+# install and what the units really need (docs/reference/capabilities.md).
 provides: []
 requires: []
 EOF
@@ -304,59 +304,83 @@ EOF
 chmod +x "$ext_dir/tests/test-$name.sh"
 
 # --- README ------------------------------------------------------------------
+# The template of docs/reference/extension-readme.md; the catalog:* blocks are
+# filled from the manifest by tools/catalog-docs.sh.
 {
     cat <<EOF
 # $name
 
-TODO: одна фраза — что это расширение даёт машине.
+TODO: что расширение даёт машине — одна-три фразы.
 
-\`\`\`
-cream install $name          # живая машина
-cream remove $name
-EXTENSION $name              # образ bisquite
-\`\`\`
+<!-- catalog:facts -->
+<!-- /catalog:facts -->
 
-## Зачем
+## Что делает
 
-TODO: чего не хватает без него и чем это заканчивается на машине. Ссылайся на
-замер, а не на общее соображение: «замерено на <образе>, <дата>».
-
-## Настройки
-
-Ключи домена \`$name\` (\`config.keys\` манифеста): \`cream show $name\`,
-\`sudo cream set $name KEY=VALUE\`; в образе — \`EXTENSION $name KEY=VALUE\`.
-
-| Ключ | Что задаёт | Умолчание |
-|---|---|---|
-| \`${prefix}_EXAMPLE\` | TODO | пусто |
-
-## Манифест
-
-| Поле | Значение |
-|---|---|
-| \`targets\` | \`build: exec\`, \`live: $live\` |
-| \`platform.arch\` | ${arch_list[*]} |
 EOF
     if (( library )); then
-        echo "| \`kind\` | \`library\` — путь \`\${CREAM_ROOT:-}/opt/cream/ext/$name/$name.sh\` |"
+        cat <<EOF
+- TODO: функции библиотеки. Потребитель объявляет \`depends\` на \`$name\` и зовёт
+  \`"\${CREAM_ROOT:-}/opt/cream/ext/$name/$name.sh"\`.
+
+## Параметры
+
+<!-- catalog:params -->
+<!-- /catalog:params -->
+
+## Установка
+
+Библиотеку отдельно не ставят: её добирает \`cream install --with-deps\` потребителя.
+EOF
     else
-        echo "| \`hooks\` | \`install\`${stage:+, \`configure\` (стадия \`$stage\`)}, \`remove\` |"
+        cat <<EOF
+- **\`install\`** — TODO.
+- **\`remove\`** — TODO: снимает только своё.
+
+## Параметры
+
+<!-- catalog:params -->
+<!-- /catalog:params -->
+
+## Установка
+
+На машине с подключённым каталогом ([как подключить](../../../docs/getting-started.md)):
+
+\`\`\`bash
+sudo cream install --with-deps $name ${prefix}_EXAMPLE=value
+cream show $name
+\`\`\`
+
+В образе bisquite (VMFILE):
+
+\`\`\`dockerfile
+RUN_COMMAND cream install --with-deps $name ${prefix}_EXAMPLE=value
+\`\`\`
+
+## Этапы
+
+| Когда | Что происходит |
+|---|---|
+| сборка образа / \`cream install\` | TODO |
+EOF
+        if [[ -n "$stage" ]]; then
+            echo "| загрузка (\`cream-configure@$name\`, стадия \`$stage\`) | TODO |"
+        fi
+        echo "| \`cream remove\` | TODO |"
     fi
-    if (( want_cloud_user )); then echo "| \`depends\` | \`cloud-user\` |"; fi
     cat <<EOF
+
+## Известные ограничения
+
+- TODO: чего расширение не делает, где не проверено. Ссылайся на замер, а не на
+  общее соображение: «замерено на <образе>, <дата>».
 
 ## Проверки
 
-- **V** — \`make cream-validate\`, \`make check-names\`, \`tools/lint-hooks.sh\`.
+- **V** — \`make cream-validate\`, \`tools/lint-hooks.sh\`, \`make check-names\`.
 - **H** — \`tests/test-$name.sh\`.
 - **L** — \`make test-live EXT=$name\` (умолчания прогона — \`tests/live.env\`; с ним
   расширение попадает в живые прогоны CI).
-
-## Проверено на
-
-| Система | Архитектура | Дата |
-|---|---|---|
-| TODO после первого живого прогона | | |
 EOF
 } > "$ext_dir/README.md"
 
@@ -377,6 +401,8 @@ else
     if [[ -n "$stage" ]]; then echo "  hooks/configure         стадия $stage"; fi
 fi
 echo "  tests/test-$name.sh     H-тест — поведение пишется до кода"
-echo "  README.md               что даёт, ключи, проверки"
+echo "  README.md               по шаблону docs/reference/extension-readme.md"
+echo
+echo "Дальше: tools/catalog-docs.sh — заполнит блоки catalog:* в README из манифеста."
 echo
 echo "Дальше: заполнить TODO, потом  make ci  и  make cream-validate"

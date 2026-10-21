@@ -1,59 +1,190 @@
 # teleport
 
 Узел Teleport на машине: SSH-нода и веб-приложения без входящих портов — агент
-сам держит обратный туннель к прокси на 443. Расширение формата `cream/v1`
-(исполнитель — [cream](https://github.com/iamletenkov/cream)), перенос логики
-`bisquite-teleport-agent` 3.x (спека stvor-agent §10). Заменило обёртку
-`teleport-agent` (layout 2, удалена из каталога); способность — `teleport-node`.
+сам держит обратный туннель к прокси на 443. Исполнитель —
+[cream](https://github.com/iamletenkov/cream); способность — `teleport-node`.
+
+<!-- catalog:facts -->
+| | |
+|---|---|
+| ОС | Debian ≥ 12, Ubuntu ≥ 20.04 |
+| Архитектура | amd64, arm64 |
+| cream | ≥ 1.0.0 |
+| Даёт | `teleport-node` |
+| Требует | — |
+| Зависит от | — |
+| Конфликтует с | способность `teleport-node` |
+| Хуки | `install`, `upgrade`, `remove`, `apply` |
+| Настройка на загрузке | — |
+| Действия | `cream run teleport join`, `cream run teleport join-retry`, `cream run teleport leave`, `cream run teleport set-managed`, `cream run teleport managed-status`, `cream run teleport status`, `cream run teleport render`, `cream run teleport reload-apps`, `cream run teleport hup`, `cream run teleport scrub-token` |
+| Живая машина | да |
+<!-- /catalog:facts -->
 
 Метки узла задают три стороны: оператор (`TELEPORT_ENV`, `TELEPORT_LABELS`),
 внешний управляющий — служба `stvor-agent` (управляемые метки
 `TELEPORT_MANAGED_LABELS`, действия `set-managed` и `managed-status`) и другие
 расширения (командные метки `command-labels.d`).
 
-## Установка — бинарь Teleport
+## Что делает
 
-**Платформа:** Debian ≥ 12, Ubuntu ≥ 20.04 (с 4.1.0 — ради Jetson Nano на L4T
-R32). Тарбол Teleport 18.10 arm64 требует glibc ≥ 2.17 (`objdump -T`, 2026-10-20),
-у focal 2.31; path-юниты, `PIDFile`, `ConditionPathExists` и `systemctl show
---value` есть в systemd 245. Ubuntu 18.04 (systemd 237) не поддерживается.
+- **`install`** (и **`upgrade`** — тот же код) — ставит только бинарь `teleport`
+  в `/usr/local/bin` (без `tsh`, `tctl`, `tbot`) из тарбола Teleport 18.10 (см.
+  «Установка — бинарь Teleport»), включает `teleport-apps.path` и
+  `teleport-token.path` и **не регистрирует** узел и не запускает агента. Та же
+  версия уже стоит — пропуск без скачивания. Смена ключа — повтор
+  `cream install teleport KEY=…`: новый бинарь, и работавший агент перезапускается
+  (`try-restart`). В сборке образа (`CREAM_PHASE=build`) хук отказывает, если в
+  `/var/lib/teleport` уже есть регистрация: иначе все копии образа были бы одной
+  нодой. cream раскладывает юниты `teleport.service`, `teleport-apps.{path,service}`,
+  `teleport-token.{path,service}`, `teleport-join.{service,timer}` в
+  `/etc/systemd/system/`.
+- **`apply`** (после `cream set`) — render и `systemctl --no-block
+  reload-or-restart teleport.service` — HUP, открытые сессии живут.
+- **`remove`** — `leave`, path-юниты выключены, бинарь и состояние стёрты; юниты
+  и (с `--purge`) домен удаляет cream.
 
+Хука `configure` нет: регистрация — действие `join` (см. «Регистрация — `join`»),
+конфиг собирает действие `render` в `ExecStartPre`/`ExecReload` `teleport.service`.
 
-```
-cream install teleport                                   # 18.10.0 с cdn.teleport.dev
-cream install teleport TELEPORT_VERSION=18.10.0 TELEPORT_MIRROR=https://binaries.example.org \
+| Путь | Что |
+|---|---|
+| `/opt/cream/ext/teleport/` | дерево расширения: `hooks/`, `actions/` (тонкие входы), `files/teleport.sh` (общая библиотека), `files/os-logins` (метка `os_logins`, её зовёт Teleport) |
+| `/etc/systemd/system/teleport{,-apps,-token,-join}.*` | юниты (раскладывает cream) |
+| `/etc/cream/teleport/{config,apps.d,command-labels.d}` | домен ручек и объявления |
+| `/var/lib/cream/ext/teleport/{registration-secret,join-pending,join-refused,managed-pending,reload-pending,rollback}` | состояние (каталог 0700, файлы 0600) |
+| `/etc/teleport.yaml`, `/var/lib/teleport/`, `/usr/local/bin/teleport` | Teleport |
+
+## Параметры
+
+<!-- catalog:params -->
+| Ключ | Тип | Умолчание | Что задаёт |
+|---|---|---|---|
+| `TELEPORT_VERSION` | строка `^[0-9]+\.[0-9]+\.[0-9]+$` | `18.10.0` | версия Teleport; не новее кластера, для bound_keypair — не ниже 18.8.0 *(только при установке)* |
+| `TELEPORT_SHA256` | строка `^[0-9a-f]{64}$` | пусто | sha256 тарбола архитектуры машины; пусто — .sha256 с cdn.teleport.dev *(только при установке)* |
+| `TELEPORT_MIRROR` | строка `^https?://[A-Za-z0-9.:/-]+$` | пусто | база зеркала <base>/binaries/teleport/<ver>/<тарбол>; пусто — cdn.teleport.dev *(только при установке)* |
+| `TELEPORT_TARBALL` | `path` | пусто | локальный тарбол (офлайн, нужен TELEPORT_SHA256); взаимоисключим с TELEPORT_MIRROR *(только при установке)* |
+| `TELEPORT_PROXY` | строка `^[a-z0-9][a-z0-9.-]{0,252}(:[0-9]{1,5})?$` | пусто | прокси кластера host[:port]; пишет только join *(только чтение)* |
+| `TELEPORT_JOIN_METHOD` | `token` \| `bound_keypair` | `token` | метод регистрации; пишет только join *(только чтение)* |
+| `TELEPORT_TOKEN` | строка `^[A-Za-z0-9._-]{8,256}$` | пусто | имя токена bound_keypair (не секрет); у метода token пусто; пишет только join *(только чтение)* |
+| `TELEPORT_CA_PIN` | строка `^sha256:[0-9a-f]{64}$` | пусто | необязательная сверка CA кластера: sha256:<64 hex> |
+| `TELEPORT_ENV` | строка `^[a-zA-Z0-9][a-zA-Z0-9_./ -]{0,127}$` | пусто | метка env — по ней роли кластера дают доступ |
+| `TELEPORT_NODENAME` | строка `^[a-z0-9][a-z0-9-]{1,62}$` | пусто | имя ноды, метка DNS; пусто — короткое имя хоста |
+| `TELEPORT_LABELS` | список через пробел, элемент `^[a-zA-Z0-9][a-zA-Z0-9_./-]{0,63}=[a-zA-Z0-9][a-zA-Z0-9_./-]{0,127}$` | пусто | прочие метки ноды ключ=значение через пробел (env, app, os_logins, teleport.icon нельзя) |
+| `TELEPORT_APPS` | список через пробел, элемент `^[a-z0-9][a-z0-9-]{0,62}=([0-9]{1,5}\|https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?)$` | пусто | приложения оператора имя=порт или имя=http(s)://хост[:порт][/путь] через пробел |
+| `TELEPORT_APPS_DISABLE` | список через пробел, элемент `^[a-z0-9][a-z0-9-]{0,62}$` | пусто | не публиковать объявленные приложения: имена через пробел |
+| `TELEPORT_APPS_ICONS` | список через пробел, элемент `^[a-z0-9][a-z0-9-]{0,62}=[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` | пусто | иконка приложения в веб-морде прокси: имя=иконка через пробел |
+| `TELEPORT_APPS_DISCOVERY` | `bool` | `1` | 0 — не читать объявления /etc/cream/teleport/apps.d |
+| `TELEPORT_OS_LOGINS` | `bool` | `1` | динамическая метка ноды os_logins (root и uid >= 1000 с shell); 0 — нет |
+| `TELEPORT_MANAGED_LABELS` | список через пробел, элемент `^[a-z][a-z0-9_]{0,62}=[a-z0-9][a-z0-9._-]{0,62}$` | пусто | управляемые метки ключ=значение через пробел; пишет только set-managed *(только чтение)* |
+<!-- /catalog:params -->
+
+**Ключи установки** (`scope: install`, смена — повтор `cream install teleport KEY=…`):
+
+- `TELEPORT_VERSION` — **не новее кластера**, не старше на мажор; для
+  `bound_keypair` — не ниже 18.8.0.
+- `TELEPORT_SHA256` — пусто: `.sha256` с `cdn.teleport.dev` (второй канал, если
+  тарбол с зеркала). Своя сборка Teleport на зеркале (форк той же версии) — не тот
+  тарбол, что описывает `.sha256` CDN: её сумму задают явно.
+- `TELEPORT_MIRROR` — база зеркала:
+  `<база>/binaries/teleport/<версия>/teleport-v<версия>-linux-<arch>-bin.tar.gz`;
+  пусто — `cdn.teleport.dev`.
+- `TELEPORT_TARBALL` — локальный тарбол; нужен `TELEPORT_SHA256`; взаимоисключим с
+  `TELEPORT_MIRROR`.
+
+**Ручки** — `cream set teleport KEY=…` (хук `apply`):
+
+| Ключ | Что делает |
+|---|---|
+| `TELEPORT_PROXY`, `TELEPORT_JOIN_METHOD`, `TELEPORT_TOKEN` | `readonly`: пишет только `join` (и `leave`) |
+| `TELEPORT_CA_PIN` | сверка CA кластера `sha256:<64 hex>` |
+| `TELEPORT_ENV` | метка `env` — по ней роли кластера дают доступ |
+| `TELEPORT_NODENAME` | имя ноды; пусто — короткое имя хоста |
+| `TELEPORT_LABELS` | метки ноды `ключ=значение` **через пробел**; `env`, `app`, `os_logins`, `teleport.icon` нельзя |
+| `TELEPORT_APPS` | приложения оператора `имя=порт` или `имя=http(s)://хост[:порт][/путь]` через пробел |
+| `TELEPORT_APPS_DISABLE` | не публиковать объявленное: имена через пробел |
+| `TELEPORT_APPS_ICONS` | `имя=иконка` через пробел; сильнее `ICON=` объявления |
+| `TELEPORT_APPS_DISCOVERY` | `0` — не читать `apps.d` |
+| `TELEPORT_OS_LOGINS` | `0` — без динамической метки `os_logins` |
+| `TELEPORT_MANAGED_LABELS` | `readonly`: пишет только `set-managed` (и `leave`) — см. «Управляемые метки» |
+
+Значения ложатся в YAML в двойных кавычках: кавычек и `$` в них нет (те же
+регулярные выражения — в `files/teleport.sh`, `KEY_TYPE`).
+
+## Установка
+
+На машине с подключённым каталогом ([как подключить](../../../docs/getting-started.md)):
+
+```bash
+sudo cream install --with-deps teleport                                   # 18.10.0 с cdn.teleport.dev
+sudo cream install --with-deps teleport TELEPORT_VERSION=18.10.0 TELEPORT_MIRROR=https://binaries.example.org \
     TELEPORT_SHA256=<sha256 тарбола архитектуры машины>
-cream install teleport TELEPORT_TARBALL=/media/teleport-v18.10.0-linux-arm64-bin.tar.gz \
-    TELEPORT_SHA256=<sha256>                                 # офлайн
+sudo cream install --with-deps teleport TELEPORT_TARBALL=/media/teleport-v18.10.0-linux-arm64-bin.tar.gz \
+    TELEPORT_SHA256=<sha256>                                             # офлайн
 ```
 
-| Ключ (`scope: install`) | Умолчание | Что делает |
+В образе bisquite (VMFILE) — только бинарь; регистрация — на машине (`join`
+работает только на живой машине):
+
+```dockerfile
+RUN_COMMAND cream install --with-deps teleport
+```
+
+## Этапы
+
+| Когда | Что происходит |
+|---|---|
+| сборка образа / `cream install` | бинарь, path-юниты включены; регистрации нет (в сборке — отказ, если она есть) |
+| `cream upgrade` | тот же код, что `install`; агент перезапускается |
+| `cream run teleport join …` | регистрация узла (см. ниже) |
+| загрузка | `teleport-join.timer` повторяет ждущую регистрацию; `teleport.service` собирает конфиг (`render`) |
+| `cream set` (хук `apply`) | render и HUP агенту |
+| изменение `apps.d` или `command-labels.d` | `teleport-apps.path` → `reload-apps` |
+| `cream remove` | `leave`, бинарь и состояние стёрты |
+
+Действия:
+
+| Действие | `lock` | Что делает |
 |---|---|---|
-| `TELEPORT_VERSION` | `18.10.0` | версия; **не новее кластера**, не старше на мажор; для `bound_keypair` — не ниже 18.8.0 |
-| `TELEPORT_SHA256` | пусто | сумма тарбола архитектуры машины; пусто — `.sha256` с `cdn.teleport.dev` (второй канал, если тарбол с зеркала) |
-| `TELEPORT_MIRROR` | пусто | база зеркала: `<база>/binaries/teleport/<версия>/teleport-v<версия>-linux-<arch>-bin.tar.gz`; пусто — `cdn.teleport.dev` |
-| `TELEPORT_TARBALL` | пусто | локальный тарбол; нужен `TELEPORT_SHA256`; взаимоисключим с `TELEPORT_MIRROR` |
+| `join KEY=…` | exclusive | регистрация, JSON в stdout |
+| `join-retry` | exclusive | тик `teleport-join.timer`; ручная регистрация после `TELEPORT_DEFER=1` |
+| `leave` | exclusive | агент выключен, `/var/lib/teleport`, `teleport.yaml`, секрет, ожидание, управляемые метки и `managed-pending` стёрты; JSON `{"result":"left"}` |
+| `set-managed k=v…` | exclusive | полный набор управляемых меток; JSON схемы 1 |
+| `managed-status` | none | управляемые метки, маркер, регистрация, агент; JSON схемы 1 |
+| `status` | none | регистрация, служба, ручки, приложения, управляемые и командные метки — текстом |
+| `render` | none | `/etc/teleport.yaml` (0600); `ExecStartPre`/`ExecReload` `teleport.service` |
+| `reload-apps` | exclusive | `teleport-apps.service`: render, HUP с подтверждением новым процессом или restart |
+| `hup` | none | `ExecReload` `teleport.service`: адресный HUP с подтверждением, иначе `reload-pending` |
+| `scrub-token` | exclusive | `teleport-token.service`: стирает секрет первого входа |
 
-Хук `install` (и `upgrade` — тот же код) ставит только `teleport` (без `tsh`, `tctl`, `tbot`), включает
-`teleport-apps.path` и `teleport-token.path` и **не регистрирует** узел и не
-запускает агента. Та же версия уже стоит — пропуск без скачивания. Смена
-ключа — повтор `cream install teleport KEY=…`: новый бинарь, и работавший агент
-перезапускается (`try-restart`). В сборке образа (`CREAM_PHASE=build`) хук
-отказывает, если в `/var/lib/teleport` уже есть регистрация: иначе все копии
-образа были бы одной нодой. Своя сборка Teleport на зеркале (форк той же
-версии) — не тот тарбол, что описывает `.sha256` CDN: её сумму задают явно.
+## Известные ограничения
 
-## Регистрация — `join`
+- Только Debian ≥ 12 и Ubuntu ≥ 20.04; Ubuntu 18.04 (systemd 237) не
+  поддерживается (см. «Установка — бинарь Teleport»).
+- `TELEPORT_VERSION` не новее кластера и не старше на мажор.
+- Регистрации в кластере в живом L-прогоне нет.
+- `cream validate` предупреждает (`validate.unit_lock`) о трёх юнитах — это
+  допустимо (см. «Действия и файлы»).
 
-```
-printf '%s' '<секрет регистрации>' | cream run teleport join TELEPORT_PROXY=teleport.example.org \
+## Подробности
+
+### Установка — бинарь Teleport
+
+**Платформа:** Debian ≥ 12, Ubuntu ≥ 20.04 (ради Jetson Nano на L4T R32). Тарбол
+Teleport 18.10 arm64 требует glibc ≥ 2.17 (`objdump -T`, 2026-10-20), у focal
+2.31; path-юниты, `PIDFile`, `ConditionPathExists` и `systemctl show --value` есть
+в systemd 245. Ubuntu 18.04 (systemd 237) не поддерживается.
+
+### Регистрация — `join`
+
+```bash
+printf '%s' '<секрет регистрации>' | sudo cream run teleport join TELEPORT_PROXY=teleport.example.org \
     TELEPORT_JOIN_METHOD=bound_keypair TELEPORT_TOKEN=robot-lab-1 TELEPORT_REGISTRATION_SECRET=- \
     TELEPORT_ENV=dev TELEPORT_NODENAME=lab-1 "TELEPORT_LABELS=space=sp-0123abcd site=lab"
-printf '%s' '<join-токен>' | cream run teleport join TELEPORT_PROXY=teleport.example.org \
+printf '%s' '<join-токен>' | sudo cream run teleport join TELEPORT_PROXY=teleport.example.org \
     TELEPORT_REGISTRATION_SECRET=- TELEPORT_ENV=dev
 ```
 
-**Секрет первого входа** (рулинг РТ1) — единственный секретный параметр `join`,
+**Секрет первого входа** — единственный секретный параметр `join`,
 только `TELEPORT_REGISTRATION_SECRET=-` со stdin: у метода `token` это сам
 join-токен, у `bound_keypair` — секрет регистрации, а `TELEPORT_TOKEN` — имя
 токена (не секрет, несекретная пара; у `token` пусто). Секрет лежит в
@@ -73,7 +204,7 @@ stdout `join` — один JSON-объект:
 неверный ввод (причина — в stderr и `reason`); 2 — узел зарегистрирован, но у
 токена не было роли App (приложения не опубликованы).
 
-Поведение перенесено из 3.x без изменений: повтор на зарегистрированной машине
+Поведение: повтор на зарегистрированной машине
 с тем же прокси — ничего не трогает; без сети или прокси (первая загрузка) —
 параметры и секрет на диске, `teleport-join.{service,timer}` повторяют при
 каждой загрузке и раз в минуту; отказ кластера (секрет неверен или истёк,
@@ -82,26 +213,11 @@ stdout `join` — один JSON-объект:
 сам, повторы включены; неудачный переезд зарегистрированной машины
 возвращает прежнюю регистрацию.
 
-## Ручки — `cream set teleport KEY=…`
+Версия кластера из `/webapi/find` — внешний ввод: до любой арифметики она
+проверяется как `X.Y.Z[-pre][+build]` (компоненты до 9 цифр) и обрезается до
+`X.Y.Z`; иное — «прокси назвал версию не по форме», join ждёт.
 
-| Ключ | Что делает |
-|---|---|
-| `TELEPORT_PROXY`, `TELEPORT_JOIN_METHOD`, `TELEPORT_TOKEN` | `readonly`: пишет только `join` (и `leave`) |
-| `TELEPORT_CA_PIN` | сверка CA кластера `sha256:<64 hex>` |
-| `TELEPORT_ENV` | метка `env` — по ней роли кластера дают доступ |
-| `TELEPORT_NODENAME` | имя ноды; пусто — короткое имя хоста |
-| `TELEPORT_LABELS` | метки ноды `ключ=значение` **через пробел**; `env`, `app`, `os_logins`, `teleport.icon` нельзя |
-| `TELEPORT_APPS` | приложения оператора `имя=порт` или `имя=http(s)://хост[:порт][/путь]` через пробел |
-| `TELEPORT_APPS_DISABLE` | не публиковать объявленное: имена через пробел |
-| `TELEPORT_APPS_ICONS` | `имя=иконка` через пробел; сильнее `ICON=` объявления |
-| `TELEPORT_APPS_DISCOVERY` | `0` — не читать `apps.d` |
-| `TELEPORT_OS_LOGINS` | `0` — без динамической метки `os_logins` |
-| `TELEPORT_MANAGED_LABELS` | `readonly`: пишет только `set-managed` (и `leave`) — см. ниже |
-
-Хук `apply` (после `cream set`): render и `systemctl --no-block
-reload-or-restart teleport.service` — HUP, открытые сессии живут.
-
-## Приложения других расширений — `apps.d`
+### Приложения других расширений — `apps.d`
 
 `/etc/cream/teleport/apps.d/<имя>.conf`, root:root, не шире 0644, не
 символическая ссылка. Каталог `apps.d` и каждый каталог над ним до `/` —
@@ -119,7 +235,7 @@ ICON=mcpVscode                  иконка в веб-морде прокси (
 видит `teleport-apps.path` и делает `reload` (render + HUP). Имя иконки — ключ
 вшитого в прокси набора; неизвестное имя прокси не считает ошибкой.
 
-## Управляемые метки — `set-managed`, `managed-status`
+### Управляемые метки — `set-managed`, `managed-status`
 
 `TELEPORT_MANAGED_LABELS` — метки внешнего управляющего (`stvor-agent`: `env`,
 `space`), не больше 16, ключ `^[a-z][a-z0-9_]{0,62}$`, значение
@@ -127,10 +243,11 @@ ICON=mcpVscode                  иконка в веб-морде прокси (
 render: метки ноды = `TELEPORT_LABELS` → поверх них управляемые (побеждают по
 ключу) → `env` = управляемый `env`, если задан, иначе `TELEPORT_ENV`. Те же
 метки получает каждое приложение. `status` показывает перекрытые ключи
-оператора.
+оператора. Интерфейс управляемых меток — мажор расширения: его несовместимое
+изменение поднимает мажорную версию.
 
-```
-cream run --lock-timeout 20s teleport set-managed env=prod space=sp-1
+```bash
+sudo cream run --lock-timeout 20s teleport set-managed env=prod space=sp-1
 cream run teleport managed-status
 ```
 
@@ -164,7 +281,7 @@ stdout — один JSON-объект схемы 1 (эталон — `tests/fixt
 `managed-status` (`lock: none`) — тот же объект без `result`, только читает;
 домен не по типу — код 3. `leave` стирает управляемые метки и маркер.
 
-## Командные метки — `command-labels.d`
+### Командные метки — `command-labels.d`
 
 Другое расширение кладёт `/etc/cream/teleport/command-labels.d/<ключ>` (через
 `files` своего манифеста) с одной строкой `command=<абсолютный путь> [аргумент…]`.
@@ -182,19 +299,19 @@ merged-usr не годится, нужен `/usr/bin/…`); команда по�
 Каталог — 0755 root, и вся цепочка над ним до `/` — тоже (иначе пропускается
 каталог целиком). Shell не участвует.
 
-**Команды может ещё не быть** (с 4.0.2) — но только непосредственно в
+**Команды может ещё не быть** — но только непосредственно в
 `/usr/bin`, `/usr/sbin` или `/usr/local/bin`: cream раскладывает `files`
 расширения до его хука `install` (спека cream §6.5), и drop-in `stvor_agent`
 появляется раньше `/usr/bin/stvor-agent`. Такая метка попадает в конфиг, команду
 при запуске проверяет сам Teleport (раз в 5 мин). Каталог и вся цепочка над ним
 до `/` включительно — root, без записи группе и всем, без ссылок: файл туда
 позже положит только root. Отсутствующая команда в любом другом месте (`/opt/…`,
-подкаталог `/usr/bin/…/x`) — пропуск строкой журнала, как раньше. Это часть
+подкаталог `/usr/bin/…/x`) — пропуск строкой журнала. Это часть
 контракта drop-in: расширение, чья команда появляется после раскладки `files`,
 ставит её в один из этих трёх каталогов.
 
 Изменение каталога видит `teleport-apps.path` → `teleport-apps.service` →
-`reload-apps` — **одна сериализованная точка** (`lock: exclusive`, с 4.0.2):
+`reload-apps` — **одна сериализованная точка** (`lock: exclusive`):
 1. ждёт, пока `teleport.service` выйдет из перехода (до 30 с);
 2. собирает конфиг; остановленный агент получает только файл; если
    `teleport.yaml` не изменился — HUP не нужен (кроме случая, когда прошлое
@@ -216,29 +333,16 @@ merged-usr не годится, нужен `/usr/bin/…`); команда по�
 4. restart (открытые сессии рвутся) — только если живого процесса Teleport в
    cgroup нет вовсе (ждёт до 30 с) или HUP не подтвердился.
 
-## Действия и файлы
-
-| Действие | `lock` | Что делает |
-|---|---|---|
-| `join KEY=…` | exclusive | регистрация, JSON в stdout |
-| `join-retry` | exclusive | тик `teleport-join.timer`; ручная регистрация после `TELEPORT_DEFER=1` |
-| `leave` | exclusive | агент выключен, `/var/lib/teleport`, `teleport.yaml`, секрет, ожидание, управляемые метки и `managed-pending` стёрты; JSON `{"result":"left"}` |
-| `set-managed k=v…` | exclusive | полный набор управляемых меток; JSON схемы 1 |
-| `managed-status` | none | управляемые метки, маркер, регистрация, агент; JSON схемы 1 |
-| `status` | none | регистрация, служба, ручки, приложения, управляемые и командные метки — текстом |
-| `render` | none | `/etc/teleport.yaml` (0600); `ExecStartPre`/`ExecReload` `teleport.service` |
-| `reload-apps` | exclusive | `teleport-apps.service`: render, HUP с подтверждением новым процессом или restart |
-| `hup` | none | `ExecReload` `teleport.service`: адресный HUP с подтверждением, иначе `reload-pending` |
-| `scrub-token` | exclusive | `teleport-token.service`: стирает секрет первого входа |
+### Действия и файлы
 
 `render`, `hup`, `status`, `managed-status` — `lock: none`: их зовут
 юниты, которые перезапускаются, пока блокировку держит другой процесс
 (`set-managed` держит её, перезапуская `teleport.service`; спека cream §7.3).
 
-Перезагрузка `teleport.service` (`ExecReload`) — render и действие `hup` (с 4.0.2):
+Перезагрузка `teleport.service` (`ExecReload`) — render и действие `hup`:
 адресный HUP встроенным `kill` bash новейшему процессу Teleport юнита с
 подтверждением новым pid-файлом — тот же код, что у `reload-apps`. Главному
-процессу (`systemctl kill --kill-who=main`, 4.0.1) сигнал не годится: после HUP
+процессу (`systemctl kill --kill-who=main`) сигнал не годится: после HUP
 старый родитель дренирует сессии и остаётся главным, и следующий HUP терялся бы
 (`cream set teleport …` молча не применялся). `/bin/kill` (procps) в минимальных
 образах нет. `hup` перезапусков не делает (он внутри reload-задания юнита):
@@ -247,7 +351,7 @@ merged-usr не годится, нужен `/usr/bin/…`); команда по�
 
 `cream validate` предупреждает (`validate.unit_lock`) о `teleport-join.service`
 (`join-retry`), `teleport-token.service` (`scrub-token`) и `teleport-apps.service`
-(`reload-apps`, с 4.0.2): их `ExecStart` зовёт
+(`reload-apps`): их `ExecStart` зовёт
 действие с `lock: exclusive`. Это допустимо: правило ловит юнит, который
 перезапускает держатель блокировки и сам ждёт её, — а эти три никто под
 блокировкой не стартует и не ждёт (`join` включает таймер `--no-block`, а
@@ -260,30 +364,14 @@ merged-usr не годится, нужен `/usr/bin/…`); команда по�
 и само действие. `teleport.service`: `TimeoutStopSec=30s` — restart внутри
 `set-managed` укладывается в 90 с адаптера stvor-agent.
 
-| Путь | Что |
-|---|---|
-| `/opt/cream/ext/teleport/` | дерево расширения: `hooks/`, `actions/` (тонкие входы), `files/teleport.sh` (общая библиотека), `files/os-logins` (метка `os_logins`, её зовёт Teleport) |
-| `/etc/systemd/system/teleport{,-apps,-token,-join}.*` | юниты (раскладывает cream) |
-| `/etc/cream/teleport/{config,apps.d,command-labels.d}` | домен ручек и объявления |
-| `/var/lib/cream/ext/teleport/{registration-secret,join-pending,join-refused,managed-pending,reload-pending,rollback}` | состояние (каталог 0700, файлы 0600) |
-| `/etc/teleport.yaml`, `/var/lib/teleport/`, `/usr/local/bin/teleport` | Teleport, как прежде |
+## Проверки
 
-Хук `remove`: `leave`, path-юниты выключены, бинарь и состояние стёрты; юниты
-и (с `--purge`) домен удаляет cream.
-
-## Тесты
-
-`bash extensions/debian/teleport/tests/test-join.sh` и `test-managed.sh` —
-подменённый корень (`CREAM_ROOT`; «systemd запущен» — каталог-маркер
-`$CREAM_ROOT/run/systemd/system`), поддельные `systemctl`, `journalctl`, `curl`,
-`teleport`, `dpkg`, `cream`, `stat`, `sleep` через `PATH`; без root, systemd и
-сети. Тестовых переключателей в окружении у боевого скрипта нет. Запускаются
-из `tools/check.sh` вместе с `tools/check-contract-fixtures.sh`.
-
-Живой прогон — `make test-live EXT=teleport` (`tests/live.env`: без зависимостей,
-debian-12, ubuntu-20.04, ubuntu-24.04; тарбол с `cdn.teleport.dev`): установка, повтор,
-`--reinstall` без изменений, загрузка, `remove`; регистрации в кластере в нём нет.
-
-Версия кластера из `/webapi/find` — внешний ввод: до любой арифметики она
-проверяется как `X.Y.Z[-pre][+build]` (компоненты до 9 цифр) и обрезается до
-`X.Y.Z`; иное — «прокси назвал версию не по форме», join ждёт.
+- **H** — `bash extensions/debian/teleport/tests/test-join.sh` и `test-managed.sh` —
+  подменённый корень (`CREAM_ROOT`; «systemd запущен» — каталог-маркер
+  `$CREAM_ROOT/run/systemd/system`), поддельные `systemctl`, `journalctl`, `curl`,
+  `teleport`, `dpkg`, `cream`, `stat`, `sleep` через `PATH`; без root, systemd и
+  сети. Тестовых переключателей в окружении у боевого скрипта нет. Запускаются
+  из `tools/check.sh` вместе с `tools/check-contract-fixtures.sh`.
+- **L** — `make test-live EXT=teleport` (`tests/live.env`: без зависимостей,
+  debian-12, ubuntu-20.04, ubuntu-24.04; тарбол с `cdn.teleport.dev`): установка, повтор,
+  `--reinstall` без изменений, загрузка, `remove`; регистрации в кластере в нём нет.

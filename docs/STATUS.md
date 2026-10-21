@@ -1,31 +1,23 @@
 # Статус cream-extensions
 
-**Фаза:** перевод каталога на cream/v1 по плану
-[2026-10-19-cream-v1-migration](plans/2026-10-19-cream-v1-migration.md) — задачи 1–28 закрыты,
-Task 29 (финальная интеграция) — PR выпуска 5.0.0 открыт. Набор расширений в `main` — 4.0.0.
+**Фаза:** каталог под cream 1.2.0 и bisquite 3 по плану cream
+`docs/plans/2026-10-21-bisquite-bundled-cream.md` (репозиторий cream): Task 3 и 19 —
+выпуск 5.3.0; Task 23 (документация) — PR этой ветки.
 
 ## Сделано
-- Все 44 расширения — cream/v1 (`/opt/cream/ext`, `/etc/cream`, `/var/lib/cream/ext`);
-  общий код — библиотеки `cloud-user`, `l4t` и `apt-guard` (`kind: library`).
-- Переходное убрано (Task 28): `lib/`, валидатор прежнего формата, `convert-v1.py`, тест библиотеки
-  настроек, `extensions/openwrt/` (файлы OpenWrt bisquite берёт по тегу `v3.3.0`, рулинг Р3).
-- `cream validate --catalog .` — по корню как он есть; снимок — `roots` из `cream-catalog.yaml`;
-  гейт имён `tools/check-names.sh` — по всему репозиторию, кроме истории (CHANGELOG, docs/research,
-  docs/plans), двоичные файлы пропускает.
+- 46 расширений (из них 3 библиотеки) — cream/v1; 12 с `every_boot` и `cream: ">=1.2.0"`;
+  `cream check` по каталогу и правило `every-boot` ошибкой — в CI.
+- Документация по задачам: README с таблицей расширений, [первые шаги](getting-started.md),
+  `guides/`, `reference/`, `history/`; README каждого расширения — по
+  [шаблону](reference/extension-readme.md). Таблицы из манифестов строит
+  `tools/catalog-docs.sh`, CI проверяет их и ссылки (`tools/check-links.sh`).
 
 ## Дальше
-0. PR `fix:` по финальному ревью 5.0.0: `remove` снимает пакеты только через `apt-guard`
-   (новая зависимость 21 расширения — рецептам bisquite нужен слой `EXTENSION apt-guard`),
-   `can-usb` сверяет архив до распаковки, группы `pixelflux-tegra`, имя в `cloud-user`/`docker`.
-0a. PR ветки `feature/nano-r32`: Jetson Nano (L4T R32, Ubuntu 18.04/20.04) —
-   `cuda-toolkit` 2.1.0 (CUDA 10.2), `yq` 2.1.0 (Ubuntu ≥ 18.04), новое `l4t-vendor-desktop` 1.0.0,
-   `teleport`/`stvor-agent` 4.1.0 (Ubuntu ≥ 20.04, живой прогон ubuntu-20.04);
-   цепочка Nano bisquite разрешается `cream resolve` на focal/bionic. Рецептам bisquite — правки VMFILE.
-1. Task 29: PR каталога 5.0.0 (`feat!:`, `Release-As: 5.0.0`) — слияние и выпуск решает владелец;
-   автоподъём пина каталога в bisquite не включать до плана bisquite.
-2. Бэклог после 5.0.0 — раздел «Бэклог после 5.0.0» плана
+1. Bisquite 3.0.0 (Task 24–26 плана cream): примеры VMFILE на `RUN_COMMAND cream install`.
+2. OpenWrt (Task 27–28): корень `extensions/openwrt` — следующим минором после bisquite 3.0.0.
+3. Бэклог после 5.0.0 — раздел «Бэклог после 5.0.0» плана
    [2026-10-19-cream-v1-migration](plans/2026-10-19-cream-v1-migration.md).
-3. Разгрести предупреждения shellcheck вне расширений (планка `make lint` — error).
+4. Разгрести предупреждения shellcheck вне расширений (планка `make lint` — error).
 
 ## Ждут живой проверки (P: платы и bisquite)
 V и H пройдены у всех; живой проверки на железе или в сборке ещё не было.

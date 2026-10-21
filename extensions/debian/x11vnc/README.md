@@ -4,45 +4,107 @@ VNC-доступ к рабочему столу X11 пользователя, с
 системный юнит-шаблон `x11vnc@<пользователь>.service`, по умолчанию слушает только
 петлю (доступ — SSH-туннелем).
 
-> **С 5.0.0 — формат cream/v1** (план 2026-10-19, Task 18). Каталог в госте —
-> `/opt/cream/ext/x11vnc/`; настройки — домен `x11vnc` (`/etc/cream/x11vnc/config`,
-> пароль — в `/etc/cream/x11vnc/secrets`); донастройка — `cream-configure@x11vnc`
-> (стадия `graphical`, после менеджера входа, нужен cream ≥ 1.1.0).
-
-## Манифест
-
-| Поле | Значение |
+<!-- catalog:facts -->
+| | |
 |---|---|
-| `version` | `5.0.2`, `cream: ">=1.1.0"` |
-| `targets` | `build: exec`, `live: yes` |
-| `provides` / `requires` | `remote-desktop` / `x11-server`, `display-manager` |
-| `depends` | `cloud-user >=1.0.0 <2`, `apt-guard >=1.0.0 <2` |
-| хуки | `install`, `configure` (стадия `graphical`, `after: [display-manager.service]`), `apply`, `remove` |
-| `files` | `files/x11vnc@.service` → `/etc/systemd/system/x11vnc@.service` |
+| ОС | Debian, Ubuntu |
+| Архитектура | amd64, arm64 |
+| cream | ≥ 1.2.0 |
+| Даёт | `remote-desktop` |
+| Требует | `x11-server`, `display-manager` |
+| Зависит от | [`cloud-user`](../cloud-user/README.md), [`apt-guard`](../apt-guard/README.md) |
+| Конфликтует с | — |
+| Хуки | `install`, `configure`, `apply`, `remove` |
+| Настройка на загрузке | стадия `graphical`, на каждой загрузке (`every_boot`) |
+| Живая машина | да |
+<!-- /catalog:facts -->
+
+## Что делает
+
+- **`install`** — `x11vnc`, `xauth`, `x11-utils` (обёртке нужен `xdpyinfo`, у x11vnc
+  он лишь в Recommends), `openssl`; удаляет прежний `/etc/default/bisquite-x11vnc`.
+  Юнит `files/x11vnc@.service` → `/etc/systemd/system/x11vnc@.service` кладёт
+  cream (поле `files`).
+- **`configure`** (каждая загрузка, стадия `graphical`, после
+  `display-manager.service`) — файл пароля из секрета (см. «Пароль: производный
+  файл»), `x11vnc@<пользователь>` включается и перезапускается (`--no-block`),
+  экземпляры прежних пользователей гасятся.
+- **`apply`** (после `cream set`) — то же, не дожидаясь пользователя; экземпляр
+  перезапускается.
+- **`remove`** — экземпляры выключены, файл пароля и маркер сняты; пакет `x11vnc` —
+  только если его поставил этот `install`, после симуляции apt (`apt-guard`): если apt
+  снял бы что-то кроме `x11vnc` — отказ (1) до любых изменений.
 
 Требование родовое — любой X-сервер, любой менеджер входа: путь к X authority ищется
-в рантайме (ниже). Рабочий стол (`gnome`, `xfce4`, `lxde`) ставится раньше, автологин —
-`cream set desktop DESKTOP_AUTOLOGIN=1`: без сессии пользователя серверу не к чему
-подключаться.
+в рантайме (см. «Как находится X authority»). Рабочий стол (`gnome`, `xfce4`, `lxde`)
+ставится раньше, автологин — `cream set desktop DESKTOP_AUTOLOGIN=1`: без сессии
+пользователя серверу не к чему подключаться.
 
-## Параметры (`cream set x11vnc …`)
+Нет пользователя cloud-init или менеджера входа (контейнер, сервер без стола) —
+предупреждение и 0: файл строится без владельца, сервер не включается.
 
-| Ключ | Умолчание | Что делает |
-|---|---|---|
-| `X11VNC_PORT` | `5900` | порт RFB |
-| `X11VNC_DISPLAY` | `:0` | X-дисплей |
-| `X11VNC_LISTEN` | `localhost` | `localhost` — только петля, `all` — все интерфейсы |
-| `X11VNC_PASSWORD` | пусто | секрет (`secret: file`); пусто — сервер **выключен** |
-| `X11VNC_ALLOW_NO_PASSWORD` | `0` | `1` — разрешить сервер без пароля при пустом `X11VNC_PASSWORD` (предупреждение при каждом configure и старте) |
+## Параметры
+
+<!-- catalog:params -->
+| Ключ | Тип | Умолчание | Что задаёт |
+|---|---|---|---|
+| `X11VNC_PORT` | `port` | `5900` | порт RFB |
+| `X11VNC_DISPLAY` | строка `^:[0-9]+(\.[0-9]+)?$` | `:0` | X-дисплей |
+| `X11VNC_LISTEN` | `localhost` \| `all` | `localhost` | localhost — только петля (доступ ssh-туннелем), all — все интерфейсы |
+| `X11VNC_PASSWORD` | `str` | пусто | пароль VNC (значимы первые 8 символов); пусто — сервер выключен; задаётся только через stdin: cream set x11vnc X11VNC_PASSWORD=- *(секрет: `KEY=-` со stdin или `--params-file`, не в argv)* |
+| `X11VNC_ALLOW_NO_PASSWORD` | `bool` | `0` | 1 — разрешить сервер без пароля при пустом X11VNC_PASSWORD (предупреждение при каждом configure и старте); 0 — без пароля сервер выключен |
+<!-- /catalog:params -->
+
+Домен `x11vnc`: настройки — `/etc/cream/x11vnc/config`, пароль — в
+`/etc/cream/x11vnc/secrets`. Пароль задаётся только со stdin: в argv секрет cream
+не примет. Значимы первые 8 символов пароля (так устроена VNC-аутентификация).
 
 ```bash
-echo 'пароль' | sudo cream set x11vnc X11VNC_PASSWORD=-   # только stdin: в argv секрет cream не примет
+echo 'пароль' | sudo cream set x11vnc X11VNC_PASSWORD=-
 sudo cream set x11vnc X11VNC_LISTEN=all
 ```
 
-Значимы первые 8 символов пароля (так устроена VNC-аутентификация).
+## Установка
 
-## Пароль: производный файл (рулинг Р4 плана)
+На машине с подключённым каталогом ([как подключить](../../../docs/getting-started.md)),
+после рабочего стола:
+
+```bash
+sudo cream install --with-deps x11vnc
+echo 'пароль' | sudo cream set x11vnc X11VNC_PASSWORD=-
+cream show x11vnc
+```
+
+В образе bisquite (VMFILE):
+
+```dockerfile
+RUN_COMMAND cream install --with-deps desktop DESKTOP_AUTOLOGIN=1
+RUN_COMMAND cream install --with-deps gnome
+RUN_COMMAND cream install --with-deps x11vnc X11VNC_PORT=5901
+```
+
+Пароль — не литералом в VMFILE (VMFILE едет в образ), а на машине:
+`echo 'пароль' | sudo cream set x11vnc X11VNC_PASSWORD=-`.
+
+## Этапы
+
+| Когда | Что происходит |
+|---|---|
+| сборка образа / `cream install` | пакеты, юнит-шаблон (cream, `files`) |
+| загрузка (`cream-configure@x11vnc`, стадия `graphical`, после менеджера входа) | файл пароля или маркер `nopw`, включение `x11vnc@<пользователь>`, гашение прежних экземпляров |
+| `cream set` (хук `apply`) | то же, экземпляр перезапускается |
+| `cream remove` | экземпляры выключены, файл пароля и маркер сняты; пакет — только свой и после симуляции apt |
+
+## Известные ограничения
+
+- Только X11: на Wayland-сессии бесполезен (см. «Wayland»).
+- Пустой пароль — сервер **выключен**; без пароля — только явным
+  `X11VNC_ALLOW_NO_PASSWORD=1`.
+- Сессии в контейнере нет — включение сервера пользователю проверяет только H.
+
+## Подробности
+
+### Пароль: производный файл
 
 `configure` (на каждой загрузке и после `cream set` — хук `apply`) строит из секрета
 `/etc/x11vnc/passwd` в формате `-rfbauth`: пароль, зашифрованный DES с постоянным
@@ -58,40 +120,27 @@ sudo cream set x11vnc X11VNC_LISTEN=all
   на место: окна с широкими правами нет. Ссылка на месте файла или каталога — отказ;
 - повтор с тем же паролем файл не переписывает;
 - **fail-closed**: пустой пароль — свой файл снят, сервер **выключен** («пароль не задан —
-  x11vnc выключен»). Без пароля — только явным `X11VNC_ALLOW_NO_PASSWORD=1` (по образцу
-  Р8): тогда `configure` ставит производный маркер `/etc/x11vnc/nopw` (и снимает его во
+  x11vnc выключен»). Без пароля — только явным `X11VNC_ALLOW_NO_PASSWORD=1`: тогда
+  `configure` ставит производный маркер `/etc/x11vnc/nopw` (и снимает его во
   всех прочих случаях — маркер руками не переживёт configure), а обёртка поднимает
   `-nopw` только при маркере **и** ключе, с предупреждением при каждом старте. Нет ни
   файла, ни разрешения, или файл не читается — отказ запуска;
-- файл пароля, построенный не этим configure (например, оставшийся от 4.x), при пустом
-  секрете не удаляется и не используется: сервер выключен, в журнале — как перенести
-  пароль (`echo 'пароль' | sudo cream set x11vnc X11VNC_PASSWORD=-`); `remove` его тоже
-  не трогает;
-- не построился файл — сбой `configure` (маркер снят заранее).
+- файл пароля, построенный не этим configure (например, унаследованный от прежней
+  установки), при пустом секрете не удаляется и не используется: сервер выключен, в
+  журнале — как перенести пароль (`echo 'пароль' | sudo cream set x11vnc
+  X11VNC_PASSWORD=-`); `remove` его тоже не трогает;
+- не построился файл — сбой `configure` (маркер снят заранее), никогда не `-nopw`.
 
-Нет пользователя cloud-init или менеджера входа (контейнер, сервер без стола) —
-предупреждение и 0 (Р11): файл строится без владельца, сервер не включается.
-
-## Что делает
-
-- **`install`**: `x11vnc`, `xauth`, `x11-utils` (обёртке нужен `xdpyinfo`, у x11vnc он
-  лишь в Recommends), `openssl`; удаляет прежний `/etc/default/bisquite-x11vnc`.
-- **`configure`/`apply`**: файл пароля, `x11vnc@<пользователь>` включается и
-  перезапускается (`--no-block`), экземпляры прежних пользователей гасятся.
-- **`remove`**: экземпляры выключены, файл пароля и маркер сняты; пакет `x11vnc` —
-  только если его поставил этот `install`, после симуляции apt (`apt-guard`): если apt
-  снял бы что-то кроме `x11vnc` — отказ (1) до любых изменений.
-
-## Как находится X authority
+### Как находится X authority
 
 Путь к authority **не зашит в юните**, а ищется в рантайме обёрткой
-`run-x11vnc.sh`. Прежний хардкод
+`run-x11vnc.sh`. Зашитый путь
 
 ```
 -auth /var/run/lightdm/%i/:0
 ```
 
-не работал **ни под одним** дисплей-менеджером. Это склейка двух разных схем
+не работает **ни под одним** дисплей-менеджером. Это склейка двух разных схем
 LightDM (проверено по исходникам, версии 1.2–1.32 — одинаково):
 
 - `src/x-server-local.c` пишет `<run-dir>/**root**/:0` — authority самого
@@ -120,8 +169,7 @@ LightDM (проверено по исходникам, версии 1.2–1.32 �
 в замерах ниже совпадают.
 
 Не подошёл ни один — **громкий отказ с перечислением всех проверенных путей**
-и пометкой, какие из них существуют. Раньше на этом месте был немой цикл
-рестарта каждые 5 секунд.
+и пометкой, какие из них существуют.
 
 **`x11vnc -auth guess` не годится.** Его встроенный скрипт FINDDISPLAY
 перебирает `~/.Xauthority`, `/tmp/.gdm*`, `/tmp/.Xauth*` и глобы
@@ -129,7 +177,7 @@ LightDM (проверено по исходникам, версии 1.2–1.32 �
 нет, а `auth-for-*` это legacy-раскладка. Плюс `man x11vnc` предупреждает,
 что FINDDISPLAY зависает навсегда, если гритер держит X-сервер.
 
-## Wayland
+### Wayland
 
 `x11vnc` обслуживает X11 и на Wayland-сессии бесполезен. Обёртка спрашивает
 у `loginctl` тип сессии и отказывает внятно.
@@ -142,19 +190,33 @@ LightDM (проверено по исходникам, версии 1.2–1.32 �
 Xorg включает расширение рабочего стола: `gnome` ставит `WaylandEnable=false`.
 Это несущая связь между двумя расширениями, и в манифестах она не выражается.
 
-## Подключение
+### Диагностика
 
-```vmfile
-EXTENSION desktop DESKTOP_AUTOLOGIN=1
-EXTENSION gnome
-EXTENSION x11vnc X11VNC_PORT=5901
+```bash
+cream show x11vnc
+systemctl status cream-configure@x11vnc
+systemctl list-units 'x11vnc@*'; journalctl -u 'x11vnc@*' -b | tail -30   # строка «authority: …»
+ls -l /etc/x11vnc/; ss -ltnp | grep 5900
 ```
 
-Пароль — не литералом в VMFILE (VMFILE едет в образ), а на машине:
-`echo 'пароль' | sudo cream set x11vnc X11VNC_PASSWORD=-`.
+### Проверено на
+
+| Система | Дисплей-менеджер | Что получилось | Дата |
+|---|---|---|---|
+| Debian 12 | GDM | authority `/run/user/1000/gdm/Xauthority` (кандидат 2), `NRestarts=0` | 2026-09-03 |
+| Debian 12 | LightDM | authority `/home/check/.Xauthority` (кандидат 1), `NRestarts=0` | 2026-09-03 |
+| Ubuntu 20.04, Jetson Nano (образ Q-engineering, L4T R32.6.1) | GDM3 вендора, автологин | authority `/run/user/1000/gdm/Xauthority`, сервер на `127.0.0.1`/`::1`; пароль со stdin — файл 0600 пользователя (до перехода на cream/v1), перезапуск, тип безопасности VNC Authentication вместо None | 2026-09-15 |
+
+Оба менеджера прогнаны подряд на одной машине, переключением симлинка
+`display-manager.service`. Замер подтвердил и то, ради чего заведена обёртка:
+пути `/var/run/lightdm/<user>/:0` нет **ни под одним** из них,
+каталог `root` под LightDM существует и принадлежит X-серверу с правами 0600,
+а `x11vnc -findauth` под GDM отвечает пустой строкой — то есть `-auth guess`
+здесь не помог бы.
 
 ## Проверки
 
+- **V** — `make cream-validate`, `tools/lint-hooks.sh`, `make check-names`.
 - **H** — `tests/test-x11vnc.sh`: манифест; нет пароля — нет файла, маркер; есть —
   файл 0600 пользователя, 8 байт на входе openssl; повтор не переписывает; ссылка на
   месте файла или каталога — сбой, по ссылке не пишется; отказ openssl — сбой без
@@ -166,27 +228,3 @@ EXTENSION x11vnc X11VNC_PORT=5901
   секрет `X11VNC_PASSWORD`, debian-12): установка, повтор, `--reinstall` без изменений,
   секрета нет в `ps`, журнале, реестре, `config`; configure на загрузке, `remove`.
   Сессии в контейнере нет — включение сервера пользователю проверяет H.
-
-## Диагностика
-
-```bash
-cream show x11vnc
-systemctl status cream-configure@x11vnc
-systemctl list-units 'x11vnc@*'; journalctl -u 'x11vnc@*' -b | tail -30   # строка «authority: …»
-ls -l /etc/x11vnc/; ss -ltnp | grep 5900
-```
-
-## Проверено на
-
-| Система | Дисплей-менеджер | Что получилось | Дата |
-|---|---|---|---|
-| Debian 12 | GDM | authority `/run/user/1000/gdm/Xauthority` (кандидат 2), `NRestarts=0` | 2026-09-03 |
-| Debian 12 | LightDM | authority `/home/check/.Xauthority` (кандидат 1), `NRestarts=0` | 2026-09-03 |
-| Ubuntu 20.04, Jetson Nano (образ Q-engineering, L4T R32.6.1) | GDM3 вендора, автологин | authority `/run/user/1000/gdm/Xauthority`, сервер на `127.0.0.1`/`::1`; пароль со stdin — файл 0600 пользователя (layout 2), перезапуск, тип безопасности VNC Authentication вместо None | 2026-09-15 |
-
-Оба менеджера прогнаны подряд на одной машине, переключением симлинка
-`display-manager.service`. Замер подтвердил и то, ради чего заведена обёртка:
-прежнего пути `/var/run/lightdm/<user>/:0` нет **ни под одним** из них,
-каталог `root` под LightDM существует и принадлежит X-серверу с правами 0600,
-а `x11vnc -findauth` под GDM отвечает пустой строкой — то есть `-auth guess`
-здесь не помог бы.

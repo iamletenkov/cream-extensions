@@ -2,7 +2,7 @@
 
 Только каркасом `tools/new-extension.sh` (skill `/new-extension`), не копией соседа:
 вместе с соседом копируются чужие способности и пути. Конвенция —
-[docs/extensions.md](../extensions.md).
+[написать расширение](../guides/write-extension.md).
 
 ## Шаги
 
@@ -27,10 +27,12 @@
    библиотека в `depends`.
 5. **L — живой прогон**, если расширение ставится на живую машину: `tests/live.env`
    (`LIVE_DISTROS`, `LIVE_DEPS`, …) и прогон — [runbook 04](04_live-runs.md).
-6. **README расширения:** что делает, `cream install/set/run`, таблица ключей, «Проверки» (V/H/L/P).
+6. **README расширения** — по [шаблону](../reference/extension-readme.md); блоки из
+   манифеста заполняет `tools/catalog-docs.sh` (он же обновляет таблицу README каталога).
 7. **Проверки и PR:**
    ```sh
    free -g                      # available ≥ 6 ГБ; make ci — по одному на хосте
+   tools/catalog-docs.sh        # таблицы документации из манифеста
    make ci                      # shellcheck + tools/check.sh
    git push -u origin feature/<имя>
    gh pr create --title 'feat(<имя>): …' --body '…'

@@ -17,7 +17,8 @@
 # (README, "Jetson / L4T").
 schema: cream/v1
 name: can
-version: 2.0.1
+version: 2.0.2
+# 2.0.2: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: Шина CAN — can-utils, модули ядра CAN для ядер машины и их автозагрузка
 cream: ">=1.0.0"
 platform:

@@ -3,7 +3,7 @@
 #
 #   tools/check-names.sh            the whole repository: every file git tracks
 #                                   or would track (.gitignore is honoured),
-#                                   except the history (CHANGELOG.md,
+#                                   except the history (CHANGELOG.md, docs/history/,
 #                                   docs/research/, docs/plans/) and this gate
 #                                   with its test and fixtures
 #   tools/check-names.sh DIR...     the given extension directories
@@ -13,7 +13,7 @@
 # layout 2 paths, the old shared library, the bisquite-* CLIs and units, the
 # old settings keys and the nft names of bisquite must not come back — neither
 # in an extension nor in the tools and documents describing the format. The
-# word "bisquite" alone (the image builder, `EXTENSION` in a README) is allowed.
+# word "bisquite" alone (the name of the image builder) is allowed.
 # Binary files (images, archives) are skipped.
 #
 # Exceptions, for text that has to name the old thing (rename tables of a
@@ -37,7 +37,7 @@ FORBIDDEN=(
 # History and the gate itself (paths from the repository root; a trailing /
 # is a directory).
 EXCLUDE=(
-    CHANGELOG.md docs/research/ docs/plans/
+    CHANGELOG.md docs/history/ docs/research/ docs/plans/
     tools/check-names.sh tools/test-check-names.sh tools/testdata/check-names/
 )
 

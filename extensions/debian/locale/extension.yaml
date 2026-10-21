@@ -13,7 +13,8 @@
 # on arm64 the same packages, not run.
 schema: cream/v1
 name: locale
-version: 2.0.0
+version: 2.0.1
+# 2.0.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: Системная локаль и раскладки клавиатуры — система, консоль, Xorg/GDM, умолчания GNOME
 cream: ">=1.0.0"
 platform:

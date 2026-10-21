@@ -11,7 +11,8 @@
 # Not a cloud.cfg.d fragment: mergemanydict replaces lists whole (hooks/install).
 schema: cream/v1
 name: cloud-growroot
-version: 2.0.0
+version: 2.0.1
+# 2.0.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: Модули cloud-init growpart и resizefs в cloud.cfg — корень растёт до размера носителя
 cream: ">=1.0.0"
 platform:

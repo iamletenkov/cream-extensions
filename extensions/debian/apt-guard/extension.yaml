@@ -7,7 +7,8 @@
 schema: cream/v1
 name: apt-guard
 kind: library
-version: 1.0.0
+version: 1.0.1
+# 1.0.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: Библиотека — remove снимает только свои пакеты apt, с проверкой симуляцией
 cream: ">=1.0.0"
 platform:

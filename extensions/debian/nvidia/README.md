@@ -4,28 +4,33 @@
 пакеты драйвера, модуль ядра строго под ядра **машины** (`/lib/modules`, а не
 `uname -r`), блокировка `nouveau`, initramfs и проверка результата в конце установки.
 
-```
-EXTENSION nvidia                                   # образ bisquite (основной путь)
-sudo cream install --accept-risk nvidia            # живая машина (live: confirm), код 10 — перезагрузка
-sudo cream install --accept-risk nvidia NVIDIA_DRIVER_VERSION=590
-```
+<!-- catalog:facts -->
+| | |
+|---|---|
+| ОС | Debian, Ubuntu |
+| Архитектура | amd64 |
+| cream | ≥ 1.0.0 |
+| Даёт | `gpu-driver-nvidia` |
+| Требует | — |
+| Зависит от | — |
+| Конфликтует с | — |
+| Хуки | `install` |
+| Настройка на загрузке | — |
+| Живая машина | с `--accept-risk` |
 
-> **3.0.0 — cream/v1.** `install.sh` стал хуком `hooks/install`; расширение ставится и
-> при сборке (`targets.build: exec`), и на живую машину (`live: confirm`). Коды возврата:
-> **20** — ядер в `/lib/modules` нет (контейнер; до apt, рулинг Р11), **10** — драйвер
-> поставлен или изменился blacklist `nouveau` (нужна перезагрузка), 0 — ничего не
-> поменялось. Удаление initrd ядра appliance (`uname -r`) — только при сборке. Комментарий
-> в `/etc/modprobe.d/blacklist-nouveau.conf` — «cream nvidia». Ключи настроек прежние,
-> без переименований (`NVIDIA_DRIVER_VERSION`, `NVIDIA_KERNEL_MODULES`, `NVIDIA_SOURCE`),
-> теперь это `config.keys` со `scope: install`. Файлы пишутся через временный файл и
-> переименование — символическая ссылка на месте файла заменяется, а не проходится.
+> **Живая машина — с `--accept-risk`.** Ставит драйвер NVIDIA и собирает модуль ядра (DKMS — компилятор и заголовки ядра) под каждое ядро в /lib/modules, блокирует nouveau и пересобирает initramfs всех ядер; до перезагрузки работает прежний драйвер (nouveau), после — NVIDIA: графический сеанс и консоль переключаются; Secure Boot должен быть выключен (README); снимать драйвер — руками (README, «Как снять»)
+<!-- /catalog:facts -->
 
-> **2.0.0 — несовместимо с 1.x.** Убраны `ubuntu-drivers autoinstall` и тихие
-> откаты на 535/525/470, убрана Ubuntu 20.04; появились настройки ветки,
-> типа модулей и источника. Нужной ветки нет — сборка падает с объяснением,
-> а не ставит «что нашлось».
+## Что делает
 
-## Что ставится
+**`install`** ставит драйвер, собирает модуль под каждое ядро, пишет
+`/etc/modprobe.d/blacklist-nouveau.conf` (комментарий — «cream nvidia»),
+пересобирает initramfs и проверяет результат. Коды: **20** — ядер в `/lib/modules`
+нет (контейнер; до apt), **10** — драйвер поставлен или изменился blacklist
+`nouveau` (нужна перезагрузка), 0 — ничего не поменялось, 1 — сбой или проверка не
+прошла. Файлы пишутся через временный файл и переименование — символическая ссылка
+на месте файла заменяется, а не проходится. Нужной ветки нет — сборка падает с
+объяснением, а не ставит «что нашлось».
 
 | Система | Источник | Пакеты | Модуль ядра |
 |---|---|---|---|
@@ -41,6 +46,103 @@ sudo cream install --accept-risk nvidia NVIDIA_DRIVER_VERSION=590
 в `debian:12`). Если машина уже несёт запись на тот же репозиторий, своя не
 добавляется (иначе apt отказывает на всём списке источников — урок
 расширения `docker`).
+
+Своего `configure` нет — на загрузке донастраивать нечего. Хука `remove` нет — см.
+«Как снять».
+
+## Параметры
+
+<!-- catalog:params -->
+| Ключ | Тип | Умолчание | Что задаёт |
+|---|---|---|---|
+| `NVIDIA_DRIVER_VERSION` | строка `^[0-9]{3,4}$` | `580` | ветка драйвера (580, 590, …), не полная версия; внутри ветки — новейшая из источника *(только при установке)* |
+| `NVIDIA_KERNEL_MODULES` | `open` \| `proprietary` | `open` | open — открытые модули (Blackwell, RTX 50xx — только они); proprietary — для карт до Turing *(только при установке)* |
+| `NVIDIA_SOURCE` | `archive` \| `ppa` | `archive` | Ubuntu: архив Ubuntu или PPA graphics-drivers (всегда DKMS); Debian: только archive — репозиторий CUDA NVIDIA *(только при установке)* |
+<!-- /catalog:params -->
+
+Все ключи — `scope: install`: параметры строки установки (`cream install nvidia
+KEY=…`); смена ключа — повтор `install` (на живой машине — новая ветка поверх старой,
+лучше пересборка образа).
+
+- `NVIDIA_DRIVER_VERSION` — номер ветки (`580`, `590`, …); полная версия
+  (`580.95.05`) не принимается — внутри ветки ставится новейшая из источника.
+- `NVIDIA_KERNEL_MODULES` — **Blackwell (RTX 50xx, в т.ч. RTX 5060) и новее —
+  только `open`**; `proprietary` нужен лишь для карт до Turing (Maxwell, Pascal,
+  Volta), и с ним скрипт предупреждает.
+- `NVIDIA_SOURCE` — Ubuntu: архив Ubuntu или PPA `graphics-drivers` (там ветки
+  появляются раньше; модуль — всегда DKMS). Debian: только `archive` (= репозиторий
+  CUDA NVIDIA), `ppa` — ошибка.
+
+Нет ветки в источнике — ошибка с подсказкой: на Ubuntu с `archive` —
+«`NVIDIA_SOURCE=ppa`», на Debian — список веток, которые есть.
+
+## Установка
+
+На живой машине (`live: confirm`; код 10 — перезагрузитесь):
+
+```bash
+sudo cream install --with-deps --accept-risk nvidia
+sudo cream install --with-deps --accept-risk nvidia NVIDIA_DRIVER_VERSION=590
+sudo reboot
+```
+
+Установка собирает модуль (на Debian и с PPA — DKMS: компилятор, заголовки,
+десятки минут), блокирует `nouveau` и пересобирает initramfs всех ядер. До
+перезагрузки работает прежний драйвер, после — NVIDIA. В контейнере или на машине
+без ядер в `/lib/modules` хук возвращает 20 — с `--allow-skip` это запись
+`skipped`, и она служит поставщиком `gpu-driver-nvidia` для
+[`nvidia-container-toolkit`](../nvidia-container-toolkit/README.md).
+
+В образе bisquite (VMFILE; основной путь) — одна из строк:
+
+```dockerfile
+RUN_COMMAND cream install --with-deps nvidia
+RUN_COMMAND cream install --with-deps nvidia NVIDIA_DRIVER_VERSION=580 NVIDIA_KERNEL_MODULES=open NVIDIA_SOURCE=archive
+RUN_COMMAND cream install --with-deps nvidia NVIDIA_DRIVER_VERSION=590          # Debian 13
+```
+
+Ставьте **после** слоёв, меняющих ядро (`UPDATE`, установка другого
+`linux-image-*`): модуль собирается под ядро, которое лежит в образе
+в момент запуска расширения. Обновление ядра после него оставит новое ядро
+без модуля (на Ubuntu с предсобранными модулями метапакет флейвора потянет
+их сам, с DKMS — соберёт DKMS-хук ядра, но проверки этого расширения
+уже не будет).
+
+## Этапы
+
+| Когда | Что происходит |
+|---|---|
+| сборка образа / `cream install` | источник и ключ, пакеты, модуль под каждое ядро, blacklist `nouveau`, initramfs, проверка; initrd ядра appliance удаляется — только при сборке |
+| загрузка | своего configure нет |
+| `cream remove` | хука нет — снимать руками (см. «Как снять») |
+
+## Известные ограничения
+
+- **Secure Boot должен быть выключен.** Предсобранные модули Canonical
+  подписаны и загрузятся и с SB, но DKMS-модуль (Debian всегда, Ubuntu с
+  `ppa` или с ядром, под которое предсобранного нет) подписан в лучшем случае
+  ключом MOK, созданным при сборке образа; чтобы ядро ему поверило, ключ надо
+  зарегистрировать (`mokutil --import`) на **каждой** машине с подтверждением
+  в консоли при загрузке. Для тиража это не годится — решение владельца:
+  SB выключен.
+- `platform.arch` — только amd64: модули Canonical, PPA и каталог `x86_64`
+  репозитория CUDA; arm64-серверы не проверялись, Jetson обслуживает
+  [`nvidia-jetpack`](../nvidia-jetpack/README.md). Ubuntu 20.04 не поддерживается.
+- Внутри ветки ставится новейшая версия источника на момент сборки — две
+  сборки в разные дни могут дать разные 580.x.
+- Нужен GPU на машине (или passthrough в ВМ); в ВМ без GPU модуль есть, но
+  `nvidia-smi` ответит «No devices were found».
+- Драйвер с зависимостями (а с DKMS — ещё компилятор и заголовки) заметно
+  увеличивают образ: закладывайте место под сборку с запасом.
+- **При сборке DKMS идёт в appliance libguestfs, а ему bisquite по умолчанию даёт
+  2 ГБ** (`virt-customize --memsize 2048`). Ветке 590 под ядро Debian 13
+  (6.12) этого мало — компилятор убивает OOM (замер 2026-10-14), хук
+  тогда так и пишет. Собирайте с запасом: `bs image build --memsize 6144
+  --smp 4 …` (`--smp` заодно ускоряет компиляцию). Debian 12 с 580 и Ubuntu
+  с готовыми модулями Canonical укладываются в умолчание.
+- На машине с GPU (P) не проверялось.
+
+## Подробности
 
 ### Почему на Debian — репозиторий CUDA, а не non-free
 
@@ -90,74 +192,16 @@ sudo cream install --accept-risk nvidia NVIDIA_DRIVER_VERSION=590
 - версия не из запрошенной ветки;
 - лицензия модуля не та: `Dual MIT/GPL` у open, `NVIDIA` у proprietary.
 
-## Настройки
-
-Ключи `config.keys` со `scope: install`: параметры строки `EXTENSION` или
-`cream install nvidia KEY=…`; смена ключа — повтор `install` (на живой машине —
-новая ветка поверх старой, лучше пересборка образа).
-
-| Переменная | Умолчание | Значения | Что |
-|---|---|---|---|
-| `NVIDIA_DRIVER_VERSION` | `580` | номер ветки (`580`, `590`, …) | ветка драйвера; полная версия (`580.95.05`) не принимается — внутри ветки ставится новейшая из источника |
-| `NVIDIA_KERNEL_MODULES` | `open` | `open`, `proprietary` | открытые или закрытые модули ядра. **Blackwell (RTX 50xx, в т.ч. RTX 5060) и новее — только `open`**; `proprietary` нужен лишь для карт до Turing (Maxwell, Pascal, Volta), и с ним скрипт предупреждает |
-| `NVIDIA_SOURCE` | `archive` | `archive`, `ppa` | Ubuntu: архив Ubuntu или PPA `graphics-drivers` (там ветки появляются раньше; модуль — всегда DKMS). Debian: только `archive` (= репозиторий CUDA NVIDIA), `ppa` — ошибка |
-
-Нет ветки в источнике — ошибка с подсказкой: на Ubuntu с `archive` —
-«`NVIDIA_SOURCE=ppa`», на Debian — список веток, которые есть.
-
-## Подключение
-
-### В VMFILE
-
-```vmfile
-EXTENSION nvidia
-EXTENSION nvidia NVIDIA_DRIVER_VERSION=580 NVIDIA_KERNEL_MODULES=open NVIDIA_SOURCE=archive
-EXTENSION nvidia NVIDIA_DRIVER_VERSION=590          # Debian 13
-```
-
-Ставьте **после** слоёв, меняющих ядро (`UPDATE`, установка другого
-`linux-image-*`): модуль собирается под ядро, которое лежит в образе
-в момент запуска расширения. Обновление ядра после него оставит новое ядро
-без модуля (на Ubuntu с предсобранными модулями метапакет флейвора потянет
-их сам, с DKMS — соберёт DKMS-хук ядра, но проверки этого расширения
-уже не будет).
-
-### На живой машине
-
-```bash
-sudo cream install --accept-risk nvidia            # 10 — перезагрузитесь
-sudo reboot
-```
-
-`live: confirm`: установка собирает модуль (на Debian и с PPA — DKMS: компилятор,
-заголовки, десятки минут), блокирует `nouveau` и пересобирает initramfs всех ядер.
-До перезагрузки работает прежний драйвер, после — NVIDIA. В контейнере или на
-машине без ядер в `/lib/modules` хук возвращает 20 — с `--allow-skip` это запись
-`skipped`, и она служит поставщиком `gpu-driver-nvidia` для
-`nvidia-container-toolkit`.
-
 ### Как сменить версию драйвера
 
 Только пересборкой образа: поменяйте `NVIDIA_DRIVER_VERSION` в строке
-`EXTENSION` и соберите образ заново. Ставить другую ветку руками на
+`cream install` и соберите образ заново. Ставить другую ветку руками на
 машине не нужно — тираж должен быть одинаковым, а на Debian ветку держит
 `nvidia-driver-pinning-<ветка>`.
 
-## Манифест
+### Как снять
 
-| Поле | Значение |
-|---|---|
-| `version` | `3.0.0`, `cream: ">=1.0.0"` |
-| `targets` | `build: exec`, `live: confirm` (`live_note` — DKMS, `nouveau`, initramfs, перезагрузка, Secure Boot) |
-| `platform` | `deb`, `arch: [amd64]` — модули Canonical, PPA и каталог `x86_64` репозитория CUDA; arm64-серверы не проверялись, Jetson обслуживает `nvidia-jetpack`; `os`: debian, ubuntu |
-| `hooks` | `install` (90 мин); `configure` нет — на загрузке донастраивать нечего; `remove` нет (см. «Как снять») |
-| `provides` | `gpu-driver-nvidia` |
-| `config.keys` | `NVIDIA_DRIVER_VERSION`, `NVIDIA_KERNEL_MODULES`, `NVIDIA_SOURCE` — `scope: install` |
-| `depends`, `requires`, `conflicts` | — |
-
-## Как снять
-
-Хука `remove` нет (рулинг Р9 допускает это для `live: confirm`): снять драйвер с
+Хука `remove` нет (для `live: confirm` это допустимо): снять драйвер с
 работающей машины — это пакеты драйвера с зависимостями, DKMS-модуль под каждое ядро,
 закрепление ветки (Debian) и initramfs, а машина после этого остаётся на `nouveau` или
 без графики. Делается руками и осознанно:
@@ -172,7 +216,7 @@ sudo update-initramfs -u -k all && sudo reboot
 sudo cream remove --forget nvidia                                     # снять запись реестра
 ```
 
-## Проверка на машине
+### Проверка на машине
 
 ```bash
 nvidia-smi                              # драйвер отвечает, видна карта и версия 580.x
@@ -183,7 +227,7 @@ lsmod | grep nouveau                    # должно быть ПУСТО
 cat /etc/modprobe.d/blacklist-nouveau.conf
 ```
 
-## Диагностика
+### Диагностика
 
 ```bash
 dpkg -l | grep -E 'nvidia|linux-modules-nvidia'
@@ -198,7 +242,7 @@ dmesg | grep -iE 'nvidia|nouveau|NVRM'
 - **Driver/library version mismatch** — ядро обновили после сборки, а модуль
   остался от другой версии; пересоберите образ.
 - **Модуль не грузится, в `dmesg` про подпись (Lockdown / Key was rejected)** —
-  включён Secure Boot, см. ниже.
+  включён Secure Boot, см. «Известные ограничения».
 
 ## Проверки
 
@@ -217,26 +261,3 @@ dmesg | grep -iE 'nvidia|nouveau|NVRM'
 - **P** — ВМ с GPU (passthrough) или машина с картой: сборка образа через bisquite
   и живая установка, `nvidia-smi` после перезагрузки (раздел «Проверка на машине»).
   **Не выполнялась** при переводе на cream/v1 (машины с GPU нет).
-
-## Ограничения
-
-- **Secure Boot должен быть выключен.** Предсобранные модули Canonical
-  подписаны и загрузятся и с SB, но DKMS-модуль (Debian всегда, Ubuntu с
-  `ppa` или с ядром, под которое предсобранного нет) подписан в лучшем случае
-  ключом MOK, созданным при сборке образа; чтобы ядро ему поверило, ключ надо
-  зарегистрировать (`mokutil --import`) на **каждой** машине с подтверждением
-  в консоли при загрузке. Для тиража это не годится — решение владельца:
-  SB выключен.
-- Внутри ветки ставится новейшая версия источника на момент сборки — две
-  сборки в разные дни могут дать разные 580.x.
-- Нужен GPU на машине (или passthrough в ВМ); в ВМ без GPU модуль есть, но
-  `nvidia-smi` ответит «No devices were found».
-- Драйвер с зависимостями (а с DKMS — ещё компилятор и заголовки) заметно
-  увеличивают образ: закладывайте место под сборку с запасом.
-- **При сборке DKMS идёт в appliance libguestfs, а ему bisquite по умолчанию даёт
-  2 ГБ** (`virt-customize --memsize 2048`). Ветке 590 под ядро Debian 13
-  (6.12) этого мало — компилятор убивает OOM (замер 2026-10-14), хук
-  тогда так и пишет. Собирайте с запасом: `bs image build --memsize 6144
-  --smp 4 …` (`--smp` заодно ускоряет компиляцию). Debian 12 с 580 и Ubuntu
-  с готовыми модулями Canonical укладываются в умолчание.
-
