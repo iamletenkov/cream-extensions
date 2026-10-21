@@ -5,6 +5,7 @@
 
 ### Добавлено
 
+* **catalog:** каталог под cream 1.2.0 — `hooks.configure.every_boot: true` и `cream: ">=1.2.0"` у 12 расширений (code-server, desktop, docker, firewall, jetson-stats, kiosk, pixelflux-tegra, pixelflux-v4l2m2m, rustdesk, selkies, vino-vnc, x11vnc; версии подняты минором), `wallpaper` — исключение `every-boot-not-needed` (3.0.1); правило `[every-boot]` в `lint-hooks` — ошибка по умолчанию; `cream check` по каталогу в CI (`tools/cream-check.sh`, `make cream-check`); `rustdesk` ставит повторную сверку `cream configure --again rustdesk`; L-раннер проверяет отметку configure на второй загрузке ([#42](https://github.com/iamletenkov/cream-extensions/issues/42)) ([4715dbd](https://github.com/iamletenkov/cream-extensions/commit/4715dbda7ba48f97d174711a514cba3372648045))
 * **tools:** аудит хуков configure и правило every-boot в lint-hooks ([#39](https://github.com/iamletenkov/cream-extensions/issues/39)) ([3c7596b](https://github.com/iamletenkov/cream-extensions/commit/3c7596b9d033b5d3de157234915666fac0213b3e))
 
 ## [5.2.0](https://github.com/iamletenkov/cream-extensions/compare/v5.1.2...v5.2.0) (2026-10-21)
