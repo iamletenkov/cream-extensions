@@ -1,13 +1,14 @@
-# Fixture of tools/test-live-test.sh: configure exits 20 at boot. Since cream 1.2.0
-# that is "skipped" (cream spec §10.8): the unit succeeds, the runner stays green.
+# Fixture of tools/test-live-test.sh: configure exits 20 at boot (every_boot: the
+# mark of install does not skip it). Since cream 1.2.0 that is "skipped" (cream
+# spec §10.8): the unit succeeds, the mark is taken away, the runner stays green.
 schema: cream/v1
 name: live-configure-20
 version: 1.0.0
 summary: фикстура L-раннера — configure возвращает 20
-cream: ">=1.0.0"
+cream: ">=1.2.0"
 platform: {family: deb, arch: [amd64, arm64]}
 targets: {build: exec, live: "yes"}
 hooks:
   install: {}
-  configure: {stage: system}
+  configure: {stage: system, every_boot: true}
   remove: {}

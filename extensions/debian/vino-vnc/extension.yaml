@@ -14,11 +14,14 @@
 # remove    — databases, profile lines and autostart gone; vino only when ours.
 # No conflict with x11vnc: both default to port 5900 and are told apart by a
 # parameter (VINO_PORT, X11VNC_PORT), not by excluding each other.
+#
+# 5.1.0: hooks.configure.every_boot — configure runs every boot (cream 1.2.0
+#        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: vino-vnc
-version: 5.0.1
+version: 5.1.0
 summary: VNC через vino (GNOME) в сессии пользователя cloud-init — настройки системным dconf, по умолчанию только петля
-cream: ">=1.0.0"
+cream: ">=1.2.0"
 platform:
   family: deb
   arch: [amd64, arm64]
@@ -35,6 +38,7 @@ hooks:
   install: {timeout: 15m}
   configure:
     stage: system
+    every_boot: true
     after: [cloud-init.service]
     before: [display-manager.service, gdm.service, gdm3.service, lightdm.service]
     timeout: 2m

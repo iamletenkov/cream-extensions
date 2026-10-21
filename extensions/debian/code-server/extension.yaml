@@ -23,11 +23,13 @@
 #        to 127.0.0.1; the .deb by sha256 instead of the install script; mkcert is
 #        gone (code-server issues the certificate, cert: true); CODE_SERVER_VERSION
 #        is gone. Rename table — README.md.
+# 5.1.0: hooks.configure.every_boot — configure runs every boot (cream 1.2.0
+#        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: code-server
-version: 5.0.0
+version: 5.1.0
 summary: code-server — VS Code в браузере от имени пользователя; без пароля не стартует, наружу — через Teleport
-cream: ">=1.1.1"
+cream: ">=1.2.0"
 platform:
   family: deb
   # The release publishes .deb for amd64 and arm64 (armhf too, never built or
@@ -47,6 +49,7 @@ hooks:
   # write as the user and non-blocking systemctl.
   configure:
     stage: cloud-user
+    every_boot: true
     timeout: 3m
   apply: {timeout: 2m}
   remove: {timeout: 10m}

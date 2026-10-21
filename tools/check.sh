@@ -3,9 +3,11 @@
 #
 # Проверки: `cream validate --catalog .` по корню каталога (cream-validate.sh:
 # cream по пину tools/cream-pin.env, пустой пин — пропуск со строкой; локально —
-# CREAM_DEB=<.deb>) и его тест; гейт имён bisquite по всему репозиторию
+# CREAM_DEB=<.deb>) и его тест; `cream check` по каталогу (cream-check.sh:
+# каждое расширение строкой образа на debian:12/13 и ubuntu:22.04/24.04 с
+# поставщиками своих requires, пустая база) и его тест; гейт имён bisquite по всему репозиторию
 # (check-names.sh, кроме истории — CHANGELOG.md, docs/research/, docs/plans/) и
-# его тест; линт хуков и действий (lint-hooks.sh: шапки, systemctl --no-block,
+# его тест; линт хуков и действий (lint-hooks.sh, LINT_EVERY_BOOT=error: шапки, systemctl --no-block,
 # cream set при lock: none, source lib/, секрет в argv, CREAM_*, стадия
 # cloud-user) и его тест; тест каркаса new-extension.sh (скелеты проходят линт,
 # гейт имён, свой H-тест и cream validate); тест H-раннера (tools/hooktest.sh —
@@ -41,6 +43,12 @@ echo
 echo "== test-cream-validate =="
 "$HERE/test-cream-validate.sh" || rc=1
 
+echo "== cream-check =="
+"$HERE/cream-check.sh" || rc=1
+
+echo "== test-cream-check =="
+"$HERE/test-cream-check.sh" || rc=1
+
 echo "== check-names =="
 "$HERE/check-names.sh" || rc=1
 
@@ -48,7 +56,7 @@ echo "== test-check-names =="
 "$HERE/test-check-names.sh" || rc=1
 
 echo "== lint-hooks =="
-"$HERE/lint-hooks.sh" || rc=1
+LINT_EVERY_BOOT=error "$HERE/lint-hooks.sh" || rc=1
 
 echo "== test-lint-hooks =="
 "$HERE/test-lint-hooks.sh" || rc=1

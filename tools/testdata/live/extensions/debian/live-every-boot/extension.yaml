@@ -1,0 +1,13 @@
+# Fixture of tools/test-live-test.sh: configure with every_boot: true — the hook
+# runs on each boot past the configure mark of cream 1.2.0 (no «пропуск»).
+schema: cream/v1
+name: live-every-boot
+version: 1.0.0
+summary: фикстура L-раннера — configure на каждой загрузке
+cream: ">=1.2.0"
+platform: {family: deb, arch: [amd64, arm64]}
+targets: {build: exec, live: "yes"}
+hooks:
+  install: {}
+  configure: {stage: system, every_boot: true}
+  remove: {}

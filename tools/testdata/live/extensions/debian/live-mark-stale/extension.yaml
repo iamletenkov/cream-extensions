@@ -1,0 +1,14 @@
+# Fixture of tools/test-live-test.sh: configure without every_boot that says 20
+# at install (the mark is taken away) and 0 at boot — so it runs at boot past
+# the mark: the runner calls it out (a hook that needs every_boot), red.
+schema: cream/v1
+name: live-mark-stale
+version: 1.0.0
+summary: фикстура L-раннера — configure идёт на загрузке без every_boot
+cream: ">=1.2.0"
+platform: {family: deb, arch: [amd64, arm64]}
+targets: {build: exec, live: "yes"}
+hooks:
+  install: {}
+  configure: {stage: system}
+  remove: {}

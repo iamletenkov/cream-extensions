@@ -19,9 +19,11 @@
 # 3.0.0: cream/v1; configure-wallpaper.service → stage cloud-user (cream
 #        >= 1.1.1, ruling R14); gsettings per user → system defaults; not only
 #        GNOME; WALLPAPER_IMAGE is a file name in images/, WALLPAPER_MODE new.
+# 3.0.1: the configure hook is once per configure mark of cream 1.2.0
+#        (every-boot-not-needed, audit 2026-10-21) — only its comments.
 schema: cream/v1
 name: wallpaper
-version: 3.0.0
+version: 3.0.1
 summary: Обои рабочего стола — системное умолчание GNOME (dconf), Xfce (xfconf) и LXDE (pcmanfm) из картинок расширения
 cream: ">=1.1.1"
 platform:

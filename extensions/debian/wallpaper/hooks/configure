@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# cream hook `configure` of wallpaper: stage cloud-user — every boot, after
-# install on a working machine and after `cream set wallpaper …` (no own apply
-# hook: cream restarts the configure unit). Writes the system defaults; no
-# desktop — a warning and 0 (ruling R11).
+# cream hook `configure` of wallpaper: stage cloud-user — once per configure
+# mark (cream 1.2.0: first boot, install, upgrade, `cream set wallpaper …`; no
+# own apply hook: cream restarts the configure unit). Writes the system
+# defaults; no desktop — a warning and 0 (ruling R11); a desktop installed
+# later — `cream configure --force wallpaper`.
+# cream-lint: every-boot-not-needed пользователь cloud-init нужен только для предупреждения о личных настройках, умолчания — системные (/etc, блокировки dconf) и живут до перезагрузки (аудит 2026-10-21)
 set -euo pipefail
 exec "${CREAM_EXT_DIR:?run by cream}/files/wallpaper.sh" apply

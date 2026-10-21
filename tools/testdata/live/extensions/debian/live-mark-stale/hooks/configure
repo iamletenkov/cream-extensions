@@ -1,0 +1,4 @@
+#!/bin/sh
+# 20 at install (no mark), 0 at boot (the hook runs, the mark is written).
+[ "${CREAM_REASON:-}" = boot ] && exit 0
+exit 20
