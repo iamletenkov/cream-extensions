@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.3.0](https://github.com/iamletenkov/cream-extensions/compare/v5.2.0...v5.3.0) (2026-10-21)
+
+
+### Добавлено
+
+* **tools:** аудит хуков configure и правило every-boot в lint-hooks ([#39](https://github.com/iamletenkov/cream-extensions/issues/39)) ([3c7596b](https://github.com/iamletenkov/cream-extensions/commit/3c7596b9d033b5d3de157234915666fac0213b3e))
+
 ## [5.2.0](https://github.com/iamletenkov/cream-extensions/compare/v5.1.2...v5.2.0) (2026-10-21)
 
 
