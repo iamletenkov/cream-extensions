@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Extensions of the root extensions/openwrt on a real OpenWrt 25.12 (musl,
-# busybox ash, apk, uci, the packages of openwrt-builder v0.3.0): the root FS
+# busybox ash, apk, uci, the packages of openwrt-builder v0.3.1): the root FS
 # of the openwrt-builder release is imported into a docker image, cream comes
 # from the pin tools/cream-pin.env (the binary of the verified .deb — the same
 # static build as the release tar.gz), the catalog is this repository
@@ -19,8 +19,8 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(dirname "$HERE")"
-URL="${OPENWRT_ROOTFS_URL:-https://github.com/iamletenkov/openwrt-builder/releases/download/v0.3.0/openwrt-25.12.6-custom-x86-64-generic-rootfs.tar.gz}"
-SHA="${OPENWRT_ROOTFS_SHA256:-1ce17fa84658cda7da34ff5b4eb588b720d1f0032b2872b1859bddad62ab9c37}"
+URL="${OPENWRT_ROOTFS_URL:-https://github.com/iamletenkov/openwrt-builder/releases/download/v0.3.1/openwrt-25.12.6-custom-x86-64-generic-rootfs.tar.gz}"
+SHA="${OPENWRT_ROOTFS_SHA256:-ece09113fd478d37bdb99b74452026eb942007b796dbedcf9e45b87a2e9ac4a9}"
 
 die() { echo "test-openwrt: $*" >&2; exit 2; }
 command -v docker >/dev/null 2>&1 || die "нужен docker"

@@ -103,7 +103,7 @@ jobs:
         run: make lint
 
   # Расширения семейства openwrt на настоящем OpenWrt 25.12: корневая ФС
-  # openwrt-builder v0.3.0 (sha256 закреплён в tools/test-openwrt.sh) в
+  # openwrt-builder v0.3.1 (sha256 закреплён в tools/test-openwrt.sh) в
   # контейнере, cream по пину, настоящие uci, awg, init-скрипт podkop.
   openwrt:
     name: test-openwrt
