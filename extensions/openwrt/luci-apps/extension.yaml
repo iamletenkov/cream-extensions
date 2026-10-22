@@ -1,0 +1,38 @@
+# luci-apps — LuCI applications from the signed package feeds of OpenWrt
+# (apk). The list is an install parameter; the extension remembers what it
+# added and takes away only that.
+#
+# install — apk update and apk add of the listed packages that are missing;
+#           packages it added earlier and that left the list — apk del. Only
+#           the signed feeds of the image: `allow-untrusted` in
+#           /etc/apk/config — refusal; apk itself checks the signature of the
+#           index and the packages against /etc/apk/keys. In the image build
+#           (IPKG_INSTROOT=/ from cream) the packages are enabled, not
+#           started; on the live machine the LuCI caches are dropped and rpcd
+#           reloaded in the background.
+# remove  — apk del of what the extension added.
+schema: cream/v1
+name: luci-apps
+version: 1.0.0
+summary: приложения LuCI из подписанных фидов OpenWrt (apk) по списку; снимает только то, что поставило само
+cream: ">=1.3.0"
+platform:
+  family: openwrt
+  arch: [amd64, arm64]
+  os: [{id: openwrt, version: ">=25.12"}]
+  commands: [apk]
+targets:
+  build: exec
+  live: "yes"
+hooks:
+  # apk update and the packages over the network.
+  install: {timeout: 10m}
+  remove: {timeout: 5m}
+config:
+  keys:
+    LUCI_APPS_PACKAGES:
+      type: 'list:re:^luci-(app|theme|proto|i18n|mod)-[a-z0-9][a-z0-9._+-]{0,63}$'
+      default: ""
+      empty: true
+      scope: install
+      description: "пакеты LuCI через пробел (luci-app-sqm luci-i18n-sqm-ru)"

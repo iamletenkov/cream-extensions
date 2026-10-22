@@ -1,0 +1,94 @@
+# amneziawg — an AmneziaWG interface of OpenWrt (netifd proto amneziawg), set up
+# with uci from the keys. The packages (kmod-amneziawg, amneziawg-tools,
+# luci-proto-amneziawg) come with the image (openwrt-builder v0.3.0): the module
+# is built for the exact kernel of the release and is not in the OpenWrt feeds.
+#
+# install   — checks the packages of the image; no package, no change (code 20).
+# configure — stage early (S19, before S20network): the private key (the secret
+#             AMNEZIAWG_PRIVATE_KEY or one generated on the machine and kept in
+#             the state), the interface and its peer in /etc/config/network
+#             through `uci batch` on stdin (keys never in argv). On the live
+#             machine (not at boot) — `ubus call network reload` and ifup in the
+#             background. Not every boot: uci and the key live on the disk
+#             (signs A1–A6 — none, README «Подробности»).
+# remove    — the interface and its peers out of the network config.
+# files     — /lib/upgrade/keep.d/amneziawg: sysupgrade keeps the key (only the
+#             state; ADR 0005 of cream, ruling RO5).
+schema: cream/v1
+name: amneziawg
+version: 1.0.0
+summary: интерфейс AmneziaWG на OpenWrt — ключ на машине, интерфейс и пир через uci, пакеты из образа
+cream: ">=1.3.0"
+platform:
+  family: openwrt
+  arch: [amd64, arm64]
+  os: [{id: openwrt, version: ">=25.12"}]
+targets:
+  build: exec
+  live: "yes"
+provides: [vpn-amneziawg]
+hooks:
+  install: {timeout: 1m}
+  configure: {stage: early, timeout: 1m}
+  remove: {timeout: 1m}
+actions:
+  pubkey: {summary: "открытый ключ интерфейса (для сервера AmneziaWG)", lock: none, output: text, phases: [live]}
+files:
+  - {src: files/keep.d, dst: /lib/upgrade/keep.d/amneziawg, mode: "0644"}
+# Every value lands in `uci batch` inside single quotes: the types admit no
+# quote, backslash, newline or space (tests/test-amneziawg.sh).
+config:
+  keys:
+    AMNEZIAWG_IFACE:
+      type: 're:^[a-z][a-z0-9_]{0,10}$'
+      default: "awg0"
+      description: "имя интерфейса netifd и устройства (до 11 знаков: пир — секция <имя>_peer)"
+    AMNEZIAWG_PRIVATE_KEY:
+      type: 're:^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw480]=$'
+      default: ""
+      empty: true
+      secret: file
+      description: "закрытый ключ (base64); пусто — генерируется на машине при первом configure и хранится в состоянии"
+    AMNEZIAWG_ADDRESSES:
+      type: 'list:re:^[0-9a-fA-F.:]{2,39}/[0-9]{1,3}$'
+      default: ""
+      empty: true
+      description: "адреса интерфейса CIDR через пробел (10.8.0.2/32)"
+    AMNEZIAWG_LISTEN_PORT: {type: 're:^[0-9]{1,5}$', default: "", empty: true, description: "порт прослушивания; пусто — случайный"}
+    AMNEZIAWG_MTU: {type: 're:^[0-9]{3,4}$', default: "", empty: true, description: "MTU; пусто — умолчание netifd"}
+    AMNEZIAWG_JC: {type: 're:^[0-9]{1,5}$', default: "", empty: true, description: "обфускация Jc — число мусорных пакетов (как на сервере)"}
+    AMNEZIAWG_JMIN: {type: 're:^[0-9]{1,5}$', default: "", empty: true, description: "обфускация Jmin"}
+    AMNEZIAWG_JMAX: {type: 're:^[0-9]{1,5}$', default: "", empty: true, description: "обфускация Jmax"}
+    AMNEZIAWG_S1: {type: 're:^[0-9]{1,5}$', default: "", empty: true, description: "обфускация S1"}
+    AMNEZIAWG_S2: {type: 're:^[0-9]{1,5}$', default: "", empty: true, description: "обфускация S2"}
+    AMNEZIAWG_S3: {type: 're:^[0-9]{1,5}$', default: "", empty: true, description: "обфускация S3 (AmneziaWG 2)"}
+    AMNEZIAWG_S4: {type: 're:^[0-9]{1,5}$', default: "", empty: true, description: "обфускация S4 (AmneziaWG 2)"}
+    AMNEZIAWG_H1: {type: 're:^[0-9]{1,10}(-[0-9]{1,10})?$', default: "", empty: true, description: "обфускация H1 (число или диапазон a-b)"}
+    AMNEZIAWG_H2: {type: 're:^[0-9]{1,10}(-[0-9]{1,10})?$', default: "", empty: true, description: "обфускация H2"}
+    AMNEZIAWG_H3: {type: 're:^[0-9]{1,10}(-[0-9]{1,10})?$', default: "", empty: true, description: "обфускация H3"}
+    AMNEZIAWG_H4: {type: 're:^[0-9]{1,10}(-[0-9]{1,10})?$', default: "", empty: true, description: "обфускация H4"}
+    AMNEZIAWG_PEER_PUBLIC_KEY:
+      type: 're:^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw480]=$'
+      default: ""
+      empty: true
+      description: "открытый ключ сервера; пусто — интерфейс без пира"
+    AMNEZIAWG_PEER_PRESHARED_KEY:
+      type: 're:^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw480]=$'
+      default: ""
+      empty: true
+      secret: file
+      description: "общий ключ пира (base64), если сервер его требует"
+    AMNEZIAWG_PEER_ENDPOINT:
+      type: 're:^([A-Za-z0-9.-]{1,253}|\[[0-9a-fA-F:]{2,39}\]):[0-9]{1,5}$'
+      default: ""
+      empty: true
+      description: "адрес сервера host:порт ([IPv6]:порт)"
+    AMNEZIAWG_PEER_ALLOWED_IPS:
+      type: 'list:re:^[0-9a-fA-F.:]{2,39}/[0-9]{1,3}$'
+      default: "0.0.0.0/0 ::/0"
+      description: "сети через туннель (allowed_ips пира)"
+    AMNEZIAWG_PEER_KEEPALIVE: {type: 're:^[0-9]{1,5}$', default: "25", empty: true, description: "persistent keepalive, с; пусто — выключен"}
+    AMNEZIAWG_ROUTE_ALLOWED_IPS:
+      type: bool
+      default: "0"
+      description: "1 — маршруты на allowed_ips через туннель (весь трафик при 0.0.0.0/0); 0 — маршрутизацию решает другой (podkop)"

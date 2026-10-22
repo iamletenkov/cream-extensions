@@ -1,11 +1,12 @@
 # Статус cream-extensions
 
-**Фаза:** каталог под cream 1.2.0 и bisquite 3 по плану cream
-`docs/plans/2026-10-21-bisquite-bundled-cream.md` (репозиторий cream): Task 3 и 19 —
-выпуск 5.3.0; Task 23 (документация) — PR этой ветки.
+**Фаза:** каталог под cream 1.3.0 и bisquite 3 по плану cream
+`docs/plans/2026-10-21-bisquite-bundled-cream.md` (репозиторий cream): Task 28 — корень
+`extensions/openwrt` (`amneziawg`, `podkop`, `luci-apps`), следующий минор каталога.
 
 ## Сделано
-- 46 расширений (из них 3 библиотеки) — cream/v1; 12 с `every_boot` и `cream: ">=1.2.0"`;
+- 49 расширений (из них 3 библиотеки) — cream/v1, из них 3 семейства `openwrt` (`make test-openwrt`
+  на корневой ФС openwrt-builder v0.3.0, CI-job `test-openwrt`); 12 с `every_boot` и `cream: ">=1.2.0"`;
   `cream check` по каталогу и правило `every-boot` ошибкой — в CI.
 - Документация по задачам: README с таблицей расширений, [первые шаги](getting-started.md),
   `guides/`, `reference/`, `history/`; README каждого расширения — по
@@ -14,7 +15,7 @@
 
 ## Дальше
 1. Bisquite 3.0.0 (Task 24–26 плана cream): примеры VMFILE на `RUN_COMMAND cream install`.
-2. OpenWrt (Task 27–28): корень `extensions/openwrt` — следующим минором после bisquite 3.0.0.
+2. OpenWrt: несколько пиров у `amneziawg`, `AMNEZIAWG_I1`–`I5`; живая проверка на Raspberry Pi.
 3. Бэклог после 5.0.0 — раздел «Бэклог после 5.0.0» плана
    [2026-10-19-cream-v1-migration](plans/2026-10-19-cream-v1-migration.md).
 4. Разгрести предупреждения shellcheck вне расширений (планка `make lint` — error).

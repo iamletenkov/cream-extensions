@@ -102,9 +102,22 @@ jobs:
       - name: Shellcheck
         run: make lint
 
+  # Расширения семейства openwrt на настоящем OpenWrt 25.12: корневая ФС
+  # openwrt-builder v0.3.0 (sha256 закреплён в tools/test-openwrt.sh) в
+  # контейнере, cream по пину, настоящие uci, awg, init-скрипт podkop.
+  openwrt:
+    name: test-openwrt
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: OpenWrt scenario
+        run: make test-openwrt
+
   release-please:
     name: Release Please
-    needs: check
+    needs: [check, openwrt]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

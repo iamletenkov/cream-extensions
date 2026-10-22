@@ -1,0 +1,4 @@
+#!/bin/sh
+# cream hook `install` of podkop — the code is files/podkop.sh (its header).
+set -eu
+exec "${CREAM_EXT_DIR:?run by cream}/files/podkop.sh" install

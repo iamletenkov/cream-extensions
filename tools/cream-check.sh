@@ -2,8 +2,9 @@
 # `cream check` over the catalog: every extension as a line of a future image.
 #
 # For each extension under the roots of cream-catalog.yaml and each OS of the
-# matrix that its platform.os admits (debian:12, debian:13, ubuntu:22.04,
-# ubuntu:24.04; no platform.os — all of them), on amd64 when the extension
+# matrix of its platform.family that its platform.os admits (deb: debian:12,
+# debian:13, ubuntu:22.04, ubuntu:24.04; openwrt: openwrt:25.12; no platform.os
+# — all of the family), on amd64 when the extension
 # has it (otherwise its first architecture), over an empty base
 # (--installed []), the steps are what an image recipe would write:
 #   install --with-deps <provider>   for every capability in requires of the
@@ -48,7 +49,10 @@ MATRIX_PY='
 import pathlib, re, sys, yaml
 repo = pathlib.Path(sys.argv[1])
 cat = yaml.safe_load(open(repo / "cream-catalog.yaml", encoding="utf-8")) or {}
-OSES = [("debian", "12"), ("debian", "13"), ("ubuntu", "22.04"), ("ubuntu", "24.04")]
+OSES = [("debian", "12"), ("debian", "13"), ("ubuntu", "22.04"), ("ubuntu", "24.04"), ("openwrt", "25.12")]
+# cream check takes the family of the image from the OS: openwrt (ADR 0005 of cream) or deb.
+def family_of(os_id):
+    return "openwrt" if os_id == "openwrt" else "deb"
 
 def vt(v):
     return tuple(int(x) for x in v.split("."))
@@ -75,6 +79,8 @@ for root in cat.get("roots") or []:
 
 def fits(m, os_id, os_ver, arch):
     p = m.get("platform") or {}
+    if (p.get("family") or "deb") != family_of(os_id):
+        return False
     if arch not in (p.get("arch") or [arch]):
         return False
     oses = p.get("os")
@@ -84,6 +90,9 @@ for name in sorted(exts):
     m = exts[name]
     arches = (m.get("platform") or {}).get("arch") or ["amd64"]
     arch = "amd64" if "amd64" in arches else arches[0]
+    if not any(fits(m, os_id, os_ver, arch) for os_id, os_ver in OSES):
+        print(f"!{name}\t-\t{arch}\tни одной ОС матрицы {OSES} для её platform")
+        continue
     for os_id, os_ver in OSES:
         if not fits(m, os_id, os_ver, arch):
             continue

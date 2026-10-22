@@ -71,7 +71,7 @@ def cell(s):
     return " ".join(str(s).split()).replace("|", "\\|")
 
 def osname(e):
-    ids = {"debian": "Debian", "ubuntu": "Ubuntu"}
+    ids = {"debian": "Debian", "ubuntu": "Ubuntu", "openwrt": "OpenWrt"}
     name = ids.get(e.get("id"), str(e.get("id")))
     v = str(e.get("version") or "").strip()
     if not v:
@@ -83,7 +83,7 @@ def osname(e):
 def oses(m):
     lst = (m.get("platform") or {}).get("os")
     if not lst:
-        return "Debian, Ubuntu"
+        return "OpenWrt" if (m.get("platform") or {}).get("family") == "openwrt" else "Debian, Ubuntu"
     return ", ".join(osname(e) for e in lst)
 
 def arches(m):
