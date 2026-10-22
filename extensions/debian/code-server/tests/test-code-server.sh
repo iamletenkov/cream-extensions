@@ -99,13 +99,13 @@ teleport_render() {
 echo "== манифест и раскладка =="
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
 eq "name" code-server "$(mf 'm["name"]')"
-eq "версия 5.1.2 (every_boot)" 5.1.2 "$(mf 'm["version"]')"
+eq "версия 5.2.1 (загрузка библиотекой fetch)" 5.2.1 "$(mf 'm["version"]')"
 eq "cream >=1.2.0 (every_boot, спека cream §10.9)" ">=1.2.0" "$(mf 'm["cream"]')"
 eq "configure на каждой загрузке (аудит 2026-10-21)" True "$(mf 'm["hooks"]["configure"].get("every_boot")')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
 eq "стадия cloud-user" cloud-user "$(mf 'm["hooks"]["configure"]["stage"]')"
 eq "хуки" "apply configure install remove" "$(mf '" ".join(sorted(m["hooks"]))')"
-eq "depends cloud-user" "cloud-user >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
+eq "depends cloud-user и fetch" "cloud-user >=1.0.0 <2 fetch >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
 eq "provides" "web-ide" "$(mf '" ".join(m["provides"])')"
 eq "arch" "amd64 arm64" "$(mf '" ".join(m["platform"]["arch"])')"
 eq "секрет — только пароль, secret: file" "CODE_SERVER_PASSWORD" \
@@ -192,6 +192,21 @@ check "ставится проверенный .deb" grep -q 'install .*\.deb' "
 eq "поставлено то, что скачано и проверено" good-deb "$(cat "$FAKE/installed.deb" 2>/dev/null)"
 check_not "install не трогает службы" ht_called '^systemctl'
 check_not "install не трогает домашние каталоги" test -e "$ROOT/home/alice/.config"
+
+echo "== install: curl 56 дважды (focal, curl 7.68) — третья попытка, .deb поставлен =="
+cs_root
+ht_fake dpkg 'echo amd64'
+ht_fake dpkg-query 'exit 1'
+ht_fake apt-get 'printf "%s\n" "$*" >> "$FAKE/apt.log"; exit 0'
+ht_fake curl '
+n=$(( $(cat "$FAKE/n" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/n"
+(( n <= 2 )) && { echo "curl: (56) Recv failure: Connection reset by peer" >&2; exit 56; }
+while (( $# )); do [[ "$1" == -o ]] && { echo good-deb > "$2"; }; shift; done; exit 0'
+sed -i -E "s/\[amd64\]=[0-9a-f]{64}/[amd64]=$good/" "$HT_EXT/files/code-server.sh"
+ht_hook install; eq "после двух обрывов — install 0" 0 "$?"
+eq "три вызова curl" 3 "$(grep -c '^curl ' "$FAKE/calls")"
+check "между попытками пауза" ht_called '^sleep 10$'
+check "ставится проверенный .deb" grep -q 'install .*\.deb' "$FAKE/apt.log"
 
 echo "== остатки layout 2: install и configure отказывают =="
 # plant <kind>: one leftover of the layout 2 code-server on the root.

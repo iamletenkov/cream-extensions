@@ -21,6 +21,10 @@ EXT_DIR="${CREAM_EXT_DIR:?run by cream}"
 STATE_DIR="${CREAM_STATE_DIR:?run by cream}"
 # shellcheck source=../files/common.sh
 . "$EXT_DIR/files/common.sh"
+FETCH_LIB="$R/opt/cream/ext/fetch/fetch.sh"
+[[ -f "$FETCH_LIB" ]] || { log "нет библиотеки fetch ($FETCH_LIB) — cream ставит её по depends"; exit 1; }
+# shellcheck source=../../fetch/fetch.sh
+. "$FETCH_LIB"
 
 # Pins: version + dpkg architecture -> sha256 of the release asset (GitHub
 # release asset digest, checked against the downloaded file: x86_64
@@ -74,12 +78,15 @@ else
     WORK="$(mktemp -d "${TMPDIR:-/var/tmp}/rustdesk.XXXXXX")"
     trap 'rm -r -f -- "$WORK"' EXIT
     log "скачиваю $url"
-    curl -fL --proto '=https,http' --retry 5 --retry-delay 5 --connect-timeout 30 \
-        --speed-limit 10240 --speed-time 60 -o "$WORK/$file" "$url" || { log "$file не скачался"; exit 1; }
-    if ! echo "$sha256  $WORK/$file" | sha256sum -c --quiet - >/dev/null 2>&1; then
-        log "sha256 $file не совпал с $sha256 — пакет не ставлю"
-        exit 1
-    fi
+    # Attempts, stalls as failed attempts and the sha256 — library fetch:
+    # curl 7.68 of focal (Jetson Nano) does not retry "Connection reset by peer".
+    rc=0
+    fetch_verified "$WORK/$file" "$sha256" "$url" || rc=$?
+    case "$rc" in
+        0) ;;
+        2) log "sha256 $file не совпал с $sha256 — пакет не ставлю"; exit 1 ;;
+        *) log "$file не скачался"; exit 1 ;;
+    esac
     apt_retry apt-get update -q || { log "apt-get update не прошёл"; exit 1; }
     # apt resolves the package's dependencies; the file is readable by _apt
     # (mktemp -d is 0700).

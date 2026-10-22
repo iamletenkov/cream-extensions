@@ -51,6 +51,11 @@ apt_retry(){
 
 [[ ! -L "$OPT" ]] || { log_error "/opt/selkies — символическая ссылка, не пишу через неё"; exit 1; }
 
+FETCH_LIB="$R/opt/cream/ext/fetch/fetch.sh"
+[[ -f "$FETCH_LIB" ]] || { log_error "нет библиотеки fetch ($FETCH_LIB) — cream ставит её по depends"; exit 1; }
+# shellcheck source=../../fetch/fetch.sh
+. "$FETCH_LIB"
+
 # --- AppImage -----------------------------------------------------------------
 # The release tag lost its `v` prefix upstream (v2.0.0rc0 -> 2.0.0rc0, seen
 # 2026-09-15: the old URL answers 404, the asset is byte-identical). Both
@@ -70,23 +75,17 @@ else
     # no 1.7 GB in a tmpfs.
     WORK="$(mktemp -d "$OPT/.install.XXXXXX")"
     trap 'rm -r -f -- "$WORK"' EXIT
-    fetched=0
-    for URL in "${URLS[@]}"; do
-        log_info "скачиваю $URL"
-        # --speed-limit/--speed-time turn a stalled transfer into a retry: over
-        # the board's Wi-Fi the download froze at 76 of 535 MB and curl waited
-        # an hour with no timeout (AGX Orin, 2026-09-15).
-        if curl -fsSL --retry 5 --retry-delay 5 \
-                --connect-timeout 30 --speed-limit 10240 --speed-time 60 \
-                -o "$WORK/selkies.AppImage" "$URL"; then
-            fetched=1; break
-        fi
-    done
-    (( fetched )) || { log_error "AppImage не скачался ни по одной ссылке: ${URLS[*]}"; exit 1; }
-    if ! echo "${APPIMAGE_SHA256[$APPARCH]}  $WORK/selkies.AppImage" | sha256sum -c --quiet - >/dev/null 2>&1; then
-        log_error "sha256 AppImage не совпал с закреплённым для $APPARCH"
-        exit 1
-    fi
+    # Attempts per URL, stalls as failed attempts and the pinned sha256 —
+    # library fetch: curl 7.68 of focal (Jetson Nano) does not retry
+    # "Connection reset by peer" by itself.
+    log_info "скачиваю $ASSET (${URLS[*]})"
+    rc=0
+    fetch_verified "$WORK/selkies.AppImage" "${APPIMAGE_SHA256[$APPARCH]}" "${URLS[@]}" || rc=$?
+    case "$rc" in
+        0) ;;
+        2) log_error "sha256 AppImage не совпал с закреплённым для $APPARCH"; exit 1 ;;
+        *) log_error "AppImage не скачался ни по одной ссылке: ${URLS[*]}"; exit 1 ;;
+    esac
     chmod 0755 "$WORK/selkies.AppImage"
     # --appimage-extract works without FUSE: the runtime is static and unpacks
     # the squashfs itself, into the current directory.

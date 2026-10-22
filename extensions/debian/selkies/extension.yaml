@@ -26,7 +26,9 @@
 #        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: selkies
-version: 6.1.1
+version: 6.2.0
+# 6.2.0: the AppImage through library fetch (depends): attempts per URL — curl 7.68
+#        of focal (Jetson Nano) does not retry "Connection reset by peer".
 # 6.1.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 # 6.0.1: только README (выпуск 5.1.1 изменил дерево без подъёма версии —
 #        cream отвергал обновление с 6.0.0: version.same_digest).
@@ -46,6 +48,7 @@ provides: [web-remote-desktop]
 requires: [x11-server, display-manager]
 depends:
   - {name: cloud-user, version: ">=1.0.0 <2"}
+  - {name: fetch, version: ">=1.0.0 <2"}
 hooks:
   # The AppImage is ~535 MB over the network, extracted to 1.7 GB.
   install: {timeout: 60m}

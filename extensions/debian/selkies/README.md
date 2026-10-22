@@ -11,7 +11,7 @@ X-сессия, которая на мониторе, — в браузере, �
 | cream | ≥ 1.2.0 |
 | Даёт | `web-remote-desktop` |
 | Требует | `x11-server`, `display-manager` |
-| Зависит от | [`cloud-user`](../cloud-user/README.md) |
+| Зависит от | [`cloud-user`](../cloud-user/README.md), [`fetch`](../fetch/README.md) |
 | Конфликтует с | — |
 | Хуки | `install`, `configure`, `apply`, `remove` |
 | Настройка на загрузке | стадия `graphical`, на каждой загрузке (`every_boot`) |
@@ -31,7 +31,9 @@ X-сессия, которая на мониторе, — в браузере, �
 - **`install`** — AppImage Selkies по закреплённой версии и sha256 на архитектуру,
   распаковка в `/opt/selkies/2.0.0` (**+1,7 ГБ**, без FUSE), ссылка
   `/opt/selkies/current`; `x11-utils`, `xauth` для обёртки. Службу не запускает,
-  настроек не пишет. Повтор при распакованном дереве сеть не трогает. cream
+  настроек не пишет. Повтор при распакованном дереве сеть не трогает. Загрузка —
+  библиотекой [`fetch`](../fetch/README.md): 5 попыток на адрес (curl 7.68 focal
+  сам обрыв не повторяет). cream
   раскладывает юнит `selkies@.service` → `/etc/systemd/system/selkies@.service`.
 - **`configure`** — на каждой загрузке (стадия `graphical`, после менеджера входа),
   после `install` на живой машине:

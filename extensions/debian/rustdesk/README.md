@@ -12,7 +12,7 @@
 | cream | ≥ 1.2.0 |
 | Даёт | `remote-support` |
 | Требует | — |
-| Зависит от | [`cloud-user`](../cloud-user/README.md), [`apt-guard`](../apt-guard/README.md) |
+| Зависит от | [`cloud-user`](../cloud-user/README.md), [`apt-guard`](../apt-guard/README.md), [`fetch`](../fetch/README.md) |
 | Конфликтует с | — |
 | Хуки | `install`, `configure`, `remove` |
 | Настройка на загрузке | стадия `system`, на каждой загрузке (`every_boot`) |
@@ -27,7 +27,8 @@
 ## Что делает
 
 - **`install`** — `.deb` своей архитектуры (`dpkg --print-architecture`):
-  скачивается во временный каталог, **sha256 сверяется до того, как файл увидит
+  скачивается во временный каталог библиотекой [`fetch`](../fetch/README.md) (5
+  попыток на обрыв), **sha256 сверяется до того, как файл увидит
   apt**; юнит `/usr/lib/systemd/system/rustdesk.service`, если его не положил
   postinst (в appliance сборки PID 1 — не systemd); служба включена. В **сборке**
   удаляются `RustDesk*.toml` у `/root`, `/etc/skel` и пользователей с UID ≥ 1000

@@ -76,13 +76,13 @@ blocking_systemctl() { grep -E '^systemctl (start|restart|stop|reload|enable --n
 echo "== манифест и раскладка =="
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
 eq "name" selkies "$(mf 'm["name"]')"
-eq "версия 6.1.1 (every_boot)" 6.1.1 "$(mf 'm["version"]')"
+eq "версия 6.2.0 (загрузка библиотекой fetch)" 6.2.0 "$(mf 'm["version"]')"
 eq "cream >=1.2.0 (every_boot, спека cream §10.9)" ">=1.2.0" "$(mf 'm["cream"]')"
 eq "configure на каждой загрузке (аудит 2026-10-21)" True "$(mf 'm["hooks"]["configure"].get("every_boot")')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
 eq "стадия graphical" graphical "$(mf 'm["hooks"]["configure"]["stage"]')"
 eq "хуки" "apply configure install remove" "$(mf '" ".join(sorted(m["hooks"]))')"
-eq "depends cloud-user" "cloud-user >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
+eq "depends cloud-user и fetch" "cloud-user >=1.0.0 <2 fetch >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
 eq "provides" "web-remote-desktop" "$(mf '" ".join(m["provides"])')"
 eq "requires" "display-manager x11-server" "$(mf '" ".join(sorted(m["requires"]))')"
 eq "секреты — secret: file" "SELKIES_BASIC_AUTH_PASSWORD SELKIES_BASIC_AUTH_VIEWONLY_PASSWORD SELKIES_MASTER_TOKEN" \
@@ -155,6 +155,21 @@ ht_hook install; check_not "install не 0" test "$?" -eq 0
 check "скачивался AppImage aarch64" ht_called "^curl .*selkies-$VER-aarch64\\.AppImage"
 check_not "ничего не распаковано" test -e "$ROOT/opt/selkies/$VER"
 check_not "ссылки current нет" test -L "$ROOT/opt/selkies/current"
+
+echo "== install: curl 56 дважды (focal, curl 7.68) — третья попытка того же адреса =="
+sk_root
+ht_fake dpkg 'echo arm64'
+ht_fake apt-get
+ht_fake curl '
+n=$(( $(cat "$FAKE/n" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/n"
+(( n <= 2 )) && { echo "curl: (56) Recv failure: Connection reset by peer" >&2; exit 56; }
+while (( $# )); do [[ "$1" == -o ]] && { echo bogus > "$2"; }; shift; done; exit 0'
+ht_hook install; check_not "install не 0 (сумма подставного файла не сходится)" test "$?" -eq 0
+eq "три вызова curl, все по первому адресу" 3 "$(grep -c "^curl .*/download/$VER/selkies-$VER-aarch64\.AppImage$" "$FAKE/calls")"
+check "между попытками пауза" ht_called '^sleep 10$'
+check "отказ — по sha256, а не по сети" grep -q 'sha256' "$ROOT/out"
+check_not "ничего не распаковано" test -e "$ROOT/opt/selkies/$VER"
+check_not "рабочий каталог убран" compgen -G "$ROOT/opt/selkies/.install.*"
 
 echo "== configure: нет пароля и нет SELKIES_ALLOW_NO_AUTH — не стартует =="
 sk_root
