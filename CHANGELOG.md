@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.4.1](https://github.com/iamletenkov/cream-extensions/compare/v5.4.0...v5.4.1) (2026-10-22)
+
+
+### Исправлено
+
+* **amneziawg:** интерфейс переживает wrt.cloudinit — стадия system и every_boot ([#49](https://github.com/iamletenkov/cream-extensions/issues/49)) ([17a8212](https://github.com/iamletenkov/cream-extensions/commit/17a82121a748f2497067907b267da42c62fb555f))
+
 ## [5.4.0](https://github.com/iamletenkov/cream-extensions/compare/v5.3.1...v5.4.0) (2026-10-22)
 
 

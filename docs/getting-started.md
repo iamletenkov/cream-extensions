@@ -21,7 +21,7 @@ cream version          # cream 1.2.0 или новее
 `SHA256SUMS` того же выпуска.
 
 ```bash
-CV=5.4.0 # x-release-please-version
+CV=5.4.1 # x-release-please-version
 URL="https://github.com/iamletenkov/cream-extensions/releases/download/v$CV"
 curl -fLO "$URL/SHA256SUMS"
 SUM=$(awk -v f="cream-extensions-$CV.tar.gz" '$2 == f {print $1}' SHA256SUMS)
