@@ -64,6 +64,17 @@ fi
 eq "keep.d" "/opt/teleport/data/ /opt/teleport/.cream-owned" "$(grep -v '^#' /lib/upgrade/keep.d/teleport | tr '\n' ' ' | sed 's/ $//')"
 hasnt /etc/teleport.yaml
 
+step "журнал узла: log_cap через rc.common под писателем с O_APPEND"
+mkdir -p /var/lock
+exec 5>>/opt/teleport/log/teleport.log
+head -c 1048577 /dev/zero | tr '\0' x >&5
+/etc/init.d/teleport log_cap
+eq "копия в .1" 1048577 "$(wc -c </opt/teleport/log/teleport.log.1)"
+echo "after cap" >&5
+eq "писатель с нового конца" 10 "$(wc -c </opt/teleport/log/teleport.log)"
+exec 5>&-
+eq "журнал 0600" -rw------- "$(mode /opt/teleport/log/teleport.log)"
+
 step "join отложенный (procd не PID 1): ручки, секрет, render"
 mkdir -p /etc/cream/teleport-openwrt/apps.d
 printf 'NAME=luci\nURI=http://127.0.0.1:80\n' >/etc/cream/teleport-openwrt/apps.d/luci.conf

@@ -58,7 +58,7 @@ Stvor из того же тарбола `linux-<arch>` (рулинг Р7); на 
 
 `teleport.yaml` отличается от Debian: `data_dir: /opt/teleport/data`,
 `log.output: /opt/teleport/log/teleport.log` (журнал узла — файл, не syslog; больше 1 МиБ —
-перед стартом остановленного агента уходит в `teleport.log.1`), `ssh_service.pam.enabled: false`
+копия в `teleport.log.1` и усечение на месте, см. «Служба procd»), `ssh_service.pam.enabled: false`
 и `ssh_service.enhanced_recording.enabled: false` (PAM и BPF на OpenWrt нет).
 Динамическая метка `os_logins` читает `/etc/passwd` (NSS и `getent` нет): на стоковой
 системе это `root`.
@@ -181,8 +181,13 @@ RUN_COMMAND cream install teleport-openwrt TELEPORT_MIRROR=https://stvor.example
   `/opt/teleport/bin/teleport start --config /etc/teleport.yaml`, `respawn`,
   `TMPDIR=/opt/teleport/tmp`. **Без `procd_set_param stdout/stderr`**: иначе procd
   выставляет `LD_PRELOAD=/lib/libsetlbf.so` (musl), и в glibc-процесс грузятся обе libc
-  (PoC); журнал — `log.output` в файл `/opt/teleport/log/teleport.log` (0700/0600; перед
-  стартом остановленного агента файл больше 1 МиБ становится `teleport.log.1`);
+  (PoC); журнал — `log.output` в файл `/opt/teleport/log/teleport.log` (0700/0600);
+- экземпляр **`logcap`** — рядом с агентом: раз в 10 мин (и перед каждым стартом)
+  `/etc/init.d/teleport log_cap` копирует журнал больше 1 МиБ в `teleport.log.1` и усекает
+  его на месте (copy-truncate): на диске ≤ 2 МиБ плюс записанное за 10 мин. Под
+  работающим агентом это безопасно — Teleport открывает журнал с `O_APPEND`
+  (`lib/utils/log`), после усечения пишет с нового конца, без разреженной дыры. Журнал —
+  на `/opt`, не в tmpfs (это ОЗУ);
 - экземпляр **`join`** — пока есть `join-pending`: `cream run --lock-timeout 6m
   teleport-openwrt join-retry` при загрузке и раз в минуту. Заканчивается сам, когда
   маркер снят, — тик, который завершает регистрацию, не убивает свою же службу.
@@ -217,10 +222,10 @@ stvor-agent не сохраняются. После обновления про�
   `enhanced_recording`, `data_dir`), `join` с подставными procd/ubus
   (регистрация, ожидание сети и тик, отказ по журналу узла с отсечкой; строки `logger`
   с тегом `teleport[<pid экземпляра>]` и журнал с записью для всех — не отказ;
-  ротация журнала init-скриптом), `set-managed`
+  предел журнала под работающим писателем с `O_APPEND`), `set-managed`
   (перезапуск с подтверждением и без), `reload-apps`, `apply`, `hup`, `remove`; действия
   с набором команд busybox (без `stat`, `install`, `hostname`, `paste`).
 - **L** — `make test-openwrt`: корневая ФС openwrt-builder v0.3.1 в контейнере, настоящие
   cream и busybox: `install` из локального набора-подделки в фазе build, отложенный `join`
-  (`bound_keypair` и `token`), render, управляемые метки, `remove`. procd в контейнере нет —
+  (`bound_keypair` и `token`), `log_cap` через rc.common, render, управляемые метки, `remove`. procd в контейнере нет —
   загрузка, регистрация и `tsh ssh` проверяются на ВМ.

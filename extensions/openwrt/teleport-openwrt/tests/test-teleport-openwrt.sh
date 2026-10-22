@@ -198,14 +198,28 @@ check "время старта записано" test -s "$fn/run/teleport.start
 eq "журнал: каталог 0700" 700 "$(stat -c %a "$fn/home/log")"
 eq "журнал: файл 0600" 600 "$(stat -c %a "$fn/home/log/teleport.log")"
 check "log.output — файл, не syslog" grep -q 'TP_LOG=$TP_HOME/log/teleport.log' "$I"
-# Over 1 MiB: rotated before the start of a stopped agent, never under a running one.
-head -c 1048577 /dev/zero > "$fn/home/log/teleport.log"
-: > "$fn/running"; init_run >/dev/null
-eq "агент работает — журнал не трогается" 1048577 "$(wc -c < "$fn/home/log/teleport.log")"
-rm "$fn/running"; init_run >/dev/null
-eq "агент стоит — большой журнал ушёл в .1" 1048577 "$(wc -c < "$fn/home/log/teleport.log.1")"
-eq "новый журнал пуст" 0 "$(wc -c < "$fn/home/log/teleport.log")"
-eq "старый журнал 0600" 600 "$(stat -c %a "$fn/home/log/teleport.log.1")"
+out="$(init_run)"
+check "рядом с агентом — экземпляр logcap" grep -qx 'open logcap' <<< "$out"
+check "logcap — раз в 10 мин зовёт log_cap службы" \
+    grep -qx 'param command /bin/sh -c while sleep 600; do /etc/init.d/teleport log_cap; done' <<< "$out"
+check "log_cap — команда rc.common" grep -qx 'EXTRA_COMMANDS="log_cap"' "$I"
+# The limit holds under a running writer: the agent appends (O_APPEND, as
+# Teleport opens its log); copy-truncate leaves no hole and keeps the old text in .1.
+log_cap_run(){ FN="$fn" sh -c '. "$1"; log_cap' sh "$fn/init.sh"; }
+L="$fn/home/log/teleport.log"
+exec 5>>"$L"
+head -c 1048577 /dev/zero | tr '\0' x >&5
+log_cap_run
+eq "работающий писатель — копия в .1" 1048577 "$(wc -c < "$L.1")"
+echo "after cap" >&5
+eq "работающий писатель — пишет с нового конца, без дыры" 10 "$(wc -c < "$L")"
+eq "работающий писатель — текст после усечения" "after cap" "$(cat "$L")"
+head -c 1048566 /dev/zero | tr '\0' y >&5
+log_cap_run
+eq "ровно предел — не трогается" 1048576 "$(wc -c < "$L")"
+exec 5>&-
+eq "старый журнал 0600" 600 "$(stat -c %a "$L.1")"
+eq "журнал 0600" 600 "$(stat -c %a "$L")"
 rm "$fn/st/agent-enabled"; : > "$fn/run/teleport.start"
 check "запущен сейчас — экземпляр teleport" grep -qx 'open teleport' <<< "$(init_run)"
 rm "$fn/run/teleport.start"; : > "$fn/st/join-pending"

@@ -8,9 +8,15 @@
 # NO procd_set_param stdout/stderr: procd would set LD_PRELOAD=/lib/libsetlbf.so
 # (musl) and a glibc process would load two libc. The journal of the node is the
 # file of log.output — /opt/teleport/log/teleport.log, directory 0700, file 0600
-# (not syslog: any process logs any tag there, and join reads refusals from it);
-# before a start of a stopped agent a file over 1 MiB becomes teleport.log.1 (one
-# old file, disk ≤ 2 MiB). TMPDIR is on the disk: /tmp is RAM.
+# (not syslog: any process logs any tag there, and join reads refusals from it).
+# TMPDIR is on the disk: /tmp is RAM.
+#
+# Instance `logcap` — next to the agent: every 10 min (and before every start)
+# `/etc/init.d/teleport log_cap` copies a log over 1 MiB to teleport.log.1 and
+# truncates it in place — disk ≤ 2 MiB plus what is written in 10 min. Safe under
+# a running agent: Teleport opens its log with O_APPEND (lib/utils/log,
+# logFileDefaultFlag), so after the truncation it writes from the new end, with no
+# sparse hole. The log stays on /opt: tmpfs is RAM on a 1 GB machine.
 #
 # Instance `join` — the retry of a waiting join: while the state file join-pending
 # exists, `cream run teleport-openwrt join-retry` at boot and every minute. It ends
@@ -24,14 +30,16 @@ TP_STATE=/opt/cream/var/ext/teleport-openwrt
 TP_HOME=/opt/teleport
 TP_LOG=$TP_HOME/log/teleport.log
 TP_LOG_MAX=1048576
+TP_LOG_PERIOD=600
+EXTRA_COMMANDS="log_cap"
+EXTRA_HELP="	log_cap	copy-truncate the log of the node over $TP_LOG_MAX bytes"
 
-# log_prepare: the root-only log, rotated only while the agent is not running
-# (a running Teleport keeps writing to the inode it opened).
-log_prepare() {
+# log_cap: the root-only log (directory 0700, file 0600), over TP_LOG_MAX —
+# copied to .1 and truncated in place (copy-truncate; the agent appends).
+log_cap() {
 	mkdir -p "${TP_LOG%/*}" && chmod 0700 "${TP_LOG%/*}" || return 1
-	if [ -f "$TP_LOG" ] && ! procd_running teleport teleport &&
-		[ "$(wc -c <"$TP_LOG")" -gt "$TP_LOG_MAX" ]; then
-		mv -f "$TP_LOG" "$TP_LOG.1"
+	if [ -f "$TP_LOG" ] && [ ! -L "$TP_LOG" ] && [ "$(wc -c <"$TP_LOG")" -gt "$TP_LOG_MAX" ]; then
+		cp -f "$TP_LOG" "$TP_LOG.1" && : >"$TP_LOG"
 	fi
 	[ -e "$TP_LOG" ] || : >"$TP_LOG"
 	chmod 0600 "$TP_LOG" "$TP_LOG.1" 2>/dev/null
@@ -40,13 +48,17 @@ log_prepare() {
 
 start_service() {
 	if [ -e "$TP_STATE/agent-enabled" ] || [ -e /var/run/teleport.start ]; then
-		if log_prepare && /usr/bin/cream run teleport-openwrt render; then
+		if log_cap && /usr/bin/cream run teleport-openwrt render; then
 			date +%s >/var/run/teleport.started
 			procd_open_instance teleport
 			procd_set_param command "$TP_HOME/bin/teleport" start --config /etc/teleport.yaml
 			procd_set_param env TMPDIR="$TP_HOME/tmp"
 			procd_set_param respawn 3600 5 0
 			procd_set_param term_timeout 30
+			procd_close_instance
+			procd_open_instance logcap
+			procd_set_param command /bin/sh -c "while sleep $TP_LOG_PERIOD; do /etc/init.d/teleport log_cap; done"
+			procd_set_param respawn 3600 5 0
 			procd_close_instance
 		fi
 	fi
