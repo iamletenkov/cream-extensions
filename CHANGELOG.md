@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.4.2](https://github.com/iamletenkov/cream-extensions/compare/v5.4.1...v5.4.2) (2026-10-22)
+
+
+### Исправлено
+
+* **fetch:** загрузка больших файлов переживает обрыв соединения на curl 7.68 ([#53](https://github.com/iamletenkov/cream-extensions/issues/53)) ([ddd924e](https://github.com/iamletenkov/cream-extensions/commit/ddd924edf39964d8a60290d6c9d222343a79bf65))
+
 ## [5.4.1](https://github.com/iamletenkov/cream-extensions/compare/v5.4.0...v5.4.1) (2026-10-22)
 
 
