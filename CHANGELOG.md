@@ -1,5 +1,17 @@
 # Changelog
 
+## [5.5.0](https://github.com/iamletenkov/cream-extensions/compare/v5.4.2...v5.5.0) (2026-10-22)
+
+
+### Добавлено
+
+* **teleport:** общее ядро lib/teleport-core.sh и расширение teleport-openwrt ([#52](https://github.com/iamletenkov/cream-extensions/issues/52)) ([781c270](https://github.com/iamletenkov/cream-extensions/commit/781c2706c946dd4af4242c73287036f83bb94fde))
+
+
+### Исправлено
+
+* **fetch:** selkies, code-server и rustdesk ставятся без cream install fetch ([#56](https://github.com/iamletenkov/cream-extensions/issues/56)) ([8bdec18](https://github.com/iamletenkov/cream-extensions/commit/8bdec18da2b1c2bb0244573fc2c27915e5909767))
+
 ## [5.4.2](https://github.com/iamletenkov/cream-extensions/compare/v5.4.1...v5.4.2) (2026-10-22)
 
 

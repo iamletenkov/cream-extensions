@@ -8,9 +8,9 @@
 # правка README у teleport и stvor-agent без подъёма версий сломала обновление
 # роботам с 5.1.0. Любая правка дерева — даже README — меняет отпечаток.
 #
-# Общее ядро Teleport lib/teleport-core.sh лежит в снимке в каждом потребителе
-# (lib/teleport-core.consumers): его правка меняет дерево всех потребителей, и
-# поднять version обязан каждый из них.
+# Общая библиотека lib/<lib>.sh (ядро Teleport teleport-core.sh, загрузчик
+# fetch.sh) лежит в снимке в каждом своём потребителе (lib/<lib>.consumers): её
+# правка меняет дерево всех потребителей, и поднять version обязан каждый из них.
 #
 # База — старший тег v*, достижимый из HEAD (или --base <ref>). Сравнивается
 # рабочее дерево (локальный make ci ловит и незакоммиченное; в CI это HEAD).
@@ -67,15 +67,18 @@ sys.exit(0 if key(sys.argv[1]) > key(sys.argv[2]) else 1)
 EOF
 }
 
-# Consumers of the shared core whose snapshot tree changes with lib/teleport-core.sh.
-core_changed=0; consumers=" "
-if [[ -f "$REPO/lib/teleport-core.consumers" ]]; then
+# Consumers of the shared libraries whose snapshot tree changes with lib/<lib>.sh:
+# " extensions/<family>/<name>=<lib> …" for every changed library.
+lib_changed=" "
+for list in "$REPO"/lib/*.consumers; do
+    [[ -f "$list" ]] || continue
+    lib="$(basename "$list" .consumers)"
+    gitr diff --quiet "$base" -- "lib/$lib.sh" && continue
     while IFS= read -r c || [[ -n "$c" ]]; do
         c="${c%%#*}"; c="${c//[[:space:]]/}"
-        [[ -n "$c" ]] && consumers+="extensions/$c "
-    done < "$REPO/lib/teleport-core.consumers"
-    gitr diff --quiet "$base" -- lib/teleport-core.sh || core_changed=1
-fi
+        [[ -n "$c" ]] && lib_changed+="extensions/$c=$lib "
+    done < "$list"
+done
 
 rc=0; checked=0; changed=0
 for manifest in "$REPO"/extensions/*/*/extension.yaml; do
@@ -86,8 +89,14 @@ for manifest in "$REPO"/extensions/*/*/extension.yaml; do
     checked=$((checked + 1))
     why="дерево изменилось"
     if gitr diff --quiet "$base" -- "$rel/"; then
-        (( core_changed )) && [[ "$consumers" == *" $rel "* ]] || continue
-        why="ядро lib/teleport-core.sh (его копия в снимке) изменилось"
+        libs=""
+        for w in $lib_changed; do [[ "${w%%=*}" == "$rel" ]] && libs+="${libs:+, }lib/${w#*=}.sh"; done
+        [[ -n "$libs" ]] || continue
+        if [[ "$libs" == "lib/teleport-core.sh" ]]; then
+            why="ядро lib/teleport-core.sh (его копия в снимке) изменилось"
+        else
+            why="общая библиотека $libs (её копия в снимке) изменилась"
+        fi
     fi
     changed=$((changed + 1))
     new_v="$(yaml_version < "$manifest")"

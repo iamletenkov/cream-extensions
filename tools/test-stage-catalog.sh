@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Tests of tools/stage-catalog.sh on a fixture repository: the staged tree is
 # the catalog of the working tree (cream-catalog.yaml, LICENSE, NOTICE, the
-# roots, without tests/), and every consumer of lib/teleport-core.sh
-# (lib/teleport-core.consumers) gets files/teleport-core.sh — byte-equal to
-# lib/, mode 0644 — and only consumers do. --ext stages one extension and
+# roots, without tests/), and every consumer of a shared library lib/<lib>.sh
+# (lib/<lib>.consumers: the core teleport-core, the downloader fetch) gets
+# files/<lib>.sh — byte-equal to lib/, mode 0644 — and only consumers do. --ext stages one extension and
 # prints its path. Broken setups (a consumer without a directory, no core, a
 # busy OUT) are refused with code 2. The real repository stages too.
 #
@@ -32,6 +32,8 @@ fixture(){
     echo license > "$r/LICENSE"; echo notice > "$r/NOTICE"; echo doc > "$r/docs/x.md"
     printf '# core\necho core\n' > "$r/lib/teleport-core.sh"
     printf '# consumers\ndebian/tp\n\nopenwrt/tp-owrt\n' > "$r/lib/teleport-core.consumers"
+    printf '# fetch\necho fetch\n' > "$r/lib/fetch.sh"
+    printf 'debian/other\n' > "$r/lib/fetch.consumers"
     for e in debian/tp openwrt/tp-owrt debian/other; do
         mkdir -p "$r/extensions/$e/files" "$r/extensions/$e/tests" "$r/extensions/$e/hooks"
         printf 'schema: cream/v1\nname: %s\n' "${e#*/}" > "$r/extensions/$e/extension.yaml"
@@ -59,6 +61,11 @@ for e in debian/tp openwrt/tp-owrt; do
     eq "ядро у $e — 0644" 644 "$(stat -c %a "$TMP/out/extensions/$e/files/teleport-core.sh")"
 done
 check_not "у непотребителя ядра нет" test -e "$TMP/out/extensions/debian/other/files/teleport-core.sh"
+check "вторая библиотека у своего потребителя — байт в байт" cmp -s "$R/lib/fetch.sh" "$TMP/out/extensions/debian/other/files/fetch.sh"
+eq "вторая библиотека — 0644" 644 "$(stat -c %a "$TMP/out/extensions/debian/other/files/fetch.sh")"
+for e in debian/tp openwrt/tp-owrt; do
+    check_not "у непотребителя fetch ($e) её нет" test -e "$TMP/out/extensions/$e/files/fetch.sh"
+done
 check_not "исходное дерево не тронуто" test -e "$R/extensions/debian/tp/files/teleport-core.sh"
 
 echo "== незакоммиченная правка видна (рабочее дерево, не коммит) =="
@@ -75,6 +82,7 @@ check_not "--ext: без tests/" test -e "$TMP/one/tp-owrt/tests"
 got="$("$R/tools/stage-catalog.sh" --ext "$R/extensions/debian/other" "$TMP/one" 2>/dev/null)"; rc=$?
 eq "--ext непотребителя — код 0" 0 "$rc"
 check_not "--ext непотребителя: ядра нет" test -e "$TMP/one/other/files/teleport-core.sh"
+check "--ext: вторая библиотека у её потребителя" cmp -s "$R/lib/fetch.sh" "$TMP/one/other/files/fetch.sh"
 # A relative path and a trailing slash name the same extension.
 got="$(cd "$R" && tools/stage-catalog.sh --ext extensions/debian/tp/ "$TMP/rel" 2>/dev/null)"; rc=$?
 eq "--ext относительный путь — код 0" 0 "$rc"
@@ -97,6 +105,12 @@ printf 'debian/tp\n../../etc\n' > "$R4/lib/teleport-core.consumers"
 out="$("$R4/tools/stage-catalog.sh" "$TMP/o5" 2>&1)"; rc=$?
 eq "потребитель не <семейство>/<имя> — код 2" 2 "$rc"
 
+R6="$TMP/repo6"; fixture "$R6"
+rm "$R6/lib/fetch.sh"
+out="$("$R6/tools/stage-catalog.sh" "$TMP/o7" 2>&1)"; rc=$?
+eq "нет второй библиотеки при её .consumers — код 2" 2 "$rc"
+check "нет второй библиотеки — названа" grep -q 'fetch.sh' <<< "$out"
+
 R5="$TMP/repo5"; fixture "$R5"
 rm -r "$R5/lib"
 out="$("$R5/tools/stage-catalog.sh" "$TMP/o6" 2>&1)"; rc=$?
@@ -107,13 +121,16 @@ check "без lib/ — расширения скопированы" test -f "$TM
 echo "== этот репозиторий =="
 out="$("$HERE/stage-catalog.sh" "$TMP/real" 2>&1)"; rc=$?
 eq "репозиторий — код 0" 0 "$rc"
-n=0
-while IFS= read -r c; do
-    [[ -z "$c" || "$c" == \#* ]] && continue
-    n=$((n + 1))
-    check "репозиторий: ядро у $c" cmp -s "$REPO/lib/teleport-core.sh" "$TMP/real/extensions/$c/files/teleport-core.sh"
-done < "$REPO/lib/teleport-core.consumers"
-check "репозиторий: потребители есть" test "$n" -gt 0
+for lib in teleport-core fetch; do
+    n=0
+    while IFS= read -r c; do
+        c="${c%%#*}"; c="${c//[[:space:]]/}"
+        [[ -n "$c" ]] || continue
+        n=$((n + 1))
+        check "репозиторий: $lib у $c" cmp -s "$REPO/lib/$lib.sh" "$TMP/real/extensions/$c/files/$lib.sh"
+    done < "$REPO/lib/$lib.consumers"
+    check "репозиторий: у $lib потребители есть" test "$n" -gt 0
+done
 check_not "репозиторий: tests/ нет" bash -c 'compgen -G "$1/extensions/*/*/tests" >/dev/null' _ "$TMP/real"
 
 echo "test-stage-catalog: $pass/$((pass + fail))"

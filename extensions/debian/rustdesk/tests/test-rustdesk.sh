@@ -72,14 +72,14 @@ echo "== манифест =="
 # eval: test-only literal expressions over our own manifest, as in nvidia-jetpack.
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "версия 2.2.0 (загрузка библиотекой fetch)" 2.2.0 "$(mf 'm["version"]')"
+eq "версия 2.2.1 (fetch_verified из files/fetch.sh)" 2.2.1 "$(mf 'm["version"]')"
 eq "cream >=1.2.0 (every_boot, спека cream §10.9)" ">=1.2.0" "$(mf 'm["cream"]')"
 eq "configure на каждой загрузке (аудит 2026-10-21)" True "$(mf 'm["hooks"]["configure"].get("every_boot")')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
 eq "стадия system" system "$(mf 'm["hooks"]["configure"]["stage"]')"
 eq "до rustdesk.service" "['rustdesk.service']" "$(mf 'm["hooks"]["configure"]["before"]')"
 eq "хуки" "['configure', 'install', 'remove']" "$(mf 'sorted(m["hooks"])')"
-eq "depends cloud-user, apt-guard, fetch" "cloud-user >=1.0.0 <2 apt-guard >=1.0.0 <2 fetch >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
+eq "depends cloud-user, apt-guard (fetch не нужен)" "cloud-user >=1.0.0 <2 apt-guard >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
 eq "параметры установки" "RUSTDESK_SHA256 RUSTDESK_SHA256_AMD64 RUSTDESK_SHA256_ARM64 RUSTDESK_URL RUSTDESK_VERSION" \
     "$(mf '" ".join(sorted(k for k, v in m["config"]["keys"].items() if v.get("scope") == "install"))')"
 check_not "ни одного ключа пароля или режима доступа" grep -qiE 'PASSWORD|VERIFICATION|APPROVE' <<< "$(mf '" ".join(m["config"]["keys"])')"
@@ -133,6 +133,8 @@ HT_PHASE=build ht_hook install "RUSTDESK_SHA256_AMD64=$DEB_SHA"; eq "после 
 eq "три вызова curl" 3 "$(grep -c '^curl ' "$FAKE/calls")"
 check "между попытками пауза" ht_called '^sleep 10$'
 eq "apt получил проверенный файл" "$DEB_CONTENT" "$(cat "$FAKE/got.deb")"
+check_not "без библиотеки fetch: /opt/cream/ext/fetch на корне нет" test -e "$ROOT/opt/cream/ext/fetch"
+check "fetch_verified — своя files/fetch.sh = lib/fetch.sh" cmp -s "$EXT/../../../lib/fetch.sh" "$HT_EXT/files/fetch.sh"
 
 echo "== install: sha256 не совпал — отказ, apt не зовётся =="
 rroot

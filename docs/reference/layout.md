@@ -10,7 +10,9 @@ extensions/
 └── openwrt/                roots: расширения для OpenWrt 25.12+ (семейство openwrt, cream ≥ 1.3.0)
 lib/                        общий код нескольких расширений, одна копия в git:
                             teleport-core.sh (ядро teleport и teleport-openwrt),
-                            teleport-core.consumers (кому его класть), tests/
+                            teleport-core.consumers (кому его класть),
+                            fetch.sh (fetch_verified для selkies, code-server,
+                            rustdesk), fetch.consumers, tests/
 tools/                      проверки, генераторы, раннеры тестов, пин cream (tools/cream-pin.env)
 docs/                       документация: guides/, reference/, runbooks/, history/, adr/, specs/, plans/, research/
 .github/workflows/          ci-release.yml (проверки и выпуск), live.yml (живые прогоны),
@@ -23,12 +25,15 @@ Makefile                    публичные команды: make help
 из них — иначе его не увидят ни `cream validate --catalog .`, ни снимок
 (`tools/catalog-snapshot.sh` отказывает на непокрытом расширении).
 
-Общее ядро Teleport (`lib/teleport-core.sh`) в git лежит одной копией; в
-`files/teleport-core.sh` каждого потребителя из `lib/teleport-core.consumers` его кладут
+Общие библиотеки `lib/<библиотека>.sh` — ядро Teleport (`teleport-core.sh`) и
+загрузчик `fetch_verified` (`fetch.sh`) — в git лежат одной копией; в
+`files/<библиотека>.sh` каждого потребителя из `lib/<библиотека>.consumers` их кладут
 снимок (из коммита) и `tools/stage-catalog.sh` (из рабочего дерева — для `cream validate`,
-`cream check`, H- и живых тестов и path-источника). Потребитель объявляет
-`files/teleport-core.sh` в `files`, поэтому дерево без ядра `cream validate` не примет;
-копию в `extensions/` отвергает `tools/check-teleport-core.sh`.
+`cream check`, H- и живых тестов и path-источника). Потребитель ядра объявляет
+`files/teleport-core.sh` в `files` (строка `# rule: files` в списке), поэтому дерево без
+ядра `cream validate` не примет; потребитель `fetch.sh` подключает его хуком из
+`${CREAM_EXT_DIR}/files/fetch.sh` — без `depends` и без установки чего-либо до себя.
+Копию в `extensions/` и потребителя не из списка отвергает `tools/check-shared-libs.sh`.
 
 Каталог называется `debian/`, а семейство в манифесте — `platform.family: deb`; это
 разные вещи. Ubuntu берёт расширения из того же `debian/`. Группировка — удобство

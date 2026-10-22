@@ -1,5 +1,7 @@
 # Consumers of lib/teleport-core.sh: <family>/<name> under extensions/, one per line.
 # tools/stage-catalog.sh and tools/catalog-snapshot.sh lay the core into their files/teleport-core.sh;
-# tools/check-teleport-core.sh and tools/check-version-bump.sh read this list.
+# tools/check-shared-libs.sh and tools/check-version-bump.sh read this list.
+# The consumers install the core (`files` of extension.yaml) — check-shared-libs checks the line:
+# rule: files
 debian/teleport
 openwrt/teleport-openwrt

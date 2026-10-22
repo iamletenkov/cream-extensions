@@ -1,0 +1,11 @@
+# Consumers of lib/fetch.sh (fetch_verified): <family>/<name> under extensions/, one per line.
+# tools/stage-catalog.sh and tools/catalog-snapshot.sh lay it into their files/fetch.sh; a hook
+# sources "${CREAM_EXT_DIR}/files/fetch.sh" — no `depends`, nothing to install first.
+# tools/check-shared-libs.sh and tools/check-version-bump.sh read this list.
+debian/code-server
+debian/rustdesk
+debian/selkies
+# The library extension fetch 1.0.0 (5.4.2) had its own copy; 1.1.0 keeps
+# /opt/cream/ext/fetch/fetch.sh as a shim to files/fetch.sh for consumers of 5.4.2
+# not yet upgraded.
+debian/fetch
