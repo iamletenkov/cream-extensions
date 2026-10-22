@@ -88,6 +88,7 @@ LightDM он разный, а под самим LightDM зависит от ег
 | `wallpaper` | `wallpaper` | системное умолчание обоев GNOME (dconf), Xfce (xfconf), LXDE (pcmanfm) |
 | `yq` | `yq` | статический `mikefarah/yq` в `/usr/local/bin` по пину версии и sha256 |
 | `stvor-agent` | `stvor-agent` | пакет `stvor-agent` по пину версии и sha256 своей архитектуры (`files/pin.env`) |
+| `stvor-agent` | `stvor-agent-openwrt` | агент на OpenWrt: tar.gz `stvor-agent` по пину версии и sha256 своей архитектуры (`files/pin.env`), службы procd |
 | `kvm-host`, `l4t-custom-kernel` | `l4t-kernel-kvm` | ядро L4T с KVM для Jetson Nano/TX1 (t210), собранное из исходников NVIDIA (сверка по `public-sources.sha256` для каждой версии L4T), загрузка по умолчанию |
 | `l4t-board-selected` | `l4t-board-fdt` | строка `FDT` платы в записи `kvm` файла `extlinux.conf` |
 | `jetson-flash-station` | `nvidia-jetpack` | станция прошивки Jetson на amd64: инструментарий L4T, NFS, binfmt aarch64, скрипты |

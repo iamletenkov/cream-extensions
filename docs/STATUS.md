@@ -5,7 +5,7 @@
 `extensions/openwrt` (`amneziawg`, `podkop`, `luci-apps`), следующий минор каталога.
 
 ## Сделано
-- 50 расширений (из них 3 библиотеки) — cream/v1, из них 4 семейства `openwrt` (`make test-openwrt`
+- 52 расширения (из них 4 библиотеки) — cream/v1, из них 5 семейства `openwrt` (`make test-openwrt`
   на корневой ФС openwrt-builder v0.3.1, CI-job `test-openwrt`); 13 с `every_boot` (`amneziawg` — стадия
   `system` после `S47wrt.cloudinit`, восстанавливает стёртый интерфейс) и `cream: ">=1.2.0"`;
   `cream check` по каталогу и правило `every-boot` ошибкой — в CI.
@@ -17,6 +17,9 @@
 - Общее ядро Teleport `lib/teleport-core.sh` (план cream `2026-10-22-openwrt-robots.md`, Task 2):
   `debian/teleport` 4.2.0 — слой systemd без смены поведения; `openwrt/teleport-openwrt` 1.0.0 —
   слой procd и набор `openwrt-<arch>` (glibc рядом); staged-дерево `tools/stage-catalog.sh`.
+- `openwrt/stvor-agent-openwrt` 1.0.0 (тот же план, Task 6): агент из tar.gz `stvor-agent_<v>_linux_<arch>.tar.gz`
+  (бинарь и init-скрипты procd выпуска агента), пользователь `stvor-telemetry`, `keep.d` — только
+  `/opt/stvor-agent/`; пин tar.gz пуст до выпуска агента с ним (Task 7), `tools/agent-bump.sh` поднимает оба пина.
 
 ## Дальше
 1. Bisquite 3.0.0 (Task 24–26 плана cream): примеры VMFILE на `RUN_COMMAND cream install`.

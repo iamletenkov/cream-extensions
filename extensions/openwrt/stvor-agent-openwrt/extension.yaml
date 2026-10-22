@@ -1,0 +1,76 @@
+# stvor-agent-openwrt — stvor-agent on OpenWrt 25.12+ (spec cream 2026-10-20-openwrt
+# §4.2, §4.3): the twin of debian/stvor-agent with the delivery of the agent for
+# OpenWrt — stvor-agent_<v>_linux_<arch>.tar.gz (the static binary and the procd
+# init scripts init.d/stvor-agent{,-telemetry} of the agent's own repository) by
+# version and sha256. Keys are those of debian/stvor-agent (the contract with the
+# install script of Stvor), STVOR_AGENT_TARBALL instead of STVOR_AGENT_DEB.
+#
+# install   — tar.gz → sha256 → /usr/bin/stvor-agent, /etc/init.d/stvor-agent{,-telemetry}
+#             (enabled; they start only with their token), the user and group
+#             stvor-telemetry (user_add/group_add_next of /lib/functions.sh), the
+#             state /opt/stvor-agent (0750 root:stvor-telemetry); on a live machine —
+#             reload-apps of teleport-openwrt for the label stvor_agent.
+# apply     — running services restart in the background.
+# remove    — stvor-agent disable, services off, the binary, the init scripts,
+#             tokens, the state and the user (if this extension made it) gone.
+# files     — the drop-in of the command label stvor_agent of teleport-openwrt,
+#             /lib/upgrade/keep.d/stvor-agent (sysupgrade keeps the state only, Р4).
+# configure none: at boot procd starts the services (rc.d), not cream; А1–А6 are not
+# about it (/var/run/stvor-agent-telemetry is made by the init script on every start).
+schema: cream/v1
+name: stvor-agent-openwrt
+version: 1.0.0
+summary: Агент портала Stvor на OpenWrt — метки env и space узла Teleport с портала и телеметрия, procd
+cream: ">=1.3.0"
+platform:
+  family: openwrt
+  arch: [amd64, arm64]
+  os: [{id: openwrt, version: ">=25.12"}]
+  commands: [bash, tar, sha256sum]
+targets: {build: exec, live: "yes"}
+provides: [stvor-agent]
+# Major of teleport-openwrt is the version of the managed labels interface and
+# of the command-labels.d contract (as for debian/stvor-agent and teleport).
+depends: [{name: teleport-openwrt, version: ">=1.0.0 <2"}]
+hooks:
+  install: {timeout: 10m}
+  upgrade: {timeout: 10m}
+  remove: {}
+  apply: {}
+config:
+  keys:
+    STVOR_AGENT_VERSION:
+      type: "re:^[0-9]+\\.[0-9]+\\.[0-9]+$"
+      default: ""
+      empty: true
+      scope: install
+      description: "версия агента; задаётся вместе с STVOR_AGENT_SHA256, пусто — пин каталога (files/pin.env)"
+    STVOR_AGENT_SHA256:
+      type: "re:^[0-9a-f]{64}$"
+      default: ""
+      empty: true
+      scope: install
+      description: "sha256 tar.gz архитектуры машины; задаётся вместе с STVOR_AGENT_VERSION"
+    STVOR_AGENT_MIRROR:
+      type: str
+      default: ""
+      empty: true
+      scope: install
+      description: "база зеркала, файл плоско <база>/stvor-agent_<версия>_linux_<arch>.tar.gz; пусто — релиз GitHub"
+    STVOR_AGENT_TARBALL:
+      type: path
+      default: ""
+      empty: true
+      scope: install
+      description: "локальный tar.gz (офлайн, абсолютный путь); взаимоисключим с STVOR_AGENT_MIRROR"
+    STVOR_AGENT_INTERVAL:
+      type: "re:^([6-9][0-9]|[1-5][0-9]{2}|600)$"
+      default: "60"
+      description: "период опроса портала, секунды, 60–600"
+    STVOR_AGENT_LOG_LEVEL:
+      type: "enum:info,debug"
+      default: info
+      description: "уровень журнала службы"
+files:
+  - {src: files/stvor_agent.command-label, dst: /etc/cream/teleport-openwrt/command-labels.d/stvor_agent, mode: "0644"}
+  - {src: files/keep.d, dst: /lib/upgrade/keep.d/stvor-agent, mode: "0644"}
