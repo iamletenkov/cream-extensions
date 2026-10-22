@@ -72,14 +72,14 @@ echo "== манифест =="
 # eval: test-only literal expressions over our own manifest, as in nvidia-jetpack.
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "версия 2.1.1 (every_boot)" 2.1.1 "$(mf 'm["version"]')"
+eq "версия 2.2.0 (загрузка библиотекой fetch)" 2.2.0 "$(mf 'm["version"]')"
 eq "cream >=1.2.0 (every_boot, спека cream §10.9)" ">=1.2.0" "$(mf 'm["cream"]')"
 eq "configure на каждой загрузке (аудит 2026-10-21)" True "$(mf 'm["hooks"]["configure"].get("every_boot")')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
 eq "стадия system" system "$(mf 'm["hooks"]["configure"]["stage"]')"
 eq "до rustdesk.service" "['rustdesk.service']" "$(mf 'm["hooks"]["configure"]["before"]')"
 eq "хуки" "['configure', 'install', 'remove']" "$(mf 'sorted(m["hooks"])')"
-eq "depends cloud-user, apt-guard" "cloud-user >=1.0.0 <2 apt-guard >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
+eq "depends cloud-user, apt-guard, fetch" "cloud-user >=1.0.0 <2 apt-guard >=1.0.0 <2 fetch >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
 eq "параметры установки" "RUSTDESK_SHA256 RUSTDESK_SHA256_AMD64 RUSTDESK_SHA256_ARM64 RUSTDESK_URL RUSTDESK_VERSION" \
     "$(mf '" ".join(sorted(k for k, v in m["config"]["keys"].items() if v.get("scope") == "install"))')"
 check_not "ни одного ключа пароля или режима доступа" grep -qiE 'PASSWORD|VERIFICATION|APPROVE' <<< "$(mf '" ".join(m["config"]["keys"])')"
@@ -121,6 +121,24 @@ check_not "временный каталог убран" test -n "$(ls -A "$ROOT
 : > "$FAKE/calls"
 HT_PHASE=build ht_hook install "RUSTDESK_SHA256_AMD64=$DEB_SHA"; eq "повтор — 0" 0 "$?"
 check_not "повтор: не качает" ht_called '^curl '
+
+echo "== install: curl 56 дважды (focal, curl 7.68) — третья попытка, пакет поставлен =="
+rroot
+ht_fake curl '
+n=$(( $(cat "$FAKE/n" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/n"
+(( n <= 2 )) && { echo "curl: (56) Recv failure: Connection reset by peer" >&2; exit 56; }
+out=""; while (( $# )); do [[ "$1" == -o ]] && { out="$2"; shift; }; shift; done
+printf "%s" "'"$DEB_CONTENT"'" > "$out"'
+HT_PHASE=build ht_hook install "RUSTDESK_SHA256_AMD64=$DEB_SHA"; eq "после двух обрывов — 0" 0 "$?"
+eq "три вызова curl" 3 "$(grep -c '^curl ' "$FAKE/calls")"
+check "между попытками пауза" ht_called '^sleep 10$'
+eq "apt получил проверенный файл" "$DEB_CONTENT" "$(cat "$FAKE/got.deb")"
+
+echo "== install: sha256 не совпал — отказ, apt не зовётся =="
+rroot
+HT_PHASE=build ht_hook install "RUSTDESK_SHA256_AMD64=$(printf '0%.0s' {1..64})"; eq "чужая сумма — 1" 1 "$?"
+eq "один вызов curl (содержимое неверно — без повторов)" 1 "$(grep -c '^curl ' "$FAKE/calls")"
+check_not "пакет не ставился" ht_called '^apt-get .*install .*\.deb'
 
 echo "== install (live): идентичность не трогается =="
 rroot; live_systemd

@@ -54,6 +54,7 @@ R="${CREAM_ROOT:-}"; R="${R%/}"
 SELF="${BASH_SOURCE[0]}"
 SECRETS="${CREAM_SECRETS_FILE:-$R/etc/cream/code-server/secrets}"
 CLOUD_USER_LIB="$R/opt/cream/ext/cloud-user/get_cloud_user.sh"
+FETCH_LIB="$R/opt/cream/ext/fetch/fetch.sh"
 TP_DIR="$R/etc/cream/teleport"
 APPS_DIR="$TP_DIR/apps.d"
 DECL="$APPS_DIR/code-server.conf"
@@ -499,7 +500,7 @@ installed_version(){
 }
 
 cmd_install(){
-    local arch work have=0 url
+    local arch work have=0 url rc
     local -a need=()
     refuse_on_leftovers || exit 1
     arch="$(dpkg --print-architecture)"
@@ -521,13 +522,19 @@ cmd_install(){
     # shellcheck disable=SC2064  # expand now: the path is fixed
     trap "rm -r -f -- '$work'" EXIT
     url="$RELEASES/v$CS_VERSION/code-server_${CS_VERSION}_${arch}.deb"
+    [[ -f "$FETCH_LIB" ]] || die "нет библиотеки fetch ($FETCH_LIB) — cream ставит её по depends"
+    # shellcheck source=../../fetch/fetch.sh
+    . "$FETCH_LIB"
     log "скачиваю $url"
-    # --speed-limit/--speed-time turn a stalled transfer into a retry.
-    curl -fsSL --retry 5 --retry-delay 5 --connect-timeout 30 --speed-limit 10240 --speed-time 60 \
-        -o "$work/code-server.deb" "$url" || die ".deb не скачался: $url"
-    if ! echo "${DEB_SHA256[$arch]}  $work/code-server.deb" | sha256sum -c --quiet - >/dev/null 2>&1; then
-        die "sha256 .deb не совпал с закреплённым для $arch — не ставлю"
-    fi
+    # Attempts, stalls as failed attempts and the pinned sha256 — library
+    # fetch: curl 7.68 of focal does not retry "Connection reset by peer".
+    rc=0
+    fetch_verified "$work/code-server.deb" "${DEB_SHA256[$arch]}" "$url" || rc=$?
+    case "$rc" in
+        0) ;;
+        2) die "sha256 .deb не совпал с закреплённым для $arch — не ставлю" ;;
+        *) die ".deb не скачался: $url" ;;
+    esac
     apt_retry apt-get install -y -q --no-install-recommends "$work/code-server.deb" \
         || die "code-server $CS_VERSION не установился"
     [[ -x "$CS_BIN" ]] || die "после установки нет /usr/bin/code-server"
