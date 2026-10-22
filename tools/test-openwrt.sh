@@ -13,6 +13,12 @@
 # teleport-openwrt from a local fake set — install in the build phase, a
 # deferred join, render, the managed labels and remove on the busybox of
 # OpenWrt (no stat, install, hostname, paste).
+# A third container runs tools/testdata/openwrt/scenario-stvor-agent.sh:
+# stvor-agent-openwrt over teleport-openwrt — install from a local delivery,
+# the user stvor-telemetry by the real /lib/functions.sh, the label stvor_agent
+# in teleport.yaml, `stvor-agent status`, remove. The delivery is a fake of the
+# release layout, or the real one: OPENWRT_AGENT_TARBALL=<file> —
+# stvor-agent_<v>_linux_amd64.tar.gz of the agent's repository (version 4.1.0).
 #
 #   tools/test-openwrt.sh          (make test-openwrt)
 #
@@ -51,11 +57,16 @@ work="$(mktemp -d)"
 trap 'rm -rf -- "$work"' EXIT
 dpkg-deb -x "$deb" "$work/deb"
 install -m 0755 "$work/deb/usr/bin/cream" "$work/cream"
-cp "$HERE/testdata/openwrt/scenario.sh" "$HERE/testdata/openwrt/scenario-teleport.sh" "$work/"
+cp "$HERE/testdata/openwrt/scenario.sh" "$HERE/testdata/openwrt/scenario-teleport.sh" \
+    "$HERE/testdata/openwrt/scenario-stvor-agent.sh" "$work/"
+if [[ -n "${OPENWRT_AGENT_TARBALL:-}" ]]; then
+    [[ -f "$OPENWRT_AGENT_TARBALL" ]] || die "OPENWRT_AGENT_TARBALL=$OPENWRT_AGENT_TARBALL: файла нет"
+    cp "$OPENWRT_AGENT_TARBALL" "$work/agent.tar.gz"
+fi
 "$HERE/stage-catalog.sh" "$work/catalog" > /dev/null || die "staged-дерево не собрано"
 
 echo "== test-openwrt: $image, cream $(basename "$deb")"
-for sc in scenario.sh scenario-teleport.sh; do
+for sc in scenario.sh scenario-teleport.sh scenario-stvor-agent.sh; do
     echo "== test-openwrt: $sc"
     crc=0
     docker run --rm --platform linux/amd64 --network none --tmpfs /tmp:rw,nosuid,nodev,mode=1777 \

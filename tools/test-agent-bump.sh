@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Тесты tools/agent-bump.sh: пин пакета stvor-agent в обёртке stvor-agent
-# (files/pin.env) и patch-подъём версии расширения по SHA256SUMS релиза.
+# (files/pin.env) и patch-подъём версии расширения по SHA256SUMS релиза; пин
+# tar.gz в stvor-agent-openwrt — из того же SHA256SUMS, если tar.gz в выпуске есть.
 # Скрипт и обёртка копируются в подменённое дерево — рабочее дерево
 # репозитория не трогается. Сеть, gh и root не нужны.
 #
@@ -30,9 +31,21 @@ ZERO="$(printf '0%.0s' {1..64})"
 # replaced by the one a scenario needs (version, amd64 sum, arm64 sum).
 new_tree(){
     T="$(mktemp -d "$TMP/tree.XXXXXX")"
-    mkdir -p "$T/tools" "$T/extensions/debian"
+    mkdir -p "$T/tools" "$T/extensions/debian" "$T/extensions/openwrt"
     cp "$REPO/tools/agent-bump.sh" "$T/tools/"
     cp -a "$REPO/extensions/debian/stvor-agent" "$T/extensions/debian/"
+    cp -a "$REPO/extensions/openwrt/stvor-agent-openwrt" "$T/extensions/openwrt/"
+    OPIN="$T/extensions/openwrt/stvor-agent-openwrt/files/pin.env"
+    OMANIFEST="$T/extensions/openwrt/stvor-agent-openwrt/extension.yaml"
+    sed -i -E "s/^version: .*/version: 1.0.0/" "$OMANIFEST"
+    if [[ -n "${OW:-}" ]]; then
+        read -r ov oa ob <<< "$OW"
+        sed -i -E -e "s/^STVOR_AGENT_PIN_VERSION=.*/STVOR_AGENT_PIN_VERSION=$ov/" \
+            -e "s/^STVOR_AGENT_PIN_SHA256_AMD64=.*/STVOR_AGENT_PIN_SHA256_AMD64=$oa/" \
+            -e "s/^STVOR_AGENT_PIN_SHA256_ARM64=.*/STVOR_AGENT_PIN_SHA256_ARM64=$ob/" "$OPIN"
+    fi
+    cp "$OPIN" "$T/opin.before"
+    cp "$OMANIFEST" "$T/omanifest.before"
     PIN="$T/extensions/debian/stvor-agent/files/pin.env"
     MANIFEST="$T/extensions/debian/stvor-agent/extension.yaml"
     if (( $# )); then
@@ -56,7 +69,9 @@ new_tree(){
 sums(){ local f="$1"; shift; printf '%s\n' "$@" > "$f"; }
 run(){ OUT="$("$T/tools/agent-bump.sh" "$@" 2>"$T/err")"; RC=$?; ERR="$(cat "$T/err")"; }
 pin(){ sed -n "s/^$1=//p" "$PIN"; }
+opin(){ sed -n "s/^$1=//p" "$OPIN"; }
 untouched(){ cmp -s "$PIN" "$T/pin.before" && cmp -s "$MANIFEST" "$T/manifest.before"; }
+ountouched(){ cmp -s "$OPIN" "$T/opin.before" && cmp -s "$OMANIFEST" "$T/omanifest.before"; }
 
 echo "== фиктивный пин 4.0.0 → релиз v4.0.0: настоящие суммы на месте нулей =="
 FICT=1 new_tree
@@ -157,6 +172,80 @@ check "код не 0" test "$RC" -ne 0
 check "сообщение называет arm64" grep -q 'arm64' <<< "$ERR"
 check "пин и манифест не тронуты" untouched
 check_not "changed= не напечатан" grep -q '^changed=' <<< "$OUT"
+
+echo "== выпуск с tar.gz: оба пина из одного SHA256SUMS =="
+E64="$(printf 'e%.0s' {1..64})"
+F64="$(printf 'f%.0s' {1..64})"
+EXT_VERSION=4.1.3 new_tree 4.0.1 "$A64" "$B64"
+eq "пин OpenWrt до выпуска пуст" "" "$(opin STVOR_AGENT_PIN_VERSION)"
+sums "$T/SHA256SUMS" "$C64  stvor-agent_4.1.0_amd64.deb" "$D64  stvor-agent_4.1.0_arm64.deb" \
+    "$E64  stvor-agent_4.1.0_linux_amd64.tar.gz" "$F64  stvor-agent_4.1.0_linux_arm64.tar.gz"
+run v4.1.0 "$T/SHA256SUMS"
+eq "код 0" 0 "$RC"
+eq "пин .deb" "$C64" "$(pin STVOR_AGENT_PIN_SHA256_AMD64)"
+eq "версия пина OpenWrt" 4.1.0 "$(opin STVOR_AGENT_PIN_VERSION)"
+eq "tar.gz amd64" "$E64" "$(opin STVOR_AGENT_PIN_SHA256_AMD64)"
+eq "tar.gz arm64" "$F64" "$(opin STVOR_AGENT_PIN_SHA256_ARM64)"
+eq "версия stvor-agent-openwrt 1.0.0 → 1.0.1" "version: 1.0.1" "$(grep '^version: ' "$OMANIFEST")"
+eq "история под version:" '# 1.0.1: пин tar.gz stvor-agent 4.1.0.' "$(grep -A1 -x 'version: 1.0.1' "$OMANIFEST" | tail -n 1)"
+eq "строк в пине OpenWrt не прибавилось" "$(wc -l < "$T/opin.before")" "$(wc -l < "$OPIN")"
+check "вывод: openwrt_ext_version" grep -qx 'openwrt_ext_version=1.0.1' <<< "$OUT"
+check "вывод: openwrt_sha256_amd64" grep -qx "openwrt_sha256_amd64=$E64" <<< "$OUT"
+check "вывод: openwrt_sha256_arm64" grep -qx "openwrt_sha256_arm64=$F64" <<< "$OUT"
+check "вывод: ext_version debian" grep -qx 'ext_version=4.1.4' <<< "$OUT"
+check "вывод: changed=true" grep -qx 'changed=true' <<< "$OUT"
+check "манифест OpenWrt — YAML" python3 -c '
+import sys, yaml
+m = yaml.safe_load(open(sys.argv[1]))
+assert m["name"] == "stvor-agent-openwrt" and m["version"] == "1.0.1", m
+' "$OMANIFEST"
+run v4.1.0 "$T/SHA256SUMS"
+check "повтор: changed=false" grep -qx 'changed=false' <<< "$OUT"
+eq "повтор: версия OpenWrt не поднята" "version: 1.0.1" "$(grep '^version: ' "$OMANIFEST")"
+
+echo "== выпуск без tar.gz — пин OpenWrt не тронут =="
+new_tree 4.0.0 "$A64" "$B64"
+sums "$T/SHA256SUMS" "$C64  stvor-agent_4.1.0_amd64.deb" "$D64  stvor-agent_4.1.0_arm64.deb"
+run v4.1.0 "$T/SHA256SUMS"
+eq "код 0" 0 "$RC"
+eq "пин .deb поднят" 4.1.0 "$(pin STVOR_AGENT_PIN_VERSION)"
+check "пин OpenWrt не тронут" ountouched
+check "сказано, что tar.gz нет" grep -q 'no tar.gz' <<< "$ERR"
+check_not "вывода openwrt_* нет" grep -q '^openwrt_' <<< "$OUT"
+
+echo "== .deb уже стоит, tar.gz впервые — поднимается только OpenWrt =="
+new_tree 4.1.0 "$C64" "$D64"
+sums "$T/SHA256SUMS" "$C64  stvor-agent_4.1.0_amd64.deb" "$D64  stvor-agent_4.1.0_arm64.deb" \
+    "$E64  stvor-agent_4.1.0_linux_amd64.tar.gz" "$F64  stvor-agent_4.1.0_linux_arm64.tar.gz"
+run v4.1.0 "$T/SHA256SUMS"
+eq "код 0" 0 "$RC"
+check "пин .deb и манифест debian не тронуты" untouched
+eq "пин OpenWrt поднят" 4.1.0 "$(opin STVOR_AGENT_PIN_VERSION)"
+check "changed=true" grep -qx 'changed=true' <<< "$OUT"
+check_not "ext_version debian не напечатан" grep -q '^ext_version=' <<< "$OUT"
+
+echo "== tar.gz одной архитектуры или чужая сумма той же версии — отказ, ничего не тронуто =="
+new_tree 4.0.0 "$A64" "$B64"
+sums "$T/SHA256SUMS" "$C64  stvor-agent_4.1.0_amd64.deb" "$D64  stvor-agent_4.1.0_arm64.deb" \
+    "$E64  stvor-agent_4.1.0_linux_amd64.tar.gz"
+run v4.1.0 "$T/SHA256SUMS"
+check "код не 0" test "$RC" -ne 0
+check "сообщение называет tar.gz arm64" grep -q 'stvor-agent_4.1.0_linux_arm64.tar.gz' <<< "$ERR"
+check "пин .deb не тронут" untouched
+check "пин OpenWrt не тронут" ountouched
+OW="4.1.0 $E64 $F64" new_tree 4.1.0 "$C64" "$D64"
+sums "$T/SHA256SUMS" "$C64  stvor-agent_4.1.0_amd64.deb" "$D64  stvor-agent_4.1.0_arm64.deb" \
+    "$E64  stvor-agent_4.1.0_linux_amd64.tar.gz" "$A64  stvor-agent_4.1.0_linux_arm64.tar.gz"
+run v4.1.0 "$T/SHA256SUMS"
+check "та же версия, другая сумма tar.gz — код не 0" test "$RC" -ne 0
+check "пин OpenWrt не тронут" ountouched
+OW="4.2.0 $E64 $F64" new_tree 4.0.0 "$A64" "$B64"
+sums "$T/SHA256SUMS" "$C64  stvor-agent_4.1.0_amd64.deb" "$D64  stvor-agent_4.1.0_arm64.deb" \
+    "$E64  stvor-agent_4.1.0_linux_amd64.tar.gz" "$F64  stvor-agent_4.1.0_linux_arm64.tar.gz"
+run v4.1.0 "$T/SHA256SUMS"
+eq "пин OpenWrt новее выпуска — код 0" 0 "$RC"
+check "пин OpenWrt не тронут" ountouched
+eq "пин .deb поднят" 4.1.0 "$(pin STVOR_AGENT_PIN_VERSION)"
 
 echo "== неверные аргументы — код 2 =="
 new_tree 4.0.0 "$A64" "$B64"
