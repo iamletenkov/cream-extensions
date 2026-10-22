@@ -315,3 +315,57 @@ sa_hook_apply(){
     fi
     sa_restart_running
 }
+
+# action status: `stvor-agent status --json` with the wrapper's verdict on
+# stdout — {"schema":1,"healthy":…,"problems":[…],"agent":<document or null>}.
+# Healthy: the agent is enabled and its service active and, when the document
+# has the block `telemetry` (agent >= 4.1.0), the telemetry service active with
+# its token ok. 0 — healthy, 1 — not (cream v1 has no check hook: health is the
+# action status). The agent's own exit code (1 — not enabled) is not the verdict.
+sa_status(){
+    local doc="" problems=""
+    if [[ ! -x "$SA_BIN" ]]; then
+        problems="agent.not_installed"
+    else
+        doc="$(sa_run "$SA_BIN" status --json 2>/dev/null)" || true
+        if [[ "$doc" == "{"*"}" ]]; then
+            problems="$(sa_status_problems <<< "$doc")"
+        else
+            doc=""
+            problems="agent.status_failed"
+        fi
+    fi
+    sa_status_json "$problems" "$doc"
+    [[ -z "$problems" ]]
+}
+
+# sa_status_problems: the document of `status --json` (json.MarshalIndent of
+# the agent, two spaces) on stdin → one problem per line. Top-level keys are
+# the lines indented by two spaces, the keys of `telemetry` by four.
+sa_status_problems(){
+    awk '
+        function val(l) { sub(/^[^:]*: */, "", l); sub(/,$/, "", l); gsub(/[^A-Za-z0-9_.-]/, "", l); return l == "" ? "unknown" : l }
+        /^  "telemetry": \{/ { tel = 1; seen = 1; next }
+        tel && /^  \}/ { tel = 0; next }
+        !tel && /^  "enabled": / { en = val($0) }
+        !tel && /^  "service": / { svc = val($0) }
+        tel && /^    "service": / { tsvc = val($0) }
+        tel && /^    "token": / { ttok = val($0) }
+        END {
+            if (en != "true") print "agent.enabled:" (en == "" ? "unknown" : en)
+            if (svc != "active") print "agent.service:" (svc == "" ? "unknown" : svc)
+            if (seen && tsvc != "active") print "telemetry.service:" (tsvc == "" ? "unknown" : tsvc)
+            if (seen && ttok != "ok") print "telemetry.token:" (ttok == "" ? "unknown" : ttok)
+        }'
+}
+
+# sa_status_json <problems, one per line> <document or empty>.
+sa_status_json(){
+    local list="" p healthy=true
+    while IFS= read -r p; do
+        [[ -n "$p" ]] || continue
+        list+="${list:+,}\"$p\""
+        healthy=false
+    done <<< "$1"
+    printf '{"schema":1,"healthy":%s,"problems":[%s],"agent":%s}\n' "$healthy" "$list" "${2:-null}"
+}

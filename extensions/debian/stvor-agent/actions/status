@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# cream action `status` of stvor-agent (`cream run stvor-agent status`): the
+# health of the agent and of its telemetry; the logic is in files/agent.sh.
+set -euo pipefail
+# shellcheck source=../files/agent.sh
+source "${CREAM_EXT_DIR:?run by cream}/files/agent.sh"
+sa_status

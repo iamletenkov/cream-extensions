@@ -20,6 +20,7 @@ teleport-openwrt set-managed`), служба телеметрии шлёт на 
 | Конфликтует с | — |
 | Хуки | `install`, `upgrade`, `remove`, `apply` |
 | Настройка на загрузке | — |
+| Действия | `cream run stvor-agent-openwrt status` |
 | Живая машина | да |
 <!-- /catalog:facts -->
 
@@ -43,6 +44,11 @@ teleport-openwrt set-managed`), служба телеметрии шлёт на 
   `/etc/stvor-agent-telemetry`), состояние `/opt/stvor-agent` стёрты; пользователь и
   группа `stvor-telemetry` снимаются, только если их создало это расширение. Drop-in
   метки `stvor_agent` уходит до `reload-apps` — узел сразу перестаёт показывать метку.
+- **действие `status`** (`cream run stvor-agent-openwrt status`) — здоровье агента и
+  телеметрии, как у [`debian/stvor-agent`](../../debian/stvor-agent/README.md):
+  `stvor-agent status --json` с вердиктом `{"schema":1,"healthy":…,"problems":[…],"agent":…}`;
+  код 0 — агент включён, служба меток и служба телеметрии `active`, токен телеметрии `ok`;
+  иначе 1.
 - **`files`** — drop-in командной метки
   `/etc/cream/teleport-openwrt/command-labels.d/stvor_agent` и
   `/lib/upgrade/keep.d/stvor-agent`.
@@ -158,7 +164,8 @@ RUN_COMMAND cream install --with-deps stvor-agent-openwrt STVOR_AGENT_VERSION=<v
   sha256 и состав tar.gz до изменений, раскладка и права, пользователь
   `stvor-telemetry` (создан — снимается, чужой — остаётся), `reload-apps` только на живой
   машине с procd, перезапуск работающих служб при обновлении и в `apply`, `remove`,
-  окружение `curl` без токена и `CREAM_*`.
+  окружение `curl` без токена и `CREAM_*`, действие `status` (блок `telemetry`). Пин в
+  git — полный или пустой целиком.
 - **L** — `make test-openwrt`: корневая ФС openwrt-builder v0.3.1 в контейнере, настоящие
   cream, busybox, rc.common и `/lib/functions.sh`: `install` поверх `teleport-openwrt` в
   фазе build, `rc.d`, пользователь и права, метка `stvor_agent` в `teleport.yaml`,

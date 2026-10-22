@@ -102,6 +102,10 @@ echo "systemctl $*" >> "$FAKE/calls"
 EOF
     cat >> "$ROOT/bin/stvor-agent" <<'EOF'
 echo "stvor-agent $*" >> "$FAKE/calls"
+if [[ "$*" == "status --json" ]]; then
+    cat "$FAKE/status.json" 2>/dev/null
+    exit "$(cat "$FAKE/status-rc" 2>/dev/null || echo 0)"
+fi
 [[ -f "$FAKE/disable-fails" && "$1" == disable ]] && exit 1
 exit 0
 EOF
@@ -129,6 +133,13 @@ hook(){
         STVOR_AGENT_VERSION= STVOR_AGENT_SHA256= STVOR_AGENT_MIRROR= STVOR_AGENT_DEB= \
         STVOR_AGENT_INTERVAL=60 STVOR_AGENT_LOG_LEVEL=info \
         "$@" "$ROOT/ext/hooks/$name"
+}
+# action <name> [KEY=VALUE…]: run actions/<name> as `cream run` does; stdout only.
+action(){
+    local name="$1"; shift
+    env -i PATH="$ROOT/bin:$BASE_PATH" LANG=C.UTF-8 TMPDIR="$ROOT/tmp" \
+        CREAM_PHASE=live CREAM_EXT=stvor-agent CREAM_ACTION="$name" \
+        CREAM_EXT_DIR="$ROOT/ext" CREAM_ROOT="$ROOT" "$@" "$ROOT/ext/actions/$name" 2>/dev/null
 }
 calls(){ cat "$FAKE/calls" 2>/dev/null; }
 net(){ grep '^curl ' "$FAKE/calls" 2>/dev/null; }
@@ -163,6 +174,14 @@ eq "targets" "{'build': 'exec', 'live': 'yes'}" "$(manifest 'm["targets"]')"
 eq "provides" "['stvor-agent']" "$(manifest 'm["provides"]')"
 eq "depends: teleport >=4.0.2 <5 (метка без бинаря)" "[{'name': 'teleport', 'version': '>=4.0.2 <5'}]" "$(manifest 'm["depends"]')"
 eq "хуки" "['apply', 'install', 'remove', 'upgrade']" "$(manifest 'sorted(m["hooks"])')"
+eq "действия — только status (здоровье, cream v1 без хука check)" "['status']" "$(manifest 'sorted(m.get("actions") or {})')"
+eq "status: json, без замка, только live" "json none ['live']" \
+    "$(manifest '" ".join([m["actions"]["status"]["output"], m["actions"]["status"]["lock"], repr(m["actions"]["status"]["phases"])])')"
+check "actions/status исполняемый" test -x "$EXT/actions/status"
+# Пакет сам заводит пользователя телеметрии и включает её юнит (postinst):
+# обёртка в это не вмешивается.
+check_not "обёртка не маскирует юниты и не заводит пользователей" \
+    grep -rqE '^[^#]*(systemctl[^#]* mask|useradd|groupadd|adduser|systemd-sysusers)' "$EXT/hooks" "$EXT/actions" "$EXT/files/agent.sh"
 for h in install upgrade remove apply; do
     check "hooks/$h исполняемый" test -x "$EXT/hooks/$h"
 done
@@ -388,6 +407,27 @@ hook remove >/dev/null 2>&1; rc=$?
 eq "remove — код 0" 0 "$rc"
 eq "remove — disable, затем dpkg -r" "stvor-agent disable
 dpkg -r stvor-agent" "$(calls)"
+tel_dirs(){
+    mkdir -p "$ROOT/etc/stvor-agent-telemetry" "$ROOT/var/lib/stvor-agent-telemetry"
+    echo fp > "$ROOT/etc/stvor-agent-telemetry/token.sha256"
+    echo buf > "$ROOT/var/lib/stvor-agent-telemetry/buffer"
+}
+tel_dirs_gone(){ [[ ! -e "$ROOT/etc/stvor-agent-telemetry" && ! -e "$ROOT/var/lib/stvor-agent-telemetry" ]]; }
+new_root; echo 4.1.0 > "$FAKE/installed"; mkdir -p "$ROOT/run/systemd/system"; tel_dirs
+hook remove >/dev/null 2>&1; rc=$?
+eq "remove с systemd — код 0" 0 "$rc"
+eq "remove с systemd — disable, стоп обоих юнитов, dpkg -r" "stvor-agent disable
+systemctl stop stvor-agent.service stvor-agent-telemetry.service
+dpkg -r stvor-agent" "$(calls)"
+check "remove — каталоги телеметрии стёрты (cream не сообщает хуку --purge)" tel_dirs_gone
+check "remove — токен меток пакета не трогает (его убирает disable)" test -e "$ROOT/etc/stvor-agent/token"
+new_root; echo 4.1.0 > "$FAKE/installed"; tel_dirs
+hook remove >/dev/null 2>&1
+check "remove без systemd — каталоги телеметрии стёрты" tel_dirs_gone
+check_not "remove без systemd — systemctl не зовётся" grep -q '^systemctl ' "$FAKE/calls"
+new_root; tel_dirs
+hook remove >/dev/null 2>&1
+check "remove без пакета — каталоги телеметрии не трогает" test -e "$ROOT/var/lib/stvor-agent-telemetry/buffer"
 new_root
 hook remove >/dev/null 2>&1; rc=$?
 eq "remove без пакета — код 0, ничего" "0 " "$rc $(calls)"
@@ -407,6 +447,58 @@ eq "apply без systemd — код 0, ничего" "0 " "$rc $(calls)"
 new_root; mkdir -p "$ROOT/run/systemd/system"
 PHASE=build hook apply >/dev/null 2>&1; rc=$?
 eq "apply в фазе build — ничего" "0 " "$rc $(calls)"
+
+echo "== действие status: блок telemetry в stvor-agent status --json =="
+# status_doc <enabled> <service> [<telemetry service> <telemetry token>]: документ
+# `stvor-agent status --json` схемы 1 в форме json.MarshalIndent агента (без
+# блока telemetry — агент до 4.1.0).
+status_doc(){
+    {
+        printf '{\n  "schema": 1,\n  "version": "4.1.0",\n  "service": "%s",\n  "enabled": %s,\n' "$2" "$1"
+        printf '  "url": "https://portal.example.org/robot-api/v1/labels",\n  "token": "ok",\n'
+        printf '  "teleport": {\n    "managed": {\n      "env": "prod",\n      "space": "sp-1"\n    },\n'
+        printf '    "pending": false,\n    "joined": true,\n    "active": true\n  },\n'
+        printf '  "restart": {\n    "attempts": 0,\n    "paused_until": null\n  }'
+        if [[ -n "${3:-}" ]]; then
+            printf ',\n  "telemetry": {\n    "service": "%s",\n    "token": "%s",\n' "$3" "$4"
+            printf '    "last_send": {\n      "at": "2026-10-22T10:00:00Z",\n      "outcome": "ok",\n      "service": "x",\n      "http_status": 204\n    },\n'
+            printf '    "buffer": null,\n    "detail_until": null\n  }'
+        fi
+        printf '\n}\n'
+    } > "$FAKE/status.json"
+}
+# st <python expression over d>: field of the action's JSON output in $ROOT/st.
+# st: eval only over this file's own literal expressions, never outside input.
+st(){ python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); v = eval(sys.argv[2], {"d": d}); print(v if isinstance(v, str) else json.dumps(v))' "$ROOT/st" "$1"; }
+new_root; status_doc true active active ok
+action status > "$ROOT/st"; rc=$?
+eq "здоров — код 0" 0 "$rc"
+eq "здоров — healthy, проблем нет" 'true []' "$(st 'd["healthy"]') $(st 'd["problems"]')"
+eq "документ агента — внутри как есть" ok "$(st 'd["agent"]["telemetry"]["token"]')"
+eq "схема ответа" 1 "$(st 'd["schema"]')"
+new_root; status_doc true active inactive absent
+action status > "$ROOT/st"; rc=$?
+eq "телеметрия не работает — код 1" 1 "$rc"
+eq "проблемы телеметрии" '["telemetry.service:inactive", "telemetry.token:absent"]' "$(st 'd["problems"]')"
+new_root; status_doc true active failed rejected
+action status > "$ROOT/st"
+eq "отозванный токен телеметрии" '["telemetry.service:failed", "telemetry.token:rejected"]' "$(st 'd["problems"]')"
+new_root; status_doc false inactive active ok; echo 1 > "$FAKE/status-rc"
+action status > "$ROOT/st"; rc=$?
+eq "агент не включён — код 1 (код status агента не ломает ответ)" 1 "$rc"
+eq "проблемы агента" '["agent.enabled:false", "agent.service:inactive"]' "$(st 'd["problems"]')"
+new_root; status_doc true active
+action status > "$ROOT/st"; rc=$?
+eq "агент до 4.1.0 (без блока telemetry) — здоров" "0 true" "$rc $(st 'd["healthy"]')"
+new_root; echo 'stvor-agent: status: boom' > "$FAKE/status.json"; echo 2 > "$FAKE/status-rc"
+action status > "$ROOT/st"; rc=$?
+eq "status агента не ответил JSON — код 1" 1 "$rc"
+eq "status_failed, агента нет в ответе" '["agent.status_failed"] null' "$(st 'd["problems"]') $(st 'd["agent"]')"
+# PATH — только $ROOT/bin: на хосте разработчика может стоять настоящий агент.
+new_root; rm -f "$ROOT/bin/stvor-agent"
+for c in bash awk; do ln -s "$(command -v "$c")" "$ROOT/bin/$c"; done
+action status PATH="$ROOT/bin" > "$ROOT/st"; rc=$?
+eq "пакета нет — код 1, not_installed" '1 ["agent.not_installed"]' "$rc $(st 'd["problems"]')"
 
 echo "== токен меток не уходит в dpkg и stvor-agent =="
 # The token is on disk (enabled agent) and, as a canary, in the caller's
