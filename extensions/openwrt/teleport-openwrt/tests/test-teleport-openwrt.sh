@@ -91,7 +91,7 @@ up(){
     [[ -e "$FAKE/agent.dead" ]] || printf '{"teleport":{"instances":{"teleport":{"running":true,"pid":%s}}}}\n' "$p" > "$FAKE/ubus.list"
     case "$(cat "$FAKE/agent")" in
         join) mkdir -p "$R/opt/teleport/data"; echo 55555555-6666 > "$R/opt/teleport/data/host_uuid" ;;
-        refuse) printf 'Thu Oct 22 10:00:00 2026 [%s.123] daemon.err teleport[9]: Failed to establish connection to cluster. error:[token expired or not found]\n' "$(date +%s)" >> "$FAKE/logread" ;;
+        refuse) printf 'Thu Oct 22 10:00:00 2026 [%s.123] daemon.err teleport[%s]: Failed to establish connection to cluster. error:[token expired or not found]\n' "$(date +%s)" "$p" >> "$FAKE/logread" ;;
     esac
 }
 case "$1" in
@@ -334,6 +334,31 @@ check "отказ — агент снят отдельным экземпляр�
 check "отказ — журнал logread -t" grep -q 'logread -t -e teleport' "$FAKE/calls"
 check "отказ — причина" grep -q 'токен регистрации не найден' "$ROOT/out"
 check_not "отказ — не включён" test -e "$S/agent-enabled"
+
+echo "== журнал: решение только по строкам процесса службы (тег teleport[<pid экземпляра>]) =="
+# Any local process can write to syslog (logger -t teleport …): a refusal from
+# another pid, or the tag inside the message, is no answer of the cluster.
+spoof(){
+    local now; now="$(date +%s)"
+    {
+        printf 'Thu Oct 22 10:00:00 2026 [%s.1] user.notice teleport[1]: Can not join the cluster, the token is expired or not found.\n' "$now"
+        printf 'Thu Oct 22 10:00:00 2026 [%s.1] user.notice teleport: Can not join the cluster, the token is expired or not found.\n' "$now"
+        printf 'Thu Oct 22 10:00:00 2026 [%s.1] user.notice evil[7]: teleport[%s]: Can not join the cluster, the token is expired or not found.\n' "$now" "$1"
+    } >> "$FAKE/logread"
+}
+setup; installed; procd_up
+echo up > "$FAKE/net"; echo hang > "$FAKE/agent"
+spoof 101
+join_line; eq "чужие строки — не отказ (0)" 0 "$?"
+eq "чужие строки — pending, не refused" pending "$(json | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
+check_not "чужие строки — повтор не снят" test -e "$S/join-refused"
+check "секрет цел для повтора" test -s "$S/registration-secret"
+# The same refusal from the pid of the instance is the answer.
+setup; installed; procd_up
+echo up > "$FAKE/net"; echo hang > "$FAKE/agent"
+printf 'Thu Oct 22 10:00:00 2026 [%s.1] daemon.err teleport[101]: Can not join the cluster, the token is expired or not found.\n' "$(date +%s)" >> "$FAKE/logread"
+join_line; eq "строка процесса службы — отказ (1)" 1 "$?"
+eq "строка процесса службы — refused" refused "$(json | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
 
 echo "== set-managed: перезапуск с подтверждением нового pid =="
 setup; installed; procd_up

@@ -97,6 +97,13 @@ printf 'debian/tp\n../../etc\n' > "$R4/lib/teleport-core.consumers"
 out="$("$R4/tools/stage-catalog.sh" "$TMP/o5" 2>&1)"; rc=$?
 eq "потребитель не <семейство>/<имя> — код 2" 2 "$rc"
 
+R5="$TMP/repo5"; fixture "$R5"
+rm -r "$R5/lib"
+out="$("$R5/tools/stage-catalog.sh" "$TMP/o6" 2>&1)"; rc=$?
+eq "каталог без lib/ (фикстура) — код 0" 0 "$rc"
+check_not "без lib/ — ядра нет" test -e "$TMP/o6/extensions/debian/tp/files/teleport-core.sh"
+check "без lib/ — расширения скопированы" test -f "$TMP/o6/extensions/debian/tp/extension.yaml"
+
 echo "== этот репозиторий =="
 out="$("$HERE/stage-catalog.sh" "$TMP/real" 2>&1)"; rc=$?
 eq "репозиторий — код 0" 0 "$rc"

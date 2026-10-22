@@ -74,7 +74,7 @@ if (( have_cream )); then
     # No arguments: the catalog is the repository root, as it is.
     R="$T/repo"
     mkdir -p "$R/tools" "$R/extensions/debian"
-    cp "$SCRIPT" "$HERE/cream-pin.env" "$R/tools/"
+    cp "$SCRIPT" "$HERE/cream-pin.env" "$HERE/stage-catalog.sh" "$R/tools/"
     printf 'schema: cream/v1\nname: cream-extensions\nversion: 0.0.0\nroots: [extensions/debian]\n' \
         > "$R/cream-catalog.yaml"
     cp -a "$FIX/ok" "$R/extensions/debian/ok"

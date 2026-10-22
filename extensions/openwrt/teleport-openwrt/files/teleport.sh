@@ -198,11 +198,23 @@ service_status_line(){
     [[ -e "$AGENT_ENABLED" ]] && en=enabled
     echo "Служба teleport (procd): $act, $en"
 }
-# logread -t: "[<epoch>.<ms>]" on every line; only the lines since the epoch.
+# The journal of the node since an epoch — only the lines of the running
+# instance teleport: syslog takes a line from any local process (`logger -t
+# teleport …`), and a refusal there decides a join (no retries, the secret goes).
+# A line counts when its tag — the field after the facility — is exactly
+# teleport[<pid of the instance, ubus>]: and its time ("[<epoch>.<ms>]" of
+# logread -t) is not before the epoch. Line of logread -t:
+#   Thu Oct 22 10:00:00 2026 [1729590000.123] daemon.err teleport[1234]: …
+# No instance — no lines: nothing is taken for an answer of the cluster.
 agent_log_since(){
+    local pid
     init_running || return 0
-    logread -t -e teleport 2>/dev/null | awk -v since="$1" '
-        match($0, /\[[0-9]+\.[0-9]+\]/) { t = substr($0, RSTART + 1, RLENGTH - 2); sub(/\..*/, "", t); if (t + 0 >= since + 0) print }' || true
+    pid="$(agent_pid)" || return 0
+    logread -t -e teleport 2>/dev/null | awk -v since="$1" -v tag="teleport[$pid]:" '
+        $6 ~ /^\[[0-9]+\.[0-9]+\]$/ && $8 == tag {
+            t = substr($6, 2); sub(/\..*/, "", t)
+            if (t + 0 >= since + 0) print
+        }' || true
 }
 # Since the last start of the instance (start_service writes the epoch).
 app_role_missing(){

@@ -18,7 +18,8 @@
 # source (`cream source add --path OUT`). tools/check-teleport-core.sh keeps the
 # copies out of git.
 #
-# OUT must not exist or be empty (with --ext: OUT/<basename> must not exist). Exit: 0 — staged; 2 — setup failure (no core, a
+# OUT must not exist or be empty (with --ext: OUT/<basename> must not exist).
+# Without lib/teleport-core.consumers the tree is a plain copy. Exit: 0 — staged; 2 — setup failure (no core, a
 # consumer without its directory, OUT busy).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,9 +36,10 @@ fi
 (( $# == 1 )) || die "использование: stage-catalog.sh [--ext DIR] OUT"
 out="$1"
 
-[[ -f "$CORE" ]] || die "нет $CORE"
-[[ -f "$CONSUMERS" ]] || die "нет $CONSUMERS"
+# A catalog without shared code (a fixture of the tests) stages as a plain copy.
 consumers=()
+[[ -f "$CONSUMERS" ]] || CONSUMERS=/dev/null
+[[ "$CONSUMERS" == /dev/null || -f "$CORE" ]] || die "нет $CORE"
 while IFS= read -r c || [[ -n "$c" ]]; do
     c="${c%%#*}"; c="${c//[[:space:]]/}"
     [[ -n "$c" ]] || continue
