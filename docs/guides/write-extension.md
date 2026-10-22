@@ -62,14 +62,16 @@ cream зовёт хук с очищенным окружением: `PATH`, `LAN
 - **Идемпотентность:** повторный `install` и `install --reinstall` не меняют ни
   одного файла (проверяет L).
 - **Скачанное — по пину версии и sha256**, иначе отказ. Большой файл (AppImage,
-  `.deb` релиза) — через библиотеку `fetch` (`fetch_verified`): curl 7.68 (Ubuntu
-  focal, L4T Jetson Nano) не повторяет обрыв соединения даже с `--retry`.
+  `.deb` релиза) — через `fetch_verified` из общей `lib/fetch.sh`: curl 7.68 (Ubuntu
+  focal, L4T Jetson Nano) не повторяет обрыв соединения даже с `--retry`. Строка
+  `<семейство>/<имя>` в `lib/fetch.consumers`, хук подключает
+  `"${CREAM_EXT_DIR}/files/fetch.sh"` — копию кладёт снимок, `depends` не нужен.
 - **Юниты, правила udev, шаблоны** — через поле `files` манифеста, их раскладывает
   cream. Префикс `cream-` в именах юнитов и путях зарезервирован за cream: юниты
   расширения называются по расширению (`teleport-join.timer`).
 - **CLI для человека** — действия (`actions/<действие>`, `cream run <имя> …`), а не
   свои скрипты в `PATH`.
-- **Общий код — библиотека** `kind: library` (`cloud-user`, `l4t`, `apt-guard`, `fetch`) в
+- **Общий код — библиотека** `kind: library` (`cloud-user`, `l4t`, `apt-guard`) в
   `depends`, вызов по пути `"${CREAM_ROOT:-}/opt/cream/ext/<библиотека>/…"`. Копий
   чужого кода в расширении нет.
 

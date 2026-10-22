@@ -118,7 +118,7 @@ RUN_COMMAND cream install --with-deps gnome x11vnc
 |---|---|---|---|
 | [`apt-guard`](extensions/debian/apt-guard/README.md) | Библиотека — remove снимает только свои пакеты apt, с проверкой симуляцией | Debian, Ubuntu | amd64, arm64 |
 | [`cloud-user`](extensions/debian/cloud-user/README.md) | Библиотека — имя пользователя cloud-init для хуков других расширений | Debian, Ubuntu | amd64, arm64 |
-| [`fetch`](extensions/debian/fetch/README.md) | Библиотека — загрузка большого файла по закреплённой sha256 с повторами на обрыв соединения | Debian, Ubuntu | amd64, arm64 |
+| [`fetch`](extensions/debian/fetch/README.md) | Устарела (не нужна с каталога 5.5.0) — совместимость для потребителей 5.4.2, загрузка с повторами на обрыв соединения | Debian, Ubuntu | amd64, arm64 |
 | [`l4t`](extensions/debian/l4t/README.md) | Общие функции расширений стека L4T — версия L4T и OPENBLAS_CORETYPE для Jetson | Debian, Ubuntu | arm64 |
 <!-- /catalog:table -->
 

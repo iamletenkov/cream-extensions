@@ -54,7 +54,9 @@ R="${CREAM_ROOT:-}"; R="${R%/}"
 SELF="${BASH_SOURCE[0]}"
 SECRETS="${CREAM_SECRETS_FILE:-$R/etc/cream/code-server/secrets}"
 CLOUD_USER_LIB="$R/opt/cream/ext/cloud-user/get_cloud_user.sh"
-FETCH_LIB="$R/opt/cream/ext/fetch/fetch.sh"
+# fetch_verified — the catalog's lib/fetch.sh, laid next to this file by the
+# snapshot (no depends: nothing to install before code-server).
+FETCH_LIB="${CREAM_EXT_DIR:-$(dirname "$SELF")/..}/files/fetch.sh"
 TP_DIR="$R/etc/cream/teleport"
 APPS_DIR="$TP_DIR/apps.d"
 DECL="$APPS_DIR/code-server.conf"
@@ -522,8 +524,8 @@ cmd_install(){
     # shellcheck disable=SC2064  # expand now: the path is fixed
     trap "rm -r -f -- '$work'" EXIT
     url="$RELEASES/v$CS_VERSION/code-server_${CS_VERSION}_${arch}.deb"
-    [[ -f "$FETCH_LIB" ]] || die "нет библиотеки fetch ($FETCH_LIB) — cream ставит её по depends"
-    # shellcheck source=../../fetch/fetch.sh
+    [[ -f "$FETCH_LIB" ]] || die "нет $FETCH_LIB — дерево расширения неполное (снимок каталога кладёт lib/fetch.sh)"
+    # shellcheck source=../../../../lib/fetch.sh
     . "$FETCH_LIB"
     log "скачиваю $url"
     # Attempts, stalls as failed attempts and the pinned sha256 — library

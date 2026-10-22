@@ -10,12 +10,12 @@
 # in cream-catalog.yaml (without the tests/ of the extensions), at the same
 # paths as in the repository; tools/, docs/ and the rest stay out. Every
 # extension under extensions/ must lie under a root, otherwise it would vanish
-# from the snapshot silently — that is an error here. The shared core of the
-# Teleport extensions, lib/teleport-core.sh of the commit, goes into
-# files/teleport-core.sh (0644) of every consumer of lib/teleport-core.consumers
-# of the commit — one copy in git, one per consumer in the snapshot (spec
-# 2026-10-20-openwrt §4.2, ruling Р11; tools/stage-catalog.sh does the same for
-# the working tree).
+# from the snapshot silently — that is an error here. Every shared library
+# lib/<lib>.sh of the commit (the Teleport core teleport-core.sh, the downloader
+# fetch.sh) goes into files/<lib>.sh (0644) of every consumer of
+# lib/<lib>.consumers of the commit — one copy in git, one per consumer in the
+# snapshot (spec 2026-10-20-openwrt §4.2, ruling Р11; tools/stage-catalog.sh does
+# the same for the working tree).
 #
 # `cream catalog pack` (cream by the pin tools/cream-pin.env, see
 # tools/cream-deb.sh; CREAM_DEB=<.deb> for local runs) runs in debian:12 with
@@ -66,19 +66,22 @@ for d in "${dirs[@]}"; do
     (( covered )) || die "$d не лежит под roots cream-catalog.yaml (${roots[*]})"
 done
 
-# The core and its consumers of the commit.
-consumers=()
-while IFS= read -r c || [[ -n "$c" ]]; do
-    c="${c%%#*}"; c="${c//[[:space:]]/}"
-    [[ -n "$c" ]] || continue
-    [[ "$c" =~ ^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9._-]*$ ]] || die "lib/teleport-core.consumers: «$c» — не <семейство>/<имя>"
-    covered=0
-    for d in "${dirs[@]}"; do [[ "$d" == "extensions/$c" ]] && covered=1; done
-    (( covered )) || die "lib/teleport-core.consumers: потребитель $c — нет extensions/$c в $REF"
-    consumers+=("$c")
-done < <(git -C "$REPO" show "$commit:lib/teleport-core.consumers" 2>/dev/null)
-(( ${#consumers[@]} == 0 )) || git -C "$REPO" cat-file -e "$commit:lib/teleport-core.sh" 2>/dev/null \
-    || die "$REF: есть потребители ядра, нет lib/teleport-core.sh"
+# The shared libraries and their consumers of the commit: pairs "<lib>/<consumer>".
+pairs=()
+while IFS= read -r list; do
+    lib="${list#lib/}"; lib="${lib%.consumers}"
+    [[ "$lib" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "$list: имя библиотеки «$lib» — не [a-z0-9-]"
+    git -C "$REPO" cat-file -e "$commit:lib/$lib.sh" 2>/dev/null || die "$REF: есть $list, нет lib/$lib.sh"
+    while IFS= read -r c || [[ -n "$c" ]]; do
+        c="${c%%#*}"; c="${c//[[:space:]]/}"
+        [[ -n "$c" ]] || continue
+        [[ "$c" =~ ^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9._-]*$ ]] || die "$list: «$c» — не <семейство>/<имя>"
+        covered=0
+        for d in "${dirs[@]}"; do [[ "$d" == "extensions/$c" ]] && covered=1; done
+        (( covered )) || die "$list: потребитель $c — нет extensions/$c в $REF"
+        pairs+=("$lib/$c")
+    done < <(git -C "$REPO" show "$commit:$list")
+done < <(git -C "$REPO" ls-tree --name-only "$commit" -- lib/ | grep -E '^lib/[^/]+\.consumers$' || true)
 
 if [[ "$REF" == "HEAD" ]] && [[ -n "$(git -C "$REPO" status --porcelain -- cream-catalog.yaml LICENSE NOTICE lib "${roots[@]}")" ]]; then
     echo "ВНИМАНИЕ: в рабочем дереве есть незакоммиченные правки — снимок берётся из коммита ${commit:0:12}" >&2
@@ -87,9 +90,10 @@ fi
 deb="$("$HERE/cream-deb.sh")" || { rc=$?; (( rc == 3 )) && die "без пина cream снимок не собрать"; exit 2; }
 core_dir="$(mktemp -d)"
 trap 'rm -r -f -- "$core_dir"' EXIT
-if (( ${#consumers[@]} )); then
-    git -C "$REPO" show "$commit:lib/teleport-core.sh" > "$core_dir/teleport-core.sh"
-fi
+for p in ${pairs[@]+"${pairs[@]}"}; do
+    lib="${p%%/*}"
+    [[ -f "$core_dir/$lib.sh" ]] || git -C "$REPO" show "$commit:lib/$lib.sh" > "$core_dir/$lib.sh"
+done
 epoch="$(git -C "$REPO" log -1 --format=%ct "$commit")"
 asset="cream-extensions-$version.tar.gz"
 mkdir -p "$OUT"
@@ -105,9 +109,11 @@ dpkg-deb -x /cream.deb /tmp/cream
 mkdir /tmp/cat
 tar -x -C /tmp/cat
 asset="$1"; shift
-for c in "$@"; do
-    cp /core/teleport-core.sh "/tmp/cat/extensions/$c/files/teleport-core.sh"
-    chmod 0644 "/tmp/cat/extensions/$c/files/teleport-core.sh"
+for p in "$@"; do
+    lib="${p%%/*}"; c="${p#*/}"
+    mkdir -p "/tmp/cat/extensions/$c/files"
+    cp "/core/$lib.sh" "/tmp/cat/extensions/$c/files/$lib.sh"
+    chmod 0644 "/tmp/cat/extensions/$c/files/$lib.sh"
 done
 /tmp/cream/usr/bin/cream --version
 /tmp/cream/usr/bin/cream catalog pack /tmp/cat --out "/out/$asset"'
@@ -117,7 +123,7 @@ git -C "$REPO" archive --format=tar "$commit" -- cream-catalog.yaml LICENSE NOTI
     | docker run --rm -i --network none -u "$(id -u):$(id -g)" \
         -e SOURCE_DATE_EPOCH="$epoch" \
         -v "$deb:/cream.deb:ro" -v "$OUT:/out" -v "$core_dir:/core:ro" \
-        "$IMAGE" sh -c "$inner" sh "$asset" "${consumers[@]}"
+        "$IMAGE" sh -c "$inner" sh "$asset" ${pairs[@]+"${pairs[@]}"}
 
 (cd "$OUT" && sha256sum -- "$asset" > SHA256SUMS)
 cat "$OUT/SHA256SUMS"

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# H-тесты библиотеки fetch (cream/v1, kind: library) на подменённом корне:
-# fetch_verified с подставным curl — обрыв «Connection reset by peer» (curl 56)
+# H-тесты библиотеки fetch (cream/v1, kind: library; устарела с 5.5.0) на
+# подменённом корне: fetch.sh — прослойка к files/fetch.sh (lib/fetch.sh, его
+# кладёт снимок), через неё — fetch_verified с подставным curl — обрыв «Connection reset by peer» (curl 56)
 # дважды и успех третьей попыткой, исчерпанные попытки и переход к следующему
 # адресу, несовпавший sha256 (отказ без повторов), неверный вызов, никаких
 # .part после себя. root и сеть не нужны; sleep подставной.
@@ -19,10 +20,20 @@ mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); prin
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
 eq "name" fetch "$(mf 'm["name"]')"
 eq "kind: library" library "$(mf 'm["kind"]')"
+eq "версия 1.1.0 (прослойка к общей lib/fetch.sh)" 1.1.0 "$(mf 'm["version"]')"
+check "summary: устарела" grep -q '^summary: Устарела' "$EXT/extension.yaml"
+check_not "своей копии библиотеки в git нет" test -e "$EXT/files/fetch.sh"
 eq "хуков нет" None "$(mf 'm.get("hooks")')"
 check_not "каталога hooks/ нет" test -e "$EXT/hooks"
 eq "обе архитектуры" "['amd64', 'arm64']" "$(mf 'm["platform"]["arch"]')"
 eq "curl не требуется до потребителя (тот ставит его сам)" None "$(mf 'm["platform"].get("commands")')"
+
+echo "== прослойка: /opt/cream/ext/fetch/fetch.sh для потребителей 5.4.2 =="
+ht_root "$EXT"
+check "files/fetch.sh в разложенном дереве = lib/fetch.sh" cmp -s "$EXT/../../../lib/fetch.sh" "$HT_EXT/files/fetch.sh"
+check "fetch.sh в корне — прослойка (своего кода нет)" test "$(grep -c 'fetch_verified()' "$HT_EXT/fetch.sh")" -eq 0
+check "путь потребителей 5.4.2 даёт fetch_verified" env -i PATH="$HT_PATH_TAIL" bash -c \
+    'set -euo pipefail; source "$1"; declare -F fetch_verified >/dev/null' _ "$ROOT/opt/cream/ext/fetch/fetch.sh"
 
 PAYLOAD='payload-of-the-asset'
 SHA="$(printf '%s' "$PAYLOAD" | sha256sum | cut -d' ' -f1)"

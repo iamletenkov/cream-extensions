@@ -51,9 +51,11 @@ apt_retry(){
 
 [[ ! -L "$OPT" ]] || { log_error "/opt/selkies — символическая ссылка, не пишу через неё"; exit 1; }
 
-FETCH_LIB="$R/opt/cream/ext/fetch/fetch.sh"
-[[ -f "$FETCH_LIB" ]] || { log_error "нет библиотеки fetch ($FETCH_LIB) — cream ставит её по depends"; exit 1; }
-# shellcheck source=../../fetch/fetch.sh
+# fetch_verified — the catalog's lib/fetch.sh, laid into files/ by the snapshot
+# (no depends: nothing to install before selkies).
+FETCH_LIB="${CREAM_EXT_DIR:?run by cream}/files/fetch.sh"
+[[ -f "$FETCH_LIB" ]] || { log_error "нет $FETCH_LIB — дерево расширения неполное (снимок каталога кладёт lib/fetch.sh)"; exit 1; }
+# shellcheck source=../../../../lib/fetch.sh
 . "$FETCH_LIB"
 
 # --- AppImage -----------------------------------------------------------------
