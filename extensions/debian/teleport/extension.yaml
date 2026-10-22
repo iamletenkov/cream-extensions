@@ -5,7 +5,8 @@ version: 4.2.0
 #        (рендер, join, метки, apps.d, управляемые метки, status) — общее ядро
 #        files/teleport-core.sh: одна копия в git (lib/teleport-core.sh каталога), в
 #        расширение его кладёт снимок; files/teleport.sh — слой systemd. Бинарь
-#        Teleport зовётся как `env -u LD_PRELOAD`.
+#        Teleport зовётся как `env -u LD_PRELOAD`. Единственное усиление: строка
+#        отказа в журнале засчитывается, только пока identity узла нет.
 # 4.1.2: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 # 4.1.1: только README (выпуск 5.1.1 изменил дерево без подъёма версии —
 #        cream отвергал обновление с 4.1.0: version.same_digest).

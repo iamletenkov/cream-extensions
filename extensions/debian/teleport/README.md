@@ -175,7 +175,8 @@ RUN_COMMAND cream install --with-deps teleport
 В git у ядра одна копия — `lib/teleport-core.sh` каталога; в расширение его кладёт снимок
 (`tools/catalog-snapshot.sh`), для проверок — `tools/stage-catalog.sh`. `files/teleport.sh`
 — слой systemd: пути, юниты, `journalctl`, тарбол `linux-<arch>`, HUP. Поведение не
-изменилось; бинарь Teleport ядро зовёт как `env -u LD_PRELOAD …`. Строка `files` с ядром
+изменилось, кроме одного усиления: строка отказа в журнале засчитывается, только пока у
+узла нет identity в `data_dir`. Бинарь Teleport ядро зовёт как `env -u LD_PRELOAD …`. Строка `files` с ядром
 (`/usr/lib/teleport/teleport-core.sh`) нужна, чтобы `cream validate` отверг дерево без него.
 
 ### Установка — бинарь Teleport
