@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.4.0](https://github.com/iamletenkov/cream-extensions/compare/v5.3.1...v5.4.0) (2026-10-22)
+
+
+### Добавлено
+
+* **openwrt:** корень extensions/openwrt — amneziawg, podkop, luci-apps для cream 1.3.0 ([#47](https://github.com/iamletenkov/cream-extensions/issues/47)) ([703418e](https://github.com/iamletenkov/cream-extensions/commit/703418eba621fd976236c190354dd88f0c50e413))
+
 ## [5.3.1](https://github.com/iamletenkov/cream-extensions/compare/v5.3.0...v5.3.1) (2026-10-21)
 
 
