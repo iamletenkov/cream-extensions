@@ -23,7 +23,7 @@ has(){ if grep -qF -- "$2" <<< "$3"; then ok; else bad "$1: нет [$2] в вы�
 
 # A catalog copy: the tools the scaffold's test and checks need.
 mkdir -p "$T/cat/tools" "$T/cat/extensions/debian"
-cp "$HERE/hooktest.sh" "$HERE/lint-hooks.sh" "$HERE/check-names.sh" "$T/cat/tools/"
+cp "$HERE/hooktest.sh" "$HERE/stage-catalog.sh" "$HERE/lint-hooks.sh" "$HERE/check-names.sh" "$T/cat/tools/"
 git -C "$T/cat" init -q  # check-names без аргументов проверяет рабочее дерево git
 new(){ NEW_EXTENSION_ROOT="$T/cat" "$NEW" "$@"; }
 E="$T/cat/extensions/debian"

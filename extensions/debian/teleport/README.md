@@ -48,7 +48,7 @@
 
 | Путь | Что |
 |---|---|
-| `/opt/cream/ext/teleport/` | дерево расширения: `hooks/`, `actions/` (тонкие входы), `files/teleport.sh` (общая библиотека), `files/os-logins` (метка `os_logins`, её зовёт Teleport) |
+| `/opt/cream/ext/teleport/` | дерево расширения: `hooks/`, `actions/` (тонкие входы), `files/teleport.sh` (слой systemd), `files/teleport-core.sh` (общее ядро, см. «Ядро и слой»), `files/os-logins` (метка `os_logins`, её зовёт Teleport) |
 | `/etc/systemd/system/teleport{,-apps,-token,-join}.*` | юниты (раскладывает cream) |
 | `/etc/cream/teleport/{config,apps.d,command-labels.d}` | домен ручек и объявления |
 | `/var/lib/cream/ext/teleport/{registration-secret,join-pending,join-refused,managed-pending,reload-pending,rollback}` | состояние (каталог 0700, файлы 0600) |
@@ -108,7 +108,7 @@
 | `TELEPORT_MANAGED_LABELS` | `readonly`: пишет только `set-managed` (и `leave`) — см. «Управляемые метки» |
 
 Значения ложатся в YAML в двойных кавычках: кавычек и `$` в них нет (те же
-регулярные выражения — в `files/teleport.sh`, `KEY_TYPE`).
+регулярные выражения — в ядре `files/teleport-core.sh`, `KEY_TYPE`).
 
 ## Установка
 
@@ -166,6 +166,18 @@ RUN_COMMAND cream install --with-deps teleport
   допустимо (см. «Действия и файлы»).
 
 ## Подробности
+
+### Ядро и слой
+
+С 4.2.0 init-независимая часть — ручки, `render`, `join` с повтором и отказом, метки,
+`apps.d`, `command-labels.d`, управляемые метки, `status` — общее ядро
+`files/teleport-core.sh`, одно с [teleport-openwrt](../../openwrt/teleport-openwrt/README.md).
+В git у ядра одна копия — `lib/teleport-core.sh` каталога; в расширение его кладёт снимок
+(`tools/catalog-snapshot.sh`), для проверок — `tools/stage-catalog.sh`. `files/teleport.sh`
+— слой systemd: пути, юниты, `journalctl`, тарбол `linux-<arch>`, HUP. Поведение не
+изменилось, кроме одного усиления: строка отказа в журнале засчитывается, только пока у
+узла нет identity в `data_dir`. Бинарь Teleport ядро зовёт как `env -u LD_PRELOAD …`. Строка `files` с ядром
+(`/usr/lib/teleport/teleport-core.sh`) нужна, чтобы `cream validate` отверг дерево без него.
 
 ### Установка — бинарь Teleport
 
@@ -367,7 +379,7 @@ merged-usr не годится, нужен `/usr/bin/…`); команда по�
 ## Проверки
 
 - **H** — `bash extensions/debian/teleport/tests/test-join.sh` и `test-managed.sh` —
-  подменённый корень (`CREAM_ROOT`; «systemd запущен» — каталог-маркер
+  по staged-копии расширения (ядро положено `tools/stage-catalog.sh --ext`), подменённый корень (`CREAM_ROOT`; «systemd запущен» — каталог-маркер
   `$CREAM_ROOT/run/systemd/system`), поддельные `systemctl`, `journalctl`, `curl`,
   `teleport`, `dpkg`, `cream`, `stat`, `sleep` через `PATH`; без root, systemd и
   сети. Тестовых переключателей в окружении у боевого скрипта нет. Запускаются

@@ -103,5 +103,31 @@ out="$("$GATE" "$R" 2>&1)"; rc=$?
 eq "без тегов — код 2" 2 "$rc"
 has "без тегов — подсказка" "fetch-depth" "$out"
 
+# Общее ядро lib/teleport-core.sh: его правка требует подъёма всех потребителей,
+# непотребитель не затронут; без файла потребителей — как раньше.
+fresh core
+mkdir -p "$R/lib"; printf '# core\n' > "$R/lib/teleport-core.sh"; printf 'debian/alpha\ndebian/beta\n' > "$R/lib/teleport-core.consumers"
+commit core-init; g tag v1.1.0
+printf '# core 2\n' > "$R/lib/teleport-core.sh"; commit core-edit
+out="$("$GATE" "$R" 2>&1)"; rc=$?
+eq "правка ядра без подъёма — код 1" 1 "$rc"
+has "правка ядра — потребитель alpha назван" "extensions/debian/alpha" "$out"
+has "правка ядра — потребитель beta назван" "extensions/debian/beta" "$out"
+has "правка ядра — причина" "ядро lib/teleport-core.sh" "$out"
+hasnt "правка ядра — непотребитель не назван" "extensions/debian/gone" "$out"
+ext alpha 1.0.1 readme; commit bump-alpha
+out="$("$GATE" "$R" 2>&1)"; rc=$?
+eq "подъём одного потребителя из двух — код 1" 1 "$rc"
+hasnt "поднятый потребитель не назван" "extensions/debian/alpha:" "$out"
+ext beta 2.0.1 readme; commit bump-beta
+out="$("$GATE" "$R" 2>&1)"; rc=$?
+eq "подъём всех потребителей — код 0" 0 "$rc"
+# The core unchanged since the tag — consumers need nothing.
+fresh core-same
+mkdir -p "$R/lib"; printf '# core\n' > "$R/lib/teleport-core.sh"; printf 'debian/alpha\n' > "$R/lib/teleport-core.consumers"
+commit core-init; g tag v1.1.0
+out="$("$GATE" "$R" 2>&1)"; rc=$?
+eq "ядро не менялось — код 0" 0 "$rc"
+
 echo "test-check-version-bump: ok $pass, fail $fail"
 (( fail == 0 ))

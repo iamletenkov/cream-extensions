@@ -15,11 +15,17 @@
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-EXT="$(dirname "$HERE")"
+SRC="$(dirname "$HERE")"
+REPO="$(cd "$SRC/../../.." && pwd)"
 
 TMP="$(mktemp -d)"
 PWN_DIR=""
 trap 'rm -r -f -- "$TMP" ${PWN_DIR:+"$PWN_DIR"}' EXIT
+# The extension as cream gets it: the shared core lib/teleport-core.sh laid into
+# files/ (tools/stage-catalog.sh); the tree in git stays without it.
+EXT="$("$REPO/tools/stage-catalog.sh" --ext "$SRC" "$TMP/staged")" || { echo "FAIL: stage-catalog" >&2; exit 1; }
+# The library of the extension: its layer and the core (static checks read both).
+LIB=("$EXT/files/teleport.sh" "$EXT/files/teleport-core.sh")
 
 pass=0; fail=0
 ok(){ pass=$((pass + 1)); }
@@ -485,7 +491,7 @@ eq "тик — код 0" 0 "$rc"
 eq "тик засчитан" 2 "$(field attempts "$PENDING")"
 check_not "join и тик не зовут flock" test -e "$FAKE/flock.log"
 check_not "в состоянии нет файла блокировки" test -n "$(find "$ROOT" -name '*.lock' 2>/dev/null)"
-check_not "в коде нет flock" grep -q 'flock' "$EXT/files/teleport.sh"
+check_not "в коде нет flock" grep -q 'flock' "${LIB[@]}"
 for a in join join-retry leave scrub-token reload-apps; do
     check "манифест: $a — lock: exclusive" grep -qx '    lock: exclusive' <<< "$(manifest_action "$a")"
 done
@@ -691,7 +697,7 @@ echo "== секрет регистрации: граница 1000 знаков �
 # RE2 of cream allows at most 1000 repetitions: both sides say {8,1000}.
 eq "манифест: тип TELEPORT_REGISTRATION_SECRET" "TELEPORT_REGISTRATION_SECRET: {type: 're:^[[:graph:]]{8,1000}\$', secret: true}" \
     "$(manifest_action join | grep -o 'TELEPORT_REGISTRATION_SECRET: .*')"
-check "скрипт: RE_REG_SECRET той же границы" grep -qx "RE_REG_SECRET='^\[\[:graph:\]\]{8,1000}\\\$'" "$EXT/files/teleport.sh"
+check "скрипт: RE_REG_SECRET той же границы" grep -qx "RE_REG_SECRET='^\[\[:graph:\]\]{8,1000}\\\$'" "${LIB[@]}"
 for n in 1000 1001; do
     new_root
     echo 7 > "$FAKE/net"
@@ -761,8 +767,8 @@ check_not "os-logins: команда из uid не выполнена" test -e "
 rm -r -f -- "$PWN_DIR"; PWN_DIR=""
 
 echo "== боевой скрипт без тестовых переключателей =="
-check_not "teleport.sh: нет TELEPORT_TEST_*" grep -q 'TELEPORT_TEST_' "$EXT/files/teleport.sh"
-check "ожидание регистрации — 120 с, константа" grep -qx 'JOIN_TIMEOUT=120' "$EXT/files/teleport.sh"
+check_not "teleport.sh: нет TELEPORT_TEST_*" grep -q 'TELEPORT_TEST_' "${LIB[@]}"
+check "ожидание регистрации — 120 с, константа" grep -qx 'JOIN_TIMEOUT=120' "${LIB[@]}"
 new_root
 echo up > "$FAKE/net"; echo hang > "$FAKE/agent"
 msg="$(stvor_line 2>&1)"
@@ -869,7 +875,7 @@ while IFS= read -r line; do
     else
         check "тип $key совпадает с манифестом" grep -qF "$key: {type: '$t'" "$EXT/extension.yaml"
     fi
-done < <(sed -n '/^declare -A KEY_TYPE=(/,/^)/p' "$EXT/files/teleport.sh" | grep -E '^\s+\[TELEPORT_')
+done < <(cat "${LIB[@]}" | sed -n '/^declare -A KEY_TYPE=(/,/^)/p' | grep -E '^\s+\[TELEPORT_')
 
 echo "== юниты =="
 U="$EXT/files"
@@ -883,7 +889,7 @@ eq "служба повтора: TimeoutStartSec вмещает ожидание
     "$(grep '^TimeoutStartSec=' "$U/teleport-join.service")"
 check "служба повтора: при каждой загрузке" grep -qx 'WantedBy=multi-user.target' "$U/teleport-join.service"
 check "таймер: раз в минуту" grep -qx 'OnCalendar=minutely' "$U/teleport-join.timer"
-check "путь файла ожидания — тот же, что в библиотеке" grep -q 'JOIN_PENDING="$STATE/join-pending"' "$EXT/files/teleport.sh"
+check "путь файла ожидания — тот же, что в библиотеке" grep -q 'JOIN_PENDING="$STATE/join-pending"' "${LIB[@]}"
 check "teleport.service: ExecStartPre — render через cream" grep -qx 'ExecStartPre=/usr/bin/cream run teleport render' "$U/teleport.service"
 check "teleport.service: ExecReload — render через cream" grep -qx 'ExecReload=/usr/bin/cream run teleport render' "$U/teleport.service"
 # A restart inside set-managed: lock ≤ 20 s + restart + confirmation ≤ 30 s
@@ -921,7 +927,7 @@ eq "Exec* юнитов зовут только известные команды
 # Keep it so: no blocking start/restart/reload of these units anywhere.
 check_not "держатель блокировки не ждёт job юнитов повтора, стирания и приложений" \
     bash -c "grep -hE 'systemctl[^#]*(start|restart|reload|enable --now)[^#]*(JOIN_SERVICE|JOIN_TIMER|teleport-join|teleport-token\.service|teleport-apps\.service)' \
-        \"\$1\"/files/teleport.sh \"\$1\"/hooks/* \"\$1\"/actions/* | grep -v -- --no-block" _ "$EXT"
+        \"\$1\"/files/teleport.sh \"\$1\"/files/teleport-core.sh \"\$1\"/hooks/* \"\$1\"/actions/* | grep -v -- --no-block" _ "$EXT"
 check "teleport-apps.path: apps.d" grep -qx 'PathChanged=/etc/cream/teleport/apps.d' "$U/teleport-apps.path"
 check "teleport-apps.path: command-labels.d" grep -qx 'PathChanged=/etc/cream/teleport/command-labels.d' "$U/teleport-apps.path"
 check "teleport-apps.service: reload-apps, ждёт блокировку" grep -qx 'ExecStart=/usr/bin/cream run --lock-timeout 6m teleport reload-apps' "$U/teleport-apps.service"

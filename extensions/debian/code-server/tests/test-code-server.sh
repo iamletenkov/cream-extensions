@@ -19,10 +19,12 @@ set -uo pipefail
 umask 022
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXT="$(dirname "$HERE")"
-TELEPORT_EXT="$(cd "$EXT/../teleport" && pwd)"
 # shellcheck source=../../../../tools/hooktest.sh
 . "$EXT/../../../tools/hooktest.sh"
 ht_init
+# teleport as cream gets it: the shared core laid into files/ (tools/stage-catalog.sh).
+TELEPORT_EXT="$("$EXT/../../../tools/stage-catalog.sh" --ext "$EXT/../teleport" "$HT_TMP/staged")" \
+    || { echo "FAIL: stage-catalog teleport" >&2; exit 1; }
 
 PW='Pw-Code-7f3a9c1e!x'
 PW2='Pw-Code-2b8d4e6f'
@@ -97,7 +99,7 @@ teleport_render() {
 echo "== манифест и раскладка =="
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
 eq "name" code-server "$(mf 'm["name"]')"
-eq "версия 5.2.0 (загрузка библиотекой fetch)" 5.2.0 "$(mf 'm["version"]')"
+eq "версия 5.2.1 (загрузка библиотекой fetch)" 5.2.1 "$(mf 'm["version"]')"
 eq "cream >=1.2.0 (every_boot, спека cream §10.9)" ">=1.2.0" "$(mf 'm["cream"]')"
 eq "configure на каждой загрузке (аудит 2026-10-21)" True "$(mf 'm["hooks"]["configure"].get("every_boot")')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"

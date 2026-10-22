@@ -5,8 +5,12 @@
 ```
 cream-catalog.yaml          корень каталога cream: schema, name, version (ведёт release-please), roots
 extensions/
-└── debian/                 roots: расширения для Debian и Ubuntu (семейство deb)
-    └── <имя>/              одно расширение, имя каталога = name манифеста
+├── debian/                 roots: расширения для Debian и Ubuntu (семейство deb)
+│   └── <имя>/              одно расширение, имя каталога = name манифеста
+└── openwrt/                roots: расширения для OpenWrt 25.12+ (семейство openwrt, cream ≥ 1.3.0)
+lib/                        общий код нескольких расширений, одна копия в git:
+                            teleport-core.sh (ядро teleport и teleport-openwrt),
+                            teleport-core.consumers (кому его класть), tests/
 tools/                      проверки, генераторы, раннеры тестов, пин cream (tools/cream-pin.env)
 docs/                       документация: guides/, reference/, runbooks/, history/, adr/, specs/, plans/, research/
 .github/workflows/          ci-release.yml (проверки и выпуск), live.yml (живые прогоны),
@@ -18,6 +22,13 @@ Makefile                    публичные команды: make help
 `cream-catalog.yaml` перечисляет `roots`; каждое расширение обязано лежать под одним
 из них — иначе его не увидят ни `cream validate --catalog .`, ни снимок
 (`tools/catalog-snapshot.sh` отказывает на непокрытом расширении).
+
+Общее ядро Teleport (`lib/teleport-core.sh`) в git лежит одной копией; в
+`files/teleport-core.sh` каждого потребителя из `lib/teleport-core.consumers` его кладут
+снимок (из коммита) и `tools/stage-catalog.sh` (из рабочего дерева — для `cream validate`,
+`cream check`, H- и живых тестов и path-источника). Потребитель объявляет
+`files/teleport-core.sh` в `files`, поэтому дерево без ядра `cream validate` не примет;
+копию в `extensions/` отвергает `tools/check-teleport-core.sh`.
 
 Каталог называется `debian/`, а семейство в манифесте — `platform.family: deb`; это
 разные вещи. Ubuntu берёт расширения из того же `debian/`. Группировка — удобство

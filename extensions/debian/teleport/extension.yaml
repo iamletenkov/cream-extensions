@@ -1,6 +1,12 @@
 schema: cream/v1
 name: teleport
-version: 4.1.2
+version: 4.2.0
+# 4.2.0: вынос ядра, поведение без изменений — init-независимая часть files/teleport.sh
+#        (рендер, join, метки, apps.d, управляемые метки, status) — общее ядро
+#        files/teleport-core.sh: одна копия в git (lib/teleport-core.sh каталога), в
+#        расширение его кладёт снимок; files/teleport.sh — слой systemd. Бинарь
+#        Teleport зовётся как `env -u LD_PRELOAD`. Единственное усиление: строка
+#        отказа в журнале засчитывается, только пока identity узла нет.
 # 4.1.2: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 # 4.1.1: только README (выпуск 5.1.1 изменил дерево без подъёма версии —
 #        cream отвергал обновление с 4.1.0: version.same_digest).
@@ -160,6 +166,10 @@ actions:
     timeout: 7m
     phases: [live]
 files:
+  # The shared core (lib/teleport-core.sh, laid by the snapshot): files/teleport.sh
+  # sources it from the tree of the extension; the line makes cream validate refuse
+  # a tree without it (spec 2026-10-20-openwrt §4.2, ruling Р11).
+  - {src: files/teleport-core.sh, dst: /usr/lib/teleport/teleport-core.sh, mode: "0644"}
   - {src: files/teleport.service, dst: /etc/systemd/system/teleport.service, mode: "0644"}
   - {src: files/teleport-apps.path, dst: /etc/systemd/system/teleport-apps.path, mode: "0644"}
   - {src: files/teleport-apps.service, dst: /etc/systemd/system/teleport-apps.service, mode: "0644"}

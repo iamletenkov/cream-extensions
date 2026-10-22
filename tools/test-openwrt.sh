@@ -3,12 +3,16 @@
 # busybox ash, apk, uci, the packages of openwrt-builder v0.3.1): the root FS
 # of the openwrt-builder release is imported into a docker image, cream comes
 # from the pin tools/cream-pin.env (the binary of the verified .deb — the same
-# static build as the release tar.gz), the catalog is this repository
-# (read-only). Inside the container — tools/testdata/openwrt/scenario.sh under
+# static build as the release tar.gz), the catalog is the staged tree of
+# this repository (tools/stage-catalog.sh: the shared core laid in; read-only). Inside the container — tools/testdata/openwrt/scenario.sh under
 # busybox sh: system init, the image build phase (PID 1 is not procd), the
 # "boot" by the rc.d scripts with the argument boot, cream set and remove — with
 # the real uci, awg and the init scripts of podkop. procd and netifd are not
 # running: the boot of a machine is checked on a VM (README of the extensions).
+# A second container runs tools/testdata/openwrt/scenario-teleport.sh:
+# teleport-openwrt from a local fake set — install in the build phase, a
+# deferred join, render, the managed labels and remove on the busybox of
+# OpenWrt (no stat, install, hostname, paste).
 #
 #   tools/test-openwrt.sh          (make test-openwrt)
 #
@@ -47,14 +51,18 @@ work="$(mktemp -d)"
 trap 'rm -rf -- "$work"' EXIT
 dpkg-deb -x "$deb" "$work/deb"
 install -m 0755 "$work/deb/usr/bin/cream" "$work/cream"
-cp "$HERE/testdata/openwrt/scenario.sh" "$work/scenario.sh"
+cp "$HERE/testdata/openwrt/scenario.sh" "$HERE/testdata/openwrt/scenario-teleport.sh" "$work/"
+"$HERE/stage-catalog.sh" "$work/catalog" > /dev/null || die "staged-дерево не собрано"
 
 echo "== test-openwrt: $image, cream $(basename "$deb")"
-crc=0
-docker run --rm --platform linux/amd64 --network none --tmpfs /tmp:rw,nosuid,nodev,mode=1777 \
-    -v "$work:/t:ro" -v "$REPO:/catalog:ro" "$image" /bin/sh /t/scenario.sh || crc=$?
-if (( crc != 0 )); then
-    echo "test-openwrt: сценарий упал (код $crc)" >&2
-    exit 1
-fi
+for sc in scenario.sh scenario-teleport.sh; do
+    echo "== test-openwrt: $sc"
+    crc=0
+    docker run --rm --platform linux/amd64 --network none --tmpfs /tmp:rw,nosuid,nodev,mode=1777 \
+        -v "$work:/t:ro" -v "$work/catalog:/catalog:ro" "$image" /bin/sh "/t/$sc" || crc=$?
+    if (( crc != 0 )); then
+        echo "test-openwrt: сценарий $sc упал (код $crc)" >&2
+        exit 1
+    fi
+done
 echo "test-openwrt: ок"

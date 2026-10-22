@@ -11,12 +11,13 @@
 | `cream validate` | `tools/cream-validate.sh` | манифест не проходит схему cream, имя повторяется, `depends` на отсутствующее или цикл, юнит не сходится с действиями |
 | `cream check` | `tools/cream-check.sh` | расширение не ставится строкой образа на одной из ОС матрицы; способности из `requires` никто не даёт |
 | гейт имён | `tools/check-names.sh` | найдено прежнее имя сборщика (ниже) |
-| правило версий | `tools/check-version-bump.sh` | дерево расширения изменилось с последнего тега `v*`, а `version` не выросла |
+| правило версий | `tools/check-version-bump.sh` | дерево расширения изменилось с последнего тега `v*` (для потребителей ядра — и `lib/teleport-core.sh`), а `version` не выросла |
 | таблицы из манифестов | `tools/catalog-docs.sh --check` | блок `catalog:*` в README устарел или маркеров нет |
 | ссылки | `tools/check-links.sh` | относительная ссылка `.md` ведёт на несуществующий файл или заголовок |
 | образцы контракта | `tools/check-contract-fixtures.sh` | образцы контракта `stvor-agent` ↔ `teleport` разошлись с пином `tools/contract-fixtures.sha256` |
-| снимок | `tools/test-snapshot.sh` | две сборки снимка дают разные байты или cream его не принимает |
-| тесты | `tools/test-*.sh`, `extensions/*/*/tests/test-*.sh` | тест инструмента или H-тест расширения не прошёл |
+| снимок | `tools/test-snapshot.sh` | две сборки снимка дают разные байты, cream его не принимает или ядро `lib/teleport-core.sh` лежит не у всех потребителей и не байт в байт |
+| общее ядро | `tools/check-teleport-core.sh` | копия `teleport-core.sh` под `extensions/`, потребитель без строки `files/teleport-core.sh` в `files`, объявивший её не потребитель, staged-копия не равна `lib/` |
+| тесты | `tools/test-*.sh`, `lib/tests/test-*.sh`, `extensions/*/*/tests/test-*.sh` | тест инструмента, общего кода или H-тест расширения не прошёл |
 
 ## Линт хуков: `tools/lint-hooks.sh`
 

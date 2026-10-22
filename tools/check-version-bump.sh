@@ -8,6 +8,10 @@
 # правка README у teleport и stvor-agent без подъёма версий сломала обновление
 # роботам с 5.1.0. Любая правка дерева — даже README — меняет отпечаток.
 #
+# Общее ядро Teleport lib/teleport-core.sh лежит в снимке в каждом потребителе
+# (lib/teleport-core.consumers): его правка меняет дерево всех потребителей, и
+# поднять version обязан каждый из них.
+#
 # База — старший тег v*, достижимый из HEAD (или --base <ref>). Сравнивается
 # рабочее дерево (локальный make ci ловит и незакоммиченное; в CI это HEAD).
 # Расширение, которого в базе нет (появилось после тега), и удалённое — без
@@ -63,6 +67,16 @@ sys.exit(0 if key(sys.argv[1]) > key(sys.argv[2]) else 1)
 EOF
 }
 
+# Consumers of the shared core whose snapshot tree changes with lib/teleport-core.sh.
+core_changed=0; consumers=" "
+if [[ -f "$REPO/lib/teleport-core.consumers" ]]; then
+    while IFS= read -r c || [[ -n "$c" ]]; do
+        c="${c%%#*}"; c="${c//[[:space:]]/}"
+        [[ -n "$c" ]] && consumers+="extensions/$c "
+    done < "$REPO/lib/teleport-core.consumers"
+    gitr diff --quiet "$base" -- lib/teleport-core.sh || core_changed=1
+fi
+
 rc=0; checked=0; changed=0
 for manifest in "$REPO"/extensions/*/*/extension.yaml; do
     [[ -e "$manifest" ]] || continue
@@ -70,13 +84,17 @@ for manifest in "$REPO"/extensions/*/*/extension.yaml; do
     rel="${dir#"$REPO"/}"
     old_yaml="$(gitr show "$base:$rel/extension.yaml" 2>/dev/null)" || continue  # новое после тега
     checked=$((checked + 1))
-    gitr diff --quiet "$base" -- "$rel/" && continue
+    why="дерево изменилось"
+    if gitr diff --quiet "$base" -- "$rel/"; then
+        (( core_changed )) && [[ "$consumers" == *" $rel "* ]] || continue
+        why="ядро lib/teleport-core.sh (его копия в снимке) изменилось"
+    fi
     changed=$((changed + 1))
     new_v="$(yaml_version < "$manifest")"
     old_v="$(yaml_version <<< "$old_yaml")"
     if ! out="$(vgt "$new_v" "$old_v" 2>&1)"; then
         [[ -n "$out" ]] && echo "$out" >&2
-        echo "$rel: дерево изменилось с $base, а version $new_v не выше $old_v." >&2
+        echo "$rel: $why с $base, а version $new_v не выше $old_v." >&2
         echo "  Подними version в $rel/extension.yaml (patch — правка без смены поведения, в т. ч. README)" >&2
         echo "  и запиши причину в историю версий манифеста: иначе cream на роботе с $base" >&2
         echo "  отвергнет обновление (version.same_digest — тот же номер, другой отпечаток дерева)." >&2

@@ -60,7 +60,9 @@ ht_done() {
     (( HT_FAIL == 0 ))
 }
 
-# ht_root <extension dir>: a fresh root with a copy of the extension.
+# ht_root <extension dir>: a fresh root with a copy of the extension, staged as
+# cream gets it (tools/stage-catalog.sh --ext: the shared core laid into a
+# consumer, tests/ left out).
 ht_root() {
     local src="$1" k
     [[ -f "$src/extension.yaml" ]] || { echo "ht_root: $src: нет extension.yaml" >&2; return 2; }
@@ -71,8 +73,8 @@ ht_root() {
     HT_EXT="$ROOT/opt/cream/ext/$HT_NAME"
     mkdir -p "$ROOT/bin" "$ROOT/tmp" "$FAKE" "$(dirname "$HT_EXT")" \
         "$ROOT/etc/cream/$HT_NAME" "$ROOT/var/lib/cream/ext/$HT_NAME"
-    cp -a "$src" "$HT_EXT"
-    rm -r -f -- "$HT_EXT/tests"
+    "$(dirname "${BASH_SOURCE[0]}")/stage-catalog.sh" --ext "$src" "$(dirname "$HT_EXT")" > /dev/null || return 2
+    [[ -d "$HT_EXT" ]] || mv -- "$(dirname "$HT_EXT")/$(basename "$src")" "$HT_EXT"
     # Libraries (kind: library) from `depends`, laid down as cream does: the
     # catalog sibling, without tests/. Other depends are the test's business.
     local lib
