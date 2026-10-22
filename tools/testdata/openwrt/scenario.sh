@@ -15,6 +15,34 @@ eq() { [ "$2" = "$3" ] || fail "$1: ждали «$2», получили «$3»";
 mode() { ls -l "$1" | cut -c1-10; }
 uget() { uci -q get "$1" 2>/dev/null || true; }
 
+# cloudinit_s47 WAN_IP: what wrt.cloudinit (S47 of openwrt-builder v0.3.0) does to
+# the network on a boot that provisions a new instance-id (apply_network_config):
+# every section of /etc/config/network deleted (purge_package network), then
+# loopback, wan and lan from the seed written anew. The real script needs a
+# cidata seed of the hypervisor, so its network part is repeated here.
+cloudinit_s47() {
+	uci -q show network | cut -d. -f2 | cut -d= -f1 | sort -u |
+		while read -r s; do uci -q delete "network.$s"; done
+	uci batch <<EOF >/dev/null
+set network.loopback=interface
+set network.loopback.device='lo'
+set network.loopback.proto='static'
+set network.loopback.ipaddr='127.0.0.1'
+set network.loopback.netmask='255.0.0.0'
+set network.wan=interface
+set network.wan.device='eth0'
+set network.wan.proto='static'
+set network.wan.ipaddr='$1'
+set network.wan.netmask='255.255.255.0'
+set network.lan=interface
+set network.lan.device='br-lan1'
+set network.lan.proto='static'
+set network.lan.ipaddr='192.168.10.1'
+set network.lan.netmask='255.255.255.0'
+commit network
+EOF
+}
+
 PEER="$(printf "%042d" 0 | tr 0 s)A="
 LINK='vless://0b7e6c2a-1111-4222-8333-944445555666@proxy.example.org:443?security=reality&sni=example.org#x'
 
@@ -39,7 +67,8 @@ cream install amneziawg AMNEZIAWG_ADDRESSES=10.8.0.2/32 AMNEZIAWG_PEER_PUBLIC_KE
 	AMNEZIAWG_PEER_ENDPOINT=vpn.example.org:51820 AMNEZIAWG_JC=4 AMNEZIAWG_H1=100-200
 cream install podkop PODKOP_CONNECTION_TYPE=vpn PODKOP_INTERFACE=awg0
 cream install luci-apps
-has /opt/cream/var/stages/early/amneziawg
+has /opt/cream/var/stages/system/amneziawg
+hasnt /opt/cream/var/stages/early/amneziawg
 has /opt/cream/var/stages/system/podkop
 has /lib/upgrade/keep.d/amneziawg
 hasnt /opt/cream/var/ext/amneziawg/private.key
@@ -66,6 +95,9 @@ config interface 'lan'
 	option netmask '255.255.255.0'
 EOF
 /etc/rc.d/S19cream-configure-early boot
+step "загрузка: S47 wrt.cloudinit переписывает сеть по сиду — после него S95"
+cloudinit_s47 10.0.0.2
+/etc/rc.d/S95cream-configure boot
 eq "proto" amneziawg "$(uget network.awg0.proto)"
 eq "адрес" 10.8.0.2/32 "$(uget network.awg0.addresses)"
 eq "Jc" 4 "$(uget network.awg0.awg_jc)"
@@ -76,11 +108,10 @@ eq "маршруты не наши" 0 "$(uget network.awg0_peer.route_allowed_ip
 key=$(cat /opt/cream/var/ext/amneziawg/private.key)
 eq "ключ машины в uci" "$key" "$(uget network.awg0.private_key)"
 eq "ключ 0600" -rw------- "$(mode /opt/cream/var/ext/amneziawg/private.key)"
-eq "lan не тронут" 192.168.1.1 "$(uget network.lan.ipaddr)"
+eq "lan от wrt.cloudinit не тронут" 192.168.10.1 "$(uget network.lan.ipaddr)"
+eq "wan от wrt.cloudinit не тронут" 10.0.0.2 "$(uget network.wan.ipaddr)"
 pub=$(CREAM_PHASE=live cream run amneziawg pubkey)
 [ "$pub" = "$(echo "$key" | awg pubkey)" ] || fail "pubkey: $pub"
-
-/etc/rc.d/S95cream-configure boot
 eq "podkop vpn" vpn "$(uget podkop.main.connection_type)"
 eq "podkop interface" awg0 "$(uget podkop.main.interface)"
 eq "podkop сообщества" russia_inside "$(uget podkop.main.community_lists)"
@@ -89,11 +120,23 @@ eq "podkop настройки образа на месте" 77.88.8.8 "$(uget po
 has /etc/rc.d/S99podkop
 eq "/etc/config/podkop 0600" -rw------- "$(mode /etc/config/podkop)"
 
-step "вторая загрузка: configure пропущены по отметке"
+step "вторая загрузка: сид тот же, интерфейс на месте — ручная правка не затёрта"
 uci set network.awg0.mtu=1280
 uci commit network
 /etc/rc.d/S19cream-configure-early boot
-eq "configure не повторялся" 1280 "$(uget network.awg0.mtu)"
+/etc/rc.d/S95cream-configure boot
+eq "интерфейс не переписан" 1280 "$(uget network.awg0.mtu)"
+eq "podkop interface" awg0 "$(uget podkop.main.interface)"
+
+step "третья загрузка: новый instance-id — S47 снова чистит сеть, S95 восстанавливает awg0"
+/etc/rc.d/S19cream-configure-early boot
+cloudinit_s47 10.0.0.3
+eq "после S47 awg0 нет" "" "$(uget network.awg0)"
+/etc/rc.d/S95cream-configure boot
+eq "awg0 восстановлен" amneziawg "$(uget network.awg0.proto)"
+eq "пир восстановлен" "$PEER" "$(uget network.awg0_peer.public_key)"
+eq "тот же ключ машины" "$key" "$(uget network.awg0.private_key)"
+eq "wan нового сида" 10.0.0.3 "$(uget network.wan.ipaddr)"
 
 step "cream set: proxy без ссылки — podkop выключен; со ссылкой — включён"
 CREAM_PHASE=live cream set podkop PODKOP_CONNECTION_TYPE=proxy

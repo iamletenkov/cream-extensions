@@ -37,9 +37,6 @@ secret() {
 # is_key VALUE: a WireGuard key in base64.
 is_key() { printf '%s\n' "$1" | grep -q "$KEY_RE"; }
 
-# live: not the image build and not the boot — netifd is to be told.
-live() { [ "${CREAM_PHASE:-}" = live ] && [ "${CREAM_REASON:-}" != boot ]; }
-
 # ubus_up: netifd answers (not in a container, not in the image).
 ubus_up() { command -v ubus >/dev/null 2>&1 && ubus -t 2 list network >/dev/null 2>&1; }
 
@@ -112,6 +109,38 @@ cmd_install() {
 	fi
 }
 
+# desired: the uci commands of the interface and its peer from the keys
+# (globals of cmd_configure: key, psk, host, port).
+desired() {
+	echo "set network.$IFACE=interface"
+	echo "set network.$IFACE.proto='amneziawg'"
+	echo "set network.$IFACE.private_key='$key'"
+	for a in ${AMNEZIAWG_ADDRESSES:-}; do echo "add_list network.$IFACE.addresses='$a'"; done
+	for o in LISTEN_PORT:listen_port MTU:mtu JC:awg_jc JMIN:awg_jmin JMAX:awg_jmax S1:awg_s1 S2:awg_s2 \
+		S3:awg_s3 S4:awg_s4 H1:awg_h1 H2:awg_h2 H3:awg_h3 H4:awg_h4; do
+		eval "v=\${AMNEZIAWG_${o%%:*}:-}"
+		[ -z "$v" ] || echo "set network.$IFACE.${o#*:}='$v'"
+	done
+	if [ -n "${AMNEZIAWG_PEER_PUBLIC_KEY:-}" ]; then
+		p="${IFACE}_peer"
+		echo "set network.$p=amneziawg_$IFACE"
+		echo "set network.$p.description='cream amneziawg'"
+		echo "set network.$p.public_key='$AMNEZIAWG_PEER_PUBLIC_KEY'"
+		[ -z "$psk" ] || echo "set network.$p.preshared_key='$psk'"
+		for a in ${AMNEZIAWG_PEER_ALLOWED_IPS:-}; do echo "add_list network.$p.allowed_ips='$a'"; done
+		echo "set network.$p.route_allowed_ips='${AMNEZIAWG_ROUTE_ALLOWED_IPS:-0}'"
+		[ -z "$host" ] || echo "set network.$p.endpoint_host='$host'"
+		[ -z "$port" ] || echo "set network.$p.endpoint_port='$port'"
+		[ -z "${AMNEZIAWG_PEER_KEEPALIVE:-}" ] || echo "set network.$p.persistent_keepalive='$AMNEZIAWG_PEER_KEEPALIVE'"
+	fi
+}
+
+# in_place: the interface (and its peer, if one is set) is in the network config.
+in_place() {
+	[ "$(uci -q -c "$CONF" get "network.$IFACE.proto" 2>/dev/null || true)" = amneziawg ] || return 1
+	[ -z "${AMNEZIAWG_PEER_PUBLIC_KEY:-}" ] || uci -q -c "$CONF" get "network.${IFACE}_peer" >/dev/null 2>&1
+}
+
 cmd_configure() {
 	if foreign "$IFACE"; then
 		die "network.$IFACE уже есть и это не amneziawg (proto $(uci -q -c "$CONF" get "network.$IFACE.proto" 2>/dev/null || echo '?')) — выберите другое AMNEZIAWG_IFACE"
@@ -130,43 +159,37 @@ cmd_configure() {
 		host="${host#[}"
 		host="${host%]}"
 	fi
+	body="$(desired)"
+	sum="$(printf '%s\n' "$body" | sha256sum | cut -d' ' -f1)"
+	[ -n "$sum" ] || die "sha256sum не дал отпечаток"
+	# Every boot (stage system, S95 — after S47 wrt.cloudinit, which purges
+	# /etc/config/network when it provisions a seed): the interface in place and
+	# the same keys — nothing to write, manual edits stay; gone — written again.
+	if [ "${CREAM_REASON:-}" = boot ] && [ "$(cat "$STATE/applied" 2>/dev/null || true)" = "$sum" ] && in_place; then
+		echo "amneziawg: интерфейс $IFACE на месте, настройки те же — не переписываю"
+		return 0
+	fi
 	if [ -e "$CONF/network" ]; then
 		chmod 0600 "$CONF/network"
 	fi
 	{
 		if [ -n "$prev" ] && [ "$prev" != "$IFACE" ]; then drop_iface "$prev"; fi
 		drop_iface "$IFACE"
-		echo "set network.$IFACE=interface"
-		echo "set network.$IFACE.proto='amneziawg'"
-		echo "set network.$IFACE.private_key='$key'"
-		for a in ${AMNEZIAWG_ADDRESSES:-}; do echo "add_list network.$IFACE.addresses='$a'"; done
-		for o in LISTEN_PORT:listen_port MTU:mtu JC:awg_jc JMIN:awg_jmin JMAX:awg_jmax S1:awg_s1 S2:awg_s2 \
-			S3:awg_s3 S4:awg_s4 H1:awg_h1 H2:awg_h2 H3:awg_h3 H4:awg_h4; do
-			eval "v=\${AMNEZIAWG_${o%%:*}:-}"
-			[ -z "$v" ] || echo "set network.$IFACE.${o#*:}='$v'"
-		done
-		if [ -n "${AMNEZIAWG_PEER_PUBLIC_KEY:-}" ]; then
-			p="${IFACE}_peer"
-			echo "set network.$p=amneziawg_$IFACE"
-			echo "set network.$p.description='cream amneziawg'"
-			echo "set network.$p.public_key='$AMNEZIAWG_PEER_PUBLIC_KEY'"
-			[ -z "$psk" ] || echo "set network.$p.preshared_key='$psk'"
-			for a in ${AMNEZIAWG_PEER_ALLOWED_IPS:-}; do echo "add_list network.$p.allowed_ips='$a'"; done
-			echo "set network.$p.route_allowed_ips='${AMNEZIAWG_ROUTE_ALLOWED_IPS:-0}'"
-			[ -z "$host" ] || echo "set network.$p.endpoint_host='$host'"
-			[ -z "$port" ] || echo "set network.$p.endpoint_port='$port'"
-			[ -z "${AMNEZIAWG_PEER_KEEPALIVE:-}" ] || echo "set network.$p.persistent_keepalive='$AMNEZIAWG_PEER_KEEPALIVE'"
-		fi
+		printf '%s\n' "$body"
 		echo "commit network"
 	} | uci -c "$CONF" batch >/dev/null
 	# uci batch answers 0 even when a command inside failed: check the result.
 	[ "$(uci -q -c "$CONF" get "network.$IFACE.proto" 2>/dev/null || true)" = amneziawg ] ||
 		die "uci не записал network.$IFACE в /etc/config/network"
 	printf '%s\n' "$IFACE" >"$STATE/iface"
+	printf '%s\n' "$sum" >"$STATE/applied"
 	echo "amneziawg: интерфейс $IFACE записан в /etc/config/network"
-	if live && ubus_up; then
-		ubus call network reload
+	# On the live machine netifd runs at S95 too (since S20network): reload.
+	if [ "${CREAM_PHASE:-}" = live ] && ubus_up; then
+		ubus call network reload || warn "ubus call network reload не прошёл — $IFACE поднимется после перезагрузки"
 		(ifup "$IFACE" >/dev/null 2>&1 &)
+	elif [ "${CREAM_PHASE:-}" = live ]; then
+		warn "netifd не отвечает — $IFACE поднимется после ubus call network reload или перезагрузки"
 	fi
 }
 
@@ -186,7 +209,7 @@ cmd_remove() {
 	if [ "${CREAM_PHASE:-}" = live ] && ubus_up; then
 		ubus call network reload
 	fi
-	rm -f "$STATE/iface"
+	rm -f "$STATE/iface" "$STATE/applied"
 }
 
 cmd_pubkey() {

@@ -13,7 +13,7 @@
 <!-- catalog:reference -->
 | Расширение | cream | Даёт | Требует | Зависит от | Конфликтует с | Настройка на загрузке | Живая машина |
 |---|---|---|---|---|---|---|---|
-| [`amneziawg`](../../extensions/openwrt/amneziawg/README.md) | ≥ 1.3.0 | `vpn-amneziawg` | — | — | — | стадия `early`, по отметке выполнения | да |
+| [`amneziawg`](../../extensions/openwrt/amneziawg/README.md) | ≥ 1.3.0 | `vpn-amneziawg` | — | — | — | стадия `system`, на каждой загрузке (`every_boot`) | да |
 | [`apt-guard`](../../extensions/debian/apt-guard/README.md) | ≥ 1.0.0 | — | — | — | — | — | да |
 | [`btop`](../../extensions/debian/btop/README.md) | ≥ 1.0.0 | `system-monitor` | — | [`apt-guard`](../../extensions/debian/apt-guard/README.md) | — | — | да |
 | [`can`](../../extensions/debian/can/README.md) | ≥ 1.0.0 | `can-bus` | — | [`apt-guard`](../../extensions/debian/apt-guard/README.md) | — | — | да |

@@ -71,11 +71,11 @@ cream запускает хук — [стадии configure](https://github.com/
 | А2 | перебирает пользователей или домашние каталоги (`getent passwd`, `/home/*`, UID 1000+) | `rustdesk`, `desktop` |
 | А3 | ждёт пользователя cloud-init (`get_cloud_user.sh`, стадия `cloud-user`) | `x11vnc`, `kiosk`, `docker` |
 | А4 | сам ставит себе повтор `configure` | `rustdesk` |
-| А5 | правит файлы, которые переписывает само приложение | `rustdesk` — `RustDesk2.toml` |
+| А5 | правит файлы, которые переписывает само приложение | `rustdesk` — `RustDesk2.toml`; `amneziawg` — `/etc/config/network`, его переписывает `wrt.cloudinit` |
 | А6 | зависит от железа: GPU, кодер, `/dev/*`, плата Jetson | `pixelflux-tegra`, `jetson-stats` |
 
 Решения по каждому хуку каталога — [аудит configure](../research/2026-10-21-configure-audit.md):
-`every_boot` у 12 расширений, без него — `chromium-kiosk` (собирает файл только из
+`every_boot` у 12 расширений (позже — и у `amneziawg`, 13), без него — `chromium-kiosk` (собирает файл только из
 параметров) и `wallpaper` (системные умолчания живут до перезагрузки).
 
 - **Осознанное «не нужен».** Правило `every-boot` в `tools/lint-hooks.sh` ищет

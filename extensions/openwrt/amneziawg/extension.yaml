@@ -4,19 +4,22 @@
 # is built for the exact kernel of the release and is not in the OpenWrt feeds.
 #
 # install   — checks the packages of the image; no package, no change (code 20).
-# configure — stage early (S19, before S20network): the private key (the secret
-#             AMNEZIAWG_PRIVATE_KEY or one generated on the machine and kept in
-#             the state), the interface and its peer in /etc/config/network
-#             through `uci batch` on stdin (keys never in argv). On the live
-#             machine (not at boot) — `ubus call network reload` and ifup in the
-#             background. Not every boot: uci and the key live on the disk
-#             (signs A1–A6 — none, README «Подробности»).
+# configure — stage system (S95, after S47 wrt.cloudinit, which purges
+#             /etc/config/network when it provisions a seed — first boot or a
+#             new instance-id; before podkop by name): the private key (the
+#             secret AMNEZIAWG_PRIVATE_KEY or one generated on the machine and
+#             kept in the state), the interface and its peer in
+#             /etc/config/network through `uci batch` on stdin (keys never in
+#             argv). Every boot (A5 — another program rewrites the file): the
+#             interface in place with the same keys — left as is; gone — written
+#             again. Written on the live machine (S95 too) — `ubus call network
+#             reload` and ifup in the background.
 # remove    — the interface and its peers out of the network config.
 # files     — /lib/upgrade/keep.d/amneziawg: sysupgrade keeps the key (only the
 #             state; ADR 0005 of cream, ruling RO5).
 schema: cream/v1
 name: amneziawg
-version: 1.0.0
+version: 1.0.1
 summary: интерфейс AmneziaWG на OpenWrt — ключ на машине, интерфейс и пир через uci, пакеты из образа
 cream: ">=1.3.0"
 platform:
@@ -29,7 +32,7 @@ targets:
 provides: [vpn-amneziawg]
 hooks:
   install: {timeout: 1m}
-  configure: {stage: early, timeout: 1m}
+  configure: {stage: system, every_boot: true, timeout: 1m}
   remove: {timeout: 1m}
 actions:
   pubkey: {summary: "открытый ключ интерфейса (для сервера AmneziaWG)", lock: none, output: text, phases: [live]}
