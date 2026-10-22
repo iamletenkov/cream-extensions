@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.6.0](https://github.com/iamletenkov/cream-extensions/compare/v5.5.0...v5.6.0) (2026-10-22)
+
+
+### Добавлено
+
+* **stvor-agent-openwrt:** агент Stvor на OpenWrt из tar.gz, службы procd ([#57](https://github.com/iamletenkov/cream-extensions/issues/57)) ([3fad493](https://github.com/iamletenkov/cream-extensions/commit/3fad49397b11ae6c2aec837737422c829a818001))
+* **stvor-agent:** пин агента 4.1.0 и учёт службы телеметрии ([#59](https://github.com/iamletenkov/cream-extensions/issues/59)) ([753157d](https://github.com/iamletenkov/cream-extensions/commit/753157dda3a2ab3daa1998332356b8d96a204fc8))
+
 ## [5.5.0](https://github.com/iamletenkov/cream-extensions/compare/v5.4.2...v5.5.0) (2026-10-22)
 
 
