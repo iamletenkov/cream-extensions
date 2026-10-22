@@ -76,13 +76,13 @@ blocking_systemctl() { grep -E '^systemctl (start|restart|stop|reload|enable --n
 echo "== манифест и раскладка =="
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
 eq "name" selkies "$(mf 'm["name"]')"
-eq "версия 6.2.0 (загрузка библиотекой fetch)" 6.2.0 "$(mf 'm["version"]')"
+eq "версия 6.2.1 (fetch_verified из files/fetch.sh)" 6.2.1 "$(mf 'm["version"]')"
 eq "cream >=1.2.0 (every_boot, спека cream §10.9)" ">=1.2.0" "$(mf 'm["cream"]')"
 eq "configure на каждой загрузке (аудит 2026-10-21)" True "$(mf 'm["hooks"]["configure"].get("every_boot")')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
 eq "стадия graphical" graphical "$(mf 'm["hooks"]["configure"]["stage"]')"
 eq "хуки" "apply configure install remove" "$(mf '" ".join(sorted(m["hooks"]))')"
-eq "depends cloud-user и fetch" "cloud-user >=1.0.0 <2 fetch >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
+eq "depends только cloud-user (fetch не нужен)" "cloud-user >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
 eq "provides" "web-remote-desktop" "$(mf '" ".join(m["provides"])')"
 eq "requires" "display-manager x11-server" "$(mf '" ".join(sorted(m["requires"]))')"
 eq "секреты — secret: file" "SELKIES_BASIC_AUTH_PASSWORD SELKIES_BASIC_AUTH_VIEWONLY_PASSWORD SELKIES_MASTER_TOKEN" \
@@ -170,6 +170,22 @@ check "между попытками пауза" ht_called '^sleep 10$'
 check "отказ — по sha256, а не по сети" grep -q 'sha256' "$ROOT/out"
 check_not "ничего не распаковано" test -e "$ROOT/opt/selkies/$VER"
 check_not "рабочий каталог убран" compgen -G "$ROOT/opt/selkies/.install.*"
+check_not "без библиотеки fetch: /opt/cream/ext/fetch на корне нет" test -e "$ROOT/opt/cream/ext/fetch"
+check "fetch_verified — своя files/fetch.sh = lib/fetch.sh" cmp -s "$EXT/../../../lib/fetch.sh" "$HT_EXT/files/fetch.sh"
+
+echo "== install: без библиотеки fetch — скачано, проверено, распаковано =="
+sk_root
+ht_fake dpkg 'echo amd64'
+ht_fake apt-get
+APPIMG_OK='appimage-payload'
+sed -i -E "s/\[x86_64\]=\"[0-9a-f]{64}\"/[x86_64]=\"$(printf '%s' "$APPIMG_OK" | sha256sum | cut -d' ' -f1)\"/" "$HT_EXT/hooks/install"
+ht_fake curl 'while (( $# )); do [[ "$1" == -o ]] && { printf %s '"$APPIMG_OK"' > "$2"; }; shift; done; exit 0'
+ht_hook install
+check "AppImage скачан через fetch_verified (сумма сошлась, дальше — распаковка)" ht_called "^curl .*selkies-$VER-x86_64\.AppImage"
+check_not "отказа по sha256 нет" grep -q 'sha256 AppImage не совпал' "$ROOT/out"
+check_not "нет жалобы на отсутствующую библиотеку" grep -q 'fetch' "$ROOT/out"
+check_not "без библиотеки fetch: /opt/cream/ext/fetch на корне нет" test -e "$ROOT/opt/cream/ext/fetch"
+check "fetch_verified — своя files/fetch.sh = lib/fetch.sh" cmp -s "$EXT/../../../lib/fetch.sh" "$HT_EXT/files/fetch.sh"
 
 echo "== configure: нет пароля и нет SELKIES_ALLOW_NO_AUTH — не стартует =="
 sk_root

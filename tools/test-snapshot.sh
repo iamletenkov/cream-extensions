@@ -5,13 +5,15 @@
 # second under another umask) give the same SHA256SUMS. Contents: the whole
 # catalog of the commit — cream-catalog.yaml, LICENSE, NOTICE and every
 # extension under extensions/ (no filtering by format), without tests/ and
-# nothing else of the repository (tools/, docs/); the shared core
-# lib/teleport-core.sh of the commit lies byte-equal in files/teleport-core.sh
-# of every consumer (lib/teleport-core.consumers) and nowhere else. The catalog version equals the release-please version. Acceptance by
+# nothing else of the repository (tools/, docs/); every shared library
+# lib/<lib>.sh of the commit (teleport-core, fetch) lies byte-equal in
+# files/<lib>.sh of every consumer (lib/<lib>.consumers) and nowhere else. The catalog version equals the release-please version. Acceptance by
 # the same cream (pin tools/cream-pin.env), as Stvor and bisquite consume it:
 # `cream source add --archive file://… --sha256 … --sync`, `cream validate` of
 # the synced cache, `cream resolve` (phase build) of teleport and of
-# stvor-agent with its dependency, of teleport-openwrt (family openwrt); a wrong sha256 is refused. Without a cream
+# stvor-agent with its dependency, of teleport-openwrt (family openwrt), of
+# code-server and rustdesk with their dependencies but without the library fetch
+# (no deps.missing: lib/fetch.sh is theirs); a wrong sha256 is refused. Without a cream
 # pin and CREAM_DEB the test is skipped with a line, not silently.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -81,22 +83,24 @@ fi
 extra="$(grep -vE '^(cream-catalog\.yaml|LICENSE|NOTICE|extensions/.*)$' <<<"$listing" | head -n5 | tr '\n' ' ')"
 if [[ -z "$extra" ]]; then ok "кроме каталога в снимке ничего"; else bad "в снимке лишнее: $extra"; fi
 if grep -q '/tests/' <<<"$listing"; then bad "в снимке есть tests/"; else ok "tests/ в снимок не попадают"; fi
-# The core: one copy per consumer, the bytes of lib/ of the commit.
-mapfile -t want_core < <(git -C "$REPO" show HEAD:lib/teleport-core.consumers 2>/dev/null \
-    | sed 's/#.*//; s/[[:space:]]//g' | grep . | sed 's|.*|extensions/&/files/teleport-core.sh|' | LC_ALL=C sort)
-got_core="$(grep '/teleport-core\.sh$' <<<"$listing" | LC_ALL=C sort)"
-if (( ${#want_core[@]} )) && [[ "$got_core" == "$(printf '%s\n' "${want_core[@]}")" ]]; then
-    ok "ядро у потребителей и только у них: ${#want_core[@]}"
-else
-    bad "ядро в снимке: [$(tr '\n' ' ' <<<"$got_core")], ждали [${want_core[*]}]"
-fi
-git -C "$REPO" show HEAD:lib/teleport-core.sh > "$T/core.want" 2>/dev/null
-for f in "${want_core[@]}"; do
-    if tar -xzOf "$T/a/$asset" "$f" 2>/dev/null | cmp -s - "$T/core.want"; then
-        ok "$f = lib/teleport-core.sh"
+# Shared libraries: one copy per consumer, the bytes of lib/ of the commit.
+for lib in teleport-core fetch; do
+    mapfile -t want_lib < <(git -C "$REPO" show "HEAD:lib/$lib.consumers" 2>/dev/null \
+        | sed 's/#.*//; s/[[:space:]]//g' | grep . | sed "s|.*|extensions/&/files/$lib.sh|" | LC_ALL=C sort)
+    got_lib="$(grep "/files/$lib\.sh\$" <<<"$listing" | LC_ALL=C sort)"
+    if (( ${#want_lib[@]} )) && [[ "$got_lib" == "$(printf '%s\n' "${want_lib[@]}")" ]]; then
+        ok "lib/$lib.sh у потребителей и только у них: ${#want_lib[@]}"
     else
-        bad "$f не равен lib/teleport-core.sh коммита"
+        bad "lib/$lib.sh в снимке: [$(tr '\n' ' ' <<<"$got_lib")], ждали [${want_lib[*]}]"
     fi
+    git -C "$REPO" show "HEAD:lib/$lib.sh" > "$T/$lib.want" 2>/dev/null
+    for f in "${want_lib[@]}"; do
+        if tar -xzOf "$T/a/$asset" "$f" 2>/dev/null | cmp -s - "$T/$lib.want"; then
+            ok "$f = lib/$lib.sh"
+        else
+            bad "$f не равен lib/$lib.sh коммита"
+        fi
+    done
 done
 
 # 3. Acceptance by cream, as the consumers do it.
@@ -115,6 +119,8 @@ echo "ok source add --archive --sync"
 B="--phase build --family deb --target-arch amd64 --host-arch amd64"
 $C resolve $B teleport && echo "ok resolve teleport" || { echo "FAIL resolve teleport"; rc=1; }
 $C resolve $B teleport stvor-agent && echo "ok resolve stvor-agent" || { echo "FAIL resolve stvor-agent"; rc=1; }
+$C resolve $B cloud-user apt-guard code-server rustdesk > /tmp/res 2>&1 && ! grep -qw fetch /tmp/res \
+    && echo "ok resolve code-server rustdesk без fetch" || { echo "FAIL resolve code-server rustdesk без fetch"; cat /tmp/res; rc=1; }
 W="--phase build --family openwrt --target-arch amd64 --host-arch amd64"
 $C resolve $W teleport-openwrt && echo "ok resolve teleport-openwrt" || { echo "FAIL resolve teleport-openwrt"; rc=1; }
 exit $rc'

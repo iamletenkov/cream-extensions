@@ -21,9 +21,11 @@ EXT_DIR="${CREAM_EXT_DIR:?run by cream}"
 STATE_DIR="${CREAM_STATE_DIR:?run by cream}"
 # shellcheck source=../files/common.sh
 . "$EXT_DIR/files/common.sh"
-FETCH_LIB="$R/opt/cream/ext/fetch/fetch.sh"
-[[ -f "$FETCH_LIB" ]] || { log "нет библиотеки fetch ($FETCH_LIB) — cream ставит её по depends"; exit 1; }
-# shellcheck source=../../fetch/fetch.sh
+# fetch_verified — the catalog's lib/fetch.sh, laid into files/ by the snapshot
+# (no depends: nothing to install before rustdesk).
+FETCH_LIB="$EXT_DIR/files/fetch.sh"
+[[ -f "$FETCH_LIB" ]] || { log "нет $FETCH_LIB — дерево расширения неполное (снимок каталога кладёт lib/fetch.sh)"; exit 1; }
+# shellcheck source=../../../../lib/fetch.sh
 . "$FETCH_LIB"
 
 # Pins: version + dpkg architecture -> sha256 of the release asset (GitHub

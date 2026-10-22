@@ -12,7 +12,7 @@
 | cream | ≥ 1.2.0 |
 | Даёт | `remote-support` |
 | Требует | — |
-| Зависит от | [`cloud-user`](../cloud-user/README.md), [`apt-guard`](../apt-guard/README.md), [`fetch`](../fetch/README.md) |
+| Зависит от | [`cloud-user`](../cloud-user/README.md), [`apt-guard`](../apt-guard/README.md) |
 | Конфликтует с | — |
 | Хуки | `install`, `configure`, `remove` |
 | Настройка на загрузке | стадия `system`, на каждой загрузке (`every_boot`) |
@@ -27,7 +27,7 @@
 ## Что делает
 
 - **`install`** — `.deb` своей архитектуры (`dpkg --print-architecture`):
-  скачивается во временный каталог библиотекой [`fetch`](../fetch/README.md) (5
+  скачивается во временный каталог `fetch_verified` из [`lib/fetch.sh`](../../../lib/fetch.sh) (5
   попыток на обрыв), **sha256 сверяется до того, как файл увидит
   apt**; юнит `/usr/lib/systemd/system/rustdesk.service`, если его не положил
   postinst (в appliance сборки PID 1 — не systemd); служба включена. В **сборке**

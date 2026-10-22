@@ -13,7 +13,7 @@ ssh-туннель.
 | cream | ≥ 1.2.0 |
 | Даёт | `web-ide` |
 | Требует | — |
-| Зависит от | [`cloud-user`](../cloud-user/README.md), [`fetch`](../fetch/README.md) |
+| Зависит от | [`cloud-user`](../cloud-user/README.md) |
 | Конфликтует с | — |
 | Хуки | `install`, `configure`, `apply`, `remove` |
 | Настройка на загрузке | стадия `cloud-user`, на каждой загрузке (`every_boot`) |
@@ -28,7 +28,7 @@ ssh-туннель.
 учёток и служб той же машины.
 
 - **`install`** — `.deb` code-server **4.135.0** из релиза GitHub по закреплённому
-  sha256 на архитектуру, загрузка — библиотекой [`fetch`](../fetch/README.md) (5
+  sha256 на архитектуру, загрузка — `fetch_verified` из [`lib/fetch.sh`](../../../lib/fetch.sh) (5
   попыток на обрыв; `apt-get install` проверенного файла; чужая сумма — отказ,
   ничего не ставится); `openssl` — им code-server выпускает свой сертификат.
   Службу не запускает, настроек и домашних каталогов не трогает. Повтор при

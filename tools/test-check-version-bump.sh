@@ -128,6 +128,20 @@ mkdir -p "$R/lib"; printf '# core\n' > "$R/lib/teleport-core.sh"; printf 'debian
 commit core-init; g tag v1.1.0
 out="$("$GATE" "$R" 2>&1)"; rc=$?
 eq "ядро не менялось — код 0" 0 "$rc"
+# A second shared library (lib/fetch.sh): its edit raises its consumers only.
+fresh lib-second
+mkdir -p "$R/lib"; printf '# core\n' > "$R/lib/teleport-core.sh"; printf 'debian/alpha\n' > "$R/lib/teleport-core.consumers"
+printf '# fetch\n' > "$R/lib/fetch.sh"; printf 'debian/beta\n' > "$R/lib/fetch.consumers"
+commit libs-init; g tag v1.1.0
+printf '# fetch 2\n' > "$R/lib/fetch.sh"; commit fetch-edit
+out="$("$GATE" "$R" 2>&1)"; rc=$?
+eq "правка второй библиотеки без подъёма — код 1" 1 "$rc"
+has "правка fetch — потребитель beta назван" "extensions/debian/beta" "$out"
+has "правка fetch — причина" "общая библиотека lib/fetch.sh" "$out"
+hasnt "правка fetch — потребитель ядра не назван" "extensions/debian/alpha" "$out"
+ext beta 2.0.1 readme; commit bump-beta
+out="$("$GATE" "$R" 2>&1)"; rc=$?
+eq "подъём потребителя fetch — код 0" 0 "$rc"
 
 echo "test-check-version-bump: ok $pass, fail $fail"
 (( fail == 0 ))

@@ -99,13 +99,13 @@ teleport_render() {
 echo "== манифест и раскладка =="
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
 eq "name" code-server "$(mf 'm["name"]')"
-eq "версия 5.2.1 (загрузка библиотекой fetch)" 5.2.1 "$(mf 'm["version"]')"
+eq "версия 5.2.2 (fetch_verified из files/fetch.sh)" 5.2.2 "$(mf 'm["version"]')"
 eq "cream >=1.2.0 (every_boot, спека cream §10.9)" ">=1.2.0" "$(mf 'm["cream"]')"
 eq "configure на каждой загрузке (аудит 2026-10-21)" True "$(mf 'm["hooks"]["configure"].get("every_boot")')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
 eq "стадия cloud-user" cloud-user "$(mf 'm["hooks"]["configure"]["stage"]')"
 eq "хуки" "apply configure install remove" "$(mf '" ".join(sorted(m["hooks"]))')"
-eq "depends cloud-user и fetch" "cloud-user >=1.0.0 <2 fetch >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
+eq "depends только cloud-user (fetch не нужен)" "cloud-user >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
 eq "provides" "web-ide" "$(mf '" ".join(m["provides"])')"
 eq "arch" "amd64 arm64" "$(mf '" ".join(m["platform"]["arch"])')"
 eq "секрет — только пароль, secret: file" "CODE_SERVER_PASSWORD" \
@@ -207,6 +207,8 @@ ht_hook install; eq "после двух обрывов — install 0" 0 "$?"
 eq "три вызова curl" 3 "$(grep -c '^curl ' "$FAKE/calls")"
 check "между попытками пауза" ht_called '^sleep 10$'
 check "ставится проверенный .deb" grep -q 'install .*\.deb' "$FAKE/apt.log"
+check_not "без библиотеки fetch: /opt/cream/ext/fetch на корне нет" test -e "$ROOT/opt/cream/ext/fetch"
+check "fetch_verified — своя files/fetch.sh = lib/fetch.sh" cmp -s "$EXT/../../../lib/fetch.sh" "$HT_EXT/files/fetch.sh"
 
 echo "== остатки layout 2: install и configure отказывают =="
 # plant <kind>: one leftover of the layout 2 code-server on the root.

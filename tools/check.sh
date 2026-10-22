@@ -24,11 +24,12 @@
 # отвергает обновление version.same_digest) и его тест. Документация:
 # сгенерированные из манифестов блоки README и справочника не устарели
 # (catalog-docs.sh --check), относительные ссылки и якоря .md целы
-# (check-links.sh), и тесты обоих. Общее ядро Teleport (lib/teleport-core.sh,
-# спека 2026-10-20-openwrt §4.2, рулинг Р11): staged-дерево (stage-catalog.sh —
-# на нём cream validate, cream check, H-тесты потребителей) и его тест; одна копия
-# в git и строка files у потребителей (check-teleport-core.sh) и его тест; тесты
-# ядра — каждый исполняемый lib/tests/test-*.sh.
+# (check-links.sh), и тесты обоих. Общие библиотеки lib/<lib>.sh (ядро Teleport
+# teleport-core.sh, загрузчик fetch.sh; спека 2026-10-20-openwrt §4.2, рулинг
+# Р11): staged-дерево (stage-catalog.sh — на нём cream validate, cream check,
+# H-тесты потребителей) и его тест; одна копия в git, сверка копий и
+# потребителей (check-shared-libs.sh) и его тест; тесты ядра — каждый
+# исполняемый lib/tests/test-*.sh.
 #
 # Тесты расширений находятся сами: каждый исполняемый
 # extensions/<семейство>/<имя>/tests/test-*.sh (рулинг Р13 плана
@@ -110,11 +111,11 @@ echo "== check-contract-fixtures =="
 echo "== test-stage-catalog =="
 "$HERE/test-stage-catalog.sh" || rc=1
 
-echo "== check-teleport-core =="
-"$HERE/check-teleport-core.sh" || rc=1
+echo "== check-shared-libs =="
+"$HERE/check-shared-libs.sh" || rc=1
 
-echo "== test-check-teleport-core =="
-"$HERE/test-check-teleport-core.sh" || rc=1
+echo "== test-check-shared-libs =="
+"$HERE/test-check-shared-libs.sh" || rc=1
 
 # Tests of the shared libraries of lib/: found, not listed.
 for t in "$REPO"/lib/tests/test-*.sh; do

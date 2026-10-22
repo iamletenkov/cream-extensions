@@ -16,7 +16,7 @@
 | ссылки | `tools/check-links.sh` | относительная ссылка `.md` ведёт на несуществующий файл или заголовок |
 | образцы контракта | `tools/check-contract-fixtures.sh` | образцы контракта `stvor-agent` ↔ `teleport` разошлись с пином `tools/contract-fixtures.sha256` |
 | снимок | `tools/test-snapshot.sh` | две сборки снимка дают разные байты, cream его не принимает или ядро `lib/teleport-core.sh` лежит не у всех потребителей и не байт в байт |
-| общее ядро | `tools/check-teleport-core.sh` | копия `teleport-core.sh` под `extensions/`, потребитель без строки `files/teleport-core.sh` в `files`, объявивший её не потребитель, staged-копия не равна `lib/` |
+| общие библиотеки | `tools/check-shared-libs.sh` | копия `lib/<библиотека>.sh` в `files/` под `extensions/`; потребитель ядра без строки `files/teleport-core.sh` в `files` (`# rule: files`), потребитель `fetch` без `files/fetch.sh` в своём дереве; взявший библиотеку не потребитель; staged-копия не равна `lib/` |
 | тесты | `tools/test-*.sh`, `lib/tests/test-*.sh`, `extensions/*/*/tests/test-*.sh` | тест инструмента, общего кода или H-тест расширения не прошёл |
 
 ## Линт хуков: `tools/lint-hooks.sh`
