@@ -27,7 +27,9 @@
 #        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: code-server
-version: 5.1.1
+version: 5.2.0
+# 5.2.0: the .deb through library fetch (depends): attempts per URL — curl 7.68
+#        of focal (Jetson Nano) does not retry "Connection reset by peer".
 # 5.1.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: code-server — VS Code в браузере от имени пользователя; без пароля не стартует, наружу — через Teleport
 cream: ">=1.2.0"
@@ -43,6 +45,7 @@ targets:
 provides: [web-ide]
 depends:
   - {name: cloud-user, version: ">=1.0.0 <2"}
+  - {name: fetch, version: ">=1.0.0 <2"}
 hooks:
   # The .deb is ~100 MB over the network.
   install: {timeout: 20m}

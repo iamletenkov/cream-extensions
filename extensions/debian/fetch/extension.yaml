@@ -1,0 +1,19 @@
+# fetch — library: fetch_verified for the large downloads of the catalog
+# (AppImage, .deb of a release) — a loop of attempts per URL around curl and
+# the pinned sha256 after. curl 7.68 (Ubuntu focal, L4T of Jetson Nano) does
+# not retry "Connection reset by peer" even with --retry, and has no
+# --retry-all-errors. Consumers source
+# "${CREAM_ROOT:-}/opt/cream/ext/fetch/fetch.sh" (cream spec §4.5). No hooks:
+# cream lays the tree down and keeps it while a consumer depends on it.
+# No platform.commands: a consumer puts curl on itself (selkies, code-server do
+# it in install), the library must not refuse before that.
+schema: cream/v1
+name: fetch
+kind: library
+version: 1.0.0
+summary: Библиотека — загрузка большого файла по закреплённой sha256 с повторами на обрыв соединения
+cream: ">=1.0.0"
+platform:
+  family: deb
+  arch: [amd64, arm64]
+targets: {build: exec, live: "yes"}
