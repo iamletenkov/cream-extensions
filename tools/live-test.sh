@@ -283,12 +283,12 @@ docker run -d --name "$NAME" \
     "$IMAGE" > /dev/null || die "контейнер не запустился"
 wait_boot || die "systemd в контейнере не загрузился"
 
-# Catalog: the extension and its deps, without tests/.
+# Catalog: the extension and its deps, without tests/, staged (the shared core
+# laid into its consumers, tools/stage-catalog.sh --ext).
 mkdir -p "$TMP/cat/extensions"
 printf 'schema: cream/v1\nname: live-test\nversion: 0.0.0\nroots: [extensions]\n' > "$TMP/cat/cream-catalog.yaml"
 for d in "${dep_dirs[@]}" "$ext_dir"; do
-    cp -a "$d" "$TMP/cat/extensions/$(basename "$d")"
-    rm -r -f -- "$TMP/cat/extensions/$(basename "$d")/tests"
+    "$HERE/stage-catalog.sh" --ext "$d" "$TMP/cat/extensions" > /dev/null || die "$d: не собрано"
 done
 # Params file: plain params and generated secrets (0600 root inside).
 declare -A secret_val=()

@@ -24,7 +24,11 @@
 # отвергает обновление version.same_digest) и его тест. Документация:
 # сгенерированные из манифестов блоки README и справочника не устарели
 # (catalog-docs.sh --check), относительные ссылки и якоря .md целы
-# (check-links.sh), и тесты обоих.
+# (check-links.sh), и тесты обоих. Общее ядро Teleport (lib/teleport-core.sh,
+# спека 2026-10-20-openwrt §4.2, рулинг Р11): staged-дерево (stage-catalog.sh —
+# на нём cream validate, cream check, H-тесты потребителей) и его тест; одна копия
+# в git и строка files у потребителей (check-teleport-core.sh) и его тест; тесты
+# ядра — каждый исполняемый lib/tests/test-*.sh.
 #
 # Тесты расширений находятся сами: каждый исполняемый
 # extensions/<семейство>/<имя>/tests/test-*.sh (рулинг Р13 плана
@@ -102,6 +106,23 @@ echo "== test-check-links =="
 
 echo "== check-contract-fixtures =="
 "$HERE/check-contract-fixtures.sh" || rc=1
+
+echo "== test-stage-catalog =="
+"$HERE/test-stage-catalog.sh" || rc=1
+
+echo "== check-teleport-core =="
+"$HERE/check-teleport-core.sh" || rc=1
+
+echo "== test-check-teleport-core =="
+"$HERE/test-check-teleport-core.sh" || rc=1
+
+# Tests of the shared libraries of lib/: found, not listed.
+for t in "$REPO"/lib/tests/test-*.sh; do
+    [[ -e "$t" ]] || continue
+    echo "== ${t#"$REPO"/} =="
+    if [[ ! -x "$t" ]]; then echo "${t#"$REPO"/}: не исполняемый (chmod +x)" >&2; rc=1; continue; fi
+    "$t" || rc=1
+done
 
 # Tests of the extensions: found, not listed.
 n=0

@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # `cream validate` of this catalog.
 #
-#   tools/cream-validate.sh            `cream validate --catalog .` over the
-#                                      repository root, as it is: every
-#                                      extension under the roots of
-#                                      cream-catalog.yaml, the graph, duplicate
-#                                      names, cross-extension unit/action checks
-#   tools/cream-validate.sh DIR...     the given extension directories, copied
-#                                      into a temporary catalog (its own
+#   tools/cream-validate.sh            `cream validate --catalog` over the
+#                                      staged tree of the repository
+#                                      (tools/stage-catalog.sh: the working tree
+#                                      with the shared core laid in, as the
+#                                      snapshot has it): every extension under
+#                                      the roots of cream-catalog.yaml, the
+#                                      graph, duplicate names, cross-extension
+#                                      unit/action checks
+#   tools/cream-validate.sh DIR...     the given extension directories, staged
+#                                      (--ext) into a temporary catalog (its own
 #                                      cream-catalog.yaml, roots: [extensions])
 #                                      and validated as a catalog
 #
@@ -80,9 +83,12 @@ fi
 
 command -v docker >/dev/null 2>&1 || die "нужен docker"
 
+stage="$(mktemp -d)"
+trap 'rm -r -f -- "$stage" ${tmp:+"$tmp"}' EXIT
 if (( ${#dirs[@]} == 0 )); then
-    # The root: mounted read-only as /cat, validated as it lies.
-    mounts=(-v "$deb:/cream.deb:ro" -v "$REPO:/cat:ro")
+    # The staged root: mounted read-only as /cat.
+    "$HERE/stage-catalog.sh" "$stage/cat" || die "staged-дерево не собрано"
+    mounts=(-v "$deb:/cream.deb:ro" -v "$stage/cat:/cat:ro")
     names=()
     echo "cream validate --catalog . ($REPO)"
     # shellcheck disable=SC2016  # expanded inside the container
@@ -97,7 +103,8 @@ else
     mounts=(-v "$deb:/cream.deb:ro")
     names=()
     for i in "${!dirs[@]}"; do
-        mounts+=(-v "${dirs[$i]}:/src/$i:ro")
+        staged="$("$HERE/stage-catalog.sh" --ext "${dirs[$i]}" "$stage/$i")" || die "${dirs[$i]}: не собрано"
+        mounts+=(-v "$staged:/src/$i:ro")
         names+=("$(basename "${dirs[$i]}")")
     done
     echo "cream validate: ${names[*]}"

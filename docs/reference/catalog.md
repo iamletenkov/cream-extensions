@@ -56,6 +56,7 @@
 | [`sensing-gmsl2-camera`](../../extensions/debian/sensing-gmsl2-camera/README.md) | ≥ 1.0.0 | `gmsl2-camera` | — | [`apt-guard`](../../extensions/debian/apt-guard/README.md) | — | — | с `--accept-risk` |
 | [`stvor-agent`](../../extensions/debian/stvor-agent/README.md) | ≥ 1.0.0 | `stvor-agent` | — | [`teleport`](../../extensions/debian/teleport/README.md) | — | — | да |
 | [`teleport`](../../extensions/debian/teleport/README.md) | ≥ 1.0.0 | `teleport-node` | — | — | способность `teleport-node` | — | да |
+| [`teleport-openwrt`](../../extensions/openwrt/teleport-openwrt/README.md) | ≥ 1.3.0 | `teleport-node` | — | — | способность `teleport-node` | — | да |
 | [`tensorrt`](../../extensions/debian/tensorrt/README.md) | ≥ 1.0.0 | `tensorrt` | — | [`l4t`](../../extensions/debian/l4t/README.md), [`apt-guard`](../../extensions/debian/apt-guard/README.md) | — | — | да |
 | [`vino-vnc`](../../extensions/debian/vino-vnc/README.md) | ≥ 1.2.0 | `remote-desktop` | `x11-server`, `display-manager` | [`cloud-user`](../../extensions/debian/cloud-user/README.md), [`apt-guard`](../../extensions/debian/apt-guard/README.md) | — | стадия `system`, на каждой загрузке (`every_boot`) | да |
 | [`wallpaper`](../../extensions/debian/wallpaper/README.md) | ≥ 1.1.1 | `wallpaper` | `desktop-session` | [`cloud-user`](../../extensions/debian/cloud-user/README.md) | — | стадия `cloud-user`, по отметке выполнения | да |
@@ -99,7 +100,7 @@
 | `stvor-agent` | [`stvor-agent`](../../extensions/debian/stvor-agent/README.md) | — |
 | `system-locale` | [`locale`](../../extensions/debian/locale/README.md) | — |
 | `system-monitor` | [`btop`](../../extensions/debian/btop/README.md) | — |
-| `teleport-node` | [`teleport`](../../extensions/debian/teleport/README.md) | — |
+| `teleport-node` | [`teleport`](../../extensions/debian/teleport/README.md), [`teleport-openwrt`](../../extensions/openwrt/teleport-openwrt/README.md) | — |
 | `tensorflow` | [`l4t-tensorflow`](../../extensions/debian/l4t-tensorflow/README.md) | — |
 | `tensorrt` | [`tensorrt`](../../extensions/debian/tensorrt/README.md) | — |
 | `vpn-amneziawg` | [`amneziawg`](../../extensions/openwrt/amneziawg/README.md) | — |

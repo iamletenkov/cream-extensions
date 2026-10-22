@@ -14,8 +14,8 @@
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-EXT="$(dirname "$HERE")"
-REPO="$(cd "$EXT/../../.." && pwd)"
+SRC="$(dirname "$HERE")"
+REPO="$(cd "$SRC/../../.." && pwd)"
 FIXTURES="$HERE/fixtures"
 
 TMP="$(mktemp -d)"
@@ -32,6 +32,9 @@ kill_helpers(){
 }
 cleanup(){ local r; for r in "$TMP"/root.*; do [[ -d "$r" ]] && kill_helpers "$r"; done; rm -r -f -- "$TMP"; }
 trap cleanup EXIT
+# The extension as cream gets it: the shared core lib/teleport-core.sh laid into
+# files/ (tools/stage-catalog.sh); the tree in git stays without it.
+EXT="$("$REPO/tools/stage-catalog.sh" --ext "$SRC" "$TMP/staged")" || { echo "FAIL: stage-catalog" >&2; exit 1; }
 
 pass=0; fail=0
 ok(){ pass=$((pass + 1)); }

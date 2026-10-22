@@ -17,7 +17,8 @@
 # `scope: build` keys. A capability nobody in the catalog provides for that
 # OS/architecture is a finding of this script (code 1), not of cream.
 #
-#   tools/cream-check.sh [catalog-repo]   default — this repository
+#   tools/cream-check.sh [catalog-repo]   default — the staged tree of this
+#                                         repository (tools/stage-catalog.sh)
 #
 # cream comes from the pin tools/cream-pin.env through tools/cream-deb.sh
 # (CREAM_DEB=<.deb> locally); it runs inside debian:12 with no network. An
@@ -28,10 +29,19 @@
 # 2 — setup failure (pin, download, docker, catalog).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CAT="$(cd "${1:-$(dirname "$HERE")}" && pwd)"
 IMAGE="debian:12"
 
 die() { echo "cream-check: $*" >&2; exit 2; }
+
+if (( $# )); then
+    CAT="$(cd "$1" && pwd)"
+else
+    # The catalog as cream gets it: the shared core laid into its consumers.
+    stage="$(mktemp -d)"
+    trap 'rm -r -f -- "$stage"' EXIT
+    "$HERE/stage-catalog.sh" "$stage/cat" || die "staged-дерево не собрано"
+    CAT="$stage/cat"
+fi
 
 [[ -f "$CAT/cream-catalog.yaml" ]] || die "$CAT: нет cream-catalog.yaml в корне"
 

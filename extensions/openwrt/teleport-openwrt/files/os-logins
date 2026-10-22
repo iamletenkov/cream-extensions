@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Value of the dynamic node label os_logins on OpenWrt: the OS logins with an
+# interactive shell, one line, comma-separated. Teleport runs this file itself
+# every 5 min (ssh_service.commands, rendered by files/teleport-core.sh render).
+#
+# Accounts of /etc/passwd (OpenWrt has no NSS beyond the files, and no getent):
+# root and uid >= 1000 (not nobody), shell not nologin/false/…; an empty shell
+# field means /bin/sh. On a stock OpenWrt that is `root` (spec §3 p. 4). A name
+# outside the label alphabet is skipped rather than mangled.
+#
+# Always exit 0: on a non-zero exit Teleport puts the error text into the
+# label instead of a list. CREAM_ROOT (tests only) reads <root>/etc/passwd.
+set -uo pipefail
+
+OS_LOGINS_MAX=255
+ROOT="${CREAM_ROOT:-}"
+ROOT="${ROOT%/}"
+
+passwd="$(cat "$ROOT/etc/passwd" 2>/dev/null)" || passwd=""
+names=()
+while IFS=: read -r name _ uid _ _ _ shell; do
+    # Digits before the arithmetic: (( )) would evaluate a[$(cmd)] from the file.
+    [[ "$name" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]{0,31}$ && "$uid" =~ ^[0-9]{1,10}$ ]] || continue
+    uid=$((10#$uid))
+    (( uid == 0 || (uid >= 1000 && uid != 65534) )) || continue
+    case "${shell##*/}" in
+        nologin|false|true|sync|shutdown|halt) continue ;;
+    esac
+    names+=("$name")
+done <<< "$passwd"
+(( ${#names[@]} )) || exit 0
+mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort -u)
+out="$(IFS=,; echo "${names[*]}")"
+if (( ${#out} > OS_LOGINS_MAX )); then
+    # Whole names only, then the marker: `,...` is 4 characters.
+    out=""
+    for n in "${names[@]}"; do
+        (( ${#out} + 1 + ${#n} + 4 <= OS_LOGINS_MAX )) || break
+        out+="${out:+,}$n"
+    done
+    out+=",..."
+fi
+printf '%s\n' "$out"
+exit 0

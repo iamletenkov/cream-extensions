@@ -1,0 +1,157 @@
+# teleport-openwrt — узел Teleport на OpenWrt 25.12+ (спека cream 2026-10-20-openwrt,
+# вариант A): набор openwrt-<arch> (teleport, fdpass-teleport после patchelf и
+# glibc-рантайм Debian 12 в /opt/teleport/lib; собирает стенд Stvor, Р7), регистрация,
+# рендер teleport.yaml, метки, приложения, управляемые метки stvor-agent — общее ядро
+# files/teleport-core.sh (одна копия в git: lib/teleport-core.sh, кладёт снимок, Р11) и
+# слой procd files/teleport.sh. Ключи и действия — те же, что у debian/teleport.
+#
+# install   — набор по URL зеркала или локальному файлу и TELEPORT_SHA256, раскладка
+#             /opt/teleport/{bin,lib,data,tmp}, маркер /opt/teleport/.cream-owned
+#             (Teleport без маркера — отказ), ссылка /usr/bin/teleport; не регистрирует.
+# apply     — render и перезапуск работающего агента фоном.
+# remove    — leave, служба выключена, /opt/teleport и ссылка стёрты.
+# files     — /etc/init.d/teleport (procd: экземпляр teleport с respawn без stdout/stderr —
+#             иначе LD_PRELOAD musl в glibc-процессе; экземпляр join — повтор раз в минуту),
+#             /lib/upgrade/keep.d/teleport (sysupgrade хранит только data и маркер, Р4).
+# configure нет: на загрузке узел поднимает procd (START=95), не cream (А1–А6 не про него).
+schema: cream/v1
+name: teleport-openwrt
+version: 1.0.0
+summary: Узел Teleport на OpenWrt — набор openwrt-<arch> с glibc рядом, регистрация, рендер teleport.yaml, procd
+cream: ">=1.3.0"
+platform:
+  family: openwrt
+  arch: [amd64, arm64]
+  os: [{id: openwrt, version: ">=25.12"}]
+  commands: [bash, curl, tar, sha256sum]
+targets: {build: exec, live: "yes"}
+provides: [teleport-node]
+conflicts: {capabilities: [teleport-node]}
+hooks:
+  install: {timeout: 20m}
+  upgrade: {timeout: 20m}
+  remove: {}
+  apply: {}
+config:
+  keys:
+    # Набор Teleport openwrt-<arch> — параметры установки: смена — повтор
+    # `cream install teleport-openwrt KEY=…`. Ключи и типы — те же, что у debian/teleport
+    # (контракт со скриптом установки Stvor); набора на cdn.teleport.dev нет.
+    TELEPORT_VERSION: {type: 're:^[0-9]+\.[0-9]+\.[0-9]+$', default: "18.10.0", scope: install,
+                       description: "версия Teleport; не новее кластера, для bound_keypair — не ниже 18.8.0"}
+    TELEPORT_SHA256: {type: 're:^[0-9a-f]{64}$', default: "", empty: true, scope: install,
+                      description: "sha256 набора openwrt-<arch> архитектуры машины; обязателен (на cdn.teleport.dev набора нет)"}
+    TELEPORT_MIRROR: {type: 're:^https?://[A-Za-z0-9.:/-]+$', default: "", empty: true, scope: install,
+                      description: "база зеркала <base>/binaries/teleport/<ver>/teleport-v<ver>-openwrt-<arch>-bin.tar.gz (стенд Stvor)"}
+    TELEPORT_TARBALL: {type: path, default: "", empty: true, scope: install,
+                       description: "локальный набор openwrt-<arch> (офлайн, нужен TELEPORT_SHA256); взаимоисключим с TELEPORT_MIRROR"}
+    # Подключение. Регулярные выражения — те же, что в ядре files/teleport-core.sh (KEY_TYPE):
+    # значения ложатся в YAML в двойных кавычках, кавычек и `$` в них нет.
+    TELEPORT_PROXY: {type: 're:^[a-z0-9][a-z0-9.-]{0,252}(:[0-9]{1,5})?$', default: "", empty: true,
+                     readonly: true, description: "прокси кластера host[:port]; пишет только join"}
+    TELEPORT_JOIN_METHOD: {type: 'enum:token,bound_keypair', default: "token", readonly: true,
+                           description: "метод регистрации; пишет только join"}
+    TELEPORT_TOKEN: {type: 're:^[A-Za-z0-9._-]{8,256}$', default: "", empty: true, readonly: true,
+                     description: "имя токена bound_keypair (не секрет); у метода token пусто; пишет только join"}
+    TELEPORT_CA_PIN: {type: 're:^sha256:[0-9a-f]{64}$', default: "", empty: true,
+                      description: "необязательная сверка CA кластера: sha256:<64 hex>"}
+    TELEPORT_ENV: {type: 're:^[a-zA-Z0-9][a-zA-Z0-9_./ -]{0,127}$', default: "", empty: true,
+                   description: "метка env — по ней роли кластера дают доступ"}
+    TELEPORT_NODENAME: {type: 're:^[a-z0-9][a-z0-9-]{1,62}$', default: "", empty: true,
+                        description: "имя ноды, метка DNS; пусто — короткое имя хоста"}
+    TELEPORT_LABELS: {type: 'list:re:^[a-zA-Z0-9][a-zA-Z0-9_./-]{0,63}=[a-zA-Z0-9][a-zA-Z0-9_./-]{0,127}$',
+                      default: "", empty: true,
+                      description: "прочие метки ноды ключ=значение через пробел (env, app, os_logins, teleport.icon нельзя)"}
+    TELEPORT_APPS: {type: 'list:re:^[a-z0-9][a-z0-9-]{0,62}=([0-9]{1,5}|https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?)$',
+                    default: "", empty: true,
+                    description: "приложения оператора имя=порт или имя=http(s)://хост[:порт][/путь] через пробел"}
+    TELEPORT_APPS_DISABLE: {type: 'list:re:^[a-z0-9][a-z0-9-]{0,62}$', default: "", empty: true,
+                            description: "не публиковать объявленные приложения: имена через пробел"}
+    TELEPORT_APPS_ICONS: {type: 'list:re:^[a-z0-9][a-z0-9-]{0,62}=[A-Za-z0-9][A-Za-z0-9._-]{0,63}$',
+                          default: "", empty: true,
+                          description: "иконка приложения в веб-морде прокси: имя=иконка через пробел"}
+    TELEPORT_APPS_DISCOVERY: {type: bool, default: "1",
+                              description: "0 — не читать объявления /etc/cream/teleport/apps.d"}
+    TELEPORT_OS_LOGINS: {type: bool, default: "1",
+                         description: "динамическая метка ноды os_logins (root и uid >= 1000 с shell); 0 — нет"}
+    # Метки внешнего управляющего (stvor-agent): пишет только set-managed, не больше 16,
+    # app, os_logins зарезервированы; перекрывают TELEPORT_LABELS по ключу, env — TELEPORT_ENV.
+    TELEPORT_MANAGED_LABELS: {type: 'list:re:^[a-z][a-z0-9_]{0,62}=[a-z0-9][a-z0-9._-]{0,62}$', default: "", empty: true,
+                              readonly: true,
+                              description: "управляемые метки ключ=значение через пробел; пишет только set-managed"}
+actions:
+  join:
+    summary: "регистрация узла; секрет первого входа — TELEPORT_REGISTRATION_SECRET=- (stdin)"
+    args: pairs
+    params:
+      TELEPORT_PROXY: {required: true}
+      TELEPORT_JOIN_METHOD: {}
+      TELEPORT_TOKEN: {}
+      TELEPORT_CA_PIN: {}
+      TELEPORT_ENV: {}
+      TELEPORT_NODENAME: {}
+      TELEPORT_LABELS: {}
+      TELEPORT_OS_LOGINS: {}
+      # token — сам join-токен, bound_keypair — секрет регистрации (рулинг РТ1).
+      TELEPORT_REGISTRATION_SECRET: {type: 're:^[[:graph:]]{8,1000}$', secret: true}
+      TELEPORT_FORCE: {type: bool}
+      TELEPORT_DEFER: {type: bool}
+    stdin: secret
+    lock: exclusive
+    timeout: 5m
+    output: json
+    phases: [live]
+  join-retry:
+    summary: "повтор ждущей регистрации (экземпляр join службы procd) и ручной «зарегистрировать сейчас»"
+    lock: exclusive
+    timeout: 5m
+    phases: [live]
+  leave:
+    summary: "отключить узел: агент выключен, регистрация, секрет и управляемые метки стёрты"
+    lock: exclusive
+    output: json
+    phases: [live]
+  set-managed:
+    summary: "полный набор управляемых меток k=v…; restart только при изменении конфига; JSON схемы 1"
+    args: free
+    lock: exclusive
+    # ожидание блокировки у вызывающего + restart с подтверждением <= 30 с
+    timeout: 3m
+    output: json
+    phases: [live]
+  managed-status:
+    summary: "управляемые метки, маркер managed-pending, регистрация, агент — JSON схемы 1"
+    lock: none
+    output: json
+    phases: [live]
+  status:
+    summary: "регистрация, служба, ручки, приложения, управляемые и командные метки — текстом"
+    lock: none
+    phases: [live]
+  render:
+    summary: "собрать /etc/teleport.yaml из ручек и apps.d (start_service /etc/init.d/teleport)"
+    lock: none
+    phases: [build, live]
+  reload-apps:
+    summary: "применить apps.d и command-labels.d: render, restart с подтверждением при изменении (зовёт тот, кто их положил)"
+    lock: exclusive
+    # restart confirmation ≤ 30 s (+ render)
+    timeout: 5m
+    phases: [live]
+  hup:
+    summary: "только systemd (ExecReload); на OpenWrt — отказ, код 2: применить — reload-apps"
+    lock: none
+    timeout: 1m
+    phases: [live]
+  scrub-token:
+    summary: "стереть секрет первого входа после регистрации (вручную; join и повтор стирают сами)"
+    lock: exclusive
+    timeout: 7m
+    phases: [live]
+files:
+  # The shared core (lib/teleport-core.sh, laid by the snapshot): files/teleport.sh
+  # sources it from the tree of the extension; the line makes cream validate refuse
+  # a tree without it (spec 2026-10-20-openwrt §4.2, ruling Р11).
+  - {src: files/teleport-core.sh, dst: /usr/lib/teleport-openwrt/teleport-core.sh, mode: "0644"}
+  - {src: files/teleport.init, dst: /etc/init.d/teleport, mode: "0755"}
+  - {src: files/keep.d, dst: /lib/upgrade/keep.d/teleport, mode: "0644"}

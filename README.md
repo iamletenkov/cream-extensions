@@ -60,7 +60,7 @@ RUN_COMMAND cream install --with-deps gnome x11vnc
 `tools/catalog-docs.sh` из манифестов; CI проверяет, что она не устарела.
 
 <!-- catalog:table -->
-Расширений — 46, библиотек — 3.
+Расширений — 47, библиотек — 3.
 
 | Расширение | Что делает | ОС | Архитектура | Параметры |
 |---|---|---|---|---|
@@ -104,6 +104,7 @@ RUN_COMMAND cream install --with-deps gnome x11vnc
 | [`sensing-gmsl2-camera`](extensions/debian/sensing-gmsl2-camera/README.md) | Камеры Sensing GMSL2 на Jetson AGX Orin (SG8A-AGON-G2Y-A1, L4T 36.4.3) — ядро, модули, оверлей, запуск на загрузке | Debian, Ubuntu | arm64 | `SENSING_GMSLMODE`, `SENSING_CAMERA_CONTROLS`, `SENSING_BOOST_CLOCK` |
 | [`stvor-agent`](extensions/debian/stvor-agent/README.md) | Агент портала Stvor — метки env и space узла Teleport с портала | Debian ≥ 12, Ubuntu ≥ 20.04 | amd64, arm64 | `STVOR_AGENT_VERSION`, `STVOR_AGENT_SHA256`, `STVOR_AGENT_MIRROR` и ещё 3 |
 | [`teleport`](extensions/debian/teleport/README.md) | Узел Teleport — бинарь, регистрация (join), рендер teleport.yaml, приложения apps.d | Debian ≥ 12, Ubuntu ≥ 20.04 | amd64, arm64 | `TELEPORT_VERSION`, `TELEPORT_SHA256`, `TELEPORT_MIRROR` и ещё 14 |
+| [`teleport-openwrt`](extensions/openwrt/teleport-openwrt/README.md) | Узел Teleport на OpenWrt — набор openwrt-<arch> с glibc рядом, регистрация, рендер teleport.yaml, procd | OpenWrt ≥ 25.12 | amd64, arm64 | `TELEPORT_VERSION`, `TELEPORT_SHA256`, `TELEPORT_MIRROR` и ещё 14 |
 | [`tensorrt`](extensions/debian/tensorrt/README.md) | TensorRT для NVIDIA Jetson — движок, биндинги Python и компилятор DLA (R36), проверка движка образа (R32) | Debian, Ubuntu | arm64 | — |
 | [`vino-vnc`](extensions/debian/vino-vnc/README.md) | VNC через vino (GNOME) в сессии пользователя cloud-init — настройки системным dconf, по умолчанию только петля | Debian, Ubuntu | amd64, arm64 | `VINO_PORT`, `VINO_LISTEN`, `VINO_ENCRYPTION` и ещё 2 |
 | [`wallpaper`](extensions/debian/wallpaper/README.md) | Обои рабочего стола — системное умолчание GNOME (dconf), Xfce (xfconf) и LXDE (pcmanfm) из картинок расширения | Debian, Ubuntu | amd64, arm64 | `WALLPAPER_IMAGE`, `WALLPAPER_MODE` |
