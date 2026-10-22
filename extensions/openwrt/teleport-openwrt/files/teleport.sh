@@ -24,14 +24,18 @@
 #              `ubus call service delete` of its instance — the retry may be the
 #              caller. No HUP: a Teleport parent that forks on HUP and exits would
 #              be respawned by procd next to its child, so changes restart the node.
-#   journal    logread -t -e teleport (log.output: syslog), cut by the epoch
-#   yaml       log.output syslog, ssh_service.pam and enhanced_recording off
+#   journal    the file /opt/teleport/log/teleport.log (log.output; directory 0700,
+#              file 0600, size-limited by the service before a start), cut by the
+#              time of its lines. Not syslog: any local process writes there any
+#              tag with any pid (`logger -t 'teleport[1234]'`), and a refusal of
+#              the cluster ends a registration
+#   yaml       log.output — that file, ssh_service.pam and enhanced_recording off
 #
 # Busybox of OpenWrt has no stat, install, hostname or paste: the functions below
 # stand in for the forms the core uses, only where the command is missing.
 #
 # No test switches in the environment: the tests substitute commands through
-# PATH (ubus, jsonfilter, logread, uname, curl, sleep…) and the root through
+# PATH (ubus, jsonfilter, uname, curl, sleep…) and the root through
 # CREAM_ROOT — "procd runs" is the ubus socket $CREAM_ROOT/var/run/ubus/ubus.sock.
 set -uo pipefail
 
@@ -41,9 +45,9 @@ TELEPORT_DATA_GUEST=/opt/teleport/data
 TELEPORT_BIN_GUEST=/opt/teleport/bin/teleport
 INIT_NAME=procd
 AGENT_UNIT=/etc/init.d/teleport
-AGENT_LOG_HINT="logread -e teleport"
-AGENT_LOG_FOLLOW="logread -f -e teleport"
-LOG_OUTPUT=syslog
+AGENT_LOG_HINT="tail /opt/teleport/log/teleport.log"
+AGENT_LOG_FOLLOW="tail -f /opt/teleport/log/teleport.log"
+LOG_OUTPUT=/opt/teleport/log/teleport.log
 
 # ---------------------------------------------------------------------------
 # Busybox: stand-ins for the forms the core uses (stat -c %u|%a|%s, install -d
@@ -128,6 +132,7 @@ command -v paste >/dev/null 2>&1 || paste(){ owrt_paste "$@"; }
 TELEPORT_HOME="$ROOT$TELEPORT_HOME_GUEST"
 TELEPORT_LIB="$TELEPORT_HOME/lib"
 TELEPORT_TMP="$TELEPORT_HOME/tmp"
+LOG_FILE="$ROOT$LOG_OUTPUT"
 FDPASS_BIN="$TELEPORT_HOME/bin/fdpass-teleport"
 OWNED="$TELEPORT_HOME/.cream-owned"
 LINK="$ROOT/usr/bin/teleport"
@@ -198,23 +203,33 @@ service_status_line(){
     [[ -e "$AGENT_ENABLED" ]] && en=enabled
     echo "Служба teleport (procd): $act, $en"
 }
-# The journal of the node since an epoch — only the lines of the running
-# instance teleport: syslog takes a line from any local process (`logger -t
-# teleport …`), and a refusal there decides a join (no retries, the secret goes).
-# A line counts when its tag — the field after the facility — is exactly
-# teleport[<pid of the instance, ubus>]: and its time ("[<epoch>.<ms>]" of
-# logread -t) is not before the epoch. Line of logread -t:
-#   Thu Oct 22 10:00:00 2026 [1729590000.123] daemon.err teleport[1234]: …
-# No instance — no lines: nothing is taken for an answer of the cluster.
+# The journal of the node since an epoch: the lines of the log file of the agent
+# (log.output; only root writes in its 0700 directory) whose leading timestamp
+# — RFC 3339, Z or ±hh:mm — is not before the epoch. A line without one is not
+# taken. The file must be a trusted regular file (root's, no write for others).
 agent_log_since(){
-    local pid
     init_running || return 0
-    pid="$(agent_pid)" || return 0
-    logread -t -e teleport 2>/dev/null | awk -v since="$1" -v tag="teleport[$pid]:" '
-        $6 ~ /^\[[0-9]+\.[0-9]+\]$/ && $8 == tag {
-            t = substr($6, 2); sub(/\..*/, "", t)
-            if (t + 0 >= since + 0) print
-        }' || true
+    [[ -f "$LOG_FILE" && ! -L "$LOG_FILE" ]] || return 0
+    trusted_path "$LOG_FILE" "журнал" >/dev/null || return 0
+    awk -v since="$1" '
+        function days(y, m, d,   era, yoe, doy) {
+            y -= (m <= 2); era = int((y >= 0 ? y : y - 399) / 400); yoe = y - era * 400
+            doy = int((153 * (m + (m > 2 ? -3 : 9)) + 2) / 5) + d - 1
+            return era * 146097 + yoe * 365 + int(yoe / 4) - int(yoe / 100) + doy - 719468
+        }
+        match($0, /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9](\.[0-9]+)?(Z|[+-][0-9][0-9]:?[0-9][0-9])/) {
+            ts = substr($0, 1, RLENGTH)
+            t = days(substr(ts, 1, 4) + 0, substr(ts, 6, 2) + 0, substr(ts, 9, 2) + 0) * 86400 \
+                + substr(ts, 12, 2) * 3600 + substr(ts, 15, 2) * 60 + substr(ts, 18, 2)
+            z = substr(ts, length(ts), 1)
+            if (z != "Z") {
+                off = substr(ts, match(ts, /[+-][0-9][0-9]:?[0-9][0-9]$/))
+                gsub(/:/, "", off)
+                sec = substr(off, 2, 2) * 3600 + substr(off, 4, 2) * 60
+                t -= (substr(off, 1, 1) == "-" ? -sec : sec)
+            }
+            if (t >= since + 0) print
+        }' "$LOG_FILE" 2>/dev/null || true
 }
 # Since the last start of the instance (start_service writes the epoch).
 app_role_missing(){
@@ -376,7 +391,7 @@ hook_install(){
     foreign_teleport && die "Teleport не от cream: в $TELEPORT_HOME_GUEST есть узел без маркера ${OWNED#"$ROOT"} — снимите его вручную"
 
     install -d -m 0755 "$ETC" "$APPS_DIR" "$CMD_LABELS_DIR" "$TELEPORT_HOME" || die "не создать каталоги $ETC"
-    install -d -m 0700 "$STATE" "$TELEPORT_TMP" || die "не создать $STATE"
+    install -d -m 0700 "$STATE" "$TELEPORT_TMP" "$(dirname "$LOG_FILE")" || die "не создать $STATE"
     install -d -m 0750 "$DATA" || die "не создать $DATA"
     : > "$OWNED" || die "не записан маркер $OWNED"
 

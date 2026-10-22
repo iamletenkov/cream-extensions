@@ -52,6 +52,7 @@ has /opt/teleport/.cream-owned
 eq "ссылка /usr/bin/teleport" /opt/teleport/bin/teleport "$(readlink /usr/bin/teleport)"
 eq "data_dir" drwxr-x--- "$(mode /opt/teleport/data)"
 eq "TMPDIR узла" drwx------ "$(mode /opt/teleport/tmp)"
+eq "каталог журнала узла" drwx------ "$(mode /opt/teleport/log)"
 has /etc/init.d/teleport
 has /etc/rc.d/S95teleport
 has /lib/upgrade/keep.d/teleport
@@ -82,7 +83,7 @@ eq "секрет 0600" -rw------- "$(mode /opt/cream/var/ext/teleport-openwrt/re
 eq "состояние 0700" drwx------ "$(mode /opt/cream/var/ext/teleport-openwrt)"
 eq "teleport.yaml 0600" -rw------- "$(mode /etc/teleport.yaml)"
 yaml_has '  data_dir: /opt/teleport/data'
-yaml_has '    output: syslog'
+yaml_has '    output: /opt/teleport/log/teleport.log'
 yaml_has '  nodename: "owrt-1"'
 yaml_has '    "env": "dev"'
 yaml_has '    enabled: false'

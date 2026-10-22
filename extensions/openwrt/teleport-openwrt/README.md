@@ -44,11 +44,11 @@ Stvor из того же тарбола `linux-<arch>` (рулинг Р7); на 
   секрет первого входа — `TELEPORT_REGISTRATION_SECRET=-` (stdin), методы `token` и
   `bound_keypair`, отложенная (`TELEPORT_DEFER=1`), ожидание сети с повтором, отказ
   кластера без повторов, откат прежней регистрации. Агент стартует экземпляром procd,
-  отказ кластера читается из `logread -t -e teleport` с отсечкой по времени попытки и
-  **только из строк процесса службы** — тег ровно `teleport[<pid экземпляра>]:` (pid — из
-  `ubus call service list`): строку с «teleport» в syslog может написать любой локальный
-  процесс (`logger -t teleport …`), а отказ решает судьбу регистрации (секрет стирается,
-  повторов нет). Строки другого pid или тег внутри текста — не ответ кластера.
+  отказ кластера читается **только из журнала узла** `/opt/teleport/log/teleport.log`
+  (каталог 0700, файл 0600 — пишет лишь root) с отсечкой по времени попытки, и
+  засчитывается, только пока в `data_dir` нет identity. syslog не читается: любой
+  локальный процесс пишет туда любой тег с любым pid (`logger -t 'teleport[1234]'`), а
+  отказ стирает секрет и снимает повторы.
 - **`apply`** (`cream set teleport-openwrt …`) — render и **перезапуск** работающего
   агента фоном (HUP на OpenWrt не шлётся, см. «Подробности»).
 - **`remove`** — `leave`, служба остановлена и выключена, `/opt/teleport`, ссылка и
@@ -57,7 +57,8 @@ Stvor из того же тарбола `linux-<arch>` (рулинг Р7); на 
   копия `lib/teleport-core.sh`), `/etc/init.d/teleport` (procd), `/lib/upgrade/keep.d/teleport`.
 
 `teleport.yaml` отличается от Debian: `data_dir: /opt/teleport/data`,
-`log.output: syslog` (журнал — `logread -e teleport`), `ssh_service.pam.enabled: false`
+`log.output: /opt/teleport/log/teleport.log` (журнал узла — файл, не syslog; больше 1 МиБ —
+перед стартом остановленного агента уходит в `teleport.log.1`), `ssh_service.pam.enabled: false`
 и `ssh_service.enhanced_recording.enabled: false` (PAM и BPF на OpenWrt нет).
 Динамическая метка `os_logins` читает `/etc/passwd` (NSS и `getent` нет): на стоковой
 системе это `root`.
@@ -180,7 +181,8 @@ RUN_COMMAND cream install teleport-openwrt TELEPORT_MIRROR=https://stvor.example
   `/opt/teleport/bin/teleport start --config /etc/teleport.yaml`, `respawn`,
   `TMPDIR=/opt/teleport/tmp`. **Без `procd_set_param stdout/stderr`**: иначе procd
   выставляет `LD_PRELOAD=/lib/libsetlbf.so` (musl), и в glibc-процесс грузятся обе libc
-  (PoC); журнал — `log.output: syslog`;
+  (PoC); журнал — `log.output` в файл `/opt/teleport/log/teleport.log` (0700/0600; перед
+  стартом остановленного агента файл больше 1 МиБ становится `teleport.log.1`);
 - экземпляр **`join`** — пока есть `join-pending`: `cream run --lock-timeout 6m
   teleport-openwrt join-retry` при загрузке и раз в минуту. Заканчивается сам, когда
   маркер снят, — тик, который завершает регистрацию, не убивает свою же службу.
@@ -211,10 +213,11 @@ stvor-agent не сохраняются. После обновления про�
 - **H** — `tests/test-teleport-openwrt.sh`: ключи и действия сверены с `debian/teleport`,
   типы — с ядром; init-скрипт (`start_service` с заглушками procd: экземпляры, `respawn`,
   `TMPDIR`, нет `stdout/stderr`), `keep.d`; `install` (зеркало и файл, sha256, `uname -m`,
-  маркер владения, сборка, после `sysupgrade`), render (`syslog`, `pam`,
-  `enhanced_recording`, `data_dir`), `join` с подставными procd/ubus/`logread`
-  (регистрация, ожидание сети и тик, отказ по журналу с отсечкой; подделка через
-  `logger` — чужой pid, тег без pid, тег в тексте — не отказ), `set-managed`
+  маркер владения, сборка, после `sysupgrade`), render (журнал-файл, `pam`,
+  `enhanced_recording`, `data_dir`), `join` с подставными procd/ubus
+  (регистрация, ожидание сети и тик, отказ по журналу узла с отсечкой; строки `logger`
+  с тегом `teleport[<pid экземпляра>]` и журнал с записью для всех — не отказ;
+  ротация журнала init-скриптом), `set-managed`
   (перезапуск с подтверждением и без), `reload-apps`, `apply`, `hup`, `remove`; действия
   с набором команд busybox (без `stat`, `install`, `hostname`, `paste`).
 - **L** — `make test-openwrt`: корневая ФС openwrt-builder v0.3.1 в контейнере, настоящие

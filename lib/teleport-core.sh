@@ -919,6 +919,9 @@ attempt_register(){
         joined && return 0
         agent_log="$(agent_log_since "$since")"
         if REFUSAL="$(refusal_reason "$agent_log")"; then
+            # A refusal ends the registration and erases the secret: a log line
+            # alone is not enough — the node must still have no identity.
+            joined && return 0
             REFUSAL_DETAIL="$(last_join_error "$agent_log")"
             return 1
         fi

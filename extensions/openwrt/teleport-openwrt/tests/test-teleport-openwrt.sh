@@ -5,7 +5,8 @@
 # (tools/hooktest.sh). procd, ubus, jsonfilter, logread, uname, curl, cream —
 # подставные: служба /etc/init.d/teleport пишет журнал вызовов и «поднимает» агента
 # (pid в ответе `ubus call service list`); агент по $FAKE/agent регистрируется
-# (host_uuid), отказывает (строка в logread) или молчит. Отдельный раздел гоняет
+# (host_uuid), отказывает (строка в своём журнале /opt/teleport/log/teleport.log)
+# или молчит; строки, которые любой процесс пишет в syslog (`logger`), решений не меняют. Отдельный раздел гоняет
 # действия с набором команд busybox OpenWrt (без stat, install, hostname, paste) —
 # заглушки слоя. Настоящий busybox, uci и cream — L (make test-openwrt).
 set -uo pipefail
@@ -91,7 +92,7 @@ up(){
     [[ -e "$FAKE/agent.dead" ]] || printf '{"teleport":{"instances":{"teleport":{"running":true,"pid":%s}}}}\n' "$p" > "$FAKE/ubus.list"
     case "$(cat "$FAKE/agent")" in
         join) mkdir -p "$R/opt/teleport/data"; echo 55555555-6666 > "$R/opt/teleport/data/host_uuid" ;;
-        refuse) printf 'Thu Oct 22 10:00:00 2026 [%s.123] daemon.err teleport[%s]: Failed to establish connection to cluster. error:[token expired or not found]\n' "$(date +%s)" "$p" >> "$FAKE/logread" ;;
+        refuse) printf '%s INFO [PROC:1] Failed to establish connection to cluster. error:[token expired or not found]\n' "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" >> "$R/opt/teleport/log/teleport.log" ;;
     esac
 }
 case "$1" in
@@ -176,10 +177,13 @@ check "состояние cream на OpenWrt" grep -qx 'TP_STATE=/opt/cream/var/
 check "render через cream до старта" grep -q '/usr/bin/cream run teleport-openwrt render' "$I"
 # start_service with recording stubs of procd, the paths moved under a scratch root.
 fn="$HT_TMP/init"; mkdir -p "$fn/st" "$fn/run"
-sed -e "s|^TP_STATE=.*|TP_STATE=$fn/st|" -e "s|/var/run/|$fn/run/|g" -e 's|/usr/bin/cream|cream_stub|' "$I" > "$fn/init.sh"
+sed -e "s|^TP_STATE=.*|TP_STATE=$fn/st|" -e "s|^TP_LOG=.*|TP_LOG=$fn/home/log/teleport.log|" \
+    -e "s|/var/run/|$fn/run/|g" -e 's|/usr/bin/cream|cream_stub|' "$I" > "$fn/init.sh"
+# procd_running: the agent runs when $fn/running exists.
 init_run(){
-    sh -c '. "$1"; procd_open_instance(){ echo "open $1"; }; procd_set_param(){ echo "param $*"; }
-           procd_close_instance(){ echo close; }; cream_stub(){ echo "cream $*"; }; start_service' sh "$fn/init.sh"
+    FN="$fn" sh -c '. "$1"; procd_open_instance(){ echo "open $1"; }; procd_set_param(){ echo "param $*"; }
+           procd_close_instance(){ echo close; }; cream_stub(){ echo "cream $*"; }
+           procd_running(){ [ -e "$FN/running" ]; }; start_service' sh "$fn/init.sh"
 }
 eq "ни включён, ни ждёт — экземпляров нет" "" "$(init_run)"
 : > "$fn/st/agent-enabled"
@@ -191,6 +195,17 @@ check "respawn без предела попыток" grep -qx 'param respawn 360
 check "TMPDIR в окружении" grep -qx 'param env TMPDIR=/opt/teleport/tmp' <<< "$out"
 check_not "нет stdout/stderr" grep -qE '^param (stdout|stderr)' <<< "$out"
 check "время старта записано" test -s "$fn/run/teleport.started"
+eq "журнал: каталог 0700" 700 "$(stat -c %a "$fn/home/log")"
+eq "журнал: файл 0600" 600 "$(stat -c %a "$fn/home/log/teleport.log")"
+check "log.output — файл, не syslog" grep -q 'TP_LOG=$TP_HOME/log/teleport.log' "$I"
+# Over 1 MiB: rotated before the start of a stopped agent, never under a running one.
+head -c 1048577 /dev/zero > "$fn/home/log/teleport.log"
+: > "$fn/running"; init_run >/dev/null
+eq "агент работает — журнал не трогается" 1048577 "$(wc -c < "$fn/home/log/teleport.log")"
+rm "$fn/running"; init_run >/dev/null
+eq "агент стоит — большой журнал ушёл в .1" 1048577 "$(wc -c < "$fn/home/log/teleport.log.1")"
+eq "новый журнал пуст" 0 "$(wc -c < "$fn/home/log/teleport.log")"
+eq "старый журнал 0600" 600 "$(stat -c %a "$fn/home/log/teleport.log.1")"
 rm "$fn/st/agent-enabled"; : > "$fn/run/teleport.start"
 check "запущен сейчас — экземпляр teleport" grep -qx 'open teleport' <<< "$(init_run)"
 rm "$fn/run/teleport.start"; : > "$fn/st/join-pending"
@@ -218,6 +233,7 @@ eq "ссылка /usr/bin/teleport" /opt/teleport/bin/teleport "$(readlink "$ROO
 check "маркер владения" test -e "$ROOT/opt/teleport/.cream-owned"
 eq "data_dir 0750" 750 "$(stat -c %a "$D")"
 eq "TMPDIR узла 0700" 700 "$(stat -c %a "$ROOT/opt/teleport/tmp")"
+eq "каталог журнала 0700" 700 "$(stat -c %a "$ROOT/opt/teleport/log")"
 check "служба включена (rc.d)" grep -qx 'init enable' "$FAKE/calls"
 check_not "install не стартует агента" grep -qE '^init (start|restart)' "$FAKE/calls"
 check_not "черновика скачивания не осталось" bash -c 'compgen -G "$1/opt/teleport/teleport-install.*" >/dev/null' _ "$ROOT"
@@ -276,7 +292,7 @@ join_line TELEPORT_DEFER=1; eq "join отложенный — 0" 0 "$?"
 eq "join отложенный — JSON" deferred "$(json | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
 check "подсказка join-retry называет teleport-openwrt" grep -q 'cream run teleport-openwrt join-retry' "$ROOT/out"
 check "data_dir /opt/teleport/data" grep -qx '  data_dir: /opt/teleport/data' "$Y"
-check "log.output syslog" grep -qx '    output: syslog' "$Y"
+check "log.output — файл журнала" grep -qx '    output: /opt/teleport/log/teleport.log' "$Y"
 ssh="$(sed -n '/^ssh_service:/,/^[a-z]/p' "$Y")"
 eq "pam выключен в ssh_service" "    enabled: false" "$(sed -n '/^  pam:$/{n;p;}' <<< "$ssh")"
 eq "enhanced_recording выключен в ssh_service" "    enabled: false" "$(sed -n '/^  enhanced_recording:$/{n;p;}' <<< "$ssh")"
@@ -323,42 +339,48 @@ check "тик: маркер снят — цикл повтора кончитс�
 check "тик: агент включён" test -e "$S/agent-enabled"
 check_not "тик не останавливает службу (он внутри неё)" grep -qE '^init (stop|restart)|^ubus call service delete' "$FAKE/calls"
 
-echo "== join: отказ кластера — из logread с отсечкой по времени =="
+echo "== join: отказ кластера — из журнала узла с отсечкой по времени =="
 setup; installed; procd_up
 echo up > "$FAKE/net"; echo refuse > "$FAKE/agent"
 # An old refusal before this join is not this join's answer.
-printf 'Thu Oct 22 09:00:00 2026 [1000.1] daemon.err teleport[3]: Can not join the cluster, the token is expired or not found.\n' > "$FAKE/logread"
+printf '2000-01-01T00:00:00Z INFO Can not join the cluster, the token is expired or not found.\n' > "$ROOT/opt/teleport/log/teleport.log"
 join_line; eq "отказ — 1" 1 "$?"
 eq "отказ — refused" refused "$(json | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
 check "отказ — агент снят отдельным экземпляром" grep -q 'ubus call service delete {"name":"teleport","instance":"teleport"}' "$FAKE/calls"
-check "отказ — журнал logread -t" grep -q 'logread -t -e teleport' "$FAKE/calls"
+check_not "отказ — syslog не читается" ht_called '^logread'
 check "отказ — причина" grep -q 'токен регистрации не найден' "$ROOT/out"
 check_not "отказ — не включён" test -e "$S/agent-enabled"
 
-echo "== журнал: решение только по строкам процесса службы (тег teleport[<pid экземпляра>]) =="
-# Any local process can write to syslog (logger -t teleport …): a refusal from
-# another pid, or the tag inside the message, is no answer of the cluster.
+echo "== журнал: syslog не решает ничего, только файл узла (0700/0600) =="
+# Any local process writes to syslog any tag with any pid (busybox
+# `logger -t 'teleport[<pid>]'`): such a line changes no decision.
 spoof(){
     local now; now="$(date +%s)"
     {
-        printf 'Thu Oct 22 10:00:00 2026 [%s.1] user.notice teleport[1]: Can not join the cluster, the token is expired or not found.\n' "$now"
+        printf 'Thu Oct 22 10:00:00 2026 [%s.1] user.notice teleport[%s]: Can not join the cluster, the token is expired or not found.\n' "$now" "$1"
         printf 'Thu Oct 22 10:00:00 2026 [%s.1] user.notice teleport: Can not join the cluster, the token is expired or not found.\n' "$now"
-        printf 'Thu Oct 22 10:00:00 2026 [%s.1] user.notice evil[7]: teleport[%s]: Can not join the cluster, the token is expired or not found.\n' "$now" "$1"
     } >> "$FAKE/logread"
 }
 setup; installed; procd_up
 echo up > "$FAKE/net"; echo hang > "$FAKE/agent"
 spoof 101
-join_line; eq "чужие строки — не отказ (0)" 0 "$?"
-eq "чужие строки — pending, не refused" pending "$(json | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
-check_not "чужие строки — повтор не снят" test -e "$S/join-refused"
-check "секрет цел для повтора" test -s "$S/registration-secret"
-# The same refusal from the pid of the instance is the answer.
+join_line; eq "logger teleport[<pid экземпляра>] — не отказ (0)" 0 "$?"
+eq "logger — pending, не refused" pending "$(json | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
+check_not "logger — отказ не записан" test -e "$S/join-refused"
+check "logger — секрет цел для повтора" test -s "$S/registration-secret"
+# The file of the node, writable by others — not trusted either.
+setup; installed; procd_up
+echo up > "$FAKE/net"; echo refuse > "$FAKE/agent"
+: > "$ROOT/opt/teleport/log/teleport.log"; chmod 0666 "$ROOT/opt/teleport/log/teleport.log"
+join_line; eq "журнал с записью для всех — не отказ (0)" 0 "$?"
+check "журнал с записью для всех — секрет цел" test -s "$S/registration-secret"
+# The same refusal in the file of the node, in local time with an offset, is the
+# answer (dated a minute ahead: the attempt starts after this line is written).
 setup; installed; procd_up
 echo up > "$FAKE/net"; echo hang > "$FAKE/agent"
-printf 'Thu Oct 22 10:00:00 2026 [%s.1] daemon.err teleport[101]: Can not join the cluster, the token is expired or not found.\n' "$(date +%s)" >> "$FAKE/logread"
-join_line; eq "строка процесса службы — отказ (1)" 1 "$?"
-eq "строка процесса службы — refused" refused "$(json | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
+printf '%s INFO Can not join the cluster, the token is expired or not found.\n' "$(TZ=Etc/GMT-3 date -d "@$(( $(date +%s) + 60 ))" +%Y-%m-%dT%H:%M:%S+03:00)" >> "$ROOT/opt/teleport/log/teleport.log"
+join_line; eq "строка журнала узла — отказ (1)" 1 "$?"
+eq "строка журнала узла — refused" refused "$(json | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
 
 echo "== set-managed: перезапуск с подтверждением нового pid =="
 setup; installed; procd_up

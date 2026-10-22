@@ -19,10 +19,12 @@ set -uo pipefail
 umask 022
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXT="$(dirname "$HERE")"
-TELEPORT_EXT="$(cd "$EXT/../teleport" && pwd)"
 # shellcheck source=../../../../tools/hooktest.sh
 . "$EXT/../../../tools/hooktest.sh"
 ht_init
+# teleport as cream gets it: the shared core laid into files/ (tools/stage-catalog.sh).
+TELEPORT_EXT="$("$EXT/../../../tools/stage-catalog.sh" --ext "$EXT/../teleport" "$HT_TMP/staged")" \
+    || { echo "FAIL: stage-catalog teleport" >&2; exit 1; }
 
 PW='Pw-Code-7f3a9c1e!x'
 PW2='Pw-Code-2b8d4e6f'
