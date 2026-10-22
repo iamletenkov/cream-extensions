@@ -38,12 +38,13 @@ new_tree(){
     OPIN="$T/extensions/openwrt/stvor-agent-openwrt/files/pin.env"
     OMANIFEST="$T/extensions/openwrt/stvor-agent-openwrt/extension.yaml"
     sed -i -E "s/^version: .*/version: 1.0.0/" "$OMANIFEST"
-    if [[ -n "${OW:-}" ]]; then
-        read -r ov oa ob <<< "$OW"
-        sed -i -E -e "s/^STVOR_AGENT_PIN_VERSION=.*/STVOR_AGENT_PIN_VERSION=$ov/" \
-            -e "s/^STVOR_AGENT_PIN_SHA256_AMD64=.*/STVOR_AGENT_PIN_SHA256_AMD64=$oa/" \
-            -e "s/^STVOR_AGENT_PIN_SHA256_ARM64=.*/STVOR_AGENT_PIN_SHA256_ARM64=$ob/" "$OPIN"
-    fi
+    # Пин OpenWrt сценария: OW="<версия> <amd64> <arm64>", без OW — пустой (как до
+    # первого выпуска с tar.gz), каким бы ни был пин в git.
+    ov="" oa="" ob=""
+    [[ -z "${OW:-}" ]] || read -r ov oa ob <<< "$OW"
+    sed -i -E -e "s/^STVOR_AGENT_PIN_VERSION=.*/STVOR_AGENT_PIN_VERSION=$ov/" \
+        -e "s/^STVOR_AGENT_PIN_SHA256_AMD64=.*/STVOR_AGENT_PIN_SHA256_AMD64=$oa/" \
+        -e "s/^STVOR_AGENT_PIN_SHA256_ARM64=.*/STVOR_AGENT_PIN_SHA256_ARM64=$ob/" "$OPIN"
     cp "$OPIN" "$T/opin.before"
     cp "$OMANIFEST" "$T/omanifest.before"
     PIN="$T/extensions/debian/stvor-agent/files/pin.env"

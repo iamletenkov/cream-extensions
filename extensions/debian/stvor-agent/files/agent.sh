@@ -21,6 +21,11 @@ RE_SA_VERSION='^[0-9]+\.[0-9]+\.[0-9]+$'
 RE_SA_SHA256='^[0-9a-f]{64}$'
 RE_SA_URL='^https?://[A-Za-z0-9._~:/%+-]+$'
 
+# Units of the package: labels and, from 4.1.0, telemetry (Stvor ADR-0034).
+SA_UNITS=(stvor-agent.service stvor-agent-telemetry.service)
+SA_ROOT="${CREAM_ROOT:-}"
+SA_ROOT="${SA_ROOT%/}"
+
 sa_log(){ >&2 echo "stvor-agent: $*"; }
 sa_die(){ >&2 echo "stvor-agent: ОШИБКА: $*"; exit 1; }
 
@@ -155,16 +160,80 @@ sa_hook_remove(){
     if command -v stvor-agent >/dev/null 2>&1; then
         sa_run stvor-agent disable || sa_die "stvor-agent disable не прошёл — пакет не снят"
     fi
+    # disable stops both services; the stop here is for an agent that was
+    # never enabled or whose disable left a unit running (prerm of the package
+    # disables them too, but only after this point).
+    if [[ "${CREAM_PHASE:-live}" != build && -d "$SA_ROOT/run/systemd/system" ]]; then
+        sa_run systemctl stop "${SA_UNITS[@]}" || sa_log "предупреждение: службы агента не остановились"
+    fi
     sa_run dpkg -r stvor-agent || sa_die "dpkg -r stvor-agent не прошёл"
+    # cream does not tell the hook about --purge; after disable the telemetry
+    # directories hold only a fingerprint and the unsent buffer of a token that
+    # is gone — what `dpkg --purge` of the package would remove.
+    rm -r -f -- "$SA_ROOT/etc/stvor-agent-telemetry" "$SA_ROOT/var/lib/stvor-agent-telemetry"
     sa_log "пакет stvor-agent $have снят"
 }
 
 # hooks/apply: the service rereads /etc/cream/stvor-agent/config on restart.
 # Never waits for systemd jobs (cream convention); no-op without systemd.
 sa_hook_apply(){
-    if [[ "${CREAM_PHASE:-live}" == build || ! -d "${CREAM_ROOT%/}/run/systemd/system" ]]; then
+    if [[ "${CREAM_PHASE:-live}" == build || ! -d "$SA_ROOT/run/systemd/system" ]]; then
         sa_log "systemd не запущен — настройки подхватит служба при старте"
         return 0
     fi
     sa_run systemctl --no-block try-restart stvor-agent.service
+}
+
+# action status: `stvor-agent status --json` with the wrapper's verdict on
+# stdout — {"schema":1,"healthy":…,"problems":[…],"agent":<document or null>}.
+# Healthy: the agent is enabled and its service active and, when the document
+# has the block `telemetry` (agent >= 4.1.0), the telemetry service active with
+# its token ok. 0 — healthy, 1 — not (cream v1 has no check hook: health is the
+# action status). The agent's own exit code (1 — not enabled) is not the verdict.
+sa_status(){
+    local doc="" problems=""
+    if ! command -v stvor-agent >/dev/null 2>&1; then
+        problems="agent.not_installed"
+    else
+        doc="$(sa_run stvor-agent status --json 2>/dev/null)" || true
+        if [[ "$doc" == "{"*"}" ]]; then
+            problems="$(sa_status_problems <<< "$doc")"
+        else
+            doc=""
+            problems="agent.status_failed"
+        fi
+    fi
+    sa_status_json "$problems" "$doc"
+    [[ -z "$problems" ]]
+}
+
+# sa_status_problems: the document of `status --json` (json.MarshalIndent of
+# the agent, two spaces) on stdin → one problem per line. Top-level keys are
+# the lines indented by two spaces, the keys of `telemetry` by four.
+sa_status_problems(){
+    awk '
+        function val(l) { sub(/^[^:]*: */, "", l); sub(/,$/, "", l); gsub(/[^A-Za-z0-9_.-]/, "", l); return l == "" ? "unknown" : l }
+        /^  "telemetry": \{/ { tel = 1; seen = 1; next }
+        tel && /^  \}/ { tel = 0; next }
+        !tel && /^  "enabled": / { en = val($0) }
+        !tel && /^  "service": / { svc = val($0) }
+        tel && /^    "service": / { tsvc = val($0) }
+        tel && /^    "token": / { ttok = val($0) }
+        END {
+            if (en != "true") print "agent.enabled:" (en == "" ? "unknown" : en)
+            if (svc != "active") print "agent.service:" (svc == "" ? "unknown" : svc)
+            if (seen && tsvc != "active") print "telemetry.service:" (tsvc == "" ? "unknown" : tsvc)
+            if (seen && ttok != "ok") print "telemetry.token:" (ttok == "" ? "unknown" : ttok)
+        }'
+}
+
+# sa_status_json <problems, one per line> <document or empty>.
+sa_status_json(){
+    local list="" p healthy=true
+    while IFS= read -r p; do
+        [[ -n "$p" ]] || continue
+        list+="${list:+,}\"$p\""
+        healthy=false
+    done <<< "$1"
+    printf '{"schema":1,"healthy":%s,"problems":[%s],"agent":%s}\n' "$healthy" "$list" "${2:-null}"
 }

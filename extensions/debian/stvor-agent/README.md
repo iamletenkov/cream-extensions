@@ -18,6 +18,7 @@ set-managed`). Само расширение — тонкое: ставит `.de
 | Конфликтует с | — |
 | Хуки | `install`, `upgrade`, `remove`, `apply` |
 | Настройка на загрузке | — |
+| Действия | `cream run stvor-agent status` |
 | Живая машина | да |
 <!-- /catalog:facts -->
 
@@ -27,8 +28,28 @@ set-managed`). Само расширение — тонкое: ставит `.de
 |---|---|
 | `install` | выбирает версию и сумму (явные ключи или пин), берёт `.deb` из источника, сверяет sha256, `dpkg -i`. Та же версия уже стоит — пропуск |
 | `upgrade` | то же; `postinst` пакета перезапускает службу, если агент включён |
-| `remove` | `stvor-agent disable` (служба, токен и `state.json`), затем `dpkg -r stvor-agent` |
+| `remove` | `stvor-agent disable` (обе службы, токены, `state.json`), на живой машине — `systemctl stop` юнитов `stvor-agent` и `stvor-agent-telemetry`, `dpkg -r stvor-agent`, затем стираются `/etc/stvor-agent-telemetry` и `/var/lib/stvor-agent-telemetry` |
 | `apply` | `systemctl --no-block try-restart stvor-agent.service` — служба перечитывает `/etc/cream/stvor-agent/config` |
+
+| Действие | Что |
+|---|---|
+| `status` | здоровье: `stvor-agent status --json` с вердиктом — `{"schema":1,"healthy":…,"problems":[…],"agent":<документ агента>}`; код 0 — здоров, 1 — нет |
+
+**Телеметрия (агент ≥ 4.1.0).** Пакет сам заводит пользователя `stvor-telemetry`
+(`sysusers.d`, в `postinst`) и включает `stvor-agent-telemetry.service`; обёртка в
+это не вмешивается — не маскирует юнит и пользователей не заводит. Служба стартует
+только с токеном телеметрии, который получает служба меток. `cream remove`
+останавливает оба юнита и стирает каталоги телеметрии: cream не сообщает хуку о
+`--purge`, а после `disable` там только отпечаток и неотправленный буфер снятого
+токена — то, что убрал бы `dpkg --purge`.
+
+**Здоровье** (`cream run stvor-agent status`): здоров, если агент включён
+(`enabled: true`), служба меток `active`, а при блоке `telemetry` (агент ≥ 4.1.0) —
+служба телеметрии `active` и её токен `ok`. Иначе код 1, в `problems` — строки вида
+`agent.enabled:false`, `agent.service:inactive`, `telemetry.service:failed`,
+`telemetry.token:absent|rejected|no_access|corrupt`, `agent.not_installed`,
+`agent.status_failed`. Сразу после `enable` токен телеметрии ещё `absent` —
+это не здорово, пока служба меток его не получит.
 
 Пин пакета — `files/pin.env` (версия и суммы по архитектурам из `SHA256SUMS`
 релиза); его поднимает `tools/agent-bump.sh` по релизу stvor-agent.
@@ -127,7 +148,7 @@ RUN_COMMAND cream install --with-deps stvor-agent
 | загрузка | служба `stvor-agent` стартует, только если есть токен |
 | `cream set` (хук `apply`) | `try-restart` службы без ожидания |
 | `cream upgrade` | новый `.deb`; `postinst` перезапускает включённую службу |
-| `cream remove` | `stvor-agent disable`, `dpkg -r`; drop-in метки снимает cream |
+| `cream remove` | `stvor-agent disable`, стоп обоих юнитов, `dpkg -r`, каталоги телеметрии стёрты; drop-in метки снимает cream |
 
 ## Известные ограничения
 
@@ -141,7 +162,8 @@ RUN_COMMAND cream install --with-deps stvor-agent
 - **H** — `tests/test-stvor-agent.sh` (его зовёт `tools/check.sh`): манифест, пин,
   выбор источника, сверка суммы, отказ при неполном пине, явные версия и сумма
   побеждают пин, reload меток после `dpkg -i` (не в фазе build), токен не попадает в argv и окружение `curl`/`dpkg`/
-  `stvor-agent`, хуки `remove` и `apply`. При `CREAM_DEB=<.deb>` (или кеше пина
+  `stvor-agent`, хуки `remove` (оба юнита, каталоги телеметрии) и `apply`, действие
+  `status` (блок `telemetry`, агент до 4.1.0, не включён, нет пакета, не JSON). При `CREAM_DEB=<.deb>` (или кеше пина
   `tools/cream-pin.env`) и docker — ещё прогон настоящим cream в `debian:12`:
   drop-in на месте после `install`, убран `remove`.
 - **L** — `make test-live EXT=stvor-agent` (`tests/live.env`: поверх `teleport`;

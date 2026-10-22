@@ -31,6 +31,7 @@ make_tgz(){
         echo 'echo "agent $*" >> "$FAKE/calls"; env > "$FAKE/agent.env"'
         printf '[[ "$1" == version ]] && echo "stvor-agent %s"\n' "$1"
         echo '[[ "$1" == disable && -e "$FAKE/disable-fails" ]] && exit 1'
+        echo '[[ "$*" == "status --json" ]] && { cat "$FAKE/status.json" 2>/dev/null; exit "$(cat "$FAKE/status-rc" 2>/dev/null || echo 0)"; }'
         echo 'exit 0'
     } > "$d/stvor-agent"
     for m in stvor-agent stvor-agent-telemetry; do
@@ -114,11 +115,20 @@ dst = {f["dst"]: f for f in o["files"]}
 assert "/etc/cream/teleport-openwrt/command-labels.d/stvor_agent" in dst, dst
 assert "/lib/upgrade/keep.d/stvor-agent" in dst, dst
 assert "configure" not in o["hooks"], o["hooks"]
+assert o["actions"] == d["actions"], (o.get("actions"), d.get("actions"))
 PY
+check "actions/status исполняемый" test -x "$SRC/actions/status"
 ok
 eq "метка — как у debian" "$(cat "$DEB/files/stvor_agent.command-label")" "$(cat "$SRC/files/stvor_agent.command-label")"
 eq "keep.d — только состояние агента" "/opt/stvor-agent/" "$(grep -v '^#' "$SRC/files/keep.d")"
-eq "пин в git пуст до выпуска с tar.gz" "" "$(sed -n 's/^STVOR_AGENT_PIN_VERSION=//p' "$SRC/files/pin.env")"
+# Пин в git — полный (выпуск с tar.gz есть) или пустой целиком (до него): половины не бывает.
+pinv(){ sed -n "s/^$1=//p" "$SRC/files/pin.env"; }
+check "пин в git: полный или пустой целиком" python3 -c '
+import re, sys
+v, a, b = sys.argv[1:]
+sys.exit(0 if (v, a, b) == ("", "", "") or (re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", v)
+    and all(re.fullmatch("[0-9a-f]{64}", x) for x in (a, b))) else 1)' \
+    "$(pinv STVOR_AGENT_PIN_VERSION)" "$(pinv STVOR_AGENT_PIN_SHA256_AMD64)" "$(pinv STVOR_AGENT_PIN_SHA256_ARM64)"
 
 echo "== install: явная пара и зеркало — tar.gz, sha256, раскладка, пользователь =="
 setup
@@ -164,6 +174,7 @@ check "сообщение об архитектуре" grep -q 'архитект
 
 echo "== пин каталога: пустой — отказ до сети, полный — по архитектуре =="
 setup
+pin "" "" ""
 ht_hook install; check "пустой пин — отказ" test "$?" -ne 0
 check "сообщение о пине" grep -q 'пин каталога неполон' "$ROOT/out"
 check_not "до сети" ht_called '^curl '
@@ -292,6 +303,32 @@ ht_hook remove; eq "disable упал — remove всё равно 0" 0 "$?"
 check "предупреждение" grep -q 'stvor-agent disable не прошёл' "$ROOT/out"
 check "токен снят" test ! -e "$ROOT/etc/stvor-agent"
 ht_hook remove; eq "повтор remove на пустом — 0" 0 "$?"
+
+echo "== действие status: блок telemetry в stvor-agent status --json =="
+status_doc(){
+    {
+        printf '{\n  "schema": 1,\n  "version": "4.1.0",\n  "service": "%s",\n  "enabled": %s,\n  "token": "ok",\n' "$2" "$1"
+        printf '  "restart": {\n    "attempts": 0,\n    "paused_until": null\n  }'
+        [[ -z "${3:-}" ]] || printf ',\n  "telemetry": {\n    "service": "%s",\n    "token": "%s",\n    "buffer": null\n  }' "$3" "$4"
+        printf '\n}\n'
+    } > "$FAKE/status.json"
+}
+# st: eval only over this file's own literal expressions, never outside input.
+st(){ python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); v = eval(sys.argv[2], {"d": d}); print(v if isinstance(v, str) else json.dumps(v))' "$ROOT/out" "$1"; }
+setup
+installed
+status_doc true active active ok
+ht_action status; eq "здоров — 0" 0 "$?"
+eq "здоров — healthy, проблем нет, документ внутри" 'true [] 4.1.0' "$(st 'd["healthy"]') $(st 'd["problems"]') $(st 'd["agent"]["version"]')"
+status_doc true active inactive absent
+ht_action status; eq "телеметрия не работает — 1" 1 "$?"
+eq "проблемы телеметрии" '["telemetry.service:inactive", "telemetry.token:absent"]' "$(st 'd["problems"]')"
+status_doc false inactive active ok; echo 1 > "$FAKE/status-rc"
+ht_action status; eq "агент не включён — 1" 1 "$?"
+eq "проблемы агента" '["agent.enabled:false", "agent.service:inactive"]' "$(st 'd["problems"]')"
+setup
+ht_action status; eq "агента нет — 1" 1 "$?"
+eq "not_installed" '["agent.not_installed"] null' "$(st 'd["problems"]') $(st 'd["agent"]')"
 
 echo "== apply: перезапуск работающих фоном, без procd — ничего =="
 setup

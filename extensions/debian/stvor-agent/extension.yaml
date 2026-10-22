@@ -5,7 +5,9 @@
 # file goes away on `cream remove stvor-agent`).
 schema: cream/v1
 name: stvor-agent
-version: 4.1.3
+version: 4.2.0
+# 4.2.0: пин пакета stvor-agent 4.1.0 (служба телеметрии): remove останавливает оба
+#        юнита и стирает каталоги телеметрии; действие status — здоровье с блоком telemetry.
 # 4.1.3: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 # 4.1.2: пин пакета stvor-agent 4.0.1.
 # 4.1.1: только README (выпуск 5.1.1 изменил дерево без подъёма версии —
@@ -32,6 +34,14 @@ hooks:
   upgrade: {timeout: 10m}
   remove: {}
   apply: {}
+# Health (cream v1 reserves the check hook): the agent and its telemetry from
+# `stvor-agent status --json`; 0 — healthy, 1 — not.
+actions:
+  status:
+    summary: "здоровье агента и телеметрии: stvor-agent status --json с вердиктом, JSON"
+    lock: none
+    output: json
+    phases: [live]
 config:
   keys:
     STVOR_AGENT_VERSION:
