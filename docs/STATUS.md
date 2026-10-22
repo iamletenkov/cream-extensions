@@ -6,7 +6,7 @@
 
 ## Сделано
 - 49 расширений (из них 3 библиотеки) — cream/v1, из них 3 семейства `openwrt` (`make test-openwrt`
-  на корневой ФС openwrt-builder v0.3.0, CI-job `test-openwrt`); 13 с `every_boot` (`amneziawg` — стадия
+  на корневой ФС openwrt-builder v0.3.1, CI-job `test-openwrt`); 13 с `every_boot` (`amneziawg` — стадия
   `system` после `S47wrt.cloudinit`, восстанавливает стёртый интерфейс) и `cream: ">=1.2.0"`;
   `cream check` по каталогу и правило `every-boot` ошибкой — в CI.
 - Документация по задачам: README с таблицей расширений, [первые шаги](getting-started.md),

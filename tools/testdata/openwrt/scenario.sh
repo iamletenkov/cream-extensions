@@ -1,6 +1,6 @@
 #!/bin/sh
 # Scenario of tools/test-openwrt.sh inside the container with the root FS of
-# openwrt-builder v0.3.0 (busybox sh). /t (read-only) — the cream binary;
+# openwrt-builder v0.3.1 (busybox sh). /t (read-only) — the cream binary;
 # /catalog (read-only) — this repository.
 set -eu
 
@@ -15,32 +15,41 @@ eq() { [ "$2" = "$3" ] || fail "$1: ждали «$2», получили «$3»";
 mode() { ls -l "$1" | cut -c1-10; }
 uget() { uci -q get "$1" 2>/dev/null || true; }
 
-# cloudinit_s47 WAN_IP: what wrt.cloudinit (S47 of openwrt-builder v0.3.0) does to
-# the network on a boot that provisions a new instance-id (apply_network_config):
-# every section of /etc/config/network deleted (purge_package network), then
-# loopback, wan and lan from the seed written anew. The real script needs a
-# cidata seed of the hypervisor, so its network part is repeated here.
+# cloudinit_s47 WAN_IP: what wrt.cloudinit (S47 of openwrt-builder v0.3.1) does to
+# the network on a boot that provisions a new instance-id — its own function
+# write_network_uci from the image, on a NoCloud v1 seed (WAN eth0 static
+# WAN_IP, LAN eth1 192.168.10.1): it rewrites only its own sections (loopback,
+# wan, lan*, br-lan*, zones lan/wan) and leaves the others — awg0 and its peer —
+# in place. The service itself needs a cidata seed of the hypervisor and procd,
+# so only its network part is called here; restarts are not.
 cloudinit_s47() {
-	uci -q show network | cut -d. -f2 | cut -d= -f1 | sort -u |
-		while read -r s; do uci -q delete "network.$s"; done
-	uci batch <<EOF >/dev/null
-set network.loopback=interface
-set network.loopback.device='lo'
-set network.loopback.proto='static'
-set network.loopback.ipaddr='127.0.0.1'
-set network.loopback.netmask='255.0.0.0'
-set network.wan=interface
-set network.wan.device='eth0'
-set network.wan.proto='static'
-set network.wan.ipaddr='$1'
-set network.wan.netmask='255.255.255.0'
-set network.lan=interface
-set network.lan.device='br-lan1'
-set network.lan.proto='static'
-set network.lan.ipaddr='192.168.10.1'
-set network.lan.netmask='255.255.255.0'
-commit network
+	seed=$(mktemp -d)
+	cat >"$seed/network-config" <<EOF
+version: 1
+config:
+  - type: physical
+    name: eth0
+    subnets:
+      - type: static
+        address: '$1'
+        netmask: '255.255.255.0'
+        gateway: '${1%.*}.1'
+  - type: physical
+    name: eth1
+    subnets:
+      - type: static
+        address: '192.168.10.1'
+        netmask: '255.255.255.0'
 EOF
+	(
+		set +eu
+		for f in /usr/lib/wrt-cloudinit/lib/*.sh; do . "$f"; done
+		. /etc/init.d/wrt.cloudinit
+		logger() { :; }
+		CIDATA=$seed
+		write_network_uci
+	) || fail "wrt.cloudinit: write_network_uci"
+	rm -rf "$seed"
 }
 
 PEER="$(printf "%042d" 0 | tr 0 s)A="
@@ -128,13 +137,15 @@ uci commit network
 eq "интерфейс не переписан" 1280 "$(uget network.awg0.mtu)"
 eq "podkop interface" awg0 "$(uget podkop.main.interface)"
 
-step "третья загрузка: новый instance-id — S47 снова чистит сеть, S95 восстанавливает awg0"
+step "третья загрузка: новый instance-id — S47 переписывает свою сеть, awg0 не трогает"
 /etc/rc.d/S19cream-configure-early boot
 cloudinit_s47 10.0.0.3
-eq "после S47 awg0 нет" "" "$(uget network.awg0)"
+eq "после S47 awg0 на месте" amneziawg "$(uget network.awg0.proto)"
+eq "после S47 ручная правка awg0 цела" 1280 "$(uget network.awg0.mtu)"
+eq "после S47 пир на месте" "$PEER" "$(uget network.awg0_peer.public_key)"
 /etc/rc.d/S95cream-configure boot
-eq "awg0 восстановлен" amneziawg "$(uget network.awg0.proto)"
-eq "пир восстановлен" "$PEER" "$(uget network.awg0_peer.public_key)"
+eq "awg0 на месте" amneziawg "$(uget network.awg0.proto)"
+eq "пир на месте" "$PEER" "$(uget network.awg0_peer.public_key)"
 eq "тот же ключ машины" "$key" "$(uget network.awg0.private_key)"
 eq "wan нового сида" 10.0.0.3 "$(uget network.wan.ipaddr)"
 

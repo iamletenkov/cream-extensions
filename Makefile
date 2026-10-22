@@ -41,7 +41,7 @@ cream-validate: ## cream validate --catalog . по корню (пин tools/crea
 cream-check: ## cream check: каждое расширение строкой образа (пин tools/cream-pin.env или CREAM_DEB=<.deb>)
 	tools/cream-check.sh
 
-test-openwrt: ## расширения extensions/openwrt на корневой ФС openwrt-builder v0.3.0 в контейнере (tools/test-openwrt.sh)
+test-openwrt: ## расширения extensions/openwrt на корневой ФС openwrt-builder v0.3.1 в контейнере (tools/test-openwrt.sh)
 	tools/test-openwrt.sh
 
 snapshot: ## снимок каталога из HEAD: dist/cream-extensions-<v>.tar.gz + dist/SHA256SUMS (tools/catalog-snapshot.sh)

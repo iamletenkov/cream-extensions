@@ -71,7 +71,7 @@ cream запускает хук — [стадии configure](https://github.com/
 | А2 | перебирает пользователей или домашние каталоги (`getent passwd`, `/home/*`, UID 1000+) | `rustdesk`, `desktop` |
 | А3 | ждёт пользователя cloud-init (`get_cloud_user.sh`, стадия `cloud-user`) | `x11vnc`, `kiosk`, `docker` |
 | А4 | сам ставит себе повтор `configure` | `rustdesk` |
-| А5 | правит файлы, которые переписывает само приложение | `rustdesk` — `RustDesk2.toml`; `amneziawg` — `/etc/config/network`, его переписывает `wrt.cloudinit` |
+| А5 | правит файлы, которые переписывает само приложение | `rustdesk` — `RustDesk2.toml`; `amneziawg` — `/etc/config/network`, его переписывал `wrt.cloudinit` образов openwrt-builder до v0.3.1 |
 | А6 | зависит от железа: GPU, кодер, `/dev/*`, плата Jetson | `pixelflux-tegra`, `jetson-stats` |
 
 Решения по каждому хуку каталога — [аудит configure](../research/2026-10-21-configure-audit.md):
