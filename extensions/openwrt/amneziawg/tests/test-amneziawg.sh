@@ -84,7 +84,7 @@ check "маршруты не трогаем по умолчанию" has_line "s
 check "keepalive 25" has_line "set network.awg0_peer.persistent_keepalive='25'"
 check "commit" has_line "commit network"
 check_not "ключ не в argv" grep -rqF "$GEN" "$FAKE/uci.argv"
-check_not "на загрузке netifd не трогаем" ht_called '^ubus call'
+check_not "netifd не отвечает — reload не зовём" ht_called '^ubus call'
 : > "$FAKE/uci.batch"
 ht_hook configure CREAM_REASON=boot
 check "повтор — тот же ключ" has_line "set network.awg0.private_key='$GEN'"
@@ -130,6 +130,46 @@ setup
 ht_fake ubus 'exit 0'
 HT_PHASE=build ht_hook configure CREAM_REASON=install
 check_not "в сборке netifd не трогаем" ht_called '^ubus call'
+
+# --- configure на загрузке (стадия system, S95, every_boot): после S47 wrt.cloudinit
+# netifd уже работает — записанный интерфейс поднимается reload; интерфейс на месте и
+# настройки те же — не переписываем (ручные правки целы), секции нет — восстанавливаем.
+setup
+ht_fake ubus 'exit 0'
+ht_hook configure CREAM_REASON=boot AMNEZIAWG_PEER_PUBLIC_KEY="$KEY_A"
+eq "загрузка: configure — 0" 0 "$?"
+check "загрузка: интерфейс записан" has_line "set network.awg0=interface"
+check "загрузка: netifd перечитал сеть" ht_called '^ubus call network reload'
+check "загрузка: отпечаток записанного в состоянии" test -s "$ROOT/var/lib/cream/ext/amneziawg/applied"
+check_not "отпечаток без ключа в открытом виде" grep -qF "$GEN" "$ROOT/var/lib/cream/ext/amneziawg/applied"
+# вторая загрузка: секция на месте (uci get читает записанный batch), настройки те же
+: > "$FAKE/calls"
+cp "$FAKE/uci.batch" "$FAKE/uci.batch.1"
+ht_hook configure CREAM_REASON=boot AMNEZIAWG_PEER_PUBLIC_KEY="$KEY_A"
+eq "загрузка без изменений — 0" 0 "$?"
+check "uci batch не звали" cmp -s "$FAKE/uci.batch" "$FAKE/uci.batch.1"
+check_not "без изменений netifd не трогаем" ht_called '^ubus call'
+check "сказано, что интерфейс на месте" grep -q 'на месте' "$ROOT/out"
+# S47 стёр сеть: секции нет — записываем заново и поднимаем
+: > "$FAKE/uci.batch"
+: > "$FAKE/calls"
+ht_hook configure CREAM_REASON=boot AMNEZIAWG_PEER_PUBLIC_KEY="$KEY_A"
+check "секции нет — восстановлен" has_line "set network.awg0=interface"
+check "восстановлен и пир" has_line "set network.awg0_peer=amneziawg_awg0"
+check "восстановленный поднят" ht_called '^ubus call network reload'
+# интерфейс есть, пира нет (стёрт) — тоже восстановление
+cp "$FAKE/uci.batch" "$FAKE/uci.batch.2"
+grep -v '_peer' "$FAKE/uci.batch.2" > "$FAKE/uci.batch"
+ht_hook configure CREAM_REASON=boot AMNEZIAWG_PEER_PUBLIC_KEY="$KEY_A"
+check "пир пропал — переписан" test "$(grep -c '^set network.awg0_peer=amneziawg_awg0' "$FAKE/uci.batch")" -ge 1
+# настройки сменились (set --no-apply и перезагрузка): переписываем
+cp "$FAKE/uci.batch" "$FAKE/uci.batch.3"
+ht_hook configure CREAM_REASON=boot AMNEZIAWG_PEER_PUBLIC_KEY="$KEY_A" AMNEZIAWG_MTU=1280
+check "новые настройки на загрузке — записаны" has_line "set network.awg0.mtu='1280'"
+# cream configure / set (apply) — всегда пишет, даже без изменений
+cp "$FAKE/uci.batch" "$FAKE/uci.batch.4"
+ht_hook configure CREAM_REASON=apply AMNEZIAWG_PEER_PUBLIC_KEY="$KEY_A" AMNEZIAWG_MTU=1280
+check_not "apply переписывает всегда" cmp -s "$FAKE/uci.batch" "$FAKE/uci.batch.4"
 
 # --- configure: битый секрет — отказ
 setup
