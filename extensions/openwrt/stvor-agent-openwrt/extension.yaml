@@ -10,16 +10,19 @@
 #             stvor-telemetry (user_add/group_add_next of /lib/functions.sh), the
 #             state /opt/stvor-agent (0750 root:stvor-telemetry); on a live machine —
 #             reload-apps of teleport-openwrt for the label stvor_agent.
+# configure — every boot (stage system, before procd starts the services; as
+#             install): owners and modes of the state — /opt/stvor-agent,
+#             machine-id, the telemetry tree of stvor-telemetry. No network.
 # apply     — running services restart in the background.
 # remove    — stvor-agent disable, services off, the binary, the init scripts,
 #             tokens, the state and the user (if this extension made it) gone.
 # files     — the drop-in of the command label stvor_agent of teleport-openwrt,
-#             /lib/upgrade/keep.d/stvor-agent (sysupgrade keeps the state only, Р4).
-# configure none: at boot procd starts the services (rc.d), not cream; А1–А6 are not
-# about it (/var/run/stvor-agent-telemetry is made by the init script on every start).
+#             /lib/upgrade/keep.d/stvor-agent (sysupgrade keeps the machine-id only, Р4).
 schema: cream/v1
 name: stvor-agent-openwrt
-version: 1.1.0
+version: 1.1.1
+# 1.1.1: keep.d — только machine-id; install и configure (каждая загрузка) выставляют
+#        владельца и права состояния, буфер телеметрии после восстановления не 0:0.
 # 1.1.0: пин tar.gz stvor-agent 4.1.0; действие status — здоровье с блоком telemetry.
 summary: Агент портала Stvor на OpenWrt — метки env и space узла Teleport с портала и телеметрия, procd
 cream: ">=1.3.0"
@@ -36,6 +39,7 @@ depends: [{name: teleport-openwrt, version: ">=1.0.0 <2"}]
 hooks:
   install: {timeout: 10m}
   upgrade: {timeout: 10m}
+  configure: {stage: system, every_boot: true, timeout: 1m}
   remove: {}
   apply: {}
 # Health (cream v1 reserves the check hook) — as debian/stvor-agent.

@@ -18,8 +18,8 @@ teleport-openwrt set-managed`), служба телеметрии шлёт на 
 | Требует | — |
 | Зависит от | [`teleport-openwrt`](../teleport-openwrt/README.md) |
 | Конфликтует с | — |
-| Хуки | `install`, `upgrade`, `remove`, `apply` |
-| Настройка на загрузке | — |
+| Хуки | `install`, `upgrade`, `configure`, `remove`, `apply` |
+| Настройка на загрузке | стадия `system`, на каждой загрузке (`every_boot`) |
 | Действия | `cream run stvor-agent-openwrt status` |
 | Живая машина | да |
 <!-- /catalog:facts -->
@@ -34,15 +34,26 @@ teleport-openwrt set-managed`), служба телеметрии шлёт на 
   Создаёт системного пользователя и группу `stvor-telemetry` помощниками
   `group_add_next`/`user_add` из `/lib/functions.sh` (shadow-utils на OpenWrt нет) и
   каталоги `/opt/stvor-agent` и `/etc/stvor-agent-telemetry` (0750
-  `root:stvor-telemetry`). Та же версия и сумма уже стоят — пропуск без сети. Новая
+  `root:stvor-telemetry`) и каждый раз выставляет владельца и права состояния (как
+  `configure`). Та же версия и сумма уже стоят — пропуск без сети. Новая
   версия на живой машине — работающие службы перезапускаются фоном. На живой машине
   зовёт `cream run teleport-openwrt reload-apps`, чтобы узел подхватил метку `stvor_agent`.
+- **`configure`** (на каждой загрузке, стадия `system` — до того, как procd поднимет
+  службы) — владелец и права состояния: `/opt/stvor-agent` 0750 `root:stvor-telemetry`,
+  `machine-id` 0640 `root:stvor-telemetry`, `/opt/stvor-agent/telemetry` и его `buffer` —
+  0700 `stvor-telemetry`. Восстановленное из копии (или `keep.d` версии 1.1.0) приходило
+  `0:0 0755`, и служба телеметрии падала с `permission denied`; теперь это чинят и
+  загрузка, и повтор `cream install`: буфер не того владельца пересоздаётся пустым. Без
+  сети; пользователя `stvor-telemetry` ещё нет — ничего.
 - **`apply`** (`cream set stvor-agent-openwrt …`) — работающие службы перезапускаются
   фоном и перечитывают `/etc/cream/stvor-agent-openwrt/config`; без procd — ничего.
 - **`remove`** — `stvor-agent disable` (служба, токен, `state.json`), службы
   остановлены и выключены; бинарь, init-скрипты, токены (`/etc/stvor-agent`,
   `/etc/stvor-agent-telemetry`), состояние `/opt/stvor-agent` стёрты; пользователь и
-  группа `stvor-telemetry` снимаются, только если их создало это расширение. Drop-in
+  группа `stvor-telemetry` снимаются, только если их создало это расширение. Каталоги,
+  куда пишет `stvor-telemetry` (`/opt/stvor-agent`, `/var/run/stvor-agent-telemetry`),
+  удаляются только после выхода всех его процессов и через каталог, доступный лишь root;
+  процессы не завершились за 40 с — отказ, ничего не снято (повторите `cream remove`). Drop-in
   метки `stvor_agent` уходит до `reload-apps` — узел сразу перестаёт показывать метку.
 - **действие `status`** (`cream run stvor-agent-openwrt status`) — здоровье агента и
   телеметрии, как у [`debian/stvor-agent`](../../debian/stvor-agent/README.md):
@@ -115,10 +126,10 @@ RUN_COMMAND cream install --with-deps stvor-agent-openwrt STVOR_AGENT_VERSION=<v
 |---|---|
 | сборка образа / `cream install` | drop-in метки и `keep.d` (cream, до хука), tar.gz по пину или явной паре, sha256, бинарь и init-скрипты, пользователь `stvor-telemetry`, службы включены; на живой машине — `reload-apps` узла |
 | `stvor-agent enable` | токен меток, `/etc/init.d/stvor-agent enable` и `restart`; служба (root) берёт токен телеметрии и стартует `stvor-agent-telemetry` |
-| загрузка | procd стартует службы из `rc.d`, каждую — только при её токене; `/var/run/stvor-agent-telemetry` init-скрипт создаёт сам |
+| загрузка | `configure` (S95) выставляет владельца и права состояния; procd стартует службы из `rc.d`, каждую — только при её токене; `/var/run/stvor-agent-telemetry` init-скрипт создаёт сам |
 | `cream set` (хук `apply`) | перезапуск работающих служб фоном |
 | `cream upgrade` | новый tar.gz; работающие службы перезапускаются |
-| `sysupgrade` | сохраняется только `/opt/stvor-agent/` (`keep.d`, Р4); бинарь, init-скрипты, реестр cream и токены — нет: та же команда портала ставит всё заново |
+| `sysupgrade` | сохраняется только `/opt/stvor-agent/machine-id` (`keep.d`, Р4) — опознание машины детектором клонов портала; токены (и `telemetry-token.src`), `state.json`, буфер телеметрии, бинарь, init-скрипты и реестр cream — нет: та же команда портала ставит всё заново и выдаёт новые токены, `install` выставляет владельца `machine-id` |
 | `cream remove` | `stvor-agent disable`, службы выключены, всё поставленное стёрто, `reload-apps` узла |
 
 ## Известные ограничения
@@ -141,10 +152,22 @@ RUN_COMMAND cream install --with-deps stvor-agent-openwrt STVOR_AGENT_VERSION=<v
 
 ### Настройка на загрузке
 
-Хука `configure` нет: службы на загрузке поднимает procd (`rc.d`), не cream; признаки
-А1–А6 ([настройка на загрузке](../../../docs/guides/configure-lifecycle.md)) к расширению не
-относятся — каталог `/var/run/stvor-agent-telemetry` (tmpfs) init-скрипт создаёт при
-каждом старте, `every_boot` не нужен.
+Службы на загрузке поднимает procd (`rc.d`), не cream; каталог
+`/var/run/stvor-agent-telemetry` (tmpfs) init-скрипт создаёт при каждом старте. `configure`
+с `every_boot` ([настройка на загрузке](../../../docs/guides/configure-lifecycle.md)) только
+выставляет владельца и права `/opt/stvor-agent`: init-скрипт агента чинит лишь верхний
+каталог телеметрии, а буфер после восстановления остаётся чужим.
+
+Дерево телеметрии принадлежит непривилегированному пользователю, поэтому root его не
+обходит и ничего внутри не перевладевает: жёсткая ссылка или симлинк в буфере на файл root
+отдали бы этот файл пользователю. Буфер — временные данные: если он сам или что-то в нём не
+пользователя `stvor-telemetry` (проверка только чтением, `find` по ссылкам не идёт), служба
+телеметрии останавливается (на живой машине) и дожидается выхода процессов пользователя,
+каталог телеметрии закрывается (`0:0 0700`), буфер уходит в каталог, доступный только root,
+и удаляется непрочитанным, на его месте создаётся пустой. `chown`/`chmod` — только на
+каталоги, которые root только что закрыл или создал; каталог телеметрии отдаётся
+пользователю последним, служба запускается вновь. Процессы пользователя не завершились за
+40 с — отказ, ничего не тронуто.
 
 ### Метка `stvor_agent`
 

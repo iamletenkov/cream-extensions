@@ -85,11 +85,47 @@ grep -q '^stvor-telemetry:' /etc/shadow || fail "shadow stvor-telemetry"
 eq "/opt/stvor-agent" "drwxr-x--- root:stvor-telemetry" "$(mode /opt/stvor-agent) $(owner /opt/stvor-agent)"
 eq "/etc/stvor-agent-telemetry" "drwxr-x--- root:stvor-telemetry" \
 	"$(mode /etc/stvor-agent-telemetry) $(owner /etc/stvor-agent-telemetry)"
-eq "keep.d" "/opt/stvor-agent/" "$(grep -v '^#' /lib/upgrade/keep.d/stvor-agent)"
+eq "keep.d" "/opt/stvor-agent/machine-id" "$(grep -v '^#' /lib/upgrade/keep.d/stvor-agent)"
 has /etc/cream/teleport-openwrt/command-labels.d/stvor_agent
 out=$(cream install stvor-agent-openwrt STVOR_AGENT_VERSION=4.1.0 STVOR_AGENT_SHA256="$sha" STVOR_AGENT_TARBALL=/opt/agent.tar.gz 2>&1) ||
 	fail "повтор install: $out"
 eq "один пользователь" 1 "$(grep -c '^stvor-telemetry:' /etc/passwd)"
+
+# A restore (keep.d of 1.1.0, a backup) brings the state back as 0:0 0755.
+SHADOW_OWNER=$(owner /etc/shadow)
+spoil() {
+	mkdir -p /opt/stvor-agent/telemetry/buffer/q
+	chown -R 0:0 /opt/stvor-agent/telemetry
+	chmod 0755 /opt/stvor-agent/telemetry /opt/stvor-agent/telemetry/buffer /opt/stvor-agent/telemetry/buffer/q
+	echo seg >/opt/stvor-agent/telemetry/buffer/q/0001
+	echo 0123 >/opt/stvor-agent/machine-id
+	chown 0:0 /opt/stvor-agent/machine-id
+	chmod 0600 /opt/stvor-agent/machine-id
+	ln -sfn /etc/shadow /opt/stvor-agent/telemetry/buffer/shadow
+	ln -f /etc/shadow /opt/stvor-agent/telemetry/buffer/shadow-hard
+	echo marker >/opt/stvor-agent/telemetry/token-rejected
+}
+fixed() {
+	for d in /opt/stvor-agent/telemetry /opt/stvor-agent/telemetry/buffer; do
+		eq "$1: $d" "drwx------ stvor-telemetry:stvor-telemetry" "$(mode "$d") $(owner "$d")"
+	done
+	eq "$1: буфер пересоздан пустым" "" "$(ls -A /opt/stvor-agent/telemetry/buffer)"
+	has /opt/stvor-agent/telemetry/token-rejected
+	eq "$1: корзины нет" "" "$(find /opt/stvor-agent -maxdepth 1 -name '.trash.*')"
+	eq "$1: /etc/shadow — одна ссылка" 1 "$(ls -ld /etc/shadow | awk '{print $2}')"
+	eq "$1: machine-id" "-rw-r----- root:stvor-telemetry" "$(mode /opt/stvor-agent/machine-id) $(owner /opt/stvor-agent/machine-id)"
+	eq "$1: ссылка не разыменована" "$SHADOW_OWNER" "$(owner /etc/shadow)"
+}
+step "права состояния: повтор install и configure на загрузке чинят восстановленное"
+spoil
+# After sysupgrade the registry is empty and the hook runs; here --reinstall does that.
+out=$(cream install --reinstall stvor-agent-openwrt STVOR_AGENT_VERSION=4.1.0 STVOR_AGENT_SHA256="$sha" STVOR_AGENT_TARBALL=/opt/agent.tar.gz 2>&1) ||
+	fail "install поверх восстановленного: $out"
+fixed install
+spoil
+/etc/rc.d/S95cream-configure boot
+fixed configure
+rm -r -f -- /opt/stvor-agent/telemetry /opt/stvor-agent/machine-id
 
 step "метка stvor_agent в teleport.yaml (render после отложенного join)"
 out=$(printf '%s' 'abcdefgh1-join-token' | CREAM_PHASE=live cream run teleport-openwrt join \
@@ -117,7 +153,10 @@ step "remove: службы, бинарь, токены, состояние, по
 mkdir -p /etc/stvor-agent /opt/stvor-agent/telemetry
 echo 'url=https://stvor.example.org/robot-api/v1/labels' >/etc/stvor-agent/token
 echo 0123 >/opt/stvor-agent/machine-id
+ln -sfn /etc /opt/stvor-agent/telemetry/etc
 CREAM_PHASE=live cream remove stvor-agent-openwrt
+has /etc/os-release
+eq "корзин нет" "" "$(find /opt /var/run -maxdepth 1 -name '.stvor-agent-trash.*')"
 for p in /usr/bin/stvor-agent /etc/init.d/stvor-agent /etc/init.d/stvor-agent-telemetry /etc/stvor-agent \
 	/etc/stvor-agent-telemetry /opt/stvor-agent /lib/upgrade/keep.d/stvor-agent \
 	/etc/cream/teleport-openwrt/command-labels.d/stvor_agent; do

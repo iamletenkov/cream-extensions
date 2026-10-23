@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # stvor-agent on OpenWrt: which delivery, where from, how it goes on and off.
-# Sourced by the hooks (hooks/install, upgrade, remove, apply); the pure
+# Sourced by the hooks (hooks/install, upgrade, configure, remove, apply); the pure
 # functions are called by tests/test-stvor-agent-openwrt.sh. The agent lives in
 # its own repository and ships for OpenWrt as stvor-agent_<version>_linux_<arch>.tar.gz:
 # the static binary `stvor-agent` and the procd init scripts
@@ -223,6 +223,110 @@ sa_dir(){
     mkdir -p -- "$1" && chown "0:$SA_USER" -- "$1" && chmod "$2" -- "$1"
 }
 
+# sa_own_state: the owners and modes of the state, every time (install, upgrade,
+# configure on every boot). A restore (keep.d of 1.1.0, a backup) brought the
+# telemetry tree back as 0:0 0755 and the telemetry service (stvor-telemetry)
+# died on permission denied; its init script fixes only the top directory.
+#   /opt/stvor-agent             0750 root:stvor-telemetry
+#   /opt/stvor-agent/machine-id  0640 root:stvor-telemetry (telemetry hashes it)
+#   /opt/stvor-agent/telemetry   0700 stvor-telemetry (the root agent may keep its
+#                                token-rejected marker there)
+#   …/telemetry/buffer           0700 stvor-telemetry, everything in it the user's
+# The tree is the unprivileged user's, so root never walks it to change
+# anything: a link (soft or hard) to a root file there would hand that file
+# over. A buffer that is not the user's is transient data: the service is
+# stopped, the buffer moved into a directory only root can reach and deleted
+# unread, an empty one made in its place. Owners and modes change only on the
+# directories root has just closed or made.
+sa_own_state(){
+    local t="$SA_HOME/telemetry" b="$SA_HOME/telemetry/buffer" uid stopped=0
+    sa_dir "$SA_HOME" 0750 || return 1
+    if [[ -f "$SA_HOME/machine-id" && ! -L "$SA_HOME/machine-id" ]]; then
+        chown "0:$SA_USER" -- "$SA_HOME/machine-id" && chmod 0640 -- "$SA_HOME/machine-id" || return 1
+    fi
+    [[ -e "$t" || -L "$t" ]] || return 0
+    uid="$(sa_uid)" || { sa_log "ОШИБКА: нет uid пользователя $SA_USER"; return 1; }
+    if sa_user_dir "$t" "$uid" && { [[ ! -e "$b" && ! -L "$b" ]] || sa_user_tree "$b" "$uid"; }; then
+        return 0
+    fi
+    sa_log "${t#"$SA_ROOT"}: владелец или права не те — буфер телеметрии пересоздаётся"
+    if sa_procd_running && sa_svc stvor-agent-telemetry running; then
+        sa_svc stvor-agent-telemetry stop || true
+        stopped=1
+    fi
+    sa_wait_user_gone "$uid" || { sa_log "ОШИБКА: процессы $SA_USER не завершились — права не трогаю"; return 1; }
+    sa_reset_telemetry "$t" "$b" || return 1
+    if (( stopped )); then
+        "$SA_INIT_DIR/stvor-agent-telemetry" start >/dev/null 2>&1 &
+        sa_log "служба stvor-agent-telemetry запускается"
+    fi
+    return 0
+}
+# sa_uid: the uid of the telemetry user (numeric: find -user takes it everywhere).
+sa_uid(){
+    local u
+    u="$(awk -F: -v n="$SA_USER" '$1 == n { print $3; exit }' "$SA_ROOT/etc/passwd")"
+    [[ "$u" =~ ^[0-9]+$ ]] && echo "$u"
+}
+# sa_user_dir <dir> <uid>: a directory (not a link) of the user, mode 0700.
+sa_user_dir(){
+    [[ -d "$1" && ! -L "$1" ]] && [[ -n "$(find "$1" -maxdepth 0 -type d -user "$2" -perm 0700 2>/dev/null)" ]]
+}
+# sa_user_tree <dir> <uid>: the user's directory and nothing in it of another
+# owner — a read-only look (find never follows links), nothing is changed.
+sa_user_tree(){
+    sa_user_dir "$1" "$2" || return 1
+    [[ -z "$(find "$1" -xdev ! -user "$2" -print 2>/dev/null | head -n 1)" ]]
+}
+# sa_wait_user_gone <uid>: no process of the user is left (procd stops the
+# service asynchronously, term_timeout 30 s).
+sa_wait_user_gone(){
+    local i
+    for (( i = 0; i < 40; i++ )); do
+        sa_user_procs "$1" || return 0
+        sleep 1
+    done
+    return 1
+}
+sa_user_procs(){
+    local f
+    for f in "$SA_ROOT"/proc/[0-9]*/status; do
+        [[ -r "$f" ]] || continue
+        awk -v u="$1" '$1 == "Uid:" && $2 == u { found = 1 } END { exit !found }' "$f" 2>/dev/null && return 0
+    done
+    return 1
+}
+# sa_reset_telemetry <telemetry> <buffer>: the user has no process left. The
+# telemetry directory is closed to the user (or put aside, if it is not a
+# directory), the buffer goes aside and is deleted unread, an empty buffer is
+# made, and the directory is handed back last.
+sa_reset_telemetry(){
+    local t="$1" b="$2" trash
+    trash="$(mktemp -d "$SA_HOME/.trash.XXXXXX")" || return 1
+    chmod 0700 -- "$trash" || return 1
+    if [[ -L "$t" || ! -d "$t" ]]; then
+        mv -f -- "$t" "$trash/telemetry" || return 1
+        mkdir -m 0700 -- "$t" || return 1
+    fi
+    chown 0:0 -- "$t" && chmod 0700 -- "$t" || return 1
+    if [[ -e "$b" || -L "$b" ]]; then
+        mv -f -- "$b" "$trash/buffer" || return 1
+    fi
+    rm -r -f -- "$trash"
+    mkdir -m 0700 -- "$b" && chown "$SA_USER:$SA_USER" -- "$b" && chmod 0700 -- "$b" || return 1
+    chown "$SA_USER:$SA_USER" -- "$t" && chmod 0700 -- "$t"
+}
+
+# hooks/configure (every boot, stage system — before procd starts the services):
+# the owners and modes of the state, no network, no services.
+sa_hook_configure(){
+    if ! sa_user_exists || ! sa_group_exists; then
+        sa_log "пользователя $SA_USER нет — права состояния выставит install"
+        return 0
+    fi
+    sa_own_state || sa_die "не выставить права ${SA_HOME#"$SA_ROOT"}"
+}
+
 # sa_reload_label: teleport-openwrt applies command-labels.d only when told
 # (no path units on OpenWrt) — on a live machine with procd; reload-apps itself
 # does nothing before join and restarts the node only when teleport.yaml changed.
@@ -271,8 +375,8 @@ sa_hook_install(){
         sa_log "установлен $(sa_tarball_name "$SA_VERSION" "$arch")${have:+ (было ${have%% *})}"
     fi
     sa_ensure_user || exit 1
-    sa_dir "$SA_HOME" 0750 || sa_die "не создать ${SA_HOME#"$SA_ROOT"}"
     sa_dir "$SA_TELEMETRY_ETC" 0750 || sa_die "не создать ${SA_TELEMETRY_ETC#"$SA_ROOT"}"
+    sa_own_state || sa_die "не выставить права ${SA_HOME#"$SA_ROOT"}"
     for s in "${SA_SERVICES[@]}"; do
         sa_svc "$s" enable || sa_log "предупреждение: /etc/init.d/$s enable не прошёл"
     done
@@ -286,17 +390,27 @@ sa_hook_install(){
 # state, the user it made. The drop-in of the label goes first, so the node
 # drops the label now (reload-apps) — cream would remove it only after the hook.
 sa_hook_remove(){
-    local s
+    local s uid=""
     if [[ -x "$SA_BIN" ]]; then
         sa_run "$SA_BIN" disable >/dev/null 2>&1 || sa_log "предупреждение: stvor-agent disable не прошёл — службы и токены снимаются здесь"
     fi
+    if sa_procd_running; then
+        for s in "${SA_SERVICES[@]}"; do sa_svc "$s" stop || true; done
+    fi
+    # The trees of the telemetry user go only when no process of it is left:
+    # busybox rm walks by path, a live process could swap a directory for a link.
+    if sa_user_exists; then
+        uid="$(sa_uid)" || sa_die "нет uid пользователя $SA_USER — ничего не снято"
+        sa_wait_user_gone "$uid" || sa_die "процессы $SA_USER не завершились — ничего не снято, повторите cream remove"
+    fi
     for s in "${SA_SERVICES[@]}"; do
-        if sa_procd_running; then sa_svc "$s" stop || true; fi
         sa_svc "$s" disable || true
         rm -f -- "$SA_INIT_DIR/$s"
     done
     rm -f -- "$SA_BIN"
-    rm -r -f -- "$SA_ETC" "$SA_TELEMETRY_ETC" "$SA_HOME" "$SA_RUN_TELEMETRY" "$SA_ROOT/var/run/stvor-agent.lock"
+    sa_trash "$SA_HOME" || sa_die "не снять ${SA_HOME#"$SA_ROOT"}"
+    sa_trash "$SA_RUN_TELEMETRY" || sa_die "не снять ${SA_RUN_TELEMETRY#"$SA_ROOT"}"
+    rm -r -f -- "$SA_ETC" "$SA_TELEMETRY_ETC" "$SA_ROOT/var/run/stvor-agent.lock"
     sa_drop_user
     rm -f -- "$SA_INSTALLED"
     if [[ -e "$SA_LABEL" ]]; then
@@ -304,6 +418,17 @@ sa_hook_remove(){
         sa_reload_label
     fi
     sa_log "stvor-agent снят: службы, бинарь, токены и состояние"
+}
+
+# sa_trash <path>: a tree the telemetry user could write goes first into a
+# directory only root reaches (on the same file system — a rename, no copy),
+# then is deleted there.
+sa_trash(){
+    local trash
+    [[ -e "$1" || -L "$1" ]] || return 0
+    trash="$(mktemp -d "$(dirname -- "$1")/.stvor-agent-trash.XXXXXX")" || return 1
+    chmod 0700 -- "$trash" && mv -f -- "$1" "$trash/x" || { rmdir -- "$trash" 2>/dev/null; return 1; }
+    rm -r -f -- "$trash"
 }
 
 # hooks/apply: the services reread /etc/cream/stvor-agent-openwrt/config on
