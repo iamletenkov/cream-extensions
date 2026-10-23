@@ -183,7 +183,7 @@ agent_stop(){
     done
     return 0
 }
-agent_enable(){ install -d -m 0700 "$STATE" && : > "$AGENT_ENABLED"; }
+agent_enable(){ install -d -m 0700 "$STATE" && : > "$AGENT_ENABLED" && chmod 0600 -- "$AGENT_ENABLED"; }
 agent_disable(){ rm -f -- "$AGENT_ENABLED"; }
 agent_disable_now(){ rm -f -- "$AGENT_ENABLED"; agent_stop || true; }
 # The retry: the instance join while join-pending exists (boot + every minute).
@@ -392,6 +392,11 @@ hook_install(){
 
     install -d -m 0755 "$ETC" "$APPS_DIR" "$CMD_LABELS_DIR" "$TELEPORT_HOME" || die "не создать каталоги $ETC"
     install -d -m 0700 "$STATE" "$TELEPORT_TMP" "$(dirname "$LOG_FILE")" || die "не создать $STATE"
+    # sysupgrade (keep.d) archives files only: the flag comes back in a state
+    # directory tar made 0755 — narrowed above, the flag here.
+    if [[ -f "$AGENT_ENABLED" && ! -L "$AGENT_ENABLED" ]]; then
+        chmod 0600 -- "$AGENT_ENABLED" || die "не выставить права ${AGENT_ENABLED#"$ROOT"}"
+    fi
     install -d -m 0750 "$DATA" || die "не создать $DATA"
     : > "$OWNED" || die "не записан маркер $OWNED"
 

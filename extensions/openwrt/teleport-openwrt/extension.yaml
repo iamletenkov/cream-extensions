@@ -12,11 +12,14 @@
 # remove    — leave, служба выключена, /opt/teleport и ссылка стёрты.
 # files     — /etc/init.d/teleport (procd: экземпляр teleport с respawn без stdout/stderr —
 #             иначе LD_PRELOAD musl в glibc-процессе; экземпляр join — повтор раз в минуту),
-#             /lib/upgrade/keep.d/teleport (sysupgrade хранит только data и маркер, Р4).
+#             /lib/upgrade/keep.d/teleport (sysupgrade хранит data, маркер, флаг agent-enabled,
+#             config и apps.d домена — тот же узел без join, Р4 с поправкой 2026-10-23).
 # configure нет: на загрузке узел поднимает procd (START=95), не cream (А1–А6 не про него).
 schema: cream/v1
 name: teleport-openwrt
-version: 1.0.0
+version: 1.0.1
+# 1.0.1: keep.d — флаг agent-enabled, config и apps.d домена: после sysupgrade узел тот же
+#        (host_uuid), без join; install сужает права восстановленного состояния.
 summary: Узел Teleport на OpenWrt — набор openwrt-<arch> с glibc рядом, регистрация, рендер teleport.yaml, procd
 cream: ">=1.3.0"
 platform:

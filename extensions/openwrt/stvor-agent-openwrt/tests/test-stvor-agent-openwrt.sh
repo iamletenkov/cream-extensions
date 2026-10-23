@@ -120,9 +120,23 @@ PY
 check "actions/status исполняемый" test -x "$SRC/actions/status"
 ok
 eq "метка — как у debian" "$(cat "$DEB/files/stvor_agent.command-label")" "$(cat "$SRC/files/stvor_agent.command-label")"
-# Спека §4.3/§4.7, Р4: токены и их след (telemetry-token.src), state.json и буфер телеметрии
-# sysupgrade не переживают; machine-id — опознание машины детектором клонов портала.
-eq "keep.d — только machine-id агента" "/opt/stvor-agent/machine-id" "$(grep -v '^#' "$SRC/files/keep.d")"
+# Решение владельца 2026-10-23 (Р4 пересмотрен): sysupgrade с сохранением конфигурации
+# хранит агента целиком — machine-id, состояние, токены и домен; буфер телеметрии нет.
+eq "keep.d — machine-id, состояние, токены, домен, маркер пользователя" \
+    "/opt/stvor-agent/machine-id|/opt/stvor-agent/state.json|/opt/stvor-agent/telemetry-token.src|/etc/stvor-agent/token|/etc/stvor-agent-telemetry/token|/etc/cream/stvor-agent-openwrt/|/opt/cream/var/ext/stvor-agent-openwrt/user-created|" \
+    "$(grep -v '^#' "$SRC/files/keep.d" | tr '\n' '|')"
+# Восстановленное лежит на диске до повторной установки: файл, который расширение
+# кладёт через files, cream отверг бы (conflict.file_unowned, рулинг cream Р21).
+check "keep.d не пересекается с files расширений OpenWrt" python3 - "$SRC/files/keep.d" "$REPO/extensions/openwrt" <<'PY2'
+import pathlib, sys, yaml
+keep = [l.strip() for l in open(sys.argv[1]) if l.strip() and not l.startswith("#")]
+bad = []
+for m in pathlib.Path(sys.argv[2]).glob("*/extension.yaml"):
+    for f in yaml.safe_load(m.read_text()).get("files") or []:
+        if any(f["dst"] == k.rstrip("/") or f["dst"].startswith(k.rstrip("/") + "/") for k in keep):
+            bad.append(f"{m.parent.name}: {f['dst']}")
+print("\n".join(bad)); sys.exit(1 if bad else 0)
+PY2
 # Пин в git — полный (выпуск с tar.gz есть) или пустой целиком (до него): половины не бывает.
 pinv(){ sed -n "s/^$1=//p" "$SRC/files/pin.env"; }
 check "пин в git: полный или пустой целиком" python3 -c '
@@ -354,6 +368,52 @@ ht_hook configure; eq "configure — 0" 0 "$?"
 check_reset "configure"
 check_not "configure — без сети" ht_called '^curl '
 check_not "configure без procd — службы не трогаются" ht_called '^init '
+
+echo "== права токенов и состояния после sysupgrade: каталоги tar 0755 — снова как пишет агент =="
+# sysupgrade архивирует только файлы: каталоги токенов tar создаёт заново 0755 root, а
+# агент не принимает токен в каталоге шире 0700. Права чинят install и configure;
+# ссылки не разыменовываются (файл root по ссылке не меняется).
+spoil_secrets(){
+    local h="$ROOT/opt/stvor-agent"
+    mkdir -p "$ROOT/etc/stvor-agent-telemetry" "$h"
+    chmod 0755 "$ROOT/etc/stvor-agent" "$ROOT/etc/stvor-agent-telemetry" "$h"
+    printf 'url=https://stvor.example.org/robot-api\ntoken=t\n' > "$ROOT/etc/stvor-agent-telemetry/token"
+    echo '{"schema":1}' > "$h/state.json"; echo fp > "$h/telemetry-token.src"
+    chmod 0644 "$ROOT/etc/stvor-agent/token" "$ROOT/etc/stvor-agent-telemetry/token" "$h/state.json" "$h/telemetry-token.src"
+    rm -f "$FAKE/chown.argv"
+}
+check_secrets(){
+    local h="$ROOT/opt/stvor-agent"
+    eq "$1: /etc/stvor-agent 0700" drwx------ "$(mode "$ROOT/etc/stvor-agent")"
+    check "$1: /etc/stvor-agent root" owned "0:0 -- $ROOT/etc/stvor-agent"
+    eq "$1: токен меток 0600" -rw------- "$(mode "$ROOT/etc/stvor-agent/token")"
+    check "$1: токен меток root" owned "0:0 -- $ROOT/etc/stvor-agent/token"
+    eq "$1: /etc/stvor-agent-telemetry 0750" drwxr-x--- "$(mode "$ROOT/etc/stvor-agent-telemetry")"
+    eq "$1: токен телеметрии 0640" -rw-r----- "$(mode "$ROOT/etc/stvor-agent-telemetry/token")"
+    check "$1: токен телеметрии root:stvor-telemetry" owned "0:stvor-telemetry -- $ROOT/etc/stvor-agent-telemetry/token"
+    for f in state.json telemetry-token.src; do
+        eq "$1: $f 0600" -rw------- "$(mode "$h/$f")"
+        check "$1: $f root" owned "0:0 -- $h/$f"
+    done
+    eq "$1: токен меток цел" "token=$TOKEN" "$(sed -n 2p "$ROOT/etc/stvor-agent/token")"
+}
+setup
+installed
+spoil_secrets
+installed; eq "переустановка после sysupgrade — 0" 0 "$?"
+check_secrets "переустановка"
+spoil_secrets
+ht_hook configure; eq "configure после sysupgrade — 0" 0 "$?"
+check_secrets "configure"
+# Ссылка вместо файла: не разыменовывается, файл root не меняется.
+setup
+installed
+echo 'root:secret' > "$ROOT/etc/root-file"; chmod 0644 "$ROOT/etc/root-file"
+rm -f "$ROOT/opt/stvor-agent/state.json"; ln -s "$ROOT/etc/root-file" "$ROOT/opt/stvor-agent/state.json"
+rm -f "$FAKE/chown.argv"
+ht_hook configure; eq "configure со ссылкой — 0" 0 "$?"
+eq "файл root по ссылке не тронут" -rw-r--r-- "$(mode "$ROOT/etc/root-file")"
+check_not "файл root не перевладевается" grep -q 'state.json\|root-file' "$FAKE/chown.argv"
 
 echo "== права состояния: живая машина — служба телеметрии остановлена и запущена вновь =="
 setup

@@ -19,6 +19,12 @@
 # in teleport.yaml, `stvor-agent status`, remove. The delivery is a fake of the
 # release layout, or the real one: OPENWRT_AGENT_TARBALL=<file> —
 # stvor-agent_<v>_linux_amd64.tar.gz of the agent's repository (version 4.1.0).
+# Two more containers check sysupgrade with kept settings of a robot (ruling Р4,
+# revised 2026-10-23): scenario-sysupgrade-save.sh lays out a registered node and
+# an enabled agent and makes the archive by the real `sysupgrade -b` into the
+# writable /out; scenario-sysupgrade-restore.sh, in a fresh container (the new
+# firmware), unpacks it as preinit does and installs the extensions again — the
+# same host_uuid, no join, the modes of the tokens and the state back.
 #
 #   tools/test-openwrt.sh          (make test-openwrt)
 #
@@ -58,7 +64,9 @@ trap 'rm -rf -- "$work"' EXIT
 dpkg-deb -x "$deb" "$work/deb"
 install -m 0755 "$work/deb/usr/bin/cream" "$work/cream"
 cp "$HERE/testdata/openwrt/scenario.sh" "$HERE/testdata/openwrt/scenario-teleport.sh" \
-    "$HERE/testdata/openwrt/scenario-stvor-agent.sh" "$work/"
+    "$HERE/testdata/openwrt/scenario-stvor-agent.sh" "$HERE/testdata/openwrt/scenario-sysupgrade-save.sh" \
+    "$HERE/testdata/openwrt/scenario-sysupgrade-restore.sh" "$work/"
+mkdir -p "$work/out"
 if [[ -n "${OPENWRT_AGENT_TARBALL:-}" ]]; then
     [[ -f "$OPENWRT_AGENT_TARBALL" ]] || die "OPENWRT_AGENT_TARBALL=$OPENWRT_AGENT_TARBALL: файла нет"
     cp "$OPENWRT_AGENT_TARBALL" "$work/agent.tar.gz"
@@ -66,11 +74,12 @@ fi
 "$HERE/stage-catalog.sh" "$work/catalog" > /dev/null || die "staged-дерево не собрано"
 
 echo "== test-openwrt: $image, cream $(basename "$deb")"
-for sc in scenario.sh scenario-teleport.sh scenario-stvor-agent.sh; do
+for sc in scenario.sh scenario-teleport.sh scenario-stvor-agent.sh scenario-sysupgrade-save.sh \
+    scenario-sysupgrade-restore.sh; do
     echo "== test-openwrt: $sc"
     crc=0
     docker run --rm --platform linux/amd64 --network none --tmpfs /tmp:rw,nosuid,nodev,mode=1777 \
-        -v "$work:/t:ro" -v "$work/catalog:/catalog:ro" "$image" /bin/sh "/t/$sc" || crc=$?
+        -v "$work:/t:ro" -v "$work/catalog:/catalog:ro" -v "$work/out:/out" "$image" /bin/sh "/t/$sc" || crc=$?
     if (( crc != 0 )); then
         echo "test-openwrt: сценарий $sc упал (код $crc)" >&2
         exit 1

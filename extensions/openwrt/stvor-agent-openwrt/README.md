@@ -41,7 +41,10 @@ teleport-openwrt set-managed`), служба телеметрии шлёт на 
 - **`configure`** (на каждой загрузке, стадия `system` — до того, как procd поднимет
   службы) — владелец и права состояния: `/opt/stvor-agent` 0750 `root:stvor-telemetry`,
   `machine-id` 0640 `root:stvor-telemetry`, `/opt/stvor-agent/telemetry` и его `buffer` —
-  0700 `stvor-telemetry`. Восстановленное из копии (или `keep.d` версии 1.1.0) приходило
+  0700 `stvor-telemetry`; токены и файлы root — как их пишет агент: `/etc/stvor-agent`
+  0700 и `token` 0600 `root`, `/etc/stvor-agent-telemetry` 0750 и `token` 0640
+  `root:stvor-telemetry`, `state.json` и `telemetry-token.src` 0600 `root` (ссылки не
+  разыменовываются). Восстановленное из копии (или `keep.d` версии 1.1.0) приходило
   `0:0 0755`, и служба телеметрии падала с `permission denied`; теперь это чинят и
   загрузка, и повтор `cream install`: буфер не того владельца пересоздаётся пустым. Без
   сети; пользователя `stvor-telemetry` ещё нет — ничего.
@@ -129,7 +132,7 @@ RUN_COMMAND cream install --with-deps stvor-agent-openwrt STVOR_AGENT_VERSION=<v
 | загрузка | `configure` (S95) выставляет владельца и права состояния; procd стартует службы из `rc.d`, каждую — только при её токене; `/var/run/stvor-agent-telemetry` init-скрипт создаёт сам |
 | `cream set` (хук `apply`) | перезапуск работающих служб фоном |
 | `cream upgrade` | новый tar.gz; работающие службы перезапускаются |
-| `sysupgrade` | сохраняется только `/opt/stvor-agent/machine-id` (`keep.d`, Р4) — опознание машины детектором клонов портала; токены (и `telemetry-token.src`), `state.json`, буфер телеметрии, бинарь, init-скрипты и реестр cream — нет: та же команда портала ставит всё заново и выдаёт новые токены, `install` выставляет владельца `machine-id` |
+| `sysupgrade` с сохранением настроек | `keep.d` хранит `machine-id`, `state.json`, `telemetry-token.src`, оба токена, домен и маркер пользователя; повтор `cream install` возвращает того же агента без новых токенов, `install` и `configure` чинят права ([ниже](#sysupgrade)) |
 | `cream remove` | `stvor-agent disable`, службы выключены, всё поставленное стёрто, `reload-apps` узла |
 
 ## Известные ограничения
@@ -143,8 +146,8 @@ RUN_COMMAND cream install --with-deps stvor-agent-openwrt STVOR_AGENT_VERSION=<v
   `debian/stvor-agent`): службы, токены и состояние снимаются хуком, но управляемые
   метки `env`/`space` узла остаются в `teleport-openwrt` до `cream run
   teleport-openwrt set-managed` или `leave`.
-- Пользователь `stvor-telemetry` снимается, только если хук создал его вместе с группой;
-  после `sysupgrade` реестр cream пуст, и созданный раньше пользователь остаётся.
+- Пользователь `stvor-telemetry` снимается, только если хук создал его вместе с группой
+  (маркер в состоянии cream сохраняется при `sysupgrade`).
 - tar.gz без `stvor-agent`, `init.d/stvor-agent` или `init.d/stvor-agent-telemetry` —
   отказ до изменений: нужен выпуск агента с поставкой для OpenWrt.
 
@@ -169,6 +172,32 @@ RUN_COMMAND cream install --with-deps stvor-agent-openwrt STVOR_AGENT_VERSION=<v
 пользователю последним, служба запускается вновь. Процессы пользователя не завершились за
 40 с — отказ, ничего не тронуто.
 
+### `sysupgrade`
+
+`sysupgrade` с сохранением настроек переносит агента целиком (Р4 с поправкой владельца
+2026-10-23). `/lib/upgrade/keep.d/stvor-agent` перечисляет:
+
+- `/opt/stvor-agent/machine-id` — опознание машины детектором клонов портала;
+- `/opt/stvor-agent/state.json` и `telemetry-token.src` — состояние агента и отпечаток
+  токена меток, под который выдан токен телеметрии;
+- `/etc/stvor-agent/token` и `/etc/stvor-agent-telemetry/token` — токены меток и
+  телеметрии;
+- `/etc/cream/stvor-agent-openwrt/` — домен (настройки службы);
+- `/opt/cream/var/ext/stvor-agent-openwrt/user-created` — маркер, что пользователя
+  `stvor-telemetry` создало расширение (сам пользователь — в `/etc/passwd`, его хранит
+  OpenWrt).
+
+Буфер телеметрии, бинарь, init-скрипты и реестр cream не сохраняются. Архив хранит только
+файлы: `tar` создаёт их каталоги заново `0755 root`, а агент не принимает токен меток в
+каталоге шире 0700. Права возвращают повтор `cream install stvor-agent-openwrt` (на роботе
+Stvor — служба восстановления) и `configure` на каждой загрузке — тем же безопасным путём,
+что и буфер телеметрии ([выше](#настройка-на-загрузке)). Портал новых токенов не выдаёт.
+
+> **Архив `sysupgrade` — секрет уровня root.** В нём токены агента (и ключ узла
+> `teleport-openwrt`, и `/etc/shadow`); выгрузка `sysupgrade -b` или резервная копия LuCI —
+> тоже. Восстанавливайте его только на ту же машину: на другой портал увидит клон по
+> `machine-id`. При удалении робота на портале токены отзываются.
+
 ### Метка `stvor_agent`
 
 Файл `files/stvor_agent.command-label` cream кладёт в
@@ -187,11 +216,16 @@ RUN_COMMAND cream install --with-deps stvor-agent-openwrt STVOR_AGENT_VERSION=<v
   sha256 и состав tar.gz до изменений, раскладка и права, пользователь
   `stvor-telemetry` (создан — снимается, чужой — остаётся), `reload-apps` только на живой
   машине с procd, перезапуск работающих служб при обновлении и в `apply`, `remove`,
-  окружение `curl` без токена и `CREAM_*`, действие `status` (блок `telemetry`). Пин в
+  окружение `curl` без токена и `CREAM_*`, действие `status` (блок `telemetry`), права токенов
+  и состояния после `sysupgrade` (каталоги 0755 от `tar`, ссылки не разыменовываются),
+  `keep.d` не пересекается с `files` расширений OpenWrt. Пин в
   git — полный или пустой целиком.
 - **L** — `make test-openwrt`: корневая ФС openwrt-builder v0.3.1 в контейнере, настоящие
   cream, busybox, rc.common и `/lib/functions.sh`: `install` поверх `teleport-openwrt` в
   фазе build, `rc.d`, пользователь и права, метка `stvor_agent` в `teleport.yaml`,
-  `stvor-agent status`, `cream set`, `remove`. Поставка — подделка с раскладкой выпуска
+  `stvor-agent status`, `cream set`, `remove`; `sysupgrade` двумя контейнерами — настоящий
+  `sysupgrade -b` робота с узлом и агентом, распаковка архива в свежем образе, повторная
+  установка: тот же `host_uuid`, `join` не вызывался, повтор команды портала — «уже
+  зарегистрирован», права токенов и состояния восстановлены. Поставка — подделка с раскладкой выпуска
   или настоящий tar.gz агента (`OPENWRT_AGENT_TARBALL=<файл>`). procd в контейнере нет —
   загрузка, `stvor-agent enable` и метки с портала проверяются на ВМ.
