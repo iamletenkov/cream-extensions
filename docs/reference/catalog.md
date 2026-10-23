@@ -56,7 +56,7 @@
 | [`selkies`](../../extensions/debian/selkies/README.md) | ≥ 1.2.0 | `web-remote-desktop` | `x11-server`, `display-manager` | [`cloud-user`](../../extensions/debian/cloud-user/README.md) | — | стадия `graphical`, на каждой загрузке (`every_boot`) | да |
 | [`sensing-gmsl2-camera`](../../extensions/debian/sensing-gmsl2-camera/README.md) | ≥ 1.0.0 | `gmsl2-camera` | — | [`apt-guard`](../../extensions/debian/apt-guard/README.md) | — | — | с `--accept-risk` |
 | [`stvor-agent`](../../extensions/debian/stvor-agent/README.md) | ≥ 1.0.0 | `stvor-agent` | — | [`teleport`](../../extensions/debian/teleport/README.md) | — | — | да |
-| [`stvor-agent-openwrt`](../../extensions/openwrt/stvor-agent-openwrt/README.md) | ≥ 1.3.0 | `stvor-agent` | — | [`teleport-openwrt`](../../extensions/openwrt/teleport-openwrt/README.md) | — | — | да |
+| [`stvor-agent-openwrt`](../../extensions/openwrt/stvor-agent-openwrt/README.md) | ≥ 1.3.0 | `stvor-agent` | — | [`teleport-openwrt`](../../extensions/openwrt/teleport-openwrt/README.md) | — | стадия `system`, на каждой загрузке (`every_boot`) | да |
 | [`teleport`](../../extensions/debian/teleport/README.md) | ≥ 1.0.0 | `teleport-node` | — | — | способность `teleport-node` | — | да |
 | [`teleport-openwrt`](../../extensions/openwrt/teleport-openwrt/README.md) | ≥ 1.3.0 | `teleport-node` | — | — | способность `teleport-node` | — | да |
 | [`tensorrt`](../../extensions/debian/tensorrt/README.md) | ≥ 1.0.0 | `tensorrt` | — | [`l4t`](../../extensions/debian/l4t/README.md), [`apt-guard`](../../extensions/debian/apt-guard/README.md) | — | — | да |

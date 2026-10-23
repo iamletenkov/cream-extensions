@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # stvor-agent on OpenWrt: which delivery, where from, how it goes on and off.
-# Sourced by the hooks (hooks/install, upgrade, remove, apply); the pure
+# Sourced by the hooks (hooks/install, upgrade, configure, remove, apply); the pure
 # functions are called by tests/test-stvor-agent-openwrt.sh. The agent lives in
 # its own repository and ships for OpenWrt as stvor-agent_<version>_linux_<arch>.tar.gz:
 # the static binary `stvor-agent` and the procd init scripts
@@ -223,6 +223,40 @@ sa_dir(){
     mkdir -p -- "$1" && chown "0:$SA_USER" -- "$1" && chmod "$2" -- "$1"
 }
 
+# sa_own_state: the owners and modes of the state, every time (install, upgrade,
+# configure on every boot). A restore (keep.d of 1.1.0, a backup) brings the
+# telemetry tree back as 0:0 0755 and the telemetry service (stvor-telemetry)
+# dies on permission denied; the init script fixes only the top directory.
+#   /opt/stvor-agent             0750 root:stvor-telemetry
+#   /opt/stvor-agent/machine-id  0640 root:stvor-telemetry (telemetry hashes it)
+#   /opt/stvor-agent/telemetry   0700 stvor-telemetry, every directory inside
+#                                0700, every entry stvor-telemetry
+# The tree is the unprivileged user's: while root changes the entries inside it
+# is closed to that user (0:0 0700), links are never followed (`chown -h`, no
+# -R) and the tree is handed back last.
+sa_own_state(){
+    local t="$SA_HOME/telemetry"
+    sa_dir "$SA_HOME" 0750 || return 1
+    if [[ -f "$SA_HOME/machine-id" && ! -L "$SA_HOME/machine-id" ]]; then
+        chown "0:$SA_USER" -- "$SA_HOME/machine-id" && chmod 0640 -- "$SA_HOME/machine-id" || return 1
+    fi
+    [[ -d "$t" && ! -L "$t" ]] || return 0
+    chown 0:0 -- "$t" && chmod 0700 -- "$t" || return 1
+    find "$t" -mindepth 1 -xdev -type d -exec chmod 0700 -- {} \; || return 1
+    find "$t" -mindepth 1 -xdev ! -type l -exec chown -h "$SA_USER:$SA_USER" -- {} \; || return 1
+    chown -h "$SA_USER:$SA_USER" -- "$t"
+}
+
+# hooks/configure (every boot, stage system — before procd starts the services):
+# the owners and modes of the state, no network, no services.
+sa_hook_configure(){
+    if ! sa_user_exists || ! sa_group_exists; then
+        sa_log "пользователя $SA_USER нет — права состояния выставит install"
+        return 0
+    fi
+    sa_own_state || sa_die "не выставить права ${SA_HOME#"$SA_ROOT"}"
+}
+
 # sa_reload_label: teleport-openwrt applies command-labels.d only when told
 # (no path units on OpenWrt) — on a live machine with procd; reload-apps itself
 # does nothing before join and restarts the node only when teleport.yaml changed.
@@ -271,8 +305,8 @@ sa_hook_install(){
         sa_log "установлен $(sa_tarball_name "$SA_VERSION" "$arch")${have:+ (было ${have%% *})}"
     fi
     sa_ensure_user || exit 1
-    sa_dir "$SA_HOME" 0750 || sa_die "не создать ${SA_HOME#"$SA_ROOT"}"
     sa_dir "$SA_TELEMETRY_ETC" 0750 || sa_die "не создать ${SA_TELEMETRY_ETC#"$SA_ROOT"}"
+    sa_own_state || sa_die "не выставить права ${SA_HOME#"$SA_ROOT"}"
     for s in "${SA_SERVICES[@]}"; do
         sa_svc "$s" enable || sa_log "предупреждение: /etc/init.d/$s enable не прошёл"
     done

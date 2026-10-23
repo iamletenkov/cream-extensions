@@ -114,13 +114,15 @@ assert ok["STVOR_AGENT_TARBALL"]["type"] == "path" and ok["STVOR_AGENT_TARBALL"]
 dst = {f["dst"]: f for f in o["files"]}
 assert "/etc/cream/teleport-openwrt/command-labels.d/stvor_agent" in dst, dst
 assert "/lib/upgrade/keep.d/stvor-agent" in dst, dst
-assert "configure" not in o["hooks"], o["hooks"]
+assert o["hooks"]["configure"] == {"stage": "system", "every_boot": True, "timeout": "1m"}, o["hooks"]
 assert o["actions"] == d["actions"], (o.get("actions"), d.get("actions"))
 PY
 check "actions/status исполняемый" test -x "$SRC/actions/status"
 ok
 eq "метка — как у debian" "$(cat "$DEB/files/stvor_agent.command-label")" "$(cat "$SRC/files/stvor_agent.command-label")"
-eq "keep.d — только состояние агента" "/opt/stvor-agent/" "$(grep -v '^#' "$SRC/files/keep.d")"
+# Спека §4.3/§4.7, Р4: токены и их след (telemetry-token.src), state.json и буфер телеметрии
+# sysupgrade не переживают; machine-id — опознание машины детектором клонов портала.
+eq "keep.d — только machine-id агента" "/opt/stvor-agent/machine-id" "$(grep -v '^#' "$SRC/files/keep.d")"
 # Пин в git — полный (выпуск с tar.gz есть) или пустой целиком (до него): половины не бывает.
 pinv(){ sed -n "s/^$1=//p" "$SRC/files/pin.env"; }
 check "пин в git: полный или пустой целиком" python3 -c '
@@ -303,6 +305,52 @@ ht_hook remove; eq "disable упал — remove всё равно 0" 0 "$?"
 check "предупреждение" grep -q 'stvor-agent disable не прошёл' "$ROOT/out"
 check "токен снят" test ! -e "$ROOT/etc/stvor-agent"
 ht_hook remove; eq "повтор remove на пустом — 0" 0 "$?"
+
+echo "== права состояния: install и configure чинят владельца и режимы вложенного =="
+# Восстановленное (keep.d прежних версий, резервная копия) приходит 0:0 0755:
+# служба телеметрии (stvor-telemetry) падает с permission denied.
+spoil_state(){
+    local t="$ROOT/opt/stvor-agent/telemetry"
+    mkdir -p "$t/buffer/q" "$ROOT/etc/real"
+    chmod 0755 "$t" "$t/buffer" "$t/buffer/q"
+    echo seg > "$t/buffer/q/0001"
+    echo id > "$ROOT/opt/stvor-agent/machine-id"; chmod 0600 "$ROOT/opt/stvor-agent/machine-id"
+    ln -sfn "$ROOT/etc/real" "$t/buffer/link"
+    rm -f "$FAKE/chown.argv"
+}
+owned(){ grep -qx -- "$1" "$FAKE/chown.argv"; }
+check_perms(){
+    local t="$ROOT/opt/stvor-agent/telemetry"
+    eq "$1: telemetry 0700" drwx------ "$(mode "$t")"
+    eq "$1: buffer 0700" drwx------ "$(mode "$t/buffer")"
+    eq "$1: вложенный каталог 0700" drwx------ "$(mode "$t/buffer/q")"
+    eq "$1: machine-id 0640" -rw-r----- "$(mode "$ROOT/opt/stvor-agent/machine-id")"
+    check "$1: machine-id root:stvor-telemetry" owned "0:stvor-telemetry -- $ROOT/opt/stvor-agent/machine-id"
+    check "$1: buffer — пользователю телеметрии" owned "-h stvor-telemetry:stvor-telemetry -- $t/buffer"
+    check "$1: файл буфера — пользователю телеметрии" owned "-h stvor-telemetry:stvor-telemetry -- $t/buffer/q/0001"
+    check "$1: telemetry — пользователю телеметрии" owned "-h stvor-telemetry:stvor-telemetry -- $t"
+    check_not "$1: ссылки не трогаются" grep -q -- "$t/buffer/link" "$FAKE/chown.argv"
+    check_not "$1: chown -R не зовётся" grep -q -- '-R' "$FAKE/chown.argv"
+    # Пока вложенное меняет владельца, каталог закрыт пользователю: первым — root, последним — ему.
+    eq "$1: сначала telemetry закрыт root" "0:0 -- $t" "$(grep -- " $t\$" "$FAKE/chown.argv" | head -n1)"
+    eq "$1: последним telemetry отдан пользователю" "-h stvor-telemetry:stvor-telemetry -- $t" "$(tail -n1 "$FAKE/chown.argv")"
+}
+setup
+installed
+spoil_state
+installed; eq "повторная установка — 0" 0 "$?"
+check_perms "переустановка"
+spoil_state
+: > "$FAKE/calls"
+ht_hook configure; eq "configure — 0" 0 "$?"
+check_perms "configure"
+check_not "configure — без сети" ht_called '^curl '
+check_not "configure — без служб" ht_called '^init '
+setup
+rm -f "$FAKE/chown.argv"
+ht_hook configure; eq "configure до install (нет пользователя) — 0" 0 "$?"
+check "configure до install — сказано" grep -q 'пользователя stvor-telemetry нет' "$ROOT/out"
+check "configure до install — chown не звался" test ! -e "$FAKE/chown.argv"
 
 echo "== действие status: блок telemetry в stvor-agent status --json =="
 status_doc(){

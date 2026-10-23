@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# cream hook `configure` of stvor-agent-openwrt (every boot): owners and modes of
+# the state; the logic is in files/agent.sh.
+set -euo pipefail
+# shellcheck source=../files/agent.sh
+source "${CREAM_EXT_DIR:?run by cream}/files/agent.sh"
+sa_hook_configure
