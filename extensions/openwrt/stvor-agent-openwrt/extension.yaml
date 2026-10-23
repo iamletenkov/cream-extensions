@@ -12,15 +12,19 @@
 #             reload-apps of teleport-openwrt for the label stvor_agent.
 # configure — every boot (stage system, before procd starts the services; as
 #             install): owners and modes of the state — /opt/stvor-agent,
-#             machine-id, the telemetry tree of stvor-telemetry. No network.
+#             machine-id, state.json, the tokens and their directories, the
+#             telemetry tree of stvor-telemetry. No network.
 # apply     — running services restart in the background.
 # remove    — stvor-agent disable, services off, the binary, the init scripts,
 #             tokens, the state and the user (if this extension made it) gone.
 # files     — the drop-in of the command label stvor_agent of teleport-openwrt,
-#             /lib/upgrade/keep.d/stvor-agent (sysupgrade keeps the machine-id only, Р4).
+#             /lib/upgrade/keep.d/stvor-agent (sysupgrade keeps the agent whole:
+#             machine-id, state, tokens, domain — Р4 revised 2026-10-23).
 schema: cream/v1
 name: stvor-agent-openwrt
-version: 1.1.1
+version: 1.1.2
+# 1.1.2: keep.d — machine-id, state.json, telemetry-token.src, оба токена, домен и маркер
+#        пользователя: после sysupgrade агент тот же; install и configure чинят права токенов.
 # 1.1.1: keep.d — только machine-id; install и configure (каждая загрузка) выставляют
 #        владельца и права состояния, буфер телеметрии после восстановления не 0:0.
 # 1.1.0: пин tar.gz stvor-agent 4.1.0; действие status — здоровье с блоком telemetry.

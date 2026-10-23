@@ -138,7 +138,7 @@ RUN_COMMAND cream install teleport-openwrt TELEPORT_MIRROR=https://stvor.example
 | загрузка (`S95teleport`) | procd: render и агент (`respawn`), если узел включён; экземпляр `join` — пока ждёт регистрация |
 | `cream set` (хук `apply`) | render и перезапуск агента фоном |
 | изменение `apps.d` или `command-labels.d` | `cream run teleport-openwrt reload-apps` — зовёт тот, кто их положил |
-| `sysupgrade` | `keep.d` хранит только `/opt/teleport/data` и маркер; та же команда портала с новым секретом возвращает тот же узел |
+| `sysupgrade` с сохранением настроек | `keep.d` хранит `/opt/teleport/data`, маркер, флаг `agent-enabled`, `config` и `apps.d` домена; повтор `cream install` возвращает тот же узел (`host_uuid`) без `join` и без секрета |
 | `cream remove` | `leave`, служба выключена, набор и состояние стёрты |
 
 Действия — те же, что у [teleport](../../debian/teleport/README.md#этапы), с отличиями:
@@ -200,11 +200,33 @@ RUN_COMMAND cream install teleport-openwrt TELEPORT_MIRROR=https://stvor.example
 
 ### `sysupgrade`
 
-`/lib/upgrade/keep.d/teleport` перечисляет только `/opt/teleport/data/` и маркер
-`/opt/teleport/.cream-owned` (Р4): реестр cream, набор, `/etc/init.d/teleport` и токены
-stvor-agent не сохраняются. После обновления прошивки — «Новый секрет» на портале и та же
-команда: `install` видит маркер и ставит всё заново, `join` сохраняет `host_uuid` — тот же
-узел без дубля.
+`sysupgrade` с сохранением настроек (по умолчанию, без `-n`) переносит узел тем же
+(Р4 с поправкой владельца 2026-10-23). `/lib/upgrade/keep.d/teleport` перечисляет:
+
+- `/opt/teleport/data/` — идентичность узла (`host_uuid`, ключи в `proc/sqlite.db`);
+- `/opt/teleport/.cream-owned` — маркер владения cream;
+- `/opt/cream/var/ext/teleport-openwrt/agent-enabled` — узел стартует на загрузке;
+- `/etc/cream/teleport-openwrt/config` и `apps.d/` — ручки домена (прокси, имя токена,
+  `env`, метки, приложения); секрета первого входа там нет.
+
+Набор, `/etc/init.d/teleport`, реестр cream и `command-labels.d` не сохраняются:
+`command-labels.d` кладут другие расширения через `files`, а cream отказывает в файле,
+который уже лежит на диске до установки (`conflict.file_unowned`). Расширение, которое
+кладёт файл через `files` в сохраняемый путь, ломает восстановление — H-тест это
+проверяет.
+
+После новой прошивки расширение ставится заново (`cream install teleport-openwrt` с теми же
+`TELEPORT_*` набора; на роботе Stvor это делает его служба восстановления): `install` видит
+маркер и data, скачивает набор, возвращает каталогу состояния права 0700, флагу — 0600
+(архив хранит только файлы, `tar` создаёт каталоги заново 0755) и ничего не регистрирует;
+служба `teleport` поднимает узел по флагу с тем же `host_uuid`. Повтор команды портала без
+секрета и без `TELEPORT_FORCE` проходит веткой «уже зарегистрирован». «Новый секрет» нужен
+только при потерянной идентичности (`sysupgrade -n`, новый диск) — тогда Teleport выдаёт
+новый `host_uuid`.
+
+> **Архив `sysupgrade` — секрет уровня root.** В нём ключ узла (`/opt/teleport/data`), как
+> и `/etc/shadow`; выгрузка `sysupgrade -b` или резервная копия LuCI с ним — тоже.
+> Восстанавливайте его только на ту же машину: на другой получится клон узла.
 
 ### Настройка на загрузке
 
@@ -219,7 +241,9 @@ stvor-agent не сохраняются. После обновления про�
 - **H** — `tests/test-teleport-openwrt.sh`: ключи и действия сверены с `debian/teleport`,
   типы — с ядром; init-скрипт (`start_service` с заглушками procd: экземпляры, `respawn`,
   `TMPDIR`, нет `stdout/stderr`), `keep.d`; `install` (зеркало и файл, sha256, `uname -m`,
-  маркер владения, сборка, после `sysupgrade`), render (журнал-файл, `pam`,
+  маркер владения, сборка, после `sysupgrade`; имитация `sysupgrade` по `keep.d` — тот же
+  `host_uuid`, data не тронута, права 0700/0600, повтор `join` без секрета — ветка «уже
+  зарегистрирован»; `keep.d` не пересекается с `files` расширений OpenWrt), render (журнал-файл, `pam`,
   `enhanced_recording`, `data_dir`), `join` с подставными procd/ubus
   (регистрация, ожидание сети и тик, отказ по журналу узла с отсечкой; строки `logger`
   с тегом `teleport[<pid экземпляра>]` и журнал с записью для всех — не отказ;
@@ -228,5 +252,7 @@ stvor-agent не сохраняются. После обновления про�
   с набором команд busybox (без `stat`, `install`, `hostname`, `paste`).
 - **L** — `make test-openwrt`: корневая ФС openwrt-builder v0.3.1 в контейнере, настоящие
   cream и busybox: `install` из локального набора-подделки в фазе build, отложенный `join`
-  (`bound_keypair` и `token`), `log_cap` через rc.common, render, управляемые метки, `remove`. procd в контейнере нет —
+  (`bound_keypair` и `token`), `log_cap` через rc.common, render, управляемые метки, `remove`; `sysupgrade` с
+  `stvor-agent-openwrt` (настоящий `sysupgrade -b`, распаковка в свежем образе, повторная
+  установка: тот же `host_uuid`, `join` не вызывался). procd в контейнере нет —
   загрузка, регистрация и `tsh ssh` проверяются на ВМ.

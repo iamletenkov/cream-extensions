@@ -61,7 +61,8 @@ has /opt/cream/ext/teleport-openwrt/files/teleport-core.sh
 if grep -v '^[[:space:]]*#' /etc/init.d/teleport | grep -qE 'procd_set_param[[:space:]]+(stdout|stderr)'; then
 	fail "init-скрипт ставит stdout/stderr"
 fi
-eq "keep.d" "/opt/teleport/data/ /opt/teleport/.cream-owned" "$(grep -v '^#' /lib/upgrade/keep.d/teleport | tr '\n' ' ' | sed 's/ $//')"
+eq "keep.d" "/opt/teleport/data/ /opt/teleport/.cream-owned /opt/cream/var/ext/teleport-openwrt/agent-enabled /etc/cream/teleport-openwrt/config /etc/cream/teleport-openwrt/apps.d/" \
+	"$(grep -v '^#' /lib/upgrade/keep.d/teleport | tr '\n' ' ' | sed 's/ $//')"
 hasnt /etc/teleport.yaml
 
 step "журнал узла: log_cap через rc.common под писателем с O_APPEND"

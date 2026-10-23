@@ -85,7 +85,7 @@ grep -q '^stvor-telemetry:' /etc/shadow || fail "shadow stvor-telemetry"
 eq "/opt/stvor-agent" "drwxr-x--- root:stvor-telemetry" "$(mode /opt/stvor-agent) $(owner /opt/stvor-agent)"
 eq "/etc/stvor-agent-telemetry" "drwxr-x--- root:stvor-telemetry" \
 	"$(mode /etc/stvor-agent-telemetry) $(owner /etc/stvor-agent-telemetry)"
-eq "keep.d" "/opt/stvor-agent/machine-id" "$(grep -v '^#' /lib/upgrade/keep.d/stvor-agent)"
+grep -qx '/etc/stvor-agent/token' /lib/upgrade/keep.d/stvor-agent || fail "keep.d: $(grep -v '^#' /lib/upgrade/keep.d/stvor-agent)"
 has /etc/cream/teleport-openwrt/command-labels.d/stvor_agent
 out=$(cream install stvor-agent-openwrt STVOR_AGENT_VERSION=4.1.0 STVOR_AGENT_SHA256="$sha" STVOR_AGENT_TARBALL=/opt/agent.tar.gz 2>&1) ||
 	fail "повтор install: $out"

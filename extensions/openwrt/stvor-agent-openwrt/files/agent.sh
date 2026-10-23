@@ -244,6 +244,7 @@ sa_own_state(){
     if [[ -f "$SA_HOME/machine-id" && ! -L "$SA_HOME/machine-id" ]]; then
         chown "0:$SA_USER" -- "$SA_HOME/machine-id" && chmod 0640 -- "$SA_HOME/machine-id" || return 1
     fi
+    sa_own_secrets || return 1
     [[ -e "$t" || -L "$t" ]] || return 0
     uid="$(sa_uid)" || { sa_log "ОШИБКА: нет uid пользователя $SA_USER"; return 1; }
     if sa_user_dir "$t" "$uid" && { [[ ! -e "$b" && ! -L "$b" ]] || sa_user_tree "$b" "$uid"; }; then
@@ -261,6 +262,33 @@ sa_own_state(){
         sa_log "служба stvor-agent-telemetry запускается"
     fi
     return 0
+}
+# sa_own_secrets: the tokens and the root files of the state as the agent writes
+# them. sysupgrade (keep.d) archives files only: tar makes their directories
+# again 0755 root, and the agent refuses a labels token in a directory wider than
+# 0700. Every path lies in a directory only root writes (nothing there is the
+# telemetry user's to swap); a link is never followed — the agent refuses it too.
+#   /etc/stvor-agent                 0700 root, token 0600 root
+#   /etc/stvor-agent-telemetry       0750 root:stvor-telemetry, token 0640 the same
+#   /opt/stvor-agent/state.json, telemetry-token.src  0600 root
+sa_own_secrets(){
+    local f
+    if [[ -d "$SA_ETC" && ! -L "$SA_ETC" ]]; then
+        chown 0:0 -- "$SA_ETC" && chmod 0700 -- "$SA_ETC" || return 1
+        sa_own_file "$SA_ETC/token" 0 0600 || return 1
+    fi
+    if [[ -d "$SA_TELEMETRY_ETC" && ! -L "$SA_TELEMETRY_ETC" ]]; then
+        sa_dir "$SA_TELEMETRY_ETC" 0750 || return 1
+        sa_own_file "$SA_TELEMETRY_ETC/token" "$SA_USER" 0640 || return 1
+    fi
+    for f in state.json telemetry-token.src; do
+        sa_own_file "$SA_HOME/$f" 0 0600 || return 1
+    done
+}
+# sa_own_file <file> <group> <mode>: a regular file (not a link) — root:<group>, mode.
+sa_own_file(){
+    [[ -f "$1" && ! -L "$1" ]] || return 0
+    chown "0:$2" -- "$1" && chmod "$3" -- "$1"
 }
 # sa_uid: the uid of the telemetry user (numeric: find -user takes it everywhere).
 sa_uid(){

@@ -232,8 +232,22 @@ check_not "повтор без respawn (заканчивается сам)" grep
 loop="$(grep -o "'while .*done'" "$I" | tr -d "'")"
 eq "цикл повтора — пока есть маркер" 'while [ -e "$1" ]; do /usr/bin/cream run --lock-timeout 6m teleport-openwrt join-retry; sleep 60; done' "$loop"
 
-echo "== keep.d: только состояние (Р4) =="
-eq "keep.d — data и маркер" "/opt/teleport/data/|/opt/teleport/.cream-owned|" "$(grep -v '^#' "$SRC/files/keep.d" | tr '\n' '|')"
+echo "== keep.d: идентичность, флаг и домен (Р4, решение владельца 2026-10-23) =="
+eq "keep.d — data, маркер, флаг agent-enabled, config и apps.d домена" \
+    "/opt/teleport/data/|/opt/teleport/.cream-owned|/opt/cream/var/ext/teleport-openwrt/agent-enabled|/etc/cream/teleport-openwrt/config|/etc/cream/teleport-openwrt/apps.d/|" \
+    "$(grep -v '^#' "$SRC/files/keep.d" | tr '\n' '|')"
+# Restored paths are on disk before cream installs again: a file that an extension
+# lays by `files` there would be refused (conflict.file_unowned, cream ruling Р21).
+check "keep.d не пересекается с files расширений OpenWrt" python3 - "$SRC/files/keep.d" "$REPO/extensions/openwrt" <<'PY2'
+import pathlib, sys, yaml
+keep = [l.strip() for l in open(sys.argv[1]) if l.strip() and not l.startswith("#")]
+bad = []
+for m in pathlib.Path(sys.argv[2]).glob("*/extension.yaml"):
+    for f in yaml.safe_load(m.read_text()).get("files") or []:
+        if any(f["dst"] == k.rstrip("/") or f["dst"].startswith(k.rstrip("/") + "/") for k in keep):
+            bad.append(f"{m.parent.name}: {f['dst']}")
+print("\n".join(bad)); sys.exit(1 if bad else 0)
+PY2
 
 echo "== install: набор openwrt-<arch> с зеркала по sha256 =="
 setup
@@ -299,6 +313,62 @@ setup
 mkdir -p "$D"; echo 1111 > "$D/host_uuid"; : > "$ROOT/opt/teleport/.cream-owned"
 installed; eq "после sysupgrade (data + маркер) — 0" 0 "$?"
 eq "host_uuid сохранён" 1111 "$(cat "$D/host_uuid")"
+
+echo "== sysupgrade с сохранением конфигурации: тот же узел без join =="
+# sysupgrade_sim: what sysupgrade -b archives — the files and links under the paths
+# of keep.d (find -type f -o -type l: directories are not archived), a new firmware
+# without the set, the domain and the state of cream (the tree of the extension
+# stays: cream lays it again), the archive unpacked at boot (tar makes the
+# missing directories by umask, 0755). The state of cream is /opt/cream/var on
+# OpenWrt and var/lib/cream under hooktest — the list is mapped.
+sysupgrade_sim(){
+    local list="$HT_TMP/keep.list" p
+    : > "$list"
+    while IFS= read -r p; do
+        [[ -n "$p" && "$p" != \#* ]] || continue
+        p="${p%/}"; p="${p/#\/opt\/cream\/var\//\/var\/lib\/cream\/}"
+        ( cd "$ROOT" && find ".$p" \( -type f -o -type l \) 2>/dev/null ) >> "$list"
+    done < "$SRC/files/keep.d"
+    tar -czf "$HT_TMP/backup.tgz" -C "$ROOT" -T "$list"
+    rm -rf -- "$ROOT/opt/teleport" "$ROOT/etc/cream" "$ROOT/var/lib/cream" "$ROOT/usr/bin/teleport" "$ROOT/etc/teleport.yaml" \
+        "$ROOT/var/run/teleport.start" "$ROOT/var/run/teleport.started" "$FAKE/ubus.list"
+    ( umask 022; tar -xzf "$HT_TMP/backup.tgz" -C "$ROOT" )
+}
+tree_sum(){ ( cd "$1" && find . -type f -exec sha256sum {} + | sort ) | sha256sum | cut -c1-64; }
+setup; installed; procd_up
+echo up > "$FAKE/net"
+join_line; eq "join до sysupgrade — 0" 0 "$?"
+printf 'NAME=web\nURI=http://127.0.0.1:8080\n' > "$ROOT/etc/cream/teleport-openwrt/apps.d/web.conf"
+uuid="$(cat "$D/host_uuid")"; before="$(tree_sum "$D")"
+chmod 0600 "$S/agent-enabled"
+sysupgrade_sim
+eq "архив: каталог состояния 0755 (tar)" 755 "$(stat -c %a "$S")"
+check "архив: флаг agent-enabled" test -e "$S/agent-enabled"
+check "архив: домен с прокси" grep -q '^TELEPORT_PROXY=' "$ROOT/etc/cream/teleport-openwrt/config"
+check "архив: apps.d" test -f "$ROOT/etc/cream/teleport-openwrt/apps.d/web.conf"
+check_not "архив: секрета первого входа нет" test -e "$S/registration-secret"
+chmod 0644 "$S/agent-enabled"
+: > "$FAKE/calls"; : > "$FAKE/curl.argv"
+installed; eq "install после sysupgrade — 0" 0 "$?"
+check "набор скачан вновь" test -s "$FAKE/curl.argv"
+eq "каталог состояния снова 0700" 700 "$(stat -c %a "$S")"
+eq "флаг agent-enabled 0600" 600 "$(stat -c %a "$S/agent-enabled")"
+eq "data_dir 0750" 750 "$(stat -c %a "$D")"
+eq "host_uuid тот же" "$uuid" "$(cat "$D/host_uuid")"
+eq "data не тронута" "$before" "$(tree_sum "$D")"
+check_not "install не стартует агента" grep -qE '^init (start|restart)' "$FAKE/calls"
+# The command of the portal again (no secret, no FORCE): the idempotent branch.
+act join TELEPORT_PROXY="$PROXY" TELEPORT_ENV=dev; eq "повтор join после sysupgrade — 0" 0 "$?"
+eq "повтор join — registered" registered "$(json | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
+check "повтор join — уже зарегистрирован" grep -q 'уже зарегистрирован' "$ROOT/out"
+check_not "повтор join — агент не стартовал (join не вызывался)" grep -qE '^init (start|restart)' "$FAKE/calls"
+check_not "повтор join — секрета нет" test -e "$S/registration-secret"
+eq "повтор join — host_uuid тот же" "$uuid" "$(cat "$D/host_uuid")"
+eq "повтор join — data не тронута" "$before" "$(tree_sum "$D")"
+# The service of the node starts it by the restored flag.
+"$ROOT/etc/init.d/teleport" start
+check "служба по флагу — агент поднят" test -f "$FAKE/ubus.list"
+eq "служба — тот же host_uuid" "$uuid" "$(cat "$D/host_uuid")"
 
 echo "== render: teleport.yaml OpenWrt (§3) =="
 setup; installed

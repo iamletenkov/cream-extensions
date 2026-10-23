@@ -20,6 +20,10 @@
 - `openwrt/stvor-agent-openwrt` 1.0.0 (тот же план, Task 6): агент из tar.gz `stvor-agent_<v>_linux_<arch>.tar.gz`
   (бинарь и init-скрипты procd выпуска агента), пользователь `stvor-telemetry`, `keep.d` — только
   `/opt/stvor-agent/`; пин tar.gz пуст до выпуска агента с ним (Task 7), `tools/agent-bump.sh` поднимает оба пина.
+- OpenWrt-робот переживает `sysupgrade` тем же узлом (решение владельца 2026-10-23, Р4):
+  `teleport-openwrt` 1.0.1 и `stvor-agent-openwrt` 1.1.2 — `keep.d` с идентичностью, флагом,
+  доменами и токенами; права после восстановления чинят `install`/`configure`; L-сценарий
+  `sysupgrade -b` → свежий образ → повторная установка. Службу восстановления кладёт Stvor.
 
 ## Дальше
 1. Bisquite 3.0.0 (Task 24–26 плана cream): примеры VMFILE на `RUN_COMMAND cream install`.
