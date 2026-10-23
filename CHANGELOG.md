@@ -1,5 +1,17 @@
 # Changelog
 
+## [5.7.0](https://github.com/iamletenkov/cream-extensions/compare/v5.6.0...v5.7.0) (2026-10-23)
+
+
+### Добавлено
+
+* **openwrt:** робот переживает sysupgrade тем же узлом ([#62](https://github.com/iamletenkov/cream-extensions/issues/62)) ([1b139d3](https://github.com/iamletenkov/cream-extensions/commit/1b139d3b2c23828c4f8bb4c962cbeddef6822445))
+
+
+### Исправлено
+
+* **stvor-agent-openwrt:** sysupgrade хранит только machine-id, права состояния чинятся сами ([#60](https://github.com/iamletenkov/cream-extensions/issues/60)) ([e582eab](https://github.com/iamletenkov/cream-extensions/commit/e582eabf2bd72d7baaff61d7acf08c195250368d))
+
 ## [5.6.0](https://github.com/iamletenkov/cream-extensions/compare/v5.5.0...v5.6.0) (2026-10-22)
 
 
