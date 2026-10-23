@@ -390,17 +390,27 @@ sa_hook_install(){
 # state, the user it made. The drop-in of the label goes first, so the node
 # drops the label now (reload-apps) — cream would remove it only after the hook.
 sa_hook_remove(){
-    local s
+    local s uid=""
     if [[ -x "$SA_BIN" ]]; then
         sa_run "$SA_BIN" disable >/dev/null 2>&1 || sa_log "предупреждение: stvor-agent disable не прошёл — службы и токены снимаются здесь"
     fi
+    if sa_procd_running; then
+        for s in "${SA_SERVICES[@]}"; do sa_svc "$s" stop || true; done
+    fi
+    # The trees of the telemetry user go only when no process of it is left:
+    # busybox rm walks by path, a live process could swap a directory for a link.
+    if sa_user_exists; then
+        uid="$(sa_uid)" || sa_die "нет uid пользователя $SA_USER — ничего не снято"
+        sa_wait_user_gone "$uid" || sa_die "процессы $SA_USER не завершились — ничего не снято, повторите cream remove"
+    fi
     for s in "${SA_SERVICES[@]}"; do
-        if sa_procd_running; then sa_svc "$s" stop || true; fi
         sa_svc "$s" disable || true
         rm -f -- "$SA_INIT_DIR/$s"
     done
     rm -f -- "$SA_BIN"
-    rm -r -f -- "$SA_ETC" "$SA_TELEMETRY_ETC" "$SA_HOME" "$SA_RUN_TELEMETRY" "$SA_ROOT/var/run/stvor-agent.lock"
+    sa_trash "$SA_HOME" || sa_die "не снять ${SA_HOME#"$SA_ROOT"}"
+    sa_trash "$SA_RUN_TELEMETRY" || sa_die "не снять ${SA_RUN_TELEMETRY#"$SA_ROOT"}"
+    rm -r -f -- "$SA_ETC" "$SA_TELEMETRY_ETC" "$SA_ROOT/var/run/stvor-agent.lock"
     sa_drop_user
     rm -f -- "$SA_INSTALLED"
     if [[ -e "$SA_LABEL" ]]; then
@@ -408,6 +418,17 @@ sa_hook_remove(){
         sa_reload_label
     fi
     sa_log "stvor-agent снят: службы, бинарь, токены и состояние"
+}
+
+# sa_trash <path>: a tree the telemetry user could write goes first into a
+# directory only root reaches (on the same file system — a rename, no copy),
+# then is deleted there.
+sa_trash(){
+    local trash
+    [[ -e "$1" || -L "$1" ]] || return 0
+    trash="$(mktemp -d "$(dirname -- "$1")/.stvor-agent-trash.XXXXXX")" || return 1
+    chmod 0700 -- "$trash" && mv -f -- "$1" "$trash/x" || { rmdir -- "$trash" 2>/dev/null; return 1; }
+    rm -r -f -- "$trash"
 }
 
 # hooks/apply: the services reread /etc/cream/stvor-agent-openwrt/config on

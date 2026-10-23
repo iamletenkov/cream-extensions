@@ -401,6 +401,44 @@ ht_hook configure; eq "configure до install (нет пользователя) 
 check "configure до install — сказано" grep -q 'пользователя stvor-telemetry нет' "$ROOT/out"
 check "configure до install — chown не звался" test ! -e "$FAKE/chown.argv"
 
+echo "== remove: дерево пользователя — через закрытую корзину, после выхода его процессов =="
+setup
+procd_up
+installed
+mkdir -p "$ROOT/opt/stvor-agent/telemetry/buffer" "$ROOT/var/run/stvor-agent-telemetry"
+echo 'root:secret' > "$ROOT/etc/root-file"
+ln -sfn "$ROOT/etc" "$ROOT/opt/stvor-agent/telemetry/buffer/etc"
+ln -f "$ROOT/etc/root-file" "$ROOT/opt/stvor-agent/telemetry/buffer/hard"
+ht_hook remove; eq "remove — 0" 0 "$?"
+check "файл root цел" grep -qx 'root:secret' "$ROOT/etc/root-file"
+check "каталог /etc цел" test -f "$ROOT/etc/passwd"
+check "/opt/stvor-agent снят" test ! -e "$ROOT/opt/stvor-agent"
+check "корзин в /opt нет" test -z "$(find "$ROOT/opt" -maxdepth 1 -name '.stvor-agent-trash.*')"
+check "корзин в /var/run нет" test -z "$(find "$ROOT/var/run" -maxdepth 1 -name '.stvor-agent-trash.*')"
+check "stop раньше disable" test "$(grep -n '^init stvor-agent-telemetry stop$' "$FAKE/calls" | cut -d: -f1)" \
+    -lt "$(grep -n '^init stvor-agent-telemetry disable$' "$FAKE/calls" | cut -d: -f1)"
+
+echo "== remove: процессы stvor-telemetry не выходят — отказ, ничего не снято =="
+setup
+procd_up
+installed
+mkdir -p "$ROOT/opt/stvor-agent/telemetry/buffer" "$ROOT/proc/4242"
+printf 'Name:\tstvor-agent\nUid:\t32768\t32768\t32768\t32768\n' > "$ROOT/proc/4242/status"
+ht_fake sleep
+: > "$FAKE/calls"
+ht_hook remove; check "remove — отказ" test "$?" -ne 0
+check "сказано о процессах" grep -q 'процессы stvor-telemetry не завершились — ничего не снято' "$ROOT/out"
+check "службы остановлены" ht_called '^init stvor-agent-telemetry stop$'
+check_not "службы не выключены" ht_called '^init .* disable$'
+for p in usr/bin/stvor-agent etc/init.d/stvor-agent etc/init.d/stvor-agent-telemetry opt/stvor-agent/telemetry/buffer; do
+    check "осталось /$p" test -e "$ROOT/$p"
+done
+check "пользователь остался" grep -q '^stvor-telemetry:' "$ROOT/etc/passwd"
+check "запись установленного осталась" test -e "$S/installed"
+rm -r -f "$ROOT/proc/4242"
+ht_hook remove; eq "процессы ушли — повтор remove 0" 0 "$?"
+check "теперь снято" test ! -e "$ROOT/opt/stvor-agent"
+
 echo "== действие status: блок telemetry в stvor-agent status --json =="
 status_doc(){
     {

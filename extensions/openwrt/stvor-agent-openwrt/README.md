@@ -50,7 +50,10 @@ teleport-openwrt set-managed`), служба телеметрии шлёт на 
 - **`remove`** — `stvor-agent disable` (служба, токен, `state.json`), службы
   остановлены и выключены; бинарь, init-скрипты, токены (`/etc/stvor-agent`,
   `/etc/stvor-agent-telemetry`), состояние `/opt/stvor-agent` стёрты; пользователь и
-  группа `stvor-telemetry` снимаются, только если их создало это расширение. Drop-in
+  группа `stvor-telemetry` снимаются, только если их создало это расширение. Каталоги,
+  куда пишет `stvor-telemetry` (`/opt/stvor-agent`, `/var/run/stvor-agent-telemetry`),
+  удаляются только после выхода всех его процессов и через каталог, доступный лишь root;
+  процессы не завершились за 40 с — отказ, ничего не снято (повторите `cream remove`). Drop-in
   метки `stvor_agent` уходит до `reload-apps` — узел сразу перестаёт показывать метку.
 - **действие `status`** (`cream run stvor-agent-openwrt status`) — здоровье агента и
   телеметрии, как у [`debian/stvor-agent`](../../debian/stvor-agent/README.md):

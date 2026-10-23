@@ -153,7 +153,10 @@ step "remove: службы, бинарь, токены, состояние, по
 mkdir -p /etc/stvor-agent /opt/stvor-agent/telemetry
 echo 'url=https://stvor.example.org/robot-api/v1/labels' >/etc/stvor-agent/token
 echo 0123 >/opt/stvor-agent/machine-id
+ln -sfn /etc /opt/stvor-agent/telemetry/etc
 CREAM_PHASE=live cream remove stvor-agent-openwrt
+has /etc/os-release
+eq "корзин нет" "" "$(find /opt /var/run -maxdepth 1 -name '.stvor-agent-trash.*')"
 for p in /usr/bin/stvor-agent /etc/init.d/stvor-agent /etc/init.d/stvor-agent-telemetry /etc/stvor-agent \
 	/etc/stvor-agent-telemetry /opt/stvor-agent /lib/upgrade/keep.d/stvor-agent \
 	/etc/cream/teleport-openwrt/command-labels.d/stvor_agent; do
