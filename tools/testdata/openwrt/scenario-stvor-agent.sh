@@ -102,12 +102,17 @@ spoil() {
 	chown 0:0 /opt/stvor-agent/machine-id
 	chmod 0600 /opt/stvor-agent/machine-id
 	ln -sfn /etc/shadow /opt/stvor-agent/telemetry/buffer/shadow
+	ln -f /etc/shadow /opt/stvor-agent/telemetry/buffer/shadow-hard
+	echo marker >/opt/stvor-agent/telemetry/token-rejected
 }
 fixed() {
-	for d in /opt/stvor-agent/telemetry /opt/stvor-agent/telemetry/buffer /opt/stvor-agent/telemetry/buffer/q; do
+	for d in /opt/stvor-agent/telemetry /opt/stvor-agent/telemetry/buffer; do
 		eq "$1: $d" "drwx------ stvor-telemetry:stvor-telemetry" "$(mode "$d") $(owner "$d")"
 	done
-	eq "$1: файл буфера" "stvor-telemetry:stvor-telemetry" "$(owner /opt/stvor-agent/telemetry/buffer/q/0001)"
+	eq "$1: буфер пересоздан пустым" "" "$(ls -A /opt/stvor-agent/telemetry/buffer)"
+	has /opt/stvor-agent/telemetry/token-rejected
+	eq "$1: корзины нет" "" "$(find /opt/stvor-agent -maxdepth 1 -name '.trash.*')"
+	eq "$1: /etc/shadow — одна ссылка" 1 "$(ls -ld /etc/shadow | awk '{print $2}')"
 	eq "$1: machine-id" "-rw-r----- root:stvor-telemetry" "$(mode /opt/stvor-agent/machine-id) $(owner /opt/stvor-agent/machine-id)"
 	eq "$1: ссылка не разыменована" "$SHADOW_OWNER" "$(owner /etc/shadow)"
 }

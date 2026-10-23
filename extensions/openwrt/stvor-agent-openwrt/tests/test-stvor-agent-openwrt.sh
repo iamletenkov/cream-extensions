@@ -306,46 +306,95 @@ check "предупреждение" grep -q 'stvor-agent disable не прош�
 check "токен снят" test ! -e "$ROOT/etc/stvor-agent"
 ht_hook remove; eq "повтор remove на пустом — 0" 0 "$?"
 
-echo "== права состояния: install и configure чинят владельца и режимы вложенного =="
-# Восстановленное (keep.d прежних версий, резервная копия) приходит 0:0 0755:
-# служба телеметрии (stvor-telemetry) падает с permission denied.
+echo "== права состояния: восстановленный буфер пересоздаётся, содержимое root не трогает =="
+# Восстановленное (keep.d 1.1.0, резервная копия) приходит 0:0 0755: служба телеметрии
+# (stvor-telemetry) падала с permission denied. Дерево — пользователя: жёсткая ссылка
+# или симлинк в буфере на файл root не должны отдать этот файл пользователю.
+T="opt/stvor-agent/telemetry"
 spoil_state(){
-    local t="$ROOT/opt/stvor-agent/telemetry"
-    mkdir -p "$t/buffer/q" "$ROOT/etc/real"
+    local t="$ROOT/$T"
+    mkdir -p "$t/buffer/q"
     chmod 0755 "$t" "$t/buffer" "$t/buffer/q"
     echo seg > "$t/buffer/q/0001"
+    echo marker > "$t/token-rejected"
+    echo 'root:secret' > "$ROOT/etc/root-file"; chmod 0600 "$ROOT/etc/root-file"
+    ln -f "$ROOT/etc/root-file" "$t/buffer/hard"
+    ln -sfn "$ROOT/etc/root-file" "$t/buffer/soft"
     echo id > "$ROOT/opt/stvor-agent/machine-id"; chmod 0600 "$ROOT/opt/stvor-agent/machine-id"
-    ln -sfn "$ROOT/etc/real" "$t/buffer/link"
     rm -f "$FAKE/chown.argv"
 }
 owned(){ grep -qx -- "$1" "$FAKE/chown.argv"; }
-check_perms(){
-    local t="$ROOT/opt/stvor-agent/telemetry"
+check_reset(){
+    local t="$ROOT/$T"
     eq "$1: telemetry 0700" drwx------ "$(mode "$t")"
-    eq "$1: buffer 0700" drwx------ "$(mode "$t/buffer")"
-    eq "$1: вложенный каталог 0700" drwx------ "$(mode "$t/buffer/q")"
+    eq "$1: новый пустой buffer 0700" "drwx------ " "$(mode "$t/buffer") $(ls -A "$t/buffer")"
     eq "$1: machine-id 0640" -rw-r----- "$(mode "$ROOT/opt/stvor-agent/machine-id")"
     check "$1: machine-id root:stvor-telemetry" owned "0:stvor-telemetry -- $ROOT/opt/stvor-agent/machine-id"
-    check "$1: buffer — пользователю телеметрии" owned "-h stvor-telemetry:stvor-telemetry -- $t/buffer"
-    check "$1: файл буфера — пользователю телеметрии" owned "-h stvor-telemetry:stvor-telemetry -- $t/buffer/q/0001"
-    check "$1: telemetry — пользователю телеметрии" owned "-h stvor-telemetry:stvor-telemetry -- $t"
-    check_not "$1: ссылки не трогаются" grep -q -- "$t/buffer/link" "$FAKE/chown.argv"
-    check_not "$1: chown -R не зовётся" grep -q -- '-R' "$FAKE/chown.argv"
-    # Пока вложенное меняет владельца, каталог закрыт пользователю: первым — root, последним — ему.
-    eq "$1: сначала telemetry закрыт root" "0:0 -- $t" "$(grep -- " $t\$" "$FAKE/chown.argv" | head -n1)"
-    eq "$1: последним telemetry отдан пользователю" "-h stvor-telemetry:stvor-telemetry -- $t" "$(tail -n1 "$FAKE/chown.argv")"
+    eq "$1: файл root цел" "-rw------- root:secret" "$(mode "$ROOT/etc/root-file") $(cat "$ROOT/etc/root-file")"
+    check_not "$1: файл root не перевладевается" grep -q 'root-file' "$FAKE/chown.argv"
+    check_not "$1: содержимое буфера не перевладевается" grep -q -- "$t/buffer/" "$FAKE/chown.argv"
+    check_not "$1: без chown -R и -h" grep -qE -- '(^| )-[Rh]( |$)' "$FAKE/chown.argv"
+    check "$1: маркер агента в telemetry остался" test -f "$t/token-rejected"
+    check "$1: корзины не осталось" test -z "$(find "$ROOT/opt/stvor-agent" -maxdepth 1 -name '.trash.*')"
+    # Порядок: telemetry закрыт root, buffer создан и отдан, telemetry отдан последним.
+    eq "$1: chown по порядку" "0:0 -- $t
+stvor-telemetry:stvor-telemetry -- $t/buffer
+stvor-telemetry:stvor-telemetry -- $t" "$(grep -- " $t" "$FAKE/chown.argv")"
 }
 setup
 installed
 spoil_state
-installed; eq "повторная установка — 0" 0 "$?"
-check_perms "переустановка"
+installed
+eq "повторная установка — 0" 0 "$?"
+check_reset "переустановка"
+check "сказано о пересоздании" grep -q 'буфер телеметрии пересоздаётся' "$ROOT/out"
 spoil_state
 : > "$FAKE/calls"
 ht_hook configure; eq "configure — 0" 0 "$?"
-check_perms "configure"
+check_reset "configure"
 check_not "configure — без сети" ht_called '^curl '
-check_not "configure — без служб" ht_called '^init '
+check_not "configure без procd — службы не трогаются" ht_called '^init '
+
+echo "== права состояния: живая машина — служба телеметрии остановлена и запущена вновь =="
+setup
+procd_up
+installed
+spoil_state
+: > "$FAKE/running-stvor-agent-telemetry"
+: > "$FAKE/calls"
+ht_hook configure; eq "configure — 0" 0 "$?"
+wait
+sleep 0.2
+check "телеметрия остановлена" ht_called '^init stvor-agent-telemetry stop$'
+check "телеметрия запущена" ht_called '^init stvor-agent-telemetry start$'
+check_reset "живая машина"
+
+echo "== права состояния: процессы пользователя не завершились — ничего не трогается =="
+setup
+installed
+spoil_state
+mkdir -p "$ROOT/proc/4242"
+printf 'Name:\tstvor-agent\nUid:\t32768\t32768\t32768\t32768\n' > "$ROOT/proc/4242/status"
+ht_fake sleep
+ht_hook configure; check "configure — отказ" test "$?" -ne 0
+check "сказано о процессах" grep -q 'процессы stvor-telemetry не завершились' "$ROOT/out"
+check "буфер на месте" test -f "$ROOT/$T/buffer/q/0001"
+check_not "telemetry не трогался" grep -q -- " $ROOT/$T" "$FAKE/chown.argv"
+
+echo "== права состояния: дерево уже пользователя — не трогается =="
+setup
+printf 'stvor-telemetry:x:%s:\n' "$(id -g)" >> "$ROOT/etc/group"
+printf 'stvor-telemetry:x:%s:%s::/var:/bin/false\n' "$(id -u)" "$(id -g)" >> "$ROOT/etc/passwd"
+installed
+mkdir -p "$ROOT/$T/buffer/q"; chmod 0700 "$ROOT/$T" "$ROOT/$T/buffer" "$ROOT/$T/buffer/q"
+echo seg > "$ROOT/$T/buffer/q/0001"
+rm -f "$FAKE/chown.argv"
+ht_hook configure; eq "configure — 0" 0 "$?"
+check "буфер сохранён" test -f "$ROOT/$T/buffer/q/0001"
+check_not "telemetry не трогался" grep -q -- " $ROOT/$T" "$FAKE/chown.argv"
+check_not "без сообщения о пересоздании" grep -q 'пересоздаётся' "$ROOT/out"
+
+echo "== configure до install: пользователя нет — ничего =="
 setup
 rm -f "$FAKE/chown.argv"
 ht_hook configure; eq "configure до install (нет пользователя) — 0" 0 "$?"

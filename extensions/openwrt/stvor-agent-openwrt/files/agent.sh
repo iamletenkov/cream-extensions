@@ -224,27 +224,97 @@ sa_dir(){
 }
 
 # sa_own_state: the owners and modes of the state, every time (install, upgrade,
-# configure on every boot). A restore (keep.d of 1.1.0, a backup) brings the
+# configure on every boot). A restore (keep.d of 1.1.0, a backup) brought the
 # telemetry tree back as 0:0 0755 and the telemetry service (stvor-telemetry)
-# dies on permission denied; the init script fixes only the top directory.
+# died on permission denied; its init script fixes only the top directory.
 #   /opt/stvor-agent             0750 root:stvor-telemetry
 #   /opt/stvor-agent/machine-id  0640 root:stvor-telemetry (telemetry hashes it)
-#   /opt/stvor-agent/telemetry   0700 stvor-telemetry, every directory inside
-#                                0700, every entry stvor-telemetry
-# The tree is the unprivileged user's: while root changes the entries inside it
-# is closed to that user (0:0 0700), links are never followed (`chown -h`, no
-# -R) and the tree is handed back last.
+#   /opt/stvor-agent/telemetry   0700 stvor-telemetry (the root agent may keep its
+#                                token-rejected marker there)
+#   …/telemetry/buffer           0700 stvor-telemetry, everything in it the user's
+# The tree is the unprivileged user's, so root never walks it to change
+# anything: a link (soft or hard) to a root file there would hand that file
+# over. A buffer that is not the user's is transient data: the service is
+# stopped, the buffer moved into a directory only root can reach and deleted
+# unread, an empty one made in its place. Owners and modes change only on the
+# directories root has just closed or made.
 sa_own_state(){
-    local t="$SA_HOME/telemetry"
+    local t="$SA_HOME/telemetry" b="$SA_HOME/telemetry/buffer" uid stopped=0
     sa_dir "$SA_HOME" 0750 || return 1
     if [[ -f "$SA_HOME/machine-id" && ! -L "$SA_HOME/machine-id" ]]; then
         chown "0:$SA_USER" -- "$SA_HOME/machine-id" && chmod 0640 -- "$SA_HOME/machine-id" || return 1
     fi
-    [[ -d "$t" && ! -L "$t" ]] || return 0
+    [[ -e "$t" || -L "$t" ]] || return 0
+    uid="$(sa_uid)" || { sa_log "ОШИБКА: нет uid пользователя $SA_USER"; return 1; }
+    if sa_user_dir "$t" "$uid" && { [[ ! -e "$b" && ! -L "$b" ]] || sa_user_tree "$b" "$uid"; }; then
+        return 0
+    fi
+    sa_log "${t#"$SA_ROOT"}: владелец или права не те — буфер телеметрии пересоздаётся"
+    if sa_procd_running && sa_svc stvor-agent-telemetry running; then
+        sa_svc stvor-agent-telemetry stop || true
+        stopped=1
+    fi
+    sa_wait_user_gone "$uid" || { sa_log "ОШИБКА: процессы $SA_USER не завершились — права не трогаю"; return 1; }
+    sa_reset_telemetry "$t" "$b" || return 1
+    if (( stopped )); then
+        "$SA_INIT_DIR/stvor-agent-telemetry" start >/dev/null 2>&1 &
+        sa_log "служба stvor-agent-telemetry запускается"
+    fi
+    return 0
+}
+# sa_uid: the uid of the telemetry user (numeric: find -user takes it everywhere).
+sa_uid(){
+    local u
+    u="$(awk -F: -v n="$SA_USER" '$1 == n { print $3; exit }' "$SA_ROOT/etc/passwd")"
+    [[ "$u" =~ ^[0-9]+$ ]] && echo "$u"
+}
+# sa_user_dir <dir> <uid>: a directory (not a link) of the user, mode 0700.
+sa_user_dir(){
+    [[ -d "$1" && ! -L "$1" ]] && [[ -n "$(find "$1" -maxdepth 0 -type d -user "$2" -perm 0700 2>/dev/null)" ]]
+}
+# sa_user_tree <dir> <uid>: the user's directory and nothing in it of another
+# owner — a read-only look (find never follows links), nothing is changed.
+sa_user_tree(){
+    sa_user_dir "$1" "$2" || return 1
+    [[ -z "$(find "$1" -xdev ! -user "$2" -print 2>/dev/null | head -n 1)" ]]
+}
+# sa_wait_user_gone <uid>: no process of the user is left (procd stops the
+# service asynchronously, term_timeout 30 s).
+sa_wait_user_gone(){
+    local i
+    for (( i = 0; i < 40; i++ )); do
+        sa_user_procs "$1" || return 0
+        sleep 1
+    done
+    return 1
+}
+sa_user_procs(){
+    local f
+    for f in "$SA_ROOT"/proc/[0-9]*/status; do
+        [[ -r "$f" ]] || continue
+        awk -v u="$1" '$1 == "Uid:" && $2 == u { found = 1 } END { exit !found }' "$f" 2>/dev/null && return 0
+    done
+    return 1
+}
+# sa_reset_telemetry <telemetry> <buffer>: the user has no process left. The
+# telemetry directory is closed to the user (or put aside, if it is not a
+# directory), the buffer goes aside and is deleted unread, an empty buffer is
+# made, and the directory is handed back last.
+sa_reset_telemetry(){
+    local t="$1" b="$2" trash
+    trash="$(mktemp -d "$SA_HOME/.trash.XXXXXX")" || return 1
+    chmod 0700 -- "$trash" || return 1
+    if [[ -L "$t" || ! -d "$t" ]]; then
+        mv -f -- "$t" "$trash/telemetry" || return 1
+        mkdir -m 0700 -- "$t" || return 1
+    fi
     chown 0:0 -- "$t" && chmod 0700 -- "$t" || return 1
-    find "$t" -mindepth 1 -xdev -type d -exec chmod 0700 -- {} \; || return 1
-    find "$t" -mindepth 1 -xdev ! -type l -exec chown -h "$SA_USER:$SA_USER" -- {} \; || return 1
-    chown -h "$SA_USER:$SA_USER" -- "$t"
+    if [[ -e "$b" || -L "$b" ]]; then
+        mv -f -- "$b" "$trash/buffer" || return 1
+    fi
+    rm -r -f -- "$trash"
+    mkdir -m 0700 -- "$b" && chown "$SA_USER:$SA_USER" -- "$b" && chmod 0700 -- "$b" || return 1
+    chown "$SA_USER:$SA_USER" -- "$t" && chmod 0700 -- "$t"
 }
 
 # hooks/configure (every boot, stage system — before procd starts the services):
