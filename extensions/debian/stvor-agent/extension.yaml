@@ -5,7 +5,8 @@
 # file goes away on `cream remove stvor-agent`).
 schema: cream/v1
 name: stvor-agent
-version: 4.2.0
+version: 4.2.1
+# 4.2.1: пин пакета stvor-agent 4.2.0.
 # 4.2.0: пин пакета stvor-agent 4.1.0 (служба телеметрии): remove останавливает оба
 #        юнита и стирает каталоги телеметрии; действие status — здоровье с блоком telemetry.
 # 4.1.3: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
