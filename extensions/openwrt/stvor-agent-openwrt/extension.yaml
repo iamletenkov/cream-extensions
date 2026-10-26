@@ -22,7 +22,8 @@
 #             machine-id, state, tokens, domain — Р4 revised 2026-10-23).
 schema: cream/v1
 name: stvor-agent-openwrt
-version: 1.1.3
+version: 1.1.4
+# 1.1.4: пин tar.gz stvor-agent 4.3.0.
 # 1.1.3: пин tar.gz stvor-agent 4.2.0.
 # 1.1.2: keep.d — machine-id, state.json, telemetry-token.src, оба токена, домен и маркер
 #        пользователя: после sysupgrade агент тот же; install и configure чинят права токенов.
