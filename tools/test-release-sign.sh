@@ -111,6 +111,55 @@ else
     echo "0000000000000000000000000000000000000000000000000000000000000000  extra" >> "$D/SHA256SUMS"
     run env COSIGN="$COSIGN_BIN" "$S" verify "$D" "$K/cosign.pub"
     eq "подменённый SHA256SUMS: код" 1 "$RC"
+    cp "$TMP/sums.ok" "$D/SHA256SUMS"
+
+    echo "== reconcile: подписанный релиз неизменяем =="
+    SIGNED="$D"
+    # rel <файлы SIGNED…> — опубликованный релиз P; пересборка F — SIGNED без подписи.
+    rel(){
+        P="$(mktemp -d "$TMP/prev.XXXXXX")"; F="$(mktemp -d "$TMP/fresh.XXXXXX")"; O="$TMP/plan.$RANDOM"
+        local x
+        for x in "$@"; do cp "$SIGNED/$x" "$P/"; done
+        cp "$SIGNED/cream-extensions-1.2.3.tar.gz" "$SIGNED/BUILDINFO.json" "$SIGNED/SHA256SUMS" "$F/"
+    }
+    rec(){ run env COSIGN="$COSIGN_BIN" "$S" reconcile "$F" "$P" "${1:-$K/cosign.pub}" "$O"; }
+    lst(){ tr '\n' ' ' < "$O/$1" | sed 's/ $//'; }
+
+    rel; rec
+    eq "новый: код" 0 "$RC"
+    eq "новый: действие" sign "$(cat "$O/action")"
+    eq "новый: загрузить" "BUILDINFO.json SHA256SUMS cream-extensions-1.2.3.tar.gz SHA256SUMS.sig SHA256SUMS.bundle.json" "$(lst upload)"
+    eq "новый: заменить" "" "$(lst clobber)"
+
+    rel SHA256SUMS SHA256SUMS.sig cream-extensions-1.2.3.tar.gz; rec
+    eq "частичный: код" 0 "$RC"
+    eq "частичный: действие" sign "$(cat "$O/action")"
+    eq "частичный: загрузить" "BUILDINFO.json SHA256SUMS.bundle.json" "$(lst upload)"
+    eq "частичный: заменить" "SHA256SUMS.sig" "$(lst clobber)"
+
+    rel SHA256SUMS SHA256SUMS.sig SHA256SUMS.bundle.json BUILDINFO.json; rec
+    eq "подписан без снимка: код" 0 "$RC"
+    eq "подписан без снимка: действие" reuse "$(cat "$O/action")"
+    eq "подписан без снимка: загрузить" "cream-extensions-1.2.3.tar.gz" "$(lst upload)"
+    eq "подписан без снимка: заменить" "" "$(lst clobber)"
+    check "подписан без снимка: подпись та же" cmp -s "$SIGNED/SHA256SUMS.sig" "$F/SHA256SUMS.sig"
+
+    # Расхождение с подписанным релизом: подпись к опубликованному SHA256SUMS верна.
+    rel cream-extensions-1.2.3.tar.gz BUILDINFO.json SHA256SUMS
+    echo "0000000000000000000000000000000000000000000000000000000000000000  extra" >> "$P/SHA256SUMS"
+    env COSIGN="$COSIGN_BIN" COSIGN_PRIVATE_KEY="$(cat "$K/cosign.key")" COSIGN_PASSWORD=test-only "$S" sign "$P" >/dev/null 2>&1
+    rec
+    eq "подписан, SHA256SUMS другой: код" 1 "$RC"
+    check "подписан, SHA256SUMS другой: причина" grep -q "релиз неизменяем" <<<"$ERR"
+    check "подписан, SHA256SUMS другой: плана нет" test ! -s "$O/action"
+
+    rel SHA256SUMS; echo x >> "$P/SHA256SUMS"; rec
+    eq "без подписи, SHA256SUMS другой: код" 1 "$RC"
+    rel cream-extensions-1.2.3.tar.gz; echo x >> "$P/cream-extensions-1.2.3.tar.gz"; rec
+    eq "снимок другой: код" 1 "$RC"
+    rel SHA256SUMS SHA256SUMS.sig SHA256SUMS.bundle.json; rec "$REPO/release/keys/stvor-platform.pub"
+    eq "подпись не проверяется: код" 1 "$RC"
+    check "подпись не проверяется: причина" grep -q "не проверяется ключом" <<<"$ERR"
 fi
 
 echo "== ключи в release/keys — PEM P-256 =="

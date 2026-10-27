@@ -281,26 +281,29 @@ jobs:
           REF="refs/tags/$TAG" tools/release-sign.sh buildinfo dist "$TAG"
           { echo "### $TAG"; echo '```'; cat dist/SHA256SUMS; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Signature already in the release
-        id: prev
+      # Подписанный релиз неизменяем (tools/release-sign.sh reconcile):
+      # опубликованный файл (в том числе SHA256SUMS) не совпал с пересборкой
+      # байт в байт — отказ, без переподписи и замены; .sig и .bundle.json
+      # опубликованы и проверяются — подпись сохраняется, догружаются только
+      # недостающие файлы; подписи нет или она неполная — подпись заново.
+      - name: Reconcile with the published release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COSIGN: ${{ runner.temp }}/bin/cosign
         run: |
           set -euo pipefail
           p="$RUNNER_TEMP/prev"; mkdir -p "$p"
-          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -D "$p" \
-            -p SHA256SUMS -p SHA256SUMS.sig -p SHA256SUMS.bundle.json 2>/dev/null || true
-          if [ -s "$p/SHA256SUMS.sig" ] && [ -s "$p/SHA256SUMS.bundle.json" ] \
-             && cmp -s "$p/SHA256SUMS" dist/SHA256SUMS; then
-            cp "$p/SHA256SUMS.sig" "$p/SHA256SUMS.bundle.json" dist/
-            echo "SHA256SUMS в релизе тот же — подпись берётся выложенная"
-            echo "reuse=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "reuse=false" >> "$GITHUB_OUTPUT"
-          fi
+          names="$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+          for f in $(cd dist && ls) SHA256SUMS.sig SHA256SUMS.bundle.json; do
+            if grep -qxF "$f" <<<"$names"; then
+              gh release download "$TAG" -R "$GITHUB_REPOSITORY" -D "$p" -p "$f"
+            fi
+          done
+          tools/release-sign.sh reconcile dist "$p" release/keys/stvor-platform.pub "$RUNNER_TEMP/plan"
+          echo "ACTION=$(cat "$RUNNER_TEMP/plan/action")" >> "$GITHUB_ENV"
 
       - name: Sign SHA256SUMS (cosign, key stvor-platform, no Rekor)
-        if: steps.prev.outputs.reuse != 'true'
+        if: env.ACTION == 'sign'
         env:
           COSIGN: ${{ runner.temp }}/bin/cosign
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
@@ -325,9 +328,17 @@ jobs:
             exit 1
           fi
           (cd dist && sha256sum -c SHA256SUMS)
-          gh release upload "$TAG" "$asset" dist/BUILDINFO.json dist/SHA256SUMS \
-            dist/SHA256SUMS.sig dist/SHA256SUMS.bundle.json --clobber -R "$GITHUB_REPOSITORY"
-          echo "К релизу $TAG приложены $(basename "$asset"), BUILDINFO.json, SHA256SUMS, SHA256SUMS.sig, SHA256SUMS.bundle.json"
+          # Только недостающие файлы, без --clobber; --clobber — лишь для
+          # неполной подписи, которую заменяет новая. Подпись — последней.
+          plan="$RUNNER_TEMP/plan"
+          mapfile -t up < <(grep -vx 'SHA256SUMS.sig\|SHA256SUMS.bundle.json' "$plan/upload" || true)
+          mapfile -t upsig < <(grep -x 'SHA256SUMS.sig\|SHA256SUMS.bundle.json' "$plan/upload" || true)
+          mapfile -t clob < "$plan/clobber"
+          cd dist
+          if [ "${#up[@]}" -gt 0 ]; then gh release upload "$TAG" "${up[@]}" -R "$GITHUB_REPOSITORY"; fi
+          if [ "${#clob[@]}" -gt 0 ]; then gh release upload "$TAG" "${clob[@]}" --clobber -R "$GITHUB_REPOSITORY"; fi
+          if [ "${#upsig[@]}" -gt 0 ]; then gh release upload "$TAG" "${upsig[@]}" -R "$GITHUB_REPOSITORY"; fi
+          echo "загружено: ${up[*]} ${upsig[*]}; заменено: ${clob[*]}"
 
   # check-names: off — BISQUITE_* ниже — имена секрета и переменной GitHub, не ключи
   # Релиз сам поднимает расширения в bisquite: запускает там
