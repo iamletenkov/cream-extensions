@@ -77,8 +77,12 @@ make snapshot-check  # две сборки дают одни байты; cream �
   `release/keys/stvor-platform-next.pub` (следующий, приватная часть — офлайн у
   владельца, в GitHub не кладётся).
 - Приватный ключ — секреты `COSIGN_PRIVATE_KEY` и `COSIGN_PASSWORD` environment
-  `release` (ветка `main`, теги `v*`); их видит только job `release-assets`. Нет
-  секрета — job красный и ничего не загружает, `dispatch-*` не запускаются.
+  `release` (ветка `main`, теги `v*`); их видит только job `release-assets`. Код
+  тега он не выполняет: снимок собирает job `release-build` без секретов и отдаёт
+  artifact'ом, а `release-assets` берёт инструменты коммита workflow
+  (`github.workflow_sha`), сверяет, что коммит тега — предок `main`, и сам пишет
+  `BUILDINFO.json`. Нет секрета — job красный и ничего не загружает, `dispatch-*`
+  не запускаются.
 - Подпись проверяется на раннере без сети (`unshare -n`) публичным ключом из
   репозитория до загрузки. Перезапуск job'а при том же `SHA256SUMS` берёт уже
   выложенную подпись (ECDSA не детерминирована).
