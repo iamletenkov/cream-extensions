@@ -51,6 +51,10 @@ eq "teleport вызывался только для version" version "$(sort -u 
 eq "каталог состояния" "drwx------ root:root" "$(mode /opt/cream/var/ext/teleport-openwrt) $(owner /opt/cream/var/ext/teleport-openwrt)"
 eq "флаг agent-enabled" "-rw------- root:root" \
 	"$(mode /opt/cream/var/ext/teleport-openwrt/agent-enabled) $(owner /opt/cream/var/ext/teleport-openwrt/agent-enabled)"
+eq "pin набора" "-rw------- root:root" \
+	"$(mode /opt/cream/var/ext/teleport-openwrt/installed-pin) $(owner /opt/cream/var/ext/teleport-openwrt/installed-pin)"
+grep -qx "TELEPORT_SHA256=$(sha256sum /out/set.tar.gz | cut -d' ' -f1)" /opt/cream/var/ext/teleport-openwrt/installed-pin ||
+	fail "pin набора без суммы набора"
 eq "data_dir" drwxr-x--- "$(mode /opt/teleport/data)"
 [ -e /etc/rc.d/S95teleport ] || fail "служба teleport не включена"
 grep -q '^TELEPORT_PROXY=' /etc/cream/teleport-openwrt/config || fail "домен без прокси"
