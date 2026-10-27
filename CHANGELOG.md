@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.9.1](https://github.com/iamletenkov/cream-extensions/compare/v5.9.0...v5.9.1) (2026-10-27)
+
+
+### Исправлено
+
+* **teleport:** та же версия с новой суммой набора ставится заново ([#68](https://github.com/iamletenkov/cream-extensions/issues/68)) ([ac2c4e3](https://github.com/iamletenkov/cream-extensions/commit/ac2c4e390a69cc6e676854e338124a767fb48ad4))
+
 ## [5.9.0](https://github.com/iamletenkov/cream-extensions/compare/v5.8.0...v5.9.0) (2026-10-26)
 
 
