@@ -7,12 +7,25 @@
 #   tools/release-sign.sh buildinfo DIST TAG  DIST/BUILDINFO.json; SHA256SUMS over the snapshot and BUILDINFO.json
 #   tools/release-sign.sh sign DIST           DIST/SHA256SUMS.sig, DIST/SHA256SUMS.bundle.json
 #   tools/release-sign.sh verify DIST PUB     both signatures, no network; .sig also by openssl
+#   tools/release-sign.sh reconcile DIST PREV PUB OUT
+#                                             rebuilt DIST against the published release PREV
 #
 # DIST is the output of tools/catalog-snapshot.sh: cream-extensions-<v>.tar.gz
 # and SHA256SUMS. buildinfo checks that <v> is the version of TAG (vX.Y.Z) and
 # takes the commit and its time from REF (default HEAD — the checked out tag);
 # the time is the commit time, not "now", so a rerun on the same tag gives the
 # same BUILDINFO.json and the same SHA256SUMS.
+#
+# reconcile: a signed release is immutable. PREV holds the published files of
+# the release downloaded by name (those of DIST and SHA256SUMS.sig /
+# .bundle.json, whichever exist):
+#   - any published file (SHA256SUMS included) differs from DIST byte for
+#     byte — refusal: no new signature, no --clobber;
+#   - .sig and .bundle.json both published — they must verify with PUB
+#     (otherwise refusal); the signature is copied into DIST, action "reuse";
+#   - no signature or an incomplete one — action "sign".
+# Writes OUT/action (reuse|sign), OUT/upload (missing files: upload without
+# --clobber), OUT/clobber (the incomplete signature replaced by the new one).
 #
 # SHA256SUMS.sig — base64 of the ASN.1 ECDSA signature over sha256 of
 # SHA256SUMS: Go stdlib (crypto/ecdsa.VerifyASN1) and
@@ -37,7 +50,7 @@ fail() {
     echo "release-sign: $*" >&2
     exit 1
 }
-usage() { sed -n '6,9p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '6,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 pin() { sed -n "s/^$1=//p" "$HERE/$2" | head -n 1; }
 
 # The snapshot of DIST: exactly one cream-extensions-<v>.tar.gz.
@@ -153,6 +166,51 @@ cmd_verify() {
     (cd "$dist" && sha256sum -c SHA256SUMS) || fail "файлы не совпали с SHA256SUMS"
 }
 
+cmd_reconcile() {
+    (( $# == 4 )) || usage
+    local dist="$1" prev="$2" pub="$3" out="$4" f n chk
+    [[ -s "$dist/SHA256SUMS" ]] || fail "нет $dist/SHA256SUMS"
+    mkdir -p "$out"
+    : > "$out/upload"
+    : > "$out/clobber"
+    shopt -s nullglob
+    for f in "$prev"/*; do
+        n="$(basename "$f")"
+        [[ "$n" == SHA256SUMS.sig || "$n" == SHA256SUMS.bundle.json ]] && continue
+        [[ -e "$dist/$n" ]] || fail "в релизе лишний файл $n — не из этой сборки"
+        cmp -s "$f" "$dist/$n" ||
+            fail "опубликованный $n отличается от пересборки — релиз неизменяем, не переподписывается и не заменяется"
+    done
+    if [[ -e "$prev/SHA256SUMS.sig" && -e "$prev/SHA256SUMS.bundle.json" ]]; then
+        [[ -e "$prev/SHA256SUMS" ]] || fail "подпись опубликована без SHA256SUMS — релиз неизменяем"
+        # SHA256SUMS опубликован тот же: подпись проверяется на копии DIST.
+        chk="$(mktemp -d)"
+        cp -- "$dist"/* "$chk/"
+        cp -- "$prev/SHA256SUMS.sig" "$prev/SHA256SUMS.bundle.json" "$chk/"
+        if ! (cmd_verify "$chk" "$pub") >/dev/null 2>&1; then
+            rm -r -f -- "$chk"
+            fail "опубликованная подпись не проверяется ключом $pub — релиз неизменяем, не переподписывается"
+        fi
+        rm -r -f -- "$chk"
+        cp -- "$prev/SHA256SUMS.sig" "$prev/SHA256SUMS.bundle.json" "$dist/"
+        echo reuse > "$out/action"
+    else
+        echo sign > "$out/action"
+    fi
+    for f in "$dist"/*; do
+        n="$(basename "$f")"
+        [[ "$n" == SHA256SUMS.sig || "$n" == SHA256SUMS.bundle.json ]] && continue
+        [[ -e "$prev/$n" ]] || echo "$n" >> "$out/upload"
+    done
+    shopt -u nullglob
+    if [[ "$(cat "$out/action")" == sign ]]; then
+        for n in SHA256SUMS.sig SHA256SUMS.bundle.json; do
+            if [[ -e "$prev/$n" ]]; then echo "$n" >> "$out/clobber"; else echo "$n" >> "$out/upload"; fi
+        done
+    fi
+    echo "reconcile: $(cat "$out/action"); загрузить: $(tr '\n' ' ' < "$out/upload"); заменить: $(tr '\n' ' ' < "$out/clobber")"
+}
+
 (( $# >= 1 )) || usage
 sub="$1"; shift
 case "$sub" in
@@ -160,5 +218,6 @@ case "$sub" in
     buildinfo) cmd_buildinfo "$@" ;;
     sign) cmd_sign "$@" ;;
     verify) cmd_verify "$@" ;;
+    reconcile) cmd_reconcile "$@" ;;
     *) usage ;;
 esac
