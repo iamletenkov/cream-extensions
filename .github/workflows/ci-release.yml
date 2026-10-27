@@ -3,9 +3,11 @@ name: CI and Release
 # Выпуск — release-please, как в bisquite: на main после проверок он ведёт
 # PR «release X.Y.Z» (CHANGELOG.md); слияние этого PR создаёт тег vX.Y.Z и
 # опубликованный релиз с заметками. К релизу job release-assets прикладывает
-# снимок каталога cream-extensions-<v>.tar.gz и SHA256SUMS
-# (tools/catalog-snapshot.sh: детерминированный `cream catalog pack` по пину
-# cream, собранный на теге) — его по пину sha256 берут Stvor и bisquite
+# снимок каталога cream-extensions-<v>.tar.gz (tools/catalog-snapshot.sh:
+# детерминированный `cream catalog pack` по пину cream, собранный на теге),
+# BUILDINFO.json, SHA256SUMS и его подпись cosign ключом stvor-platform —
+# SHA256SUMS.sig и SHA256SUMS.bundle.json (tools/release-sign.sh, та же схема,
+# что у релиза форка Teleport). Снимок по пину sha256 берут Stvor и bisquite
 # (`cream source add --archive … --sha256 …`). Версия каталога в
 # cream-catalog.yaml поднимается тем же release-please. Теги руками не ставят.
 #
@@ -36,7 +38,7 @@ on:
   workflow_dispatch:
 
 # По умолчанию — ничего; каждый job называет свои права сам. Запись — только
-# у release-please (тег, PR релиза) и release-assets (файлы к релизу).
+# у release-please (тег, PR релиза) и release-assets (файлы и подпись к релизу).
 permissions: {}
 
 # Отменять устаревший прогон можно только на PR: на main отмена посреди
@@ -157,17 +159,46 @@ jobs:
       - name: Build snapshot
         run: tools/catalog-snapshot.sh dist
 
+      # Подпись — тем же скриптом, что на теге, но одноразовым ключом: секретов
+      # environment release на PR нет и не должно быть. Тест скрипта с cosign —
+      # полный круг: подпись, проверка без сети, отказ на подмене и чужом ключе.
+      - name: cosign by sha256
+        run: tools/release-sign.sh install "$RUNNER_TEMP/bin"
+
+      - name: Signing round trip (throwaway key)
+        env:
+          COSIGN: ${{ runner.temp }}/bin/cosign
+        run: |
+          set -euo pipefail
+          tools/test-release-sign.sh
+          v="$(sed -nE 's/^version:[[:space:]]*"?([0-9.]+)"?.*/\1/p' cream-catalog.yaml | head -n1)"
+          tools/release-sign.sh buildinfo dist "v$v"
+          k="$RUNNER_TEMP/key"; mkdir -p "$k"
+          export COSIGN_PASSWORD="dry-run-$GITHUB_RUN_ID"
+          (cd "$k" && "$COSIGN" generate-key-pair >/dev/null)
+          COSIGN_PRIVATE_KEY="$(cat "$k/cosign.key")" tools/release-sign.sh sign dist
+          tools/release-sign.sh verify dist "$k/cosign.pub"
+
       - name: Show snapshot (no upload)
         run: |
           set -euo pipefail
           ls -l dist
+          cat dist/BUILDINFO.json
           (cd dist && sha256sum -c SHA256SUMS)
-          echo "Сухой прогон: снимок собран, к релизу не загружается"
+          echo "Сухой прогон: снимок собран и подписан одноразовым ключом, к релизу не загружается"
 
   # Снимок каталога к созданному релизу: сборка на теге (не на голове main —
-  # байты должны соответствовать тегу), имя файла сверяется с тегом, затем
-  # gh release upload. --clobber — перезапуск job'а заменяет те же байты
-  # (сборка детерминирована), а не падает на существующем файле.
+  # байты должны соответствовать тегу), имя файла сверяется с тегом,
+  # BUILDINFO.json и SHA256SUMS (снимок + BUILDINFO.json), подпись SHA256SUMS
+  # ключом stvor-platform без Rekor и её проверка без сети публичным ключом из
+  # release/keys, затем gh release upload. Ничего не загружается, пока подпись
+  # не проверена: нет секрета — job красный, релиз без файлов, dispatch-* не
+  # запускаются. --clobber — перезапуск job'а заменяет те же байты (сборка и
+  # BUILDINFO.json детерминированы, время — коммита тега); подпись ECDSA не
+  # детерминирована, поэтому при том же SHA256SUMS берётся уже выложенная.
+  #
+  # Секреты COSIGN_PRIVATE_KEY и COSIGN_PASSWORD — только в environment
+  # release (ветка main, теги v*); job объявляет его и потому их видит.
   release-assets:
     name: Release snapshot assets
     needs: release-please
@@ -175,8 +206,11 @@ jobs:
       github.event_name == 'push' && github.ref == 'refs/heads/main' &&
       needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
+    environment: release
     permissions:
       contents: write
+    env:
+      TAG: ${{ needs.release-please.outputs.tag_name }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -186,10 +220,49 @@ jobs:
       - name: Build snapshot on the tag
         run: tools/catalog-snapshot.sh dist
 
+      - name: cosign by sha256
+        run: tools/release-sign.sh install "$RUNNER_TEMP/bin"
+
+      - name: BUILDINFO.json and SHA256SUMS
+        run: |
+          set -euo pipefail
+          tools/release-sign.sh buildinfo dist "$TAG"
+          { echo "### $TAG"; echo '```'; cat dist/SHA256SUMS; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Signature already in the release
+        id: prev
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          p="$RUNNER_TEMP/prev"; mkdir -p "$p"
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -D "$p" \
+            -p SHA256SUMS -p SHA256SUMS.sig -p SHA256SUMS.bundle.json 2>/dev/null || true
+          if [ -s "$p/SHA256SUMS.sig" ] && [ -s "$p/SHA256SUMS.bundle.json" ] \
+             && cmp -s "$p/SHA256SUMS" dist/SHA256SUMS; then
+            cp "$p/SHA256SUMS.sig" "$p/SHA256SUMS.bundle.json" dist/
+            echo "SHA256SUMS в релизе тот же — подпись берётся выложенная"
+            echo "reuse=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "reuse=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sign SHA256SUMS (cosign, key stvor-platform, no Rekor)
+        if: steps.prev.outputs.reuse != 'true'
+        env:
+          COSIGN: ${{ runner.temp }}/bin/cosign
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: tools/release-sign.sh sign dist
+
+      - name: Verify the signature without network
+        env:
+          COSIGN: ${{ runner.temp }}/bin/cosign
+        run: tools/release-sign.sh verify dist release/keys/stvor-platform.pub
+
       - name: Upload snapshot to the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.release-please.outputs.tag_name }}
         run: |
           set -euo pipefail
           if ! [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
@@ -203,8 +276,9 @@ jobs:
             exit 1
           fi
           (cd dist && sha256sum -c SHA256SUMS)
-          gh release upload "$TAG" "$asset" dist/SHA256SUMS --clobber -R "$GITHUB_REPOSITORY"
-          echo "К релизу $TAG приложены $(basename "$asset") и SHA256SUMS"
+          gh release upload "$TAG" "$asset" dist/BUILDINFO.json dist/SHA256SUMS \
+            dist/SHA256SUMS.sig dist/SHA256SUMS.bundle.json --clobber -R "$GITHUB_REPOSITORY"
+          echo "К релизу $TAG приложены $(basename "$asset"), BUILDINFO.json, SHA256SUMS, SHA256SUMS.sig, SHA256SUMS.bundle.json"
 
   # check-names: off — BISQUITE_* ниже — имена секрета и переменной GitHub, не ключи
   # Релиз сам поднимает расширения в bisquite: запускает там

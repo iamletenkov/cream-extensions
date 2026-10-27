@@ -40,7 +40,8 @@
    «chore(main): release X.Y.Z» с разделом `CHANGELOG.md`.
 3. Слияние этого PR — выпуск: тег `vX.Y.Z`, опубликованный релиз с заметками; job
    `release-assets` собирает на теге снимок и прикладывает
-   `cream-extensions-X.Y.Z.tar.gz` и `SHA256SUMS`.
+   `cream-extensions-X.Y.Z.tar.gz`, `BUILDINFO.json`, `SHA256SUMS` и подпись
+   `SHA256SUMS.sig` / `SHA256SUMS.bundle.json` ([подпись выпуска](#подпись-выпуска)).
 4. Тот же прогон рассылает выпуск потребителям (ниже).
 
 ## Снимок каталога
@@ -59,6 +60,38 @@ make snapshot-check  # две сборки дают одни байты; cream �
 `cream-catalog.yaml`, `LICENSE`, `NOTICE` и `roots` каталога без `tests/`
 расширений; `tools/`, `docs/` и прочее — нет. Расширение под `extensions/`, не
 покрытое `roots`, — отказ скрипта: оно не должно пропасть из снимка молча.
+
+## Подпись выпуска
+
+Схема — та же, что у релиза форка Teleport, stvor-agent и cream: ключ
+`stvor-platform` (ECDSA P-256), cosign по пину `tools/cosign-pin.env`, без Rekor.
+Подписывается один файл — `SHA256SUMS`; он покрывает снимок и `BUILDINFO.json`
+(тег, коммит, время коммита, пин cream, сумма снимка, ссылка на прогон).
+
+| Файл | Что это | Чем проверить |
+|---|---|---|
+| `SHA256SUMS.sig` | base64 ASN.1 ECDSA над sha256 `SHA256SUMS` | Go stdlib (`ecdsa.VerifyASN1`), `openssl dgst -sha256 -verify` |
+| `SHA256SUMS.bundle.json` | та же подпись бандлом sigstore | `cosign verify-blob --bundle … --insecure-ignore-tlog=true` |
+
+- Публичные ключи — `release/keys/stvor-platform.pub` (текущий, им подписывают) и
+  `release/keys/stvor-platform-next.pub` (следующий, приватная часть — офлайн у
+  владельца, в GitHub не кладётся).
+- Приватный ключ — секреты `COSIGN_PRIVATE_KEY` и `COSIGN_PASSWORD` environment
+  `release` (ветка `main`, теги `v*`); их видит только job `release-assets`. Нет
+  секрета — job красный и ничего не загружает, `dispatch-*` не запускаются.
+- Подпись проверяется на раннере без сети (`unshare -n`) публичным ключом из
+  репозитория до загрузки. Перезапуск job'а при том же `SHA256SUMS` берёт уже
+  выложенную подпись (ECDSA не детерминирована).
+- На PR job `Snapshot (dry run)` гоняет тот же путь на одноразовом ключе;
+  `tools/test-release-sign.sh` — в `make test` (без cosign — без круга подписи).
+
+Проверка выпуска руками:
+
+```bash
+gh release download vX.Y.Z -R iamletenkov/cream-extensions -p 'SHA256SUMS*' -D rel
+base64 -d rel/SHA256SUMS.sig > rel/sig.der
+openssl dgst -sha256 -verify release/keys/stvor-platform.pub -signature rel/sig.der rel/SHA256SUMS
+```
 
 ## Цепочка выпусков
 

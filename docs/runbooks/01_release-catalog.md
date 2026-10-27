@@ -26,15 +26,19 @@
    make snapshot-check   # две сборки HEAD дают одни байты; cream принимает снимок
    ```
 4. **Выпуск** — слить релизный PR (решение владельца). release-please ставит тег
-   `vX.Y.Z`; job `release-assets` прикладывает `cream-extensions-X.Y.Z.tar.gz` и
-   `SHA256SUMS`; job `dispatch-bisquite` (при `BISQUITE_BUMP_ENABLED=true`) открывает в <!-- check-names: allow: имена job и переменной GitHub -->
+   `vX.Y.Z`; job `release-assets` (environment `release`) прикладывает
+   `cream-extensions-X.Y.Z.tar.gz`, `BUILDINFO.json`, `SHA256SUMS`, `SHA256SUMS.sig`,
+   `SHA256SUMS.bundle.json`; job `dispatch-bisquite` (при `BISQUITE_BUMP_ENABLED=true`) открывает в <!-- check-names: allow: имена job и переменной GitHub -->
    bisquite PR подъёма каталога.
 
 ## Приёмка
 
 ```sh
-gh release view vX.Y.Z --json assets -q '.assets[].name'   # tar.gz и SHA256SUMS
-gh release download vX.Y.Z -p SHA256SUMS -O - | grep tar.gz
+gh release view vX.Y.Z --json assets -q '.assets[].name'   # tar.gz, BUILDINFO.json, SHA256SUMS{,.sig,.bundle.json}
+gh release download vX.Y.Z -p 'SHA256SUMS*' -D /tmp/rel
+base64 -d /tmp/rel/SHA256SUMS.sig > /tmp/rel/sig.der
+openssl dgst -sha256 -verify release/keys/stvor-platform.pub -signature /tmp/rel/sig.der /tmp/rel/SHA256SUMS   # Verified OK
+grep tar.gz /tmp/rel/SHA256SUMS
 # на машине с cream (или в контейнере debian:12 с cream по пину tools/cream-pin.env):
 gh release download vX.Y.Z -p 'cream-extensions-*.tar.gz' -D /tmp/rel
 cream check --catalog core=/tmp/rel/cream-extensions-X.Y.Z.tar.gz --os debian:12 --arch amd64 \
@@ -44,7 +48,10 @@ sudo cream source add core \
   --sha256 <сумма из SHA256SUMS> --sync
 ```
 
-Результат верный, если: оба ассета на месте, `source add` принял сумму (неверная —
+Результат верный, если: все пять ассетов на месте, подпись проверяется ключом
+`stvor-platform`, `source add` принял сумму (неверная —
 отказ), `cream check` отвечает без ошибок, в README строка `CV=` показывает новую версию, в
 bisquite (и в stvor) открыт PR подъёма.
 Неудача `release-assets` — перезапуск job (`gh run rerun <id> --failed`); тег не трогать.
+Красный шаг подписи «нет секрета COSIGN_PRIVATE_KEY» — завести секреты в environment
+`release` (Settings → Environments) и перезапустить job.
