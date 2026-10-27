@@ -1,6 +1,10 @@
 schema: cream/v1
 name: teleport
-version: 4.2.0
+version: 4.2.1
+# 4.2.1: та же X.Y.Z, другая TELEPORT_SHA256 (пересборка форка, v18.10.0-stvor.3 → stvor.4)
+#        — install/upgrade ставят тарбол заново и перезапускают агента; пин поставленного
+#        тарбола — $CREAM_STATE_DIR/installed-pin (TELEPORT_VERSION=, TELEPORT_SHA256=).
+#        Без пина при заданной сумме — один раз заново. Без суммы — по версии, как было.
 # 4.2.0: вынос ядра, поведение без изменений — init-независимая часть files/teleport.sh
 #        (рендер, join, метки, apps.d, управляемые метки, status) — общее ядро
 #        files/teleport-core.sh: одна копия в git (lib/teleport-core.sh каталога), в

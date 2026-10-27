@@ -401,10 +401,12 @@ hook_install(){
     : > "$OWNED" || die "не записан маркер $OWNED"
 
     prev="$(version_of_agent)"
-    if [[ "$prev" == "$version" && -x "$FDPASS_BIN" && -d "$TELEPORT_LIB" ]]; then
+    if binary_current "$version" "$sha" && [[ -x "$FDPASS_BIN" && -d "$TELEPORT_LIB" ]]; then
         log "Teleport $version уже установлен"
     else
+        [[ "$prev" == "$version" ]] && pin_change_line "$version" "$sha"
         fetch_set "$version" "$arch" "$sha" "$mirror" "$tarball"
+        write_installed_pin "$version" "$FETCH_SHA"
         changed=1
     fi
     if ! { install -d -m 0755 "$(dirname "$LINK")" && ln -sfn "$TELEPORT_BIN_GUEST" "$LINK"; }; then

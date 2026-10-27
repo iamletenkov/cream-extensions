@@ -73,6 +73,13 @@ DATA="$ROOT$TELEPORT_DATA_GUEST"
 ROLLBACK="$STATE/rollback"
 # The path the agent reads (teleport.yaml), and the same file under the root.
 REG_SECRET="$STATE/registration-secret"
+# The installed pin — what the install hook put in place: two lines
+# TELEPORT_VERSION=<X.Y.Z> and TELEPORT_SHA256=<64 hex> (the sum of the tarball
+# or the set). A rebuild of the fork keeps X.Y.Z and changes the sum
+# (v18.10.0-stvor.3 -> stvor.4), so the hook compares both. A stable interface:
+# /etc/stvor/restore.sh of Stvor (OpenWrt) reads the version and the sum of the
+# set from it after a sysupgrade (keep.d of teleport-openwrt keeps the file).
+INSTALLED_PIN="$STATE/installed-pin"
 REG_SECRET_GUEST="${REG_SECRET#"$ROOT"}"
 # The path Teleport execs for the os_logins label.
 OS_LOGINS_CMD="${EXT_DIR#"$ROOT"}/files/os-logins"
@@ -1498,8 +1505,9 @@ teleport_sha256_url(){ echo "https://cdn.teleport.dev/$(teleport_tarball "$1" "$
 # fetch_tarball <version> <arch> <sha256> <mirror> <tarball> <work parent> — the
 # tarball of the layer (teleport_tarball) checked by sha256: FETCH_SRC is its
 # path, FETCH_WORK the scratch directory under <work parent> (removed on exit).
-# The layer unpacks it. An empty sha256 is taken from cdn.teleport.dev.
-FETCH_SRC="" FETCH_WORK=""
+# The layer unpacks it. An empty sha256 is taken from cdn.teleport.dev;
+# FETCH_SHA is the sum the tarball was checked by.
+FETCH_SRC="" FETCH_WORK="" FETCH_SHA=""
 fetch_tarball(){
     local version="$1" arch="$2" sha="$3" mirror="$4" tarball="$5" parent="$6" work file src url sha_url from_cdn=0
     install -d -m 0755 "$parent" || die "не создать $parent"
@@ -1537,7 +1545,52 @@ fetch_tarball(){
         fi
         die "sha256 не совпал: $src"
     fi
-    FETCH_SRC="$src" FETCH_WORK="$work"
+    FETCH_SRC="$src" FETCH_WORK="$work" FETCH_SHA="$sha"
+}
+
+# pin_field <KEY> — a line of the installed pin, by the form of its value.
+pin_field(){
+    local line re
+    case "$1" in
+        TELEPORT_VERSION) re="$RE_VERSION" ;;
+        TELEPORT_SHA256) re='^[0-9a-f]{64}$' ;;
+        *) return 1 ;;
+    esac
+    [[ -f "$INSTALLED_PIN" ]] || return 1
+    while IFS= read -r line; do
+        if [[ "$line" == "$1="* && "${line#*=}" =~ $re ]]; then
+            printf '%s\n' "${line#*=}"
+            return 0
+        fi
+    done < "$INSTALLED_PIN"
+    return 1
+}
+
+# binary_current <version> <sha256> — the binary of <version> is in place and,
+# with a sum given, the installed pin says it came from the tarball of that sum
+# (no pin — unknown, so not current). Without a sum (the .sha256 of the CDN) —
+# the version alone, as before.
+binary_current(){
+    [[ "$(version_of_agent)" == "$1" ]] || return 1
+    [[ -n "$2" ]] || return 0
+    [[ "$(pin_field TELEPORT_VERSION)" == "$1" && "$(pin_field TELEPORT_SHA256)" == "$2" ]]
+}
+
+# pin_change_line <version> <sha256> — why the same version is installed again.
+pin_change_line(){
+    local was
+    was="$(pin_field TELEPORT_SHA256)" || was=""
+    if [[ -n "$was" && "$(pin_field TELEPORT_VERSION)" == "$1" ]]; then
+        log "Teleport $1: сумма набора сменилась (${was:0:12}… → ${2:0:12}…) — ставлю заново"
+    else
+        log "Teleport $1: сумма поставленного набора неизвестна — ставлю заново по TELEPORT_SHA256"
+    fi
+}
+
+# write_installed_pin <version> <sha256> — after the binary is in place.
+write_installed_pin(){
+    write_state "$INSTALLED_PIN" "$(printf 'TELEPORT_VERSION=%s\nTELEPORT_SHA256=%s' "$1" "$2")" \
+        || warn "не записан ${INSTALLED_PIN#"$ROOT"} — следующий install поставит набор заново"
 }
 
 core_main(){

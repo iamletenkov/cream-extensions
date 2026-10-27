@@ -21,12 +21,15 @@ ht_init
 SECRET='abcdefgh1-join-token'
 PROXY=teleport.example.org:443
 
-# make_set <version>: the set teleport-v<v>-openwrt-<arch>-bin.tar.gz in $FAKE/set;
-# its teleport prints the version and logs whether LD_PRELOAD reached it.
+# make_set <version> [<build>]: the set teleport-v<v>-openwrt-<arch>-bin.tar.gz in
+# $FAKE/set; its teleport prints the version and logs whether LD_PRELOAD reached
+# it. <build> (a rebuild of the fork: stvor.3, stvor.4) is a comment line of the
+# binary — the same version, another sum.
 make_set(){
     local d; d="$(mktemp -d "$HT_TMP/set.XXXXXX")"
     mkdir -p "$d/teleport/lib"
     printf '#!/usr/bin/env bash\necho "${LD_PRELOAD+set}" >> "${CREAM_ROOT:-/nonexistent}/fake/preload.log" 2>/dev/null\necho "Teleport v%s git:fake go1.25"\n' "$1" > "$d/teleport/teleport"
+    [[ -z "${2:-}" ]] || echo "# build $2" >> "$d/teleport/teleport"
     printf '#!/bin/sh\necho fdpass\n' > "$d/teleport/fdpass-teleport"
     echo glibc > "$d/teleport/lib/libc.so.6"
     chmod 0755 "$d/teleport/teleport" "$d/teleport/fdpass-teleport"
@@ -233,8 +236,8 @@ loop="$(grep -o "'while .*done'" "$I" | tr -d "'")"
 eq "цикл повтора — пока есть маркер" 'while [ -e "$1" ]; do /usr/bin/cream run --lock-timeout 6m teleport-openwrt join-retry; sleep 60; done' "$loop"
 
 echo "== keep.d: идентичность, флаг и домен (Р4, решение владельца 2026-10-23) =="
-eq "keep.d — data, маркер, флаг agent-enabled, config и apps.d домена" \
-    "/opt/teleport/data/|/opt/teleport/.cream-owned|/opt/cream/var/ext/teleport-openwrt/agent-enabled|/etc/cream/teleport-openwrt/config|/etc/cream/teleport-openwrt/apps.d/|" \
+eq "keep.d — data, маркер, флаг agent-enabled, pin набора, config и apps.d домена" \
+    "/opt/teleport/data/|/opt/teleport/.cream-owned|/opt/cream/var/ext/teleport-openwrt/agent-enabled|/opt/cream/var/ext/teleport-openwrt/installed-pin|/etc/cream/teleport-openwrt/config|/etc/cream/teleport-openwrt/apps.d/|" \
     "$(grep -v '^#' "$SRC/files/keep.d" | tr '\n' '|')"
 # Restored paths are on disk before cream installs again: a file that an extension
 # lays by `files` there would be refused (conflict.file_unowned, cream ruling Р21).
@@ -271,6 +274,43 @@ check_not "LD_PRELOAD до бинаря не дошёл" grep -qx set "$ROOT/fak
 installed; eq "повторный install — 0" 0 "$?"
 check "та же версия — без скачивания" test ! -s "$FAKE/curl.argv"
 check "та же версия — сказано" grep -q 'уже установлен' "$ROOT/out"
+eq "pin набора: версия и сумма" "TELEPORT_VERSION=18.10.0|TELEPORT_SHA256=$SET_SHA|" "$(tr '\n' '|' < "$S/installed-pin")"
+eq "pin набора: 0600" 600 "$(stat -c %a "$S/installed-pin")"
+
+echo "== та же версия, другая сумма набора — набор заново и перезапуск =="
+# 2026-10-26: форк v18.10.0-stvor.3 -> stvor.4 — X.Y.Z та же, TELEPORT_SHA256 другая;
+# хук отвечал «уже установлен». Сумму поставленного набора хранит $S/installed-pin
+# (его же читает /etc/stvor/restore.sh Stvor после sysupgrade).
+pin(){ cat "$S/installed-pin" 2>/dev/null | tr '\n' '|'; }
+# install, not upgrade: an upgrade of a joined node restarts it anyway (render).
+reinstall(){ ht_hook install TELEPORT_SHA256="$1" TELEPORT_MIRROR=https://stvor.example.org/dist/teleport; }
+setup
+make_set 18.10.0 stvor.3; sha3="$SET_SHA"
+ht_hook install TELEPORT_SHA256="$sha3" TELEPORT_MIRROR=https://stvor.example.org/dist/teleport
+procd_up; echo up > "$FAKE/net"
+join_line; eq "join — 0" 0 "$?"
+check "агент работает" test -f "$FAKE/ubus.list"
+make_set 18.10.0 stvor.4; sha4="$SET_SHA"
+check "фикстура: у сборок разные суммы" test "$sha3" != "$sha4"
+: > "$FAKE/calls"; : > "$FAKE/curl.argv"
+reinstall "$sha4"; eq "другая сумма — 0" 0 "$?"
+check_not "другая сумма — не «уже установлен»" grep -q 'уже установлен' "$ROOT/out"
+check "другая сумма — набор скачан заново" grep -q 'teleport-v18.10.0-openwrt-amd64-bin.tar.gz' "$FAKE/curl.argv"
+check "другая сумма — бинарь новой сборки" grep -qx '# build stvor.4' "$ROOT/opt/teleport/bin/teleport"
+check "другая сумма — агент перезапущен" grep -qx 'init restart' "$FAKE/calls"
+check "другая сумма — сказано" grep -q 'сумма набора сменилась' "$ROOT/out"
+eq "другая сумма — pin новый" "TELEPORT_VERSION=18.10.0|TELEPORT_SHA256=$sha4|" "$(pin)"
+: > "$FAKE/calls"; : > "$FAKE/curl.argv"
+reinstall "$sha4"; eq "та же сумма — 0" 0 "$?"
+check "та же сумма — уже установлен" grep -q 'уже установлен' "$ROOT/out"
+check_not "та же сумма — без скачивания" test -s "$FAKE/curl.argv"
+eq "та же сумма — pin тот же" "TELEPORT_VERSION=18.10.0|TELEPORT_SHA256=$sha4|" "$(pin)"
+# Installed before the pin was recorded: the sum of the set is unknown — once anew.
+rm -f "$S/installed-pin"
+: > "$FAKE/curl.argv"
+reinstall "$sha4"; eq "pin нет — 0" 0 "$?"
+check "pin нет — набор скачан" test -s "$FAKE/curl.argv"
+eq "pin нет — pin записан" "TELEPORT_VERSION=18.10.0|TELEPORT_SHA256=$sha4|" "$(pin)"
 
 setup
 echo aarch64 > "$FAKE/uname"
@@ -344,6 +384,7 @@ chmod 0600 "$S/agent-enabled"
 sysupgrade_sim
 eq "архив: каталог состояния 0755 (tar)" 755 "$(stat -c %a "$S")"
 check "архив: флаг agent-enabled" test -e "$S/agent-enabled"
+check "архив: pin набора (restore.sh Stvor берёт сумму из него)" grep -qx "TELEPORT_SHA256=$SET_SHA" "$S/installed-pin"
 check "архив: домен с прокси" grep -q '^TELEPORT_PROXY=' "$ROOT/etc/cream/teleport-openwrt/config"
 check "архив: apps.d" test -f "$ROOT/etc/cream/teleport-openwrt/apps.d/web.conf"
 check_not "архив: секрета первого входа нет" test -e "$S/registration-secret"
