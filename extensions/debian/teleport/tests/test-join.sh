@@ -786,11 +786,14 @@ check_not "apply: в хуке нет systemctl без --no-block" \
     grep -nE '^[[:space:]]*systemctl (reload|restart|reload-or-restart) ' <(sed -n '/^cmd_apply(){/,/^}/p' "$EXT/files/teleport.sh")
 
 echo "== хук install: бинарь Teleport =="
-# make_tarball <version> — a tarball with teleport/teleport of that version.
+# make_tarball <version> [<build>] — a tarball with teleport/teleport of that
+# version; <build> (a rebuild of the fork: stvor.3, stvor.4) is a comment line
+# of the binary — the same version, another sum.
 make_tarball(){
     local d; d="$(mktemp -d "$TMP/tar.XXXXXX")"
     mkdir -p "$d/teleport"
     fake_teleport "$1" "$d/teleport/teleport"
+    [[ -z "${2:-}" ]] || echo "# build $2" >> "$d/teleport/teleport"
     tar -czf "$FAKE/tarball" -C "$d" teleport
     TB_SHA="$(sha256sum "$FAKE/tarball" | cut -d' ' -f1)"
 }
@@ -823,6 +826,54 @@ make_tarball 18.13.0
 echo "$TB_SHA" > "$FAKE/cdn.sha256"
 check "install без суммы: .sha256 с CDN" hk install TELEPORT_VERSION=18.13.0 2>/dev/null
 check "install без суммы: запрошен .sha256" grep -q 'teleport-v18.13.0-linux-amd64-bin.tar.gz.sha256' "$FAKE/curl.log"
+check "install без суммы: в pin — сумма с CDN" grep -qx "TELEPORT_SHA256=$TB_SHA" "$STATE/installed-pin"
+
+echo "== хук install: та же версия, другая сумма — тарбол заново и перезапуск =="
+# 2026-10-26: форк v18.10.0-stvor.3 -> stvor.4 — X.Y.Z та же, TELEPORT_SHA256 другая;
+# хук отвечал «уже установлен». Сумма поставленного тарбола — $STATE/installed-pin.
+pin(){ cat "$STATE/installed-pin" 2>/dev/null | tr '\n' '|'; }
+up_line(){ hk upgrade TELEPORT_VERSION=18.11.0 TELEPORT_MIRROR=https://mirror.example.org "$@" 2>&1; }
+new_root
+rm -f "$ROOT/usr/local/bin/teleport"
+make_tarball 18.11.0 stvor.3; sha3="$TB_SHA"
+hk install TELEPORT_VERSION=18.11.0 TELEPORT_SHA256="$sha3" TELEPORT_MIRROR=https://mirror.example.org >/dev/null 2>&1
+eq "pin: версия и сумма поставленного тарбола" "TELEPORT_VERSION=18.11.0|TELEPORT_SHA256=$sha3|" "$(pin)"
+eq "pin: 0600" 600 "$(stat -c %a "$STATE/installed-pin")"
+make_tarball 18.11.0 stvor.4; sha4="$TB_SHA"
+check "фикстура: у сборок разные суммы" test "$sha3" != "$sha4"
+: > "$FAKE/curl.log"; : > "$FAKE/systemctl.log"
+msg="$(up_line TELEPORT_SHA256="$sha4")"; rc=$?
+eq "другая сумма: код 0" 0 "$rc"
+check_not "другая сумма: не «уже установлен»" grep -q 'уже установлен' <<< "$msg"
+check "другая сумма: тарбол скачан заново" grep -q 'teleport-v18.11.0-linux-amd64-bin.tar.gz' "$FAKE/curl.log"
+check "другая сумма: бинарь новой сборки" grep -qx '# build stvor.4' "$ROOT/usr/local/bin/teleport"
+check "другая сумма: try-restart агента" grep -qx -- '--no-block try-restart teleport.service' <<< "$(slog)"
+check "другая сумма: сказано о пересборке" grep -q 'сумма набора сменилась' <<< "$msg"
+eq "другая сумма: pin — новая сумма" "TELEPORT_VERSION=18.11.0|TELEPORT_SHA256=$sha4|" "$(pin)"
+: > "$FAKE/curl.log"; : > "$FAKE/systemctl.log"
+msg="$(up_line TELEPORT_SHA256="$sha4")"; rc=$?
+eq "та же сумма: код 0" 0 "$rc"
+check "та же сумма: уже установлен" grep -q 'уже установлен' <<< "$msg"
+check_not "та же сумма: ничего не скачивал" test -s "$FAKE/curl.log"
+check_not "та же сумма: без перезапуска" grep -q 'try-restart' <<< "$(slog)"
+# Installed before the pin was recorded: the sum of the binary is unknown — with
+# TELEPORT_SHA256 the tarball comes once more, then the pin holds.
+rm -f "$STATE/installed-pin"
+: > "$FAKE/curl.log"
+msg="$(up_line TELEPORT_SHA256="$sha4")"; rc=$?
+eq "pin нет: код 0" 0 "$rc"
+check "pin нет: тарбол скачан" test -s "$FAKE/curl.log"
+eq "pin нет: pin записан" "TELEPORT_VERSION=18.11.0|TELEPORT_SHA256=$sha4|" "$(pin)"
+# Without TELEPORT_SHA256 (the .sha256 of the CDN): the version alone, as before.
+: > "$FAKE/curl.log"
+msg="$(up_line)"; rc=$?
+check "без суммы, та же версия: уже установлен" grep -q 'уже установлен' <<< "$msg"
+check_not "без суммы, та же версия: ничего не скачивал" test -s "$FAKE/curl.log"
+# A pin of another version (the binary was replaced by hand): the tarball anew.
+printf 'TELEPORT_VERSION=18.10.0\nTELEPORT_SHA256=%s\n' "$sha4" > "$STATE/installed-pin"
+: > "$FAKE/curl.log"
+up_line TELEPORT_SHA256="$sha4" >/dev/null
+check "pin другой версии: тарбол скачан" test -s "$FAKE/curl.log"
 
 new_root
 rm -f "$ROOT/usr/local/bin/teleport"

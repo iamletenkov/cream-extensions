@@ -51,7 +51,7 @@
 | `/opt/cream/ext/teleport/` | дерево расширения: `hooks/`, `actions/` (тонкие входы), `files/teleport.sh` (слой systemd), `files/teleport-core.sh` (общее ядро, см. «Ядро и слой»), `files/os-logins` (метка `os_logins`, её зовёт Teleport) |
 | `/etc/systemd/system/teleport{,-apps,-token,-join}.*` | юниты (раскладывает cream) |
 | `/etc/cream/teleport/{config,apps.d,command-labels.d}` | домен ручек и объявления |
-| `/var/lib/cream/ext/teleport/{registration-secret,join-pending,join-refused,managed-pending,reload-pending,rollback}` | состояние (каталог 0700, файлы 0600) |
+| `/var/lib/cream/ext/teleport/{installed-pin,registration-secret,join-pending,join-refused,managed-pending,reload-pending,rollback}` | состояние (каталог 0700, файлы 0600); `installed-pin` — строки `TELEPORT_VERSION=` и `TELEPORT_SHA256=` поставленного тарбола |
 | `/etc/teleport.yaml`, `/var/lib/teleport/`, `/usr/local/bin/teleport` | Teleport |
 
 ## Параметры
@@ -84,7 +84,11 @@
   `bound_keypair` — не ниже 18.8.0.
 - `TELEPORT_SHA256` — пусто: `.sha256` с `cdn.teleport.dev` (второй канал, если
   тарбол с зеркала). Своя сборка Teleport на зеркале (форк той же версии) — не тот
-  тарбол, что описывает `.sha256` CDN: её сумму задают явно.
+  тарбол, что описывает `.sha256` CDN: её сумму задают явно. С заданной суммой
+  `install`/`upgrade` сверяют и версию, и сумму поставленного тарбола (файл
+  `installed-pin` состояния): пересборка форка той же версии с новой суммой
+  (`v18.10.0-stvor.3` → `stvor.4`) ставится заново и перезапускает агента, без
+  `--reinstall`. Без суммы — сверка только по версии.
 - `TELEPORT_MIRROR` — база зеркала:
   `<база>/binaries/teleport/<версия>/teleport-v<версия>-linux-<arch>-bin.tar.gz`;
   пусто — `cdn.teleport.dev`.

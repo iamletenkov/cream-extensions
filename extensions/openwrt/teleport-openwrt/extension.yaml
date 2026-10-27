@@ -13,11 +13,16 @@
 # files     — /etc/init.d/teleport (procd: экземпляр teleport с respawn без stdout/stderr —
 #             иначе LD_PRELOAD musl в glibc-процессе; экземпляр join — повтор раз в минуту),
 #             /lib/upgrade/keep.d/teleport (sysupgrade хранит data, маркер, флаг agent-enabled,
-#             config и apps.d домена — тот же узел без join, Р4 с поправкой 2026-10-23).
+#             пин набора installed-pin, config и apps.d домена — тот же узел без join, Р4 с
+#             поправкой 2026-10-23).
 # configure нет: на загрузке узел поднимает procd (START=95), не cream (А1–А6 не про него).
 schema: cream/v1
 name: teleport-openwrt
-version: 1.0.1
+version: 1.1.0
+# 1.1.0: та же X.Y.Z, другая TELEPORT_SHA256 (пересборка форка, v18.10.0-stvor.3 → stvor.4)
+#        — install/upgrade ставят набор заново и перезапускают узел; пин поставленного
+#        набора — /opt/cream/var/ext/teleport-openwrt/installed-pin (TELEPORT_VERSION=,
+#        TELEPORT_SHA256=), keep.d хранит его: /etc/stvor/restore.sh Stvor читает сумму оттуда.
 # 1.0.1: keep.d — флаг agent-enabled, config и apps.d домена: после sysupgrade узел тот же
 #        (host_uuid), без join; install сужает права восстановленного состояния.
 summary: Узел Teleport на OpenWrt — набор openwrt-<arch> с glibc рядом, регистрация, рендер teleport.yaml, procd

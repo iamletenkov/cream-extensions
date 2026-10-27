@@ -474,10 +474,12 @@ hook_install(){
     install -d -m 0700 "$STATE" || die "не создать $STATE"
 
     prev="$(version_of_agent)"
-    if [[ "$prev" == "$version" ]]; then
+    if binary_current "$version" "$sha"; then
         log "Teleport $version уже установлен"
     else
+        [[ "$prev" == "$version" ]] && pin_change_line "$version" "$sha"
         fetch_teleport "$version" "$arch" "$sha" "$mirror" "$tarball"
+        write_installed_pin "$version" "$FETCH_SHA"
         changed=1
     fi
 
