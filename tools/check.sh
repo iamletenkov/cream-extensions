@@ -19,6 +19,8 @@
 # tools/cream-bump.sh (пин cream в tools/cream-pin.env). Тест
 # снимка каталога (test-snapshot.sh: две сборки tools/catalog-snapshot.sh дают
 # одни байты, cream принимает снимок через source add --archive и resolve).
+# Подпись выпуска (test-release-sign.sh: BUILDINFO.json, SHA256SUMS, отказ без
+# секретов; с COSIGN=<путь> — подпись и проверка без сети).
 # Правило версий (check-version-bump.sh: дерево расширения изменилось с
 # последнего тега v* — version в extension.yaml выше, чем в теге; иначе cream
 # отвергает обновление version.same_digest) и его тест. Документация:
@@ -86,6 +88,9 @@ echo "== test-cream-bump =="
 
 echo "== test-snapshot =="
 "$HERE/test-snapshot.sh" || rc=1
+
+echo "== test-release-sign =="
+"$HERE/test-release-sign.sh" || rc=1
 
 echo "== check-version-bump =="
 "$HERE/check-version-bump.sh" || rc=1
