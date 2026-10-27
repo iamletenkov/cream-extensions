@@ -147,7 +147,12 @@ else
     # Расхождение с подписанным релизом: подпись к опубликованному SHA256SUMS верна.
     rel cream-extensions-1.2.3.tar.gz BUILDINFO.json SHA256SUMS
     echo "0000000000000000000000000000000000000000000000000000000000000000  extra" >> "$P/SHA256SUMS"
-    env COSIGN="$COSIGN_BIN" COSIGN_PRIVATE_KEY="$(cat "$K/cosign.key")" COSIGN_PASSWORD=test-only "$S" sign "$P" >/dev/null 2>&1
+    run env COSIGN="$COSIGN_BIN" COSIGN_PRIVATE_KEY="$(cat "$K/cosign.key")" COSIGN_PASSWORD=test-only "$S" sign "$P"
+    eq "подпись другого SHA256SUMS: код" 0 "$RC"
+    # verify сверяет и файлы (строки extra нет), поэтому подпись — cosign и openssl напрямую.
+    check "подпись другого SHA256SUMS: cosign" "$COSIGN_BIN" verify-blob --key "$K/cosign.pub" --insecure-ignore-tlog=true \
+        --bundle "$P/SHA256SUMS.bundle.json" "$P/SHA256SUMS"
+    check "подпись другого SHA256SUMS: openssl" bash -c "base64 -d '$P/SHA256SUMS.sig' > '$TMP/p.der' && openssl dgst -sha256 -verify '$K/cosign.pub' -signature '$TMP/p.der' '$P/SHA256SUMS' >/dev/null"
     rec
     eq "подписан, SHA256SUMS другой: код" 1 "$RC"
     check "подписан, SHA256SUMS другой: причина" grep -q "релиз неизменяем" <<<"$ERR"

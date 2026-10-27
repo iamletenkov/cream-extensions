@@ -77,7 +77,7 @@ make snapshot-check  # две сборки дают одни байты; cream �
   `release/keys/stvor-platform-next.pub` (следующий, приватная часть — офлайн у
   владельца, в GitHub не кладётся).
 - Приватный ключ — секреты `COSIGN_PRIVATE_KEY` и `COSIGN_PASSWORD` environment
-  `release` (ветка `main`, теги `v*`); их видит только job `release-assets`. Код
+  `release` (только ветка `main`); их видит только job `release-assets`. Код
   тега он не выполняет: снимок собирает job `release-build` без секретов и отдаёт
   artifact'ом, а `release-assets` берёт инструменты коммита workflow
   (`github.workflow_sha`), сверяет, что коммит тега — предок `main`, и сам пишет
