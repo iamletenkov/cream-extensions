@@ -33,7 +33,9 @@ make_set(){
     printf '#!/bin/sh\necho fdpass\n' > "$d/teleport/fdpass-teleport"
     echo glibc > "$d/teleport/lib/libc.so.6"
     chmod 0755 "$d/teleport/teleport" "$d/teleport/fdpass-teleport"
-    tar -czf "$FAKE/set" -C "$d" teleport
+    # Reproducible: the same set made twice has the same sum (mtimes and the gzip
+    # stamp would differ across a second boundary on a loaded host).
+    tar --mtime=@0 --sort=name --owner=0 --group=0 --numeric-owner -cf - -C "$d" teleport | gzip -n > "$FAKE/set"
     SET_SHA="$(sha256sum "$FAKE/set" | cut -d' ' -f1)"
 }
 
@@ -311,6 +313,13 @@ rm -f "$S/installed-pin"
 reinstall "$sha4"; eq "pin нет — 0" 0 "$?"
 check "pin нет — набор скачан" test -s "$FAKE/curl.argv"
 eq "pin нет — pin записан" "TELEPORT_VERSION=18.10.0|TELEPORT_SHA256=$sha4|" "$(pin)"
+# The sum does not match: the pin is not the new one — dropped before the download,
+# so a replacement cut short never looks done (restore.sh of Stvor falls back to its recipe).
+bad_sha="$(printf 'e%.0s' {1..64})"
+reinstall "$bad_sha"; check "сумма не совпала — отказ" test "$?" -ne 0
+check_not "сумма не совпала — в pin нет чужой суммы" grep -qs "$bad_sha" "$S/installed-pin"
+check "сумма не совпала — pin снят до скачивания" test ! -e "$S/installed-pin"
+check "сумма не совпала — бинарь прежней сборки" grep -qx '# build stvor.4' "$ROOT/opt/teleport/bin/teleport"
 
 setup
 echo aarch64 > "$FAKE/uname"

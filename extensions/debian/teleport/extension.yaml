@@ -1,6 +1,8 @@
 schema: cream/v1
 name: teleport
-version: 4.2.1
+version: 4.2.2
+# 4.2.2: пин поставленного тарбола снимается до скачивания нового: прерванная установка
+#        (чужая сумма, обрыв) не выглядит завершённой.
 # 4.2.1: та же X.Y.Z, другая TELEPORT_SHA256 (пересборка форка, v18.10.0-stvor.3 → stvor.4)
 #        — install/upgrade ставят тарбол заново и перезапускают агента; пин поставленного
 #        тарбола — $CREAM_STATE_DIR/installed-pin (TELEPORT_VERSION=, TELEPORT_SHA256=).

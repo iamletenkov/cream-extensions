@@ -4,8 +4,9 @@
 # detector of the portal), state.json, the trace of the telemetry token
 # (telemetry-token.src), both tokens, the domain of the extension and the marker
 # that this extension made the user stvor-telemetry (/etc/passwd is kept by
-# OpenWrt itself). After the new firmware the extension is installed again; the
-# portal issues nothing new. The archive keeps files only: install and configure
+# OpenWrt itself) and the pin of the installed tar.gz (installed-pin: the
+# version and sha256 /etc/stvor/restore.sh of Stvor installs again). After the
+# new firmware the extension is installed again; the portal issues nothing new. The archive keeps files only: install and configure
 # (every boot) give the directories and files back their owners and modes. The
 # telemetry buffer, the binary, the init scripts and the registry of cream are
 # not kept. The archive holds the tokens: a secret of root level.
@@ -16,3 +17,4 @@
 /etc/stvor-agent-telemetry/token
 /etc/cream/stvor-agent-openwrt/
 /opt/cream/var/ext/stvor-agent-openwrt/user-created
+/opt/cream/var/ext/stvor-agent-openwrt/installed-pin

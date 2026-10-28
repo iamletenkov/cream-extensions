@@ -18,7 +18,9 @@
 # configure нет: на загрузке узел поднимает procd (START=95), не cream (А1–А6 не про него).
 schema: cream/v1
 name: teleport-openwrt
-version: 1.1.0
+version: 1.1.1
+# 1.1.1: пин поставленного набора снимается до скачивания нового: прерванная установка
+#        (чужая сумма, обрыв) не выглядит завершённой, restore.sh Stvor берёт пины рецепта.
 # 1.1.0: та же X.Y.Z, другая TELEPORT_SHA256 (пересборка форка, v18.10.0-stvor.3 → stvor.4)
 #        — install/upgrade ставят набор заново и перезапускают узел; пин поставленного
 #        набора — /opt/cream/var/ext/teleport-openwrt/installed-pin (TELEPORT_VERSION=,

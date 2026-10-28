@@ -91,7 +91,7 @@ for p in opt/teleport/data/host_uuid opt/teleport/data/proc/sqlite.db opt/telepo
 	opt/cream/var/ext/teleport-openwrt/agent-enabled opt/cream/var/ext/teleport-openwrt/installed-pin \
 	etc/cream/teleport-openwrt/config opt/stvor-agent/machine-id opt/stvor-agent/state.json opt/stvor-agent/telemetry-token.src \
 	etc/stvor-agent/token etc/stvor-agent-telemetry/token etc/cream/stvor-agent-openwrt/config \
-	opt/cream/var/ext/stvor-agent-openwrt/user-created etc/passwd; do
+	opt/cream/var/ext/stvor-agent-openwrt/user-created opt/cream/var/ext/stvor-agent-openwrt/installed-pin etc/passwd; do
 	grep -qx "$p" /out/backup.list || fail "в архиве нет $p"
 done
 for p in usr/bin/cream etc/init.d/teleport opt/teleport/bin/teleport opt/cream/var/installed \
