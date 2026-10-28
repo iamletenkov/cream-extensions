@@ -52,10 +52,23 @@ setup(){
     ht_fake uname 'cat "$FAKE/uname"'
     ht_fake hostname 'echo owrt-lab'
     ht_fake sleep
-    # curl: -o downloads the set; else /webapi/find by $FAKE/net (up — a proxy).
-    ht_fake curl 'out=""; prev=""
+    # curl: -o downloads the set (-C - continues the partial file; while
+    # $FAKE/cuts > 0 a call writes half of what is left and fails as a cut HTTP/2
+    # stream, 92); else /webapi/find by $FAKE/net (up — a proxy).
+    ht_fake curl '[[ "${1:-}" == --version ]] && { echo "curl 8.12.1 (x86_64-openwrt-linux-musl)"; exit 0; }
+out=""; prev=""
 for a in "$@"; do [[ "$prev" == -o ]] && out="$a"; prev="$a"; done
-if [[ -n "$out" ]]; then [[ -f "$FAKE/set" ]] || exit 22; cp "$FAKE/set" "$out"; exit 0; fi
+if [[ -n "$out" ]]; then
+    [[ -f "$FAKE/set" ]] || exit 22
+    [[ " $* " == *" -C - "* && -f "$out" ]] || : > "$out"
+    have="$(stat -c %s "$out")"; total="$(stat -c %s "$FAKE/set")"
+    cuts="$(cat "$FAKE/cuts" 2>/dev/null || echo 0)"
+    if (( cuts > 0 )); then
+        echo $((cuts - 1)) > "$FAKE/cuts"
+        tail -c +$((have + 1)) "$FAKE/set" | head -c $(( (total - have) / 2 )) >> "$out"; exit 92
+    fi
+    tail -c +$((have + 1)) "$FAKE/set" >> "$out"; exit 0
+fi
 net="$(cat "$FAKE/net")"
 [[ "$net" == up ]] && { echo "{\"server_version\":\"18.10.0\"}"; exit 0; }
 exit "$net"'
@@ -348,6 +361,44 @@ cp "$FAKE/set" "$HT_TMP/local-set.tar.gz"
 ht_hook install TELEPORT_SHA256="$SET_SHA" TELEPORT_TARBALL="$HT_TMP/local-set.tar.gz"; eq "локальный набор — 0" 0 "$?"
 check "локальный набор — без сети" test ! -s "$FAKE/curl.argv"
 check "локальный набор — файл оператора цел" test -f "$HT_TMP/local-set.tar.gz"
+
+echo "== install: раздача портала TELEPORT_DIST + TELEPORT_TAG, обрыв на LTE =="
+DIST=https://stvor.example.org/dist
+TAG=v18.10.0-stvor.5
+setup
+make_set 18.10.0 stvor.5
+echo 2 > "$FAKE/cuts"
+ht_hook install TELEPORT_SHA256="$SET_SHA" TELEPORT_DIST="$DIST" TELEPORT_TAG="$TAG"; eq "dist — 0" 0 "$?"
+dl="$(grep -- ' -o ' "$FAKE/curl.argv")"
+eq "dist — три вызова curl (два обрыва)" 3 "$(grep -c . <<< "$dl")"
+check "dist — URL <база>/teleport/<тег>/<набор>" \
+    grep -qE " https://stvor\.example\.org/dist/teleport/v18\.10\.0-stvor\.5/teleport-v18\.10\.0-openwrt-amd64-bin\.tar\.gz$" <<< "$dl"
+check "dist — по редиректу, только https" bash -c '! grep -v -- "^-fL .*--proto =https --proto-redir =https" <<< "$1"' _ "$dl"
+check "dist — повтор на любой ошибке" bash -c '! grep -v -- "--retry 5 --retry-all-errors" <<< "$1"' _ "$dl"
+check "dist — докачка частичного файла" bash -c '! grep -v -- " -C - -o " <<< "$1"' _ "$dl"
+check "dist — набор из частей на месте" grep -qx '# build stvor.5' "$ROOT/opt/teleport/bin/teleport"
+eq "dist — паузы перед докачкой" "5|10" "$(paste -s -d '|' "$FAKE/sleep.argv")"
+# refuse <what> <text> KEY=VALUE… — install refused before any download.
+refuse(){
+    local what="$1" text="$2"; shift 2
+    setup
+    make_set 18.10.0
+    ht_hook install TELEPORT_SHA256="$SET_SHA" "$@"; eq "$what — 1" 1 "$?"
+    check "$what — причина" grep -qF -- "$text" "$ROOT/out"
+    check_not "$what — без скачивания" test -s "$FAKE/curl.argv"
+}
+refuse "DIST без TAG" "задаются вместе" TELEPORT_DIST="$DIST"
+refuse "TAG без DIST" "задаются вместе" TELEPORT_TAG="$TAG"
+refuse "DIST и MIRROR" "взаимоисключим" TELEPORT_DIST="$DIST" TELEPORT_TAG="$TAG" TELEPORT_MIRROR=https://stvor.example.org/dist/teleport
+refuse "DIST по http" "ожидали https" TELEPORT_DIST=http://stvor.example.org/dist TELEPORT_TAG="$TAG"
+refuse "тег другой версии" "TELEPORT_VERSION=18.10.0" TELEPORT_DIST="$DIST" TELEPORT_TAG=v18.11.0-stvor.1
+setup
+make_set 18.10.0
+echo 9 > "$FAKE/cuts"
+ht_hook install TELEPORT_SHA256="$SET_SHA" TELEPORT_DIST="$DIST" TELEPORT_TAG="$TAG"; eq "попытки кончились — 1" 1 "$?"
+eq "попытки кончились — пять вызовов curl" 5 "$(grep -c -- ' -o ' "$FAKE/curl.argv")"
+check "попытки кончились — причина" grep -q 'не скачался' "$ROOT/out"
+check_not "попытки кончились — пина нет" test -e "$S/installed-pin"
 setup
 mkdir -p "$ROOT/opt/teleport/bin"; printf '#!/bin/sh\necho "Teleport v17.0.0"\n' > "$ROOT/opt/teleport/bin/teleport"; chmod +x "$ROOT/opt/teleport/bin/teleport"
 installed; eq "Teleport без маркера — 1" 1 "$?"

@@ -35,6 +35,7 @@ bad(){ fail=$((fail + 1)); echo "FAIL: $*" >&3; }
 check(){ local what="$1"; shift; if "$@"; then ok; else bad "$what"; fi; }
 check_not(){ local what="$1"; shift; if "$@"; then bad "$what"; else ok; fi; }
 eq(){ local what="$1" want="$2" got="$3"; if [[ "$want" == "$got" ]]; then ok; else bad "$what: ждали [$want], получили [$got]"; fi; }
+has(){ if grep -qF -- "$2" <<< "$3"; then ok; else bad "$1: нет [$2] в [$3]"; fi; }
 
 SECRET='Zk3_q9-RobotSecret-0123456789abcdef'
 JOIN_TOKEN='abcdefgh1-join-token'
@@ -75,12 +76,31 @@ new_root(){
     echo join > "$FAKE/agent"
     cat > "$ROOT/bin/curl" <<'EOF'
 #!/usr/bin/env bash
+if [[ "${1:-}" == --version ]]; then
+    [[ -f "$FAKE/curl.version.fail" ]] && exit 2
+    if [[ -f "$FAKE/curl.version.raw" ]]; then cat "$FAKE/curl.version.raw"; exit 0; fi
+    echo "curl $(cat "$FAKE/curl.version" 2>/dev/null || echo 8.5.0) (x86_64-pc-linux-gnu) libcurl"; exit 0
+fi
 echo "$*" >> "$FAKE/curl.log"
 out=""; prev=""
 for a in "$@"; do [[ "$prev" == -o ]] && out="$a"; prev="$a"; done
 if [[ -n "$out" ]]; then
     [[ -f "$FAKE/tarball" ]] || exit 22
-    cp "$FAKE/tarball" "$out"; exit 0
+    # -C - continues the partial file; without it the file starts over. While
+    # $FAKE/cuts > 0 a call writes half of what is left and fails as a cut
+    # HTTP/2 stream (92).
+    # $FAKE/norange: the server ignores ranges — a resume of a partial file is 33.
+    if [[ -f "$FAKE/norange" && " $* " == *" -C - "* && -s "$out" ]]; then
+        echo "norange" >> "$FAKE/curl.log"; exit 33
+    fi
+    [[ " $* " == *" -C - "* && -f "$out" ]] || : > "$out"
+    have="$(stat -c %s "$out")"; total="$(stat -c %s "$FAKE/tarball")"
+    cuts="$(cat "$FAKE/cuts" 2>/dev/null || echo 0)"
+    if (( cuts > 0 )); then
+        echo $((cuts - 1)) > "$FAKE/cuts"
+        tail -c +$((have + 1)) "$FAKE/tarball" | head -c $(( (total - have) / 2 )) >> "$out"; exit 92
+    fi
+    tail -c +$((have + 1)) "$FAKE/tarball" >> "$out"; exit 0
 fi
 if [[ "${!#}" == *.sha256 ]]; then
     [[ -f "$FAKE/cdn.sha256" ]] || exit 22
@@ -908,6 +928,105 @@ msg="$(hk install TELEPORT_VERSION=18.11.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_TA
 eq "install: офлайн из TARBALL — код 0" 0 "$rc"
 check "install: офлайн — бинарь на месте" grep -q 'v18.11.0' <<< "$("$ROOT/usr/local/bin/teleport" version)"
 check_not "install: офлайн — curl не зовётся" test -s "$FAKE/curl.log"
+
+echo "== хук install: раздача портала TELEPORT_DIST + TELEPORT_TAG =="
+# The portal answers <base>/teleport/<tag>/<tarball> with 302 to a signed S3 link.
+DIST=https://stvor.example.org/dist
+TAG=v18.10.0-stvor.5
+new_root
+rm -f "$ROOT/usr/local/bin/teleport"
+make_tarball 18.10.0 stvor.5
+msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST/" TELEPORT_TAG="$TAG" 2>&1)"; rc=$?
+eq "dist: код 0" 0 "$rc"
+check "dist: URL <база>/teleport/<тег>/<тарбол>" \
+    grep -qE " https://stvor\.example\.org/dist/teleport/v18\.10\.0-stvor\.5/teleport-v18\.10\.0-linux-amd64-bin\.tar\.gz$" "$FAKE/curl.log"
+check "dist: идёт по редиректу" grep -qE -- '^-fL ' "$FAKE/curl.log"
+check "dist: только https, и в редиректе" grep -q -- '--proto =https --proto-redir =https' "$FAKE/curl.log"
+check "dist: бинарь сборки форка" grep -qx '# build stvor.5' "$ROOT/usr/local/bin/teleport"
+check_not "dist: .sha256 с CDN не запрашивался" grep -q '\.sha256' "$FAKE/curl.log"
+eq "dist: pin — сумма тарбола" "TELEPORT_VERSION=18.10.0|TELEPORT_SHA256=$TB_SHA|" "$(tr '\n' '|' < "$STATE/installed-pin")"
+# refuse <what> <text> KEY=VALUE… — install refused before any download.
+refuse(){
+    local what="$1" text="$2"; shift 2
+    : > "$FAKE/curl.log"
+    msg="$(hk install TELEPORT_VERSION=18.10.0 "$@" 2>&1)"; rc=$?
+    check "$what: отказ" test "$rc" -ne 0
+    has "$what: текст" "$text" "$msg"
+    check_not "$what: без скачивания" test -s "$FAKE/curl.log"
+}
+refuse "DIST без TAG" "задаются вместе" TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST"
+refuse "TAG без DIST" "задаются вместе" TELEPORT_SHA256="$TB_SHA" TELEPORT_TAG="$TAG"
+refuse "DIST и MIRROR" "взаимоисключим" TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST" TELEPORT_TAG="$TAG" \
+    TELEPORT_MIRROR=https://mirror.example.org
+cp "$FAKE/tarball" "$TMP/local.tar.gz"
+refuse "DIST и TARBALL" "взаимоисключим" TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST" TELEPORT_TAG="$TAG" \
+    TELEPORT_TARBALL="$TMP/local.tar.gz"
+refuse "DIST по http" "ожидали https" TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST=http://stvor.example.org/dist TELEPORT_TAG="$TAG"
+refuse "тег не форка" "vX.Y.Z-stvor.N" TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST" TELEPORT_TAG=v18.10.0
+refuse "тег другой версии" "TELEPORT_VERSION=18.10.0" TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST" TELEPORT_TAG=v18.11.0-stvor.1
+refuse "DIST без суммы" "TELEPORT_DIST без TELEPORT_SHA256" TELEPORT_DIST="$DIST" TELEPORT_TAG="$TAG"
+
+echo "== хук install: обрыв на LTE — повтор с докачкой =="
+new_root
+rm -f "$ROOT/usr/local/bin/teleport"
+make_tarball 18.11.0
+echo 2 > "$FAKE/cuts"
+msg="$(hk install TELEPORT_VERSION=18.11.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_MIRROR=https://mirror.example.org 2>&1)"; rc=$?
+eq "обрыв: код 0" 0 "$rc"
+eq "обрыв: три вызова curl" 3 "$(grep -c 'teleport-v18.11.0-linux-amd64-bin.tar.gz' "$FAKE/curl.log")"
+check "обрыв: каждый — повтор на любой ошибке" bash -c '! grep -v -- "--retry 5 --retry-all-errors" "$1"' _ "$FAKE/curl.log"
+check "обрыв: каждый — докачка частичного файла" bash -c '! grep -v -- " -C - -o " "$1"' _ "$FAKE/curl.log"
+check "обрыв: тарбол собран из частей (сумма сошлась)" grep -q 'v18.11.0' <<< "$("$ROOT/usr/local/bin/teleport" version)"
+check "обрыв: пауза перед докачкой растёт" grep -qx 'sleep 5|sleep 10' <<< "$(grep -E '^sleep (5|10)$' "$FAKE/sleep.log" | paste -s -d '|' -)"
+has "обрыв: попытка в журнале" "попытка 1/5" "$msg"
+new_root
+rm -f "$ROOT/usr/local/bin/teleport"
+make_tarball 18.11.0
+echo 9 > "$FAKE/cuts"
+msg="$(hk install TELEPORT_VERSION=18.11.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_MIRROR=https://mirror.example.org 2>&1)"; rc=$?
+check "попытки кончились: отказ" test "$rc" -ne 0
+eq "попытки кончились: пять вызовов curl" 5 "$(grep -c 'teleport-v18.11.0' "$FAKE/curl.log")"
+has "попытки кончились: текст" "тарбол не скачался" "$msg"
+check_not "попытки кончились: pin не записан" test -e "$STATE/installed-pin"
+# curl 7.68 (focal, Jetson Nano) does not know --retry-all-errors and would refuse the call.
+new_root
+rm -f "$ROOT/usr/local/bin/teleport"
+make_tarball 18.13.0
+echo 7.68.0 > "$FAKE/curl.version"
+echo "$TB_SHA" > "$FAKE/cdn.sha256"
+msg="$(hk install TELEPORT_VERSION=18.13.0 2>&1)"; rc=$?
+eq "curl 7.68: код 0" 0 "$rc"
+check "curl 7.68: --retry 5 есть" bash -c '! grep -v -- "--retry 5 " "$1"' _ "$FAKE/curl.log"
+check_not "curl 7.68: без --retry-all-errors" grep -q -- '--retry-all-errors' "$FAKE/curl.log"
+check "curl 7.68: .sha256 тоже с повтором" grep -q -- '--retry 5 .*\.sha256$' "$FAKE/curl.log"
+# retry_all <what> — install over a fresh root; prints yes when the download had --retry-all-errors.
+retry_all(){
+    new_root
+    rm -f "$ROOT/usr/local/bin/teleport"
+    make_tarball 18.11.0
+    "$@"
+    hk install TELEPORT_VERSION=18.11.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_MIRROR=https://mirror.example.org >/dev/null 2>&1 \
+        || { echo "install-failed"; return; }
+    if grep -q -- '--retry-all-errors' "$FAKE/curl.log"; then echo yes; else echo no; fi
+}
+eq "curl 7.71.0 — граница: флаг есть" yes "$(retry_all eval 'echo 7.71.0 > "$FAKE/curl.version"')"
+eq "curl 7.70.9 — флага нет" no "$(retry_all eval 'echo 7.70.9 > "$FAKE/curl.version"')"
+eq "curl 8.0.0 — флаг есть" yes "$(retry_all eval 'echo 8.0.0 > "$FAKE/curl.version"')"
+eq "curl --version с ошибкой — запасной --retry 5" no "$(retry_all eval ': > "$FAKE/curl.version.fail"')"
+eq "curl --version — мусор: запасной --retry 5" no "$(retry_all eval 'echo "garbage x.y" > "$FAKE/curl.version.raw"')"
+eq "curl --version — пусто: запасной --retry 5" no "$(retry_all eval ': > "$FAKE/curl.version.raw"')"
+
+echo "== хук install: сервер без Range (curl 33) — частичный файл сброшен, заново с нуля =="
+new_root
+rm -f "$ROOT/usr/local/bin/teleport"
+make_tarball 18.11.0
+echo 1 > "$FAKE/cuts"; : > "$FAKE/norange"
+msg="$(hk install TELEPORT_VERSION=18.11.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_MIRROR=https://mirror.example.org 2>&1)"; rc=$?
+eq "33: код 0" 0 "$rc"
+eq "33: три вызова — обрыв, отказ докачки, с нуля" 3 "$(grep -c 'tar\.gz$' "$FAKE/curl.log")"
+check "33: сервер отказал в докачке" grep -qx norange "$FAKE/curl.log"
+has "33: в журнале код" "curl 33" "$msg"
+check "33: сумма сошлась — бинарь на месте" grep -q 'v18.11.0' <<< "$("$ROOT/usr/local/bin/teleport" version)"
 
 new_root
 mkdir -p "$ROOT/var/lib/teleport"; echo 12345678-0000 > "$HOST_UUID"

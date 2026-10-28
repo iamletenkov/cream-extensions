@@ -100,9 +100,25 @@ sa_check_source(){
     return 0
 }
 
+# sa_curl_retry: --retry 5 and, from curl 7.71, --retry-all-errors (a stream cut
+# mid-way — HTTP/2 error 92 on LTE — is retried too; 429 waits for Retry-After).
+# curl 7.68 of Ubuntu 20.04 (Jetson Nano) does not know the flag and would refuse
+# the whole call. Keep in step with curl_retry_flags of lib/teleport-core.sh.
+sa_curl_retry(){
+    local v maj min
+    v="$(sa_run curl --version 2>/dev/null | head -n 1)" || v=""
+    v="${v#curl }"; v="${v%%[!0-9.]*}"
+    maj="${v%%.*}"; min="${v#*.}"; min="${min%%.*}"
+    if [[ "$maj" =~ ^[0-9]+$ && "$min" =~ ^[0-9]+$ ]] && (( maj > 7 || (maj == 7 && min >= 71) )); then
+        echo "--retry 5 --retry-all-errors"
+    else
+        echo "--retry 5"
+    fi
+}
+
 # sa_fetch <work dir> <arch>: the checked .deb, its path on stdout.
 sa_fetch(){
-    local work="$1" arch="$2" file url
+    local work="$1" arch="$2" file url retry
     file="$work/$(sa_deb_name "$SA_VERSION" "$arch")"
     if [[ -n "${STVOR_AGENT_DEB:-}" ]]; then
         cp -- "$STVOR_AGENT_DEB" "$file" || return 1
@@ -110,8 +126,9 @@ sa_fetch(){
         command -v curl >/dev/null 2>&1 || { sa_log "ОШИБКА: нет curl — поставьте его или задайте STVOR_AGENT_DEB"; return 1; }
         url="$(sa_url "$SA_VERSION" "$arch" "${STVOR_AGENT_MIRROR:-}")"
         sa_log "скачиваю $url"
+        read -r -a retry <<< "$(sa_curl_retry)"
         # Stalls become retries instead of an endless wait.
-        sa_run curl -fL --retry 5 --retry-delay 5 \
+        sa_run curl -fL "${retry[@]}" --retry-delay 5 \
             --connect-timeout 30 --speed-limit 10240 --speed-time 60 \
             -o "$file" "$url" || { sa_log "ОШИБКА: пакет агента не скачался"; return 1; }
     fi

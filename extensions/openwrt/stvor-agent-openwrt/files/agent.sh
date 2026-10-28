@@ -168,8 +168,10 @@ sa_fetch(){
         command -v curl >/dev/null 2>&1 || { sa_log "ОШИБКА: нет curl — поставьте его (apk add curl) или задайте STVOR_AGENT_TARBALL"; return 1; }
         url="$(sa_url "$SA_VERSION" "$arch" "${STVOR_AGENT_MIRROR:-}")"
         sa_log "скачиваю $url"
-        # Stalls become retries instead of an endless wait.
-        sa_run curl -fL --retry 5 --retry-delay 5 \
+        # Stalls become retries instead of an endless wait; --retry-all-errors
+        # (curl 8 of OpenWrt 25.12) retries a stream cut mid-way — HTTP/2 error
+        # 92 on LTE — too, and 429 waits for its Retry-After.
+        sa_run curl -fL --retry 5 --retry-all-errors --retry-delay 5 \
             --connect-timeout 30 --speed-limit 10240 --speed-time 60 \
             -o "$file" "$url" || { sa_log "ОШИБКА: tar.gz агента не скачался"; return 1; }
     fi

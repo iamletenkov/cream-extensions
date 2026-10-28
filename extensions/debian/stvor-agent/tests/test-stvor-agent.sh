@@ -66,6 +66,9 @@ new_root(){
         } > "$ROOT/bin/$f"
     done
     cat >> "$ROOT/bin/curl" <<'EOF'
+if [[ "${1:-}" == --version ]]; then
+    echo "curl $(cat "$FAKE/curl.version" 2>/dev/null || echo 8.5.0) (x86_64-pc-linux-gnu) libcurl"; exit 0
+fi
 out=""; url=""
 while (( $# )); do
     case "$1" in
@@ -248,6 +251,14 @@ new_root
 hook install STVOR_AGENT_MIRROR="$MIRROR/" >/dev/null 2>&1; rc=$?
 eq "зеркало — код 0" 0 "$rc"
 eq "зеркало — файл плоско в базе" "curl $MIRROR/stvor-agent_4.0.0_amd64.deb" "$(net)"
+check "зеркало — повтор на любой ошибке (обрыв HTTP/2, 429)" \
+    grep -q -- '^-fL --retry 5 --retry-all-errors --retry-delay 5 ' "$FAKE/curl.argv"
+# curl 7.68 (Ubuntu 20.04, Jetson Nano) does not know --retry-all-errors.
+new_root; echo 7.68.0 > "$FAKE/curl.version"
+hook install >/dev/null 2>&1; rc=$?
+eq "curl 7.68 — код 0" 0 "$rc"
+check "curl 7.68 — --retry 5 без --retry-all-errors" grep -q -- '^-fL --retry 5 --retry-delay 5 ' "$FAKE/curl.argv"
+check_not "curl 7.68 — флага нет" grep -q -- '--retry-all-errors' "$FAKE/curl.argv"
 
 new_root
 cp "$FAKE/deb-amd64" "$TMP/local.deb"
