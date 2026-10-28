@@ -794,7 +794,9 @@ make_tarball(){
     mkdir -p "$d/teleport"
     fake_teleport "$1" "$d/teleport/teleport"
     [[ -z "${2:-}" ]] || echo "# build $2" >> "$d/teleport/teleport"
-    tar -czf "$FAKE/tarball" -C "$d" teleport
+    # Reproducible: the same tarball made twice has the same sum (mtimes and the gzip
+    # stamp would differ across a second boundary on a loaded host).
+    tar --mtime=@0 --sort=name --owner=0 --group=0 --numeric-owner -cf - -C "$d" teleport | gzip -n > "$FAKE/tarball"
     TB_SHA="$(sha256sum "$FAKE/tarball" | cut -d' ' -f1)"
 }
 new_root

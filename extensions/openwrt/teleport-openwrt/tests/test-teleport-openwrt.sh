@@ -33,7 +33,9 @@ make_set(){
     printf '#!/bin/sh\necho fdpass\n' > "$d/teleport/fdpass-teleport"
     echo glibc > "$d/teleport/lib/libc.so.6"
     chmod 0755 "$d/teleport/teleport" "$d/teleport/fdpass-teleport"
-    tar -czf "$FAKE/set" -C "$d" teleport
+    # Reproducible: the same set made twice has the same sum (mtimes and the gzip
+    # stamp would differ across a second boundary on a loaded host).
+    tar --mtime=@0 --sort=name --owner=0 --group=0 --numeric-owner -cf - -C "$d" teleport | gzip -n > "$FAKE/set"
     SET_SHA="$(sha256sum "$FAKE/set" | cut -d' ' -f1)"
 }
 
