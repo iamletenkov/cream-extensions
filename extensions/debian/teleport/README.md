@@ -51,7 +51,7 @@
 | `/opt/cream/ext/teleport/` | дерево расширения: `hooks/`, `actions/` (тонкие входы), `files/teleport.sh` (слой systemd), `files/teleport-core.sh` (общее ядро, см. «Ядро и слой»), `files/os-logins` (метка `os_logins`, её зовёт Teleport) |
 | `/etc/systemd/system/teleport{,-apps,-token,-join}.*` | юниты (раскладывает cream) |
 | `/etc/cream/teleport/{config,apps.d,command-labels.d}` | домен ручек и объявления |
-| `/var/lib/cream/ext/teleport/{installed-pin,registration-secret,join-pending,join-refused,managed-pending,reload-pending,rollback}` | состояние (каталог 0700, файлы 0600); `installed-pin` — строки `TELEPORT_VERSION=` и `TELEPORT_SHA256=` поставленного тарбола |
+| `/var/lib/cream/ext/teleport/{installed-pin,registration-secret,join-pending,join-refused,managed-pending,reload-pending,rollback}` | состояние (каталог 0700, файлы 0600); `installed-pin` — строки `TELEPORT_VERSION=` и `TELEPORT_SHA256=` поставленного тарбола, при `TELEPORT_DIST` — и `TELEPORT_TAG=` сборки форка |
 | `/etc/teleport.yaml`, `/var/lib/teleport/`, `/usr/local/bin/teleport` | Teleport |
 
 ## Параметры

@@ -18,7 +18,9 @@
 # configure нет: на загрузке узел поднимает procd (START=95), не cream (А1–А6 не про него).
 schema: cream/v1
 name: teleport-openwrt
-version: 1.2.0
+version: 1.2.1
+# 1.2.1: installed-pin хранит и тег сборки форка (TELEPORT_TAG=, при TELEPORT_DIST): restore.sh
+#        Stvor после sysupgrade берёт ту же сборку; пин без тега получает его без скачивания.
 # 1.2.0: раздача портала Stvor — TELEPORT_DIST и TELEPORT_TAG (вместе, взаимоисключимы с
 #        TELEPORT_MIRROR и TELEPORT_TARBALL): набор по <база>/teleport/<тег>/<набор>,
 #        редирект на подписанную ссылку — только https. Обрыв на LTE: набор — до 5

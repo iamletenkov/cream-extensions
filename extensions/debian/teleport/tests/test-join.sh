@@ -944,7 +944,14 @@ check "dist: идёт по редиректу" grep -qE -- '^-fL ' "$FAKE/curl.l
 check "dist: только https, и в редиректе" grep -q -- '--proto =https --proto-redir =https' "$FAKE/curl.log"
 check "dist: бинарь сборки форка" grep -qx '# build stvor.5' "$ROOT/usr/local/bin/teleport"
 check_not "dist: .sha256 с CDN не запрашивался" grep -q '\.sha256' "$FAKE/curl.log"
-eq "dist: pin — сумма тарбола" "TELEPORT_VERSION=18.10.0|TELEPORT_SHA256=$TB_SHA|" "$(tr '\n' '|' < "$STATE/installed-pin")"
+eq "dist: pin — сумма и тег сборки" "TELEPORT_VERSION=18.10.0|TELEPORT_SHA256=$TB_SHA|TELEPORT_TAG=$TAG|" "$(tr '\n' '|' < "$STATE/installed-pin")"
+# A pin written before the tag was kept: the same set gains the tag without a download.
+printf 'TELEPORT_VERSION=18.10.0\nTELEPORT_SHA256=%s\n' "$TB_SHA" > "$STATE/installed-pin"
+: > "$FAKE/curl.log"
+hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST/" TELEPORT_TAG="$TAG" >/dev/null 2>&1
+eq "dist: старый pin — код 0" 0 "$?"
+check_not "dist: старый pin — без скачивания" grep -q ' -o ' "$FAKE/curl.log"
+eq "dist: старый pin — тег дописан" "TELEPORT_VERSION=18.10.0|TELEPORT_SHA256=$TB_SHA|TELEPORT_TAG=$TAG|" "$(tr '\n' '|' < "$STATE/installed-pin")"
 # refuse <what> <text> KEY=VALUE… — install refused before any download.
 refuse(){
     local what="$1" text="$2"; shift 2

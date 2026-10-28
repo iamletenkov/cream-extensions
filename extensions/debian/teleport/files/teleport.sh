@@ -474,11 +474,12 @@ hook_install(){
     prev="$(version_of_agent)"
     if binary_current "$version" "$sha"; then
         log "Teleport $version уже установлен"
+        pin_tag_current "$tag" || write_installed_pin "$version" "$sha" "$tag"
     else
         [[ "$prev" == "$version" ]] && pin_change_line "$version" "$sha"
         drop_installed_pin
         fetch_teleport "$version" "$arch" "$sha" "$mirror" "$tarball" "$dist" "$tag"
-        write_installed_pin "$version" "$FETCH_SHA"
+        write_installed_pin "$version" "$FETCH_SHA" "$tag"
         changed=1
     fi
 

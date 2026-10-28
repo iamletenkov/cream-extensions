@@ -1,6 +1,8 @@
 schema: cream/v1
 name: teleport
-version: 4.3.0
+version: 4.3.1
+# 4.3.1: installed-pin хранит и тег сборки форка (TELEPORT_TAG=, при TELEPORT_DIST); пин без
+#        тега той же суммы получает его без скачивания.
 # 4.3.0: раздача портала Stvor — TELEPORT_DIST и TELEPORT_TAG (вместе, взаимоисключимы с
 #        TELEPORT_MIRROR и TELEPORT_TARBALL, нужен TELEPORT_SHA256): тарбол по
 #        <база>/teleport/<тег>/<тарбол>, редирект на подписанную ссылку — только https.

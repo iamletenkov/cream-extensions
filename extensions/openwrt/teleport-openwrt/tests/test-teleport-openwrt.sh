@@ -377,6 +377,14 @@ check "dist — по редиректу, только https" bash -c '! grep -v 
 check "dist — повтор на любой ошибке" bash -c '! grep -v -- "--retry 5 --retry-all-errors" <<< "$1"' _ "$dl"
 check "dist — докачка частичного файла" bash -c '! grep -v -- " -C - -o " <<< "$1"' _ "$dl"
 check "dist — набор из частей на месте" grep -qx '# build stvor.5' "$ROOT/opt/teleport/bin/teleport"
+eq "dist — pin: сумма и тег сборки" "TELEPORT_VERSION=18.10.0|TELEPORT_SHA256=$SET_SHA|TELEPORT_TAG=$TAG|" "$(tr '\n' '|' < "$S/installed-pin")"
+# A pin written before the tag was kept: the same set gains the tag without a download
+# (/etc/stvor/restore.sh of Stvor reads it after sysupgrade).
+printf 'TELEPORT_VERSION=18.10.0\nTELEPORT_SHA256=%s\n' "$SET_SHA" > "$S/installed-pin"
+: > "$FAKE/curl.argv"
+ht_hook install TELEPORT_SHA256="$SET_SHA" TELEPORT_DIST="$DIST" TELEPORT_TAG="$TAG"; eq "dist, старый pin — 0" 0 "$?"
+check_not "dist, старый pin — без скачивания" test -s "$FAKE/curl.argv"
+eq "dist, старый pin — тег дописан" "TELEPORT_VERSION=18.10.0|TELEPORT_SHA256=$SET_SHA|TELEPORT_TAG=$TAG|" "$(tr '\n' '|' < "$S/installed-pin")"
 eq "dist — паузы перед докачкой" "5|10" "$(paste -s -d '|' "$FAKE/sleep.argv")"
 # refuse <what> <text> KEY=VALUE… — install refused before any download.
 refuse(){

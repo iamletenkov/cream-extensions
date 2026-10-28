@@ -226,8 +226,9 @@ RUN_COMMAND cream install teleport-openwrt TELEPORT_MIRROR=https://stvor.example
 - `/opt/teleport/data/` — идентичность узла (`host_uuid`, ключи в `proc/sqlite.db`);
 - `/opt/teleport/.cream-owned` — маркер владения cream;
 - `/opt/cream/var/ext/teleport-openwrt/agent-enabled` — узел стартует на загрузке;
-- `/opt/cream/var/ext/teleport-openwrt/installed-pin` — пин поставленного набора, две
-  строки `TELEPORT_VERSION=<X.Y.Z>` и `TELEPORT_SHA256=<64 hex>`; пишет `install`/`upgrade`
+- `/opt/cream/var/ext/teleport-openwrt/installed-pin` — пин поставленного набора, строки
+  `TELEPORT_VERSION=<X.Y.Z>` и `TELEPORT_SHA256=<64 hex>`, при `TELEPORT_DIST` — третья
+  `TELEPORT_TAG=<vX.Y.Z-stvor.N>` (пин без тега той же суммы получает его без скачивания); пишет `install`/`upgrade`
   после каждой замены набора, снимает — перед скачиванием нового (файла нет — набор не
   подтверждён). Стабильный интерфейс: `/etc/stvor/restore.sh` Stvor берёт
   версию и сумму набора отсюда, а не из своей копии (иначе после обновления через cream
