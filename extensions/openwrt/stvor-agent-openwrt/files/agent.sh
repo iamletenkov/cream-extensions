@@ -458,6 +458,12 @@ sa_hook_install(){
     sa_log "включение: printf '%s' '<токен>' | stvor-agent enable 'URL=https://<портал>/robot-api/v1/labels'"
 }
 
+# sa_apply_active: the init script of the applier runs (procd) or is enabled (rc.d).
+sa_apply_active(){
+    [[ -x "$SA_INIT_DIR/$SA_APPLY" ]] || return 1
+    { sa_procd_running && sa_svc "$SA_APPLY" running; } || sa_svc "$SA_APPLY" enabled
+}
+
 # hooks/remove: the agent forgets its token and stops, then everything this
 # extension put goes: services off, the binary, the init scripts, tokens, the
 # state, the user it made. The drop-in of the label goes first, so the node
@@ -465,15 +471,20 @@ sa_hook_install(){
 sa_hook_remove(){
     local s uid=""
     # An attempt of the applier is never cut: it may be mid-install, and its
-    # binary and plan live in /opt/stvor-agent, which goes below.
+    # binary and plan live in /opt/stvor-agent, which goes below. The attempt
+    # is on while its init script runs or is enabled (the applier stops and
+    # disables it on the final); a plan.json without either is left over.
+    if sa_apply_active; then
+        sa_die "идёт попытка применения назначений (/etc/init.d/$SA_APPLY работает или включён) — ничего не снято; дождитесь её финала или прервите: /etc/init.d/$SA_APPLY stop && /etc/init.d/$SA_APPLY disable, затем повторите cream remove"
+    fi
     if [[ -e "$SA_APPLY_PLAN" || -L "$SA_APPLY_PLAN" ]]; then
-        sa_die "идёт попытка применения назначений (${SA_APPLY_PLAN#"$SA_ROOT"}) — ничего не снято, повторите cream remove после её финала"
+        sa_log "предупреждение: ${SA_APPLY_PLAN#"$SA_ROOT"} есть, а применитель не работает и не включён — попытка брошена, снимается"
     fi
     if [[ -x "$SA_BIN" ]]; then
         sa_run "$SA_BIN" disable >/dev/null 2>&1 || sa_log "предупреждение: stvor-agent disable не прошёл — службы и токены снимаются здесь"
     fi
     if sa_procd_running; then
-        for s in "${SA_SERVICES[@]}"; do sa_svc "$s" stop || true; done
+        for s in "${SA_SERVICES[@]}" "$SA_APPLY"; do sa_svc "$s" stop || true; done
     fi
     # The trees of the telemetry user go only when no process of it is left:
     # busybox rm walks by path, a live process could swap a directory for a link.

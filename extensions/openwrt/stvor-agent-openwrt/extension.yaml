@@ -19,7 +19,7 @@
 # apply     — running services restart in the background.
 # remove    — stvor-agent disable, services off, the binary, the init scripts,
 #             tokens, the state and the user (if this extension made it) gone;
-#             refused while an attempt of the applier runs (apply/plan.json).
+#             refused while the applier runs or is enabled (an attempt).
 # files     — the drop-in of the command label stvor_agent of teleport-openwrt,
 #             /lib/upgrade/keep.d/stvor-agent (sysupgrade keeps the agent whole:
 #             machine-id, state, tokens, domain, last-good.json — Р4 revised 2026-10-23).
@@ -27,7 +27,7 @@ schema: cream/v1
 name: stvor-agent-openwrt
 version: 1.3.0
 # 1.3.0: init.d/stvor-agent-apply из tar.gz (агент >= 4.4.0; не включается, не перезапускается),
-#        keep.d хранит /opt/stvor-agent/last-good.json, remove — отказ во время попытки применения.
+#        keep.d хранит /opt/stvor-agent/last-good.json, remove — отказ, пока применитель работает или включён.
 # 1.2.1: пин tar.gz stvor-agent 4.3.1.
 # 1.2.0: пин поставленного tar.gz — /opt/cream/var/ext/stvor-agent-openwrt/installed-pin
 #        (STVOR_AGENT_VERSION=, STVOR_AGENT_SHA256=; 0600, атомарно), keep.d хранит его:

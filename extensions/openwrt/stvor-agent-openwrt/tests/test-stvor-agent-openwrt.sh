@@ -41,6 +41,7 @@ make_tgz(){
             printf 'FAKE=%q\nme=%q\n' "$FAKE" "$m"
             echo 'echo "init $me $*" >> "$FAKE/calls"'
             echo '[[ "$1" == running ]] && { [[ -e "$FAKE/running-$me" ]]; exit; }'
+            echo '[[ "$1" == enabled ]] && { [[ -e "$FAKE/enabled-$me" ]]; exit; }'
             echo 'exit 0'
         } > "$d/init.d/$m"
     done
@@ -385,6 +386,7 @@ check "stvor-agent disable" ht_called '^agent disable$'
 check "служба остановлена" ht_called '^init stvor-agent stop$'
 check "служба выключена" ht_called '^init stvor-agent disable$'
 check "телеметрия выключена" ht_called '^init stvor-agent-telemetry disable$'
+check "применитель остановлен" ht_called '^init stvor-agent-apply stop$'
 check "применитель выключен" ht_called '^init stvor-agent-apply disable$'
 for p in usr/bin/stvor-agent etc/init.d/stvor-agent etc/init.d/stvor-agent-apply etc/init.d/stvor-agent-telemetry etc/stvor-agent \
     etc/stvor-agent-telemetry opt/stvor-agent var/run/stvor-agent-telemetry \
@@ -399,19 +401,33 @@ check "метка снята с узла: reload-apps" ht_called '^cream run tel
 check "запись установленного снята" test ! -e "$S/installed"
 check "пин снят" test ! -e "$S/installed-pin"
 
-echo "== remove во время попытки применения — отказ, ничего не снято =="
+echo "== remove: применитель работает или включён — отказ, ничего не снято; иначе — снимается =="
+# check_kept: отказ и ничего не снято.
+check_kept(){
+    check "$1 — отказ" test "$2" -ne 0
+    check "$1 — сообщение о попытке и выход" grep -q 'идёт попытка применения.*stvor-agent-apply stop' "$ROOT/out"
+    check_not "$1 — агент не выключен" ht_called '^agent disable$'
+    check_not "$1 — службы не остановлены" ht_called '^init .* (stop|disable)$'
+    for p in usr/bin/stvor-agent etc/init.d/stvor-agent etc/init.d/stvor-agent-apply opt/stvor-agent/apply/plan.json; do
+        check "$1 — на месте /$p" test -e "$ROOT/$p"
+    done
+}
 setup
 procd_up
 installed
 mkdir -p "$ROOT/opt/stvor-agent/apply"; echo '{}' > "$ROOT/opt/stvor-agent/apply/plan.json"
+: > "$FAKE/running-stvor-agent-apply"
 : > "$FAKE/calls"
-ht_hook remove; check "попытка идёт — отказ" test "$?" -ne 0
-check "сообщение о попытке" grep -q 'идёт попытка применения' "$ROOT/out"
-check_not "агент не выключен" ht_called '^agent disable$'
-check_not "службы не тронуты" ht_called '^init '
-for p in usr/bin/stvor-agent etc/init.d/stvor-agent etc/init.d/stvor-agent-apply opt/stvor-agent/apply/plan.json; do
-    check "на месте /$p" test -e "$ROOT/$p"
-done
+ht_hook remove; check_kept "работает" "$?"
+rm -f "$FAKE/running-stvor-agent-apply"; : > "$FAKE/enabled-stvor-agent-apply"
+: > "$FAKE/calls"
+ht_hook remove; check_kept "включён" "$?"
+rm -f "$FAKE/enabled-stvor-agent-apply"
+: > "$FAKE/calls"
+ht_hook remove; eq "plan.json без работающего и включённого применителя — 0" 0 "$?"
+check "предупреждение о брошенной попытке" grep -q 'предупреждение: .*plan.json.*снимается' "$ROOT/out"
+check "применитель остановлен" ht_called '^init stvor-agent-apply stop$'
+check "снято /opt/stvor-agent" test ! -e "$ROOT/opt/stvor-agent"
 setup
 installed
 : > "$FAKE/disable-fails"
