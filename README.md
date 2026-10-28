@@ -18,7 +18,7 @@ NVIDIA, стек Jetson (L4T), файрвол, локаль и прочее. О�
 Подключить каталог — снимок выпуска, проверенный по sha256:
 
 ```bash
-CV=5.10.0 # x-release-please-version
+CV=5.11.0 # x-release-please-version
 URL="https://github.com/iamletenkov/cream-extensions/releases/download/v$CV"
 curl -fLO "$URL/cream-extensions-$CV.tar.gz"
 curl -fLO "$URL/SHA256SUMS"
