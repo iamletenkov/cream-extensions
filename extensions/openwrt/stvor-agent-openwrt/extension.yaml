@@ -22,7 +22,8 @@
 #             machine-id, state, tokens, domain — Р4 revised 2026-10-23).
 schema: cream/v1
 name: stvor-agent-openwrt
-version: 1.2.0
+version: 1.2.1
+# 1.2.1: пин tar.gz stvor-agent 4.3.1.
 # 1.2.0: пин поставленного tar.gz — /opt/cream/var/ext/stvor-agent-openwrt/installed-pin
 #        (STVOR_AGENT_VERSION=, STVOR_AGENT_SHA256=; 0600, атомарно), keep.d хранит его:
 #        /etc/stvor/restore.sh Stvor ставит агента по нему. Снимается до скачивания.
