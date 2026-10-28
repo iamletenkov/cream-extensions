@@ -85,6 +85,11 @@ eq "machine-id" "-rw-r----- root:stvor-telemetry" "$(mode /opt/stvor-agent/machi
 eq "machine-id тот же" 0123456789abcdef "$(cat /opt/stvor-agent/machine-id)"
 eq "uid stvor-telemetry тот же" "$TUID" "$(awk -F: '$1 == "stvor-telemetry" { print $3 }' /etc/passwd)"
 eq "один пользователь" 1 "$(grep -c '^stvor-telemetry:' /etc/passwd)"
+eq "pin агента" "-rw------- root:root" \
+	"$(mode /opt/cream/var/ext/stvor-agent-openwrt/installed-pin) $(owner /opt/cream/var/ext/stvor-agent-openwrt/installed-pin)"
+eq "pin агента: версия и сумма tar.gz" \
+	"STVOR_AGENT_VERSION=4.1.0 STVOR_AGENT_SHA256=$(sha256sum /out/agent.tar.gz | cut -d' ' -f1)" \
+	"$(tr '\n' ' ' </opt/cream/var/ext/stvor-agent-openwrt/installed-pin | sed 's/ $//')"
 [ -e /opt/cream/var/ext/stvor-agent-openwrt/user-created ] || fail "маркер пользователя пропал — remove его не снимет"
 grep -qx 'STVOR_AGENT_INTERVAL=120' /etc/cream/stvor-agent-openwrt/config || fail "домен агента: $(cat /etc/cream/stvor-agent-openwrt/config)"
 [ -e /etc/cream/teleport-openwrt/command-labels.d/stvor_agent ] || fail "метка stvor_agent не разложена"
