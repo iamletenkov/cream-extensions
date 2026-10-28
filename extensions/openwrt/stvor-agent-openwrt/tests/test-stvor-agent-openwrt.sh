@@ -250,8 +250,8 @@ installed; eq "4.1.0 — 0" 0 "$?"
 make_tgz 4.2.0
 ht_hook install STVOR_AGENT_VERSION=4.2.0 STVOR_AGENT_SHA256="$(printf 'd%.0s' {1..64})" STVOR_AGENT_MIRROR="$MIRROR"
 check "чужая сумма — отказ" test "$?" -ne 0
-check_not "чужая сумма — в пине нет 4.2.0" grep -q '4.2.0' "$S/installed-pin"
-check_not "чужая сумма — в пине нет чужой суммы" grep -q 'ddddddddd' "$S/installed-pin"
+check_not "чужая сумма — в пине нет 4.2.0" grep -qs '4.2.0' "$S/installed-pin"
+check_not "чужая сумма — в пине нет чужой суммы" grep -qs 'ddddddddd' "$S/installed-pin"
 check "чужая сумма — пин снят" test ! -e "$S/installed-pin"
 check "чужая сумма — прежний бинарь на месте" test -x "$ROOT/usr/bin/stvor-agent"
 : > "$FAKE/curl-fails"

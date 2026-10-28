@@ -315,7 +315,7 @@ eq "pin нет — pin записан" "TELEPORT_VERSION=18.10.0|TELEPORT_SHA256
 # so a replacement cut short never looks done (restore.sh of Stvor falls back to its recipe).
 bad_sha="$(printf 'e%.0s' {1..64})"
 reinstall "$bad_sha"; check "сумма не совпала — отказ" test "$?" -ne 0
-check_not "сумма не совпала — в pin нет чужой суммы" grep -q "$bad_sha" "$S/installed-pin"
+check_not "сумма не совпала — в pin нет чужой суммы" grep -qs "$bad_sha" "$S/installed-pin"
 check "сумма не совпала — pin снят до скачивания" test ! -e "$S/installed-pin"
 check "сумма не совпала — бинарь прежней сборки" grep -qx '# build stvor.4' "$ROOT/opt/teleport/bin/teleport"
 

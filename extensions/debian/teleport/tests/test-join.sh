@@ -881,8 +881,8 @@ make_tarball 18.12.0
 msg="$(hk upgrade TELEPORT_VERSION=18.12.0 TELEPORT_SHA256="$bad_sha" TELEPORT_MIRROR=https://mirror.example.org 2>&1)"; rc=$?
 check "сумма не совпала: отказ" test "$rc" -ne 0
 check "сумма не совпала: текст" grep -q 'sha256 не совпал' <<< "$msg"
-check_not "сумма не совпала: в pin нет новой версии" grep -q '18.12.0' "$STATE/installed-pin"
-check_not "сумма не совпала: в pin нет чужой суммы" grep -q "$bad_sha" "$STATE/installed-pin"
+check_not "сумма не совпала: в pin нет новой версии" grep -qs '18.12.0' "$STATE/installed-pin"
+check_not "сумма не совпала: в pin нет чужой суммы" grep -qs "$bad_sha" "$STATE/installed-pin"
 check "сумма не совпала: pin снят до скачивания" test ! -e "$STATE/installed-pin"
 check "сумма не совпала: прежний бинарь на месте" grep -q 'v18.11.0' <<< "$("$ROOT/usr/local/bin/teleport" version)"
 
