@@ -409,8 +409,10 @@ sa_hook_install(){
         work="$(mktemp -d "${TMPDIR:-/tmp}/stvor-agent.XXXXXX")"
         # shellcheck disable=SC2064  # the path is fixed now, on purpose
         trap "rm -r -f -- '$work'" EXIT
-        # The pin goes before the download: a replacement cut short never looks done.
-        rm -f -- "$SA_PIN"
+        # The pin and the record go before the download: a replacement cut short
+        # (a new binary in place, an init script not) never looks done — a rerun
+        # of the old pair fetches it again instead of pinning it over the new binary.
+        rm -f -- "$SA_PIN" "$SA_INSTALLED"
         file="$(sa_fetch "$work" "$arch")" || exit 1
         mkdir -p -- "$work/x"
         sa_unpack "$file" "$work/x" || exit 1

@@ -264,6 +264,26 @@ eq "4.2.0 — 0" 0 "$?"
 eq "4.2.0 — pin новый" "STVOR_AGENT_VERSION=4.2.0|STVOR_AGENT_SHA256=$TGZ_SHA|" "$(apin)"
 check_not "черновика пина не осталось" bash -c 'compgen -G "$1/.installed-pin.*" >/dev/null' _ "$S"
 
+echo "== замена оборвалась после бинаря — повтор прежней пары ставит её заново, пин верный =="
+# Новый бинарь встал, init-скрипт не лёг (sa_die): запись установленного прежней пары
+# не должна дать повтору «уже установлен» и пин прежней пары поверх нового бинаря.
+setup
+installed; eq "4.1.0 — 0" 0 "$?"
+sha41="$TGZ_SHA"; cp "$FAKE/tgz" "$FAKE/tgz41"
+make_tgz 4.2.0
+mv "$ROOT/etc/init.d" "$ROOT/etc/init.d.saved"; : > "$ROOT/etc/init.d"
+ht_hook install STVOR_AGENT_VERSION=4.2.0 STVOR_AGENT_SHA256="$TGZ_SHA" STVOR_AGENT_MIRROR="$MIRROR"
+check "init-скрипт не лёг — отказ" test "$?" -ne 0
+check "фикстура: бинарь уже 4.2.0" grep -q 'stvor-agent 4.2.0' "$ROOT/usr/bin/stvor-agent"
+rm -f "$ROOT/etc/init.d"; mv "$ROOT/etc/init.d.saved" "$ROOT/etc/init.d"
+check "оборвалось — пина нет" test ! -e "$S/installed-pin"
+cp "$FAKE/tgz41" "$FAKE/tgz"; TGZ_SHA="$sha41"
+: > "$FAKE/calls"
+installed; eq "повтор 4.1.0 — 0" 0 "$?"
+check "повтор 4.1.0 — скачан заново" ht_called '^curl '
+check "повтор 4.1.0 — бинарь 4.1.0" grep -q 'stvor-agent 4.1.0' "$ROOT/usr/bin/stvor-agent"
+eq "повтор 4.1.0 — pin прежней пары" "STVOR_AGENT_VERSION=4.1.0|STVOR_AGENT_SHA256=$sha41|" "$(apin)"
+
 echo "== офлайн: STVOR_AGENT_TARBALL без сети =="
 setup
 cp "$FAKE/tgz" "$ROOT/agent.tar.gz"
