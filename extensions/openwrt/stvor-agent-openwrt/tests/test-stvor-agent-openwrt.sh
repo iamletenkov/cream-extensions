@@ -21,7 +21,8 @@ MIRROR=https://stvor.example.org/dist/teleport
 TOKEN="tok-$RANDOM$RANDOM-label-secret"
 
 # make_tgz <version> [без <член>]: stvor-agent_<v>_linux_<arch>.tar.gz в $FAKE/tgz:
-# бинарь-подделка (version, disable) и init-скрипты, пишущие журнал вызовов.
+# бинарь-подделка (version, disable) и init-скрипты, пишущие журнал вызовов
+# (stvor-agent-apply — с агента 4.4.0; выпуски до него идут «без init.d/stvor-agent-apply»).
 make_tgz(){
     local d m; d="$(mktemp -d "$HT_TMP/tgz.XXXXXX")"
     mkdir -p "$d/init.d"
@@ -34,7 +35,7 @@ make_tgz(){
         echo '[[ "$*" == "status --json" ]] && { cat "$FAKE/status.json" 2>/dev/null; exit "$(cat "$FAKE/status-rc" 2>/dev/null || echo 0)"; }'
         echo 'exit 0'
     } > "$d/stvor-agent"
-    for m in stvor-agent stvor-agent-telemetry; do
+    for m in stvor-agent stvor-agent-apply stvor-agent-telemetry; do
         {
             echo '#!/usr/bin/env bash'
             printf 'FAKE=%q\nme=%q\n' "$FAKE" "$m"
@@ -124,8 +125,11 @@ eq "метка — как у debian" "$(cat "$DEB/files/stvor_agent.command-labe
 # Решение владельца 2026-10-23 (Р4 пересмотрен): sysupgrade с сохранением конфигурации
 # хранит агента целиком — machine-id, состояние, токены и домен; буфер телеметрии нет.
 eq "keep.d — machine-id, состояние, токены, домен, маркер пользователя, пин tar.gz" \
-    "/opt/stvor-agent/machine-id|/opt/stvor-agent/state.json|/opt/stvor-agent/telemetry-token.src|/etc/stvor-agent/token|/etc/stvor-agent-telemetry/token|/etc/cream/stvor-agent-openwrt/|/opt/cream/var/ext/stvor-agent-openwrt/user-created|/opt/cream/var/ext/stvor-agent-openwrt/installed-pin|" \
+    "/opt/stvor-agent/machine-id|/opt/stvor-agent/state.json|/opt/stvor-agent/telemetry-token.src|/etc/stvor-agent/token|/etc/stvor-agent-telemetry/token|/etc/cream/stvor-agent-openwrt/|/opt/cream/var/ext/stvor-agent-openwrt/user-created|/opt/cream/var/ext/stvor-agent-openwrt/installed-pin|/opt/stvor-agent/last-good.json|" \
     "$(grep -v '^#' "$SRC/files/keep.d" | tr '\n' '|')"
+# Спека stvor-agent «назначения» §8.4, ADR-0001: last-good.json переживает sysupgrade,
+# файлы отката, скачанное и попытка — нет (после sysupgrade откат берётся по baseline).
+check_not "keep.d без rollback/, updates/, apply/" grep -qE '^/opt/stvor-agent/(rollback|updates|apply)' "$SRC/files/keep.d"
 # Восстановленное лежит на диске до повторной установки: файл, который расширение
 # кладёт через files, cream отверг бы (conflict.file_unowned, рулинг cream Р21).
 check "keep.d не пересекается с files расширений OpenWrt" python3 - "$SRC/files/keep.d" "$REPO/extensions/openwrt" <<'PY2'
@@ -155,6 +159,10 @@ eq "бинарь 0755" -rwxr-xr-x "$(mode "$ROOT/usr/bin/stvor-agent")"
 eq "init stvor-agent 0755" -rwxr-xr-x "$(mode "$ROOT/etc/init.d/stvor-agent")"
 eq "init телеметрии 0755" -rwxr-xr-x "$(mode "$ROOT/etc/init.d/stvor-agent-telemetry")"
 check "init-скрипт из tar.gz" grep -q 'echo "init $me $\*"' "$ROOT/etc/init.d/stvor-agent"
+# Применитель (stvor-agent, спека «назначения» §6.1): ставится, но не включается —
+# enable и start делает служба агента на время попытки, stop и disable — он сам.
+eq "init применителя 0755" -rwxr-xr-x "$(mode "$ROOT/etc/init.d/stvor-agent-apply")"
+check_not "применитель не включён" ht_called '^init stvor-agent-apply '
 check "man не ставится" test ! -e "$ROOT/usr/bin/stvor-agent.8.gz"
 check "enable агента" ht_called '^init stvor-agent enable$'
 check "enable телеметрии" ht_called '^init stvor-agent-telemetry enable$'
@@ -236,6 +244,18 @@ make_tgz 4.1.0 "без init.d/stvor-agent-telemetry"
 installed; check "нет init телеметрии — отказ" test "$?" -ne 0
 check "сообщение называет файл" grep -q 'нет файла init.d/stvor-agent-telemetry' "$ROOT/out"
 check "ничего не поставлено" nothing_installed
+make_tgz 4.1.0 "без init.d/stvor-agent-apply"
+installed; eq "выпуск без применителя (до 4.4.0) — 0" 0 "$?"
+check "init агента поставлен" test -x "$ROOT/etc/init.d/stvor-agent"
+check "init применителя не появился" test ! -e "$ROOT/etc/init.d/stvor-agent-apply"
+setup
+make_tgz 4.1.0 "без init.d/stvor-agent-apply"
+d="$(mktemp -d "$HT_TMP/tgz.XXXXXX")"; tar -xzf "$FAKE/tgz" -C "$d"
+ln -s /bin/sh "$d/init.d/stvor-agent-apply"
+tar -czf "$FAKE/tgz" -C "$d" .; TGZ_SHA="$(sha256sum "$FAKE/tgz" | cut -d' ' -f1)"
+installed; check "init применителя — ссылка: отказ" test "$?" -ne 0
+check "сообщение называет применитель" grep -q 'init.d/stvor-agent-apply' "$ROOT/out"
+check "ничего не поставлено" nothing_installed
 make_tgz 4.1.0
 : > "$FAKE/curl-fails"
 installed; check "сеть упала — отказ" test "$?" -ne 0
@@ -309,6 +329,16 @@ sleep 0.2
 check "работающий агент перезапущен" ht_called '^init stvor-agent restart$'
 check_not "неработающая телеметрия не стартует" ht_called '^init stvor-agent-telemetry restart$'
 check "сказано «было 4.1.0»" grep -q '(было 4.1.0)' "$ROOT/out"
+# Обновление агента идёт изнутри попытки: работающий применитель не трогается.
+: > "$FAKE/running-stvor-agent-apply"
+: > "$FAKE/calls"
+make_tgz 4.3.0
+ht_hook install STVOR_AGENT_VERSION=4.3.0 STVOR_AGENT_SHA256="$TGZ_SHA" STVOR_AGENT_MIRROR="$MIRROR"
+eq "upgrade до 4.3.0 при работающем применителе — 0" 0 "$?"
+wait
+sleep 0.2
+check_not "применитель не перезапущен и не включён" ht_called '^init stvor-agent-apply (restart|stop|start|enable|disable)$'
+rm -f "$FAKE/running-stvor-agent-apply"
 check "токен меток на месте" grep -q "token=$TOKEN" "$ROOT/etc/stvor-agent/token"
 setup
 procd_up
@@ -355,7 +385,8 @@ check "stvor-agent disable" ht_called '^agent disable$'
 check "служба остановлена" ht_called '^init stvor-agent stop$'
 check "служба выключена" ht_called '^init stvor-agent disable$'
 check "телеметрия выключена" ht_called '^init stvor-agent-telemetry disable$'
-for p in usr/bin/stvor-agent etc/init.d/stvor-agent etc/init.d/stvor-agent-telemetry etc/stvor-agent \
+check "применитель выключен" ht_called '^init stvor-agent-apply disable$'
+for p in usr/bin/stvor-agent etc/init.d/stvor-agent etc/init.d/stvor-agent-apply etc/init.d/stvor-agent-telemetry etc/stvor-agent \
     etc/stvor-agent-telemetry opt/stvor-agent var/run/stvor-agent-telemetry \
     etc/cream/teleport-openwrt/command-labels.d/stvor_agent; do
     check "снято /$p" test ! -e "$ROOT/$p"
@@ -367,6 +398,20 @@ check "root на месте" grep -q '^root:' "$ROOT/etc/passwd"
 check "метка снята с узла: reload-apps" ht_called '^cream run teleport-openwrt reload-apps$'
 check "запись установленного снята" test ! -e "$S/installed"
 check "пин снят" test ! -e "$S/installed-pin"
+
+echo "== remove во время попытки применения — отказ, ничего не снято =="
+setup
+procd_up
+installed
+mkdir -p "$ROOT/opt/stvor-agent/apply"; echo '{}' > "$ROOT/opt/stvor-agent/apply/plan.json"
+: > "$FAKE/calls"
+ht_hook remove; check "попытка идёт — отказ" test "$?" -ne 0
+check "сообщение о попытке" grep -q 'идёт попытка применения' "$ROOT/out"
+check_not "агент не выключен" ht_called '^agent disable$'
+check_not "службы не тронуты" ht_called '^init '
+for p in usr/bin/stvor-agent etc/init.d/stvor-agent etc/init.d/stvor-agent-apply opt/stvor-agent/apply/plan.json; do
+    check "на месте /$p" test -e "$ROOT/$p"
+done
 setup
 installed
 : > "$FAKE/disable-fails"
@@ -433,8 +478,8 @@ spoil_secrets(){
     mkdir -p "$ROOT/etc/stvor-agent-telemetry" "$h"
     chmod 0755 "$ROOT/etc/stvor-agent" "$ROOT/etc/stvor-agent-telemetry" "$h"
     printf 'url=https://stvor.example.org/robot-api\ntoken=t\n' > "$ROOT/etc/stvor-agent-telemetry/token"
-    echo '{"schema":1}' > "$h/state.json"; echo fp > "$h/telemetry-token.src"
-    chmod 0644 "$ROOT/etc/stvor-agent/token" "$ROOT/etc/stvor-agent-telemetry/token" "$h/state.json" "$h/telemetry-token.src"
+    echo '{"schema":1}' > "$h/state.json"; echo fp > "$h/telemetry-token.src"; echo '{"schema":1}' > "$h/last-good.json"
+    chmod 0644 "$ROOT/etc/stvor-agent/token" "$ROOT/etc/stvor-agent-telemetry/token" "$h/state.json" "$h/telemetry-token.src" "$h/last-good.json"
     rm -f "$FAKE/chown.argv"
 }
 check_secrets(){
@@ -446,7 +491,7 @@ check_secrets(){
     eq "$1: /etc/stvor-agent-telemetry 0750" drwxr-x--- "$(mode "$ROOT/etc/stvor-agent-telemetry")"
     eq "$1: токен телеметрии 0640" -rw-r----- "$(mode "$ROOT/etc/stvor-agent-telemetry/token")"
     check "$1: токен телеметрии root:stvor-telemetry" owned "0:stvor-telemetry -- $ROOT/etc/stvor-agent-telemetry/token"
-    for f in state.json telemetry-token.src; do
+    for f in state.json telemetry-token.src last-good.json; do
         eq "$1: $f 0600" -rw------- "$(mode "$h/$f")"
         check "$1: $f root" owned "0:0 -- $h/$f"
     done

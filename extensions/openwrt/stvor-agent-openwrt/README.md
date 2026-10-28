@@ -30,7 +30,10 @@ teleport-openwrt set-managed`), служба телеметрии шлёт на 
   или пин каталога), берёт tar.gz из источника, сверяет sha256 до распаковки и ставит
   из него `/usr/bin/stvor-agent` и init-скрипты procd `/etc/init.d/stvor-agent` и
   `/etc/init.d/stvor-agent-telemetry` (оба включаются в `rc.d`; каждый стартует, только
-  когда есть его токен). Архитектура — `uname -m` (`x86_64` → amd64, `aarch64` → arm64).
+  когда есть его токен), а если выпуск его несёт (агент ≥ 4.4.0) — и
+  `/etc/init.d/stvor-agent-apply`, применитель назначенных порталом версий: он не
+  включается и не перезапускается ни здесь, ни при обновлении — включает его служба
+  агента на время попытки, выключает сам применитель на финале. Архитектура — `uname -m` (`x86_64` → amd64, `aarch64` → arm64).
   Создаёт системного пользователя и группу `stvor-telemetry` помощниками
   `group_add_next`/`user_add` из `/lib/functions.sh` (shadow-utils на OpenWrt нет) и
   каталоги `/opt/stvor-agent` и `/etc/stvor-agent-telemetry` (0750
@@ -46,15 +49,16 @@ teleport-openwrt set-managed`), служба телеметрии шлёт на 
   `machine-id` 0640 `root:stvor-telemetry`, `/opt/stvor-agent/telemetry` и его `buffer` —
   0700 `stvor-telemetry`; токены и файлы root — как их пишет агент: `/etc/stvor-agent`
   0700 и `token` 0600 `root`, `/etc/stvor-agent-telemetry` 0750 и `token` 0640
-  `root:stvor-telemetry`, `state.json` и `telemetry-token.src` 0600 `root` (ссылки не
+  `root:stvor-telemetry`, `state.json`, `telemetry-token.src` и `last-good.json` 0600 `root` (ссылки не
   разыменовываются). Восстановленное из копии (или `keep.d` версии 1.1.0) приходило
   `0:0 0755`, и служба телеметрии падала с `permission denied`; теперь это чинят и
   загрузка, и повтор `cream install`: буфер не того владельца пересоздаётся пустым. Без
   сети; пользователя `stvor-telemetry` ещё нет — ничего.
 - **`apply`** (`cream set stvor-agent-openwrt …`) — работающие службы перезапускаются
   фоном и перечитывают `/etc/cream/stvor-agent-openwrt/config`; без procd — ничего.
-- **`remove`** — `stvor-agent disable` (служба, токен, `state.json`), службы
-  остановлены и выключены; бинарь, init-скрипты, токены (`/etc/stvor-agent`,
+- **`remove`** — пока идёт попытка применителя (`/opt/stvor-agent/apply/plan.json`) —
+  отказ, ничего не снято. Иначе `stvor-agent disable` (служба, токен, `state.json`), службы
+  остановлены и выключены (и применитель); бинарь, init-скрипты, токены (`/etc/stvor-agent`,
   `/etc/stvor-agent-telemetry`), состояние `/opt/stvor-agent` стёрты; пользователь и
   группа `stvor-telemetry` снимаются, только если их создало это расширение. Каталоги,
   куда пишет `stvor-telemetry` (`/opt/stvor-agent`, `/var/run/stvor-agent-telemetry`),
@@ -152,7 +156,8 @@ RUN_COMMAND cream install --with-deps stvor-agent-openwrt STVOR_AGENT_VERSION=<v
 - Пользователь `stvor-telemetry` снимается, только если хук создал его вместе с группой
   (маркер в состоянии cream сохраняется при `sysupgrade`).
 - tar.gz без `stvor-agent`, `init.d/stvor-agent` или `init.d/stvor-agent-telemetry` —
-  отказ до изменений: нужен выпуск агента с поставкой для OpenWrt.
+  отказ до изменений: нужен выпуск агента с поставкой для OpenWrt. `init.d/stvor-agent-apply`
+  необязателен (выпуски до 4.4.0), но если есть — только обычным файлом.
 
 ## Подробности
 
@@ -193,7 +198,11 @@ RUN_COMMAND cream install --with-deps stvor-agent-openwrt STVOR_AGENT_VERSION=<v
   строки `STVOR_AGENT_VERSION=` и `STVOR_AGENT_SHA256=` (0600, запись атомарная). Пишет
   `install`/`upgrade` после замены бинаря и init-скриптов (и при пропуске той же пары, если
   пина ещё нет), `remove` снимает. `/etc/stvor/restore.sh` Stvor ставит агента по нему, а
-  без файла — по пинам рецепта: обновление агента через cream рецепт не переписывает.
+  без файла — по пинам рецепта: обновление агента через cream рецепт не переписывает;
+- `/opt/stvor-agent/last-good.json` — последний рабочий набор версий применителя (спека
+  агента «назначения» §8.4, ADR-0001 агента). Файлы отката `rollback/`, скачанное
+  `updates/` и попытка `apply/` не сохраняются: после `sysupgrade` следующая попытка
+  берёт файлы отката по `baseline`, попытка посреди `sysupgrade` теряется.
 
 Буфер телеметрии, бинарь, init-скрипты и реестр cream не сохраняются. Архив хранит только
 файлы: `tar` создаёт их каталоги заново `0755 root`, а агент не принимает токен меток в
@@ -223,10 +232,13 @@ Stvor — служба восстановления) и `configure` на каж�
   выбор версии (явная пара, пин, половина пары), источник (зеркало, GitHub, файл), сверка
   sha256 и состав tar.gz до изменений, раскладка и права, пользователь
   `stvor-telemetry` (создан — снимается, чужой — остаётся), `reload-apps` только на живой
-  машине с procd, перезапуск работающих служб при обновлении и в `apply`, `remove`,
+  машине с procd, перезапуск работающих служб при обновлении и в `apply`, применитель
+  (ставится, не включается и не перезапускается; выпуск без него; ссылка — отказ), `remove`
+  (и отказ во время попытки),
   окружение `curl` без токена и `CREAM_*`, действие `status` (блок `telemetry`), права токенов
   и состояния после `sysupgrade` (каталоги 0755 от `tar`, ссылки не разыменовываются),
-  `keep.d` не пересекается с `files` расширений OpenWrt, `installed-pin` (0600; снят до
+  `keep.d` не пересекается с `files` расширений OpenWrt и хранит `last-good.json`, но не
+  `rollback/`, `updates/`, `apply/`, `installed-pin` (0600; снят до
   скачивания — при чужой сумме или обрыве сети не новый, пишется и без сети, если его не было). Пин в
   git — полный или пустой целиком.
 - **L** — `make test-openwrt`: корневая ФС openwrt-builder v0.3.1 в контейнере, настоящие
