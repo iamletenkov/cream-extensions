@@ -5,7 +5,10 @@
 # (telemetry-token.src), both tokens, the domain of the extension and the marker
 # that this extension made the user stvor-telemetry (/etc/passwd is kept by
 # OpenWrt itself) and the pin of the installed tar.gz (installed-pin: the
-# version and sha256 /etc/stvor/restore.sh of Stvor installs again). After the
+# version and sha256 /etc/stvor/restore.sh of Stvor installs again), and
+# last-good.json of the applier (the last working set of versions; agent spec
+# "assignments" §8.4, ADR-0001 — rollback/, updates/ and apply/ are not kept:
+# after sysupgrade the next attempt takes the rollback files by baseline). After the
 # new firmware the extension is installed again; the portal issues nothing new. The archive keeps files only: install and configure
 # (every boot) give the directories and files back their owners and modes. The
 # telemetry buffer, the binary, the init scripts and the registry of cream are
@@ -18,3 +21,4 @@
 /etc/cream/stvor-agent-openwrt/
 /opt/cream/var/ext/stvor-agent-openwrt/user-created
 /opt/cream/var/ext/stvor-agent-openwrt/installed-pin
+/opt/stvor-agent/last-good.json

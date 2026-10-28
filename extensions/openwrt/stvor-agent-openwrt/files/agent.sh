@@ -5,7 +5,11 @@
 # its own repository and ships for OpenWrt as stvor-agent_<version>_linux_<arch>.tar.gz:
 # the static binary `stvor-agent` and the procd init scripts
 # `init.d/stvor-agent` and `init.d/stvor-agent-telemetry` (plus the manual page
-# and the licenses, not installed here: OpenWrt has no man).
+# and the licenses, not installed here: OpenWrt has no man). From agent 4.4.0
+# it also carries `init.d/stvor-agent-apply` — the applier of the versions the
+# portal assigns (agent spec "assignments" §6.1, ADR-0001 of stvor-agent):
+# installed here, never enabled, started or restarted — the agent service
+# enables and starts it for an attempt, the applier stops and disables itself.
 # https://github.com/iamletenkov/stvor-agent
 #
 # Keys of the domain (cream passes them as environment) — those of
@@ -23,7 +27,8 @@
 # hook (its lock and phase).
 #
 # Layout (the agent picks the OpenWrt paths by /etc/os-release itself):
-#   /usr/bin/stvor-agent, /etc/init.d/stvor-agent{,-telemetry} — from the tar.gz
+#   /usr/bin/stvor-agent, /etc/init.d/stvor-agent{,-telemetry,-apply} — from the tar.gz
+#   /opt/stvor-agent/apply   an attempt of the applier (plan.json while it runs)
 #   /opt/stvor-agent         state.json, machine-id, telemetry/ (0750 root:stvor-telemetry;
 #                            /var is tmpfs on OpenWrt)
 #   /etc/stvor-agent-telemetry  the telemetry token directory (0750 root:stvor-telemetry)
@@ -37,6 +42,8 @@ RE_SA_VERSION='^[0-9]+\.[0-9]+\.[0-9]+$'
 RE_SA_SHA256='^[0-9a-f]{64}$'
 RE_SA_URL='^https?://[A-Za-z0-9._~:/%+-]+$'
 SA_SERVICES=(stvor-agent stvor-agent-telemetry)
+# The applier: not in SA_SERVICES — never enabled or restarted by this extension.
+SA_APPLY=stvor-agent-apply
 SA_USER=stvor-telemetry
 
 SA_ROOT="${CREAM_ROOT:-}"
@@ -47,6 +54,8 @@ SA_HOME="$SA_ROOT/opt/stvor-agent"
 SA_ETC="$SA_ROOT/etc/stvor-agent"
 SA_TELEMETRY_ETC="$SA_ROOT/etc/stvor-agent-telemetry"
 SA_RUN_TELEMETRY="$SA_ROOT/var/run/stvor-agent-telemetry"
+# An attempt of the applier is going on while its plan exists.
+SA_APPLY_PLAN="$SA_ROOT/opt/stvor-agent/apply/plan.json"
 SA_STATE="${CREAM_STATE_DIR:-$SA_ROOT/opt/cream/var/ext/stvor-agent-openwrt}"
 # "version sha256" of the tar.gz in place; the marker of the user this extension made.
 SA_INSTALLED="$SA_STATE/installed"
@@ -173,8 +182,10 @@ sa_fetch(){
 
 # sa_unpack <tar.gz> <dir>: the members this extension installs, each a regular
 # file (not a link) — a release without them is refused before anything changes.
+# init.d/stvor-agent-apply is optional (releases before 4.4.0 have none), but
+# when present it is a regular file too.
 sa_unpack(){
-    local m
+    local m a="$2/init.d/$SA_APPLY"
     sa_run tar -xzf "$1" -C "$2" || { sa_log "ОШИБКА: tar.gz агента не распаковался"; return 1; }
     for m in stvor-agent "${SA_SERVICES[@]/#/init.d/}"; do
         if [[ ! -f "$2/$m" || -L "$2/$m" ]]; then
@@ -182,6 +193,10 @@ sa_unpack(){
             return 1
         fi
     done
+    if [[ -L "$a" || ( -e "$a" && ! -f "$a" ) ]]; then
+        sa_log "ОШИБКА: init.d/$SA_APPLY в tar.gz — не обычный файл"
+        return 1
+    fi
 }
 
 # sa_put <src> <dst>: 0755 by a rename on the destination file system — a running
@@ -287,7 +302,7 @@ sa_own_state(){
 # telemetry user's to swap); a link is never followed — the agent refuses it too.
 #   /etc/stvor-agent                 0700 root, token 0600 root
 #   /etc/stvor-agent-telemetry       0750 root:stvor-telemetry, token 0640 the same
-#   /opt/stvor-agent/state.json, telemetry-token.src  0600 root
+#   /opt/stvor-agent/state.json, telemetry-token.src, last-good.json  0600 root
 sa_own_secrets(){
     local f
     if [[ -d "$SA_ETC" && ! -L "$SA_ETC" ]]; then
@@ -298,7 +313,7 @@ sa_own_secrets(){
         sa_dir "$SA_TELEMETRY_ETC" 0750 || return 1
         sa_own_file "$SA_TELEMETRY_ETC/token" "$SA_USER" 0640 || return 1
     fi
-    for f in state.json telemetry-token.src; do
+    for f in state.json telemetry-token.src last-good.json; do
         sa_own_file "$SA_HOME/$f" 0 0600 || return 1
     done
 }
@@ -420,6 +435,11 @@ sa_hook_install(){
         for s in "${SA_SERVICES[@]}"; do
             sa_put "$work/x/init.d/$s" "$SA_INIT_DIR/$s" || sa_die "не установить /etc/init.d/$s"
         done
+        # The applier: put by a rename (a running attempt keeps its procd
+        # instance), not enabled. A release without it leaves the old one be.
+        if [[ -f "$work/x/init.d/$SA_APPLY" ]]; then
+            sa_put "$work/x/init.d/$SA_APPLY" "$SA_INIT_DIR/$SA_APPLY" || sa_die "не установить /etc/init.d/$SA_APPLY"
+        fi
         mkdir -p -- "$SA_STATE" && echo "$SA_VERSION $SA_SHA256" > "$SA_INSTALLED"
         sa_log "установлен $(sa_tarball_name "$SA_VERSION" "$arch")${have:+ (было ${have%% *})}"
     fi
@@ -438,17 +458,33 @@ sa_hook_install(){
     sa_log "включение: printf '%s' '<токен>' | stvor-agent enable 'URL=https://<портал>/robot-api/v1/labels'"
 }
 
+# sa_apply_active: the init script of the applier runs (procd) or is enabled (rc.d).
+sa_apply_active(){
+    [[ -x "$SA_INIT_DIR/$SA_APPLY" ]] || return 1
+    { sa_procd_running && sa_svc "$SA_APPLY" running; } || sa_svc "$SA_APPLY" enabled
+}
+
 # hooks/remove: the agent forgets its token and stops, then everything this
 # extension put goes: services off, the binary, the init scripts, tokens, the
 # state, the user it made. The drop-in of the label goes first, so the node
 # drops the label now (reload-apps) — cream would remove it only after the hook.
 sa_hook_remove(){
     local s uid=""
+    # An attempt of the applier is never cut: it may be mid-install, and its
+    # binary and plan live in /opt/stvor-agent, which goes below. The attempt
+    # is on while its init script runs or is enabled (the applier stops and
+    # disables it on the final); a plan.json without either is left over.
+    if sa_apply_active; then
+        sa_die "идёт попытка применения назначений (/etc/init.d/$SA_APPLY работает или включён) — ничего не снято; дождитесь её финала или прервите: /etc/init.d/$SA_APPLY stop && /etc/init.d/$SA_APPLY disable, затем повторите cream remove"
+    fi
+    if [[ -e "$SA_APPLY_PLAN" || -L "$SA_APPLY_PLAN" ]]; then
+        sa_log "предупреждение: ${SA_APPLY_PLAN#"$SA_ROOT"} есть, а применитель не работает и не включён — попытка брошена, снимается"
+    fi
     if [[ -x "$SA_BIN" ]]; then
         sa_run "$SA_BIN" disable >/dev/null 2>&1 || sa_log "предупреждение: stvor-agent disable не прошёл — службы и токены снимаются здесь"
     fi
     if sa_procd_running; then
-        for s in "${SA_SERVICES[@]}"; do sa_svc "$s" stop || true; done
+        for s in "${SA_SERVICES[@]}" "$SA_APPLY"; do sa_svc "$s" stop || true; done
     fi
     # The trees of the telemetry user go only when no process of it is left:
     # busybox rm walks by path, a live process could swap a directory for a link.
@@ -456,7 +492,7 @@ sa_hook_remove(){
         uid="$(sa_uid)" || sa_die "нет uid пользователя $SA_USER — ничего не снято"
         sa_wait_user_gone "$uid" || sa_die "процессы $SA_USER не завершились — ничего не снято, повторите cream remove"
     fi
-    for s in "${SA_SERVICES[@]}"; do
+    for s in "${SA_SERVICES[@]}" "$SA_APPLY"; do
         sa_svc "$s" disable || true
         rm -f -- "$SA_INIT_DIR/$s"
     done
