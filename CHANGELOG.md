@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.10.0](https://github.com/iamletenkov/cream-extensions/compare/v5.9.3...v5.10.0) (2026-10-28)
+
+
+### Добавлено
+
+* **stvor-agent-openwrt:** применитель назначений и last-good.json в keep.d ([#78](https://github.com/iamletenkov/cream-extensions/issues/78)) ([6a28dc3](https://github.com/iamletenkov/cream-extensions/commit/6a28dc31545e6c5d23ba8ef6a145472177a315ad))
+* **teleport:** тарбол из раздачи портала по тегу форка, докачка при обрыве ([#80](https://github.com/iamletenkov/cream-extensions/issues/80)) ([d57d6af](https://github.com/iamletenkov/cream-extensions/commit/d57d6afaa4afc91095321844059e6ecb4003e5c1))
+
 ## [5.9.3](https://github.com/iamletenkov/cream-extensions/compare/v5.9.2...v5.9.3) (2026-10-28)
 
 
