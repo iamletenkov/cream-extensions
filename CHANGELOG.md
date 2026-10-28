@@ -1,5 +1,17 @@
 # Changelog
 
+## [5.11.0](https://github.com/iamletenkov/cream-extensions/compare/v5.10.0...v5.11.0) (2026-10-28)
+
+
+### Добавлено
+
+* **stvor-agent:** пин агента 4.4.0 ([#81](https://github.com/iamletenkov/cream-extensions/issues/81)) ([3ba656c](https://github.com/iamletenkov/cream-extensions/commit/3ba656c7cb95bc0ee56e05a686a43521d73ec8a4))
+
+
+### Исправлено
+
+* **teleport:** installed-pin хранит тег сборки форка ([#83](https://github.com/iamletenkov/cream-extensions/issues/83)) ([a79ac4f](https://github.com/iamletenkov/cream-extensions/commit/a79ac4f7da597bdb0435319789d13e4c5ec06c9d))
+
 ## [5.10.0](https://github.com/iamletenkov/cream-extensions/compare/v5.9.3...v5.10.0) (2026-10-28)
 
 
