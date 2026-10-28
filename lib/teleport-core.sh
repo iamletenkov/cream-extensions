@@ -1624,6 +1624,7 @@ pin_field(){
     case "$1" in
         TELEPORT_VERSION) re="$RE_VERSION" ;;
         TELEPORT_SHA256) re='^[0-9a-f]{64}$' ;;
+        TELEPORT_TAG) re="$RE_TAG" ;;
         *) return 1 ;;
     esac
     [[ -f "$INSTALLED_PIN" ]] || return 1
@@ -1664,10 +1665,21 @@ drop_installed_pin(){
     rm -f -- "$INSTALLED_PIN" || die "не снят ${INSTALLED_PIN#"$ROOT"}"
 }
 
-# write_installed_pin <version> <sha256> — after the binary is in place.
+# write_installed_pin <version> <sha256> [<tag>] — after the binary is in place;
+# the tag of the fork build (TELEPORT_DIST) is a third line: /etc/stvor/restore.sh
+# of Stvor fetches the same build after sysupgrade, not the one of its recipe.
 write_installed_pin(){
-    write_state "$INSTALLED_PIN" "$(printf 'TELEPORT_VERSION=%s\nTELEPORT_SHA256=%s' "$1" "$2")" \
+    local body
+    body="$(printf 'TELEPORT_VERSION=%s\nTELEPORT_SHA256=%s' "$1" "$2")"
+    [[ -n "${3:-}" ]] && body+=$'\n'"TELEPORT_TAG=$3"
+    write_state "$INSTALLED_PIN" "$body" \
         || warn "не записан ${INSTALLED_PIN#"$ROOT"} — следующий install поставит набор заново"
+}
+
+# pin_tag_current <tag> — the set is in place: the pin names <tag> (none given —
+# nothing to name). A pin written before the tag was kept gains it without a download.
+pin_tag_current(){
+    [[ -z "$1" || "$(pin_field TELEPORT_TAG)" == "$1" ]]
 }
 
 core_main(){
