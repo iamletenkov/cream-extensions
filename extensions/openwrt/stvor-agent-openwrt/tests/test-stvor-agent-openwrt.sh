@@ -155,7 +155,7 @@ sys.exit(0 if (v, a, b) == ("", "", "") or (re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]
 echo "== install: явная пара и зеркало — tar.gz, sha256, раскладка, пользователь =="
 setup
 installed; eq "install — 0" 0 "$?"
-check "скачан tar.gz amd64 с зеркала" grep -qx "curl -fL --retry 5 --retry-delay 5 --connect-timeout 30 --speed-limit 10240 --speed-time 60 -o .*/stvor-agent_4.1.0_linux_amd64.tar.gz $MIRROR/stvor-agent_4.1.0_linux_amd64.tar.gz" "$FAKE/calls"
+check "скачан tar.gz amd64 с зеркала" grep -qx "curl -fL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 30 --speed-limit 10240 --speed-time 60 -o .*/stvor-agent_4.1.0_linux_amd64.tar.gz $MIRROR/stvor-agent_4.1.0_linux_amd64.tar.gz" "$FAKE/calls"
 eq "бинарь 0755" -rwxr-xr-x "$(mode "$ROOT/usr/bin/stvor-agent")"
 eq "init stvor-agent 0755" -rwxr-xr-x "$(mode "$ROOT/etc/init.d/stvor-agent")"
 eq "init телеметрии 0755" -rwxr-xr-x "$(mode "$ROOT/etc/init.d/stvor-agent-telemetry")"
