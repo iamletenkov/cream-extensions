@@ -405,6 +405,7 @@ hook_install(){
         log "Teleport $version уже установлен"
     else
         [[ "$prev" == "$version" ]] && pin_change_line "$version" "$sha"
+        drop_installed_pin
         fetch_set "$version" "$arch" "$sha" "$mirror" "$tarball"
         write_installed_pin "$version" "$FETCH_SHA"
         changed=1

@@ -874,6 +874,17 @@ printf 'TELEPORT_VERSION=18.10.0\nTELEPORT_SHA256=%s\n' "$sha4" > "$STATE/instal
 : > "$FAKE/curl.log"
 up_line TELEPORT_SHA256="$sha4" >/dev/null
 check "pin другой версии: тарбол скачан" test -s "$FAKE/curl.log"
+# The sum does not match: the pin is not the new one — dropped before the download,
+# so a replacement cut short never looks done (restore.sh of Stvor falls back to its recipe).
+bad_sha="$(printf 'e%.0s' {1..64})"
+make_tarball 18.12.0
+msg="$(hk upgrade TELEPORT_VERSION=18.12.0 TELEPORT_SHA256="$bad_sha" TELEPORT_MIRROR=https://mirror.example.org 2>&1)"; rc=$?
+check "сумма не совпала: отказ" test "$rc" -ne 0
+check "сумма не совпала: текст" grep -q 'sha256 не совпал' <<< "$msg"
+check_not "сумма не совпала: в pin нет новой версии" grep -q '18.12.0' "$STATE/installed-pin"
+check_not "сумма не совпала: в pin нет чужой суммы" grep -q "$bad_sha" "$STATE/installed-pin"
+check "сумма не совпала: pin снят до скачивания" test ! -e "$STATE/installed-pin"
+check "сумма не совпала: прежний бинарь на месте" grep -q 'v18.11.0' <<< "$("$ROOT/usr/local/bin/teleport" version)"
 
 new_root
 rm -f "$ROOT/usr/local/bin/teleport"

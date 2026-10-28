@@ -93,7 +93,8 @@ Stvor из того же тарбола `linux-<arch>` (рулинг Р7); на 
 - `TELEPORT_SHA256` — sha256 набора архитектуры машины; **обязателен**. `install`/`upgrade`
   сверяют и версию, и сумму поставленного набора (`installed-pin`, см. «`sysupgrade`»):
   пересборка форка той же версии с новой суммой (`v18.10.0-stvor.3` → `stvor.4`)
-  ставится заново и перезапускает узел, без `--reinstall`.
+  ставится заново и перезапускает узел, без `--reinstall`. Перед скачиванием нового набора
+  `installed-pin` снимается: прерванная установка (чужая сумма, обрыв) не выглядит завершённой.
 - `TELEPORT_MIRROR` — база зеркала стенда Stvor:
   `<база>/binaries/teleport/<версия>/teleport-v<версия>-openwrt-<arch>-bin.tar.gz`.
 - `TELEPORT_TARBALL` — локальный набор (офлайн); взаимоисключим с `TELEPORT_MIRROR`.
@@ -211,7 +212,8 @@ RUN_COMMAND cream install teleport-openwrt TELEPORT_MIRROR=https://stvor.example
 - `/opt/cream/var/ext/teleport-openwrt/agent-enabled` — узел стартует на загрузке;
 - `/opt/cream/var/ext/teleport-openwrt/installed-pin` — пин поставленного набора, две
   строки `TELEPORT_VERSION=<X.Y.Z>` и `TELEPORT_SHA256=<64 hex>`; пишет `install`/`upgrade`
-  после каждой замены набора. Стабильный интерфейс: `/etc/stvor/restore.sh` Stvor берёт
+  после каждой замены набора, снимает — перед скачиванием нового (файла нет — набор не
+  подтверждён). Стабильный интерфейс: `/etc/stvor/restore.sh` Stvor берёт
   версию и сумму набора отсюда, а не из своей копии (иначе после обновления через cream
   его пин устаревает);
 - `/etc/cream/teleport-openwrt/config` и `apps.d/` — ручки домена (прокси, имя токена,

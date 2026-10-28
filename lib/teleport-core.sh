@@ -1587,6 +1587,13 @@ pin_change_line(){
     fi
 }
 
+# drop_installed_pin — before the download of a new set: a replacement cut short
+# (a wrong sum, no network, a kill) never looks done; the next install fetches it
+# again and /etc/stvor/restore.sh of Stvor falls back to its recipe.
+drop_installed_pin(){
+    rm -f -- "$INSTALLED_PIN" || die "не снят ${INSTALLED_PIN#"$ROOT"}"
+}
+
 # write_installed_pin <version> <sha256> — after the binary is in place.
 write_installed_pin(){
     write_state "$INSTALLED_PIN" "$(printf 'TELEPORT_VERSION=%s\nTELEPORT_SHA256=%s' "$1" "$2")" \
