@@ -1534,7 +1534,8 @@ teleport_sha256_url(){ echo "https://cdn.teleport.dev/$(teleport_tarball "$1" "$
 # curl_retry_flags — the retry flags of every download: --retry 5 and, from curl
 # 7.71, --retry-all-errors (a stream cut mid-way — HTTP/2 error 92 on LTE — is
 # retried too; 429 waits for its Retry-After). curl 7.68 of Ubuntu 20.04 (Jetson
-# Nano) does not know the flag and would refuse the whole call.
+# Nano) does not know the flag and would refuse the whole call. Keep in step with
+# sa_curl_retry of extensions/debian/stvor-agent/files/agent.sh.
 curl_retry_flags(){
     local v maj min
     v="$(curl --version 2>/dev/null | head -n 1)" || v=""

@@ -103,7 +103,7 @@ sa_check_source(){
 # sa_curl_retry: --retry 5 and, from curl 7.71, --retry-all-errors (a stream cut
 # mid-way — HTTP/2 error 92 on LTE — is retried too; 429 waits for Retry-After).
 # curl 7.68 of Ubuntu 20.04 (Jetson Nano) does not know the flag and would refuse
-# the whole call.
+# the whole call. Keep in step with curl_retry_flags of lib/teleport-core.sh.
 sa_curl_retry(){
     local v maj min
     v="$(sa_run curl --version 2>/dev/null | head -n 1)" || v=""

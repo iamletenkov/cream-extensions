@@ -30,8 +30,9 @@ Stvor из того же тарбола `linux-<arch>` (рулинг Р7); на 
 
 ## Что делает
 
-- **`install`** (и **`upgrade`** — тот же код) — набор по `TELEPORT_MIRROR` или
-  `TELEPORT_TARBALL`, **всегда** по `TELEPORT_SHA256` (сверка до распаковки);
+- **`install`** (и **`upgrade`** — тот же код) — набор по `TELEPORT_MIRROR`,
+  `TELEPORT_DIST` + `TELEPORT_TAG` или `TELEPORT_TARBALL`, **всегда** по
+  `TELEPORT_SHA256` (сверка до распаковки; обрыв — докачка, см. «Ручки установки»);
   архитектура — `uname -m` (`x86_64` → amd64, `aarch64` → arm64). Раскладка:
   `/opt/teleport/bin/{teleport,fdpass-teleport}`, `/opt/teleport/lib/` (рантайм),
   `/opt/teleport/data` (0750, `data_dir`), `/opt/teleport/tmp` (0700, `TMPDIR` узла —
@@ -99,8 +100,21 @@ Stvor из того же тарбола `linux-<arch>` (рулинг Р7); на 
   `installed-pin` снимается: прерванная установка (чужая сумма, обрыв) не выглядит завершённой.
 - `TELEPORT_MIRROR` — база зеркала стенда Stvor:
   `<база>/binaries/teleport/<версия>/teleport-v<версия>-openwrt-<arch>-bin.tar.gz`.
-- `TELEPORT_TARBALL` — локальный набор (офлайн); взаимоисключим с `TELEPORT_MIRROR`.
-  Один из двух обязателен.
+- `TELEPORT_DIST` + `TELEPORT_TAG` — раздача портала Stvor: набор по
+  `<база>/teleport/<тег>/teleport-v<версия>-openwrt-<arch>-bin.tar.gz`, тег — сборка форка
+  `vX.Y.Z-stvor.N` той же X.Y.Z, что `TELEPORT_VERSION`. Портал отвечает 302 на подписанную
+  ссылку S3 (тот же или другой хост): curl идёт по редиректу только по https
+  (`--proto =https --proto-redir =https`). Задаются вместе.
+- `TELEPORT_TARBALL` — локальный набор (офлайн).
+
+Источник набора — ровно один из трёх: `TELEPORT_MIRROR`, `TELEPORT_DIST` + `TELEPORT_TAG`
+или `TELEPORT_TARBALL`; два сразу или ни одного — отказ до скачивания.
+
+Обрыв на LTE: набор качается до 5 попыток, каждая докачивает частичный файл (`-C -`),
+паузы между ними 5, 10, 20, 40 с; внутри попытки curl повторяет любую ошибку
+(`--retry 5 --retry-all-errors`: обрыв потока HTTP/2, 429 с `Retry-After`; на curl < 7.71 —
+только `--retry 5`). Сумма сверяется после докачки как обычно. Цена: неверный `TELEPORT_TAG`
+(тег по форме, но такого на портале нет — 404) даёт отказ лишь примерно через 3 минуты.
 
 Набор — `tar.gz` с каталогом `teleport/`: `teleport/teleport`, `teleport/fdpass-teleport`
 (после `patchelf --set-interpreter /opt/teleport/lib/ld-linux-<arch>.so.* --set-rpath

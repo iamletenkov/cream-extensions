@@ -95,8 +95,22 @@
 - `TELEPORT_MIRROR` — база зеркала:
   `<база>/binaries/teleport/<версия>/teleport-v<версия>-linux-<arch>-bin.tar.gz`;
   пусто — `cdn.teleport.dev`.
-- `TELEPORT_TARBALL` — локальный тарбол; нужен `TELEPORT_SHA256`; взаимоисключим с
-  `TELEPORT_MIRROR`.
+- `TELEPORT_DIST` + `TELEPORT_TAG` — раздача портала Stvor: тарбол по
+  `<база>/teleport/<тег>/teleport-v<версия>-linux-<arch>-bin.tar.gz`, тег — сборка форка
+  `vX.Y.Z-stvor.N` той же X.Y.Z, что `TELEPORT_VERSION`. Портал отвечает 302 на подписанную
+  ссылку S3 (тот же или другой хост): curl идёт по редиректу только по https
+  (`--proto =https --proto-redir =https`). Задаются вместе и только с `TELEPORT_SHA256`
+  (сумма форка на `cdn.teleport.dev` не лежит).
+- `TELEPORT_TARBALL` — локальный тарбол; нужен `TELEPORT_SHA256`.
+
+Источник тарбола — один из трёх: `TELEPORT_MIRROR`, `TELEPORT_DIST` + `TELEPORT_TAG` или
+`TELEPORT_TARBALL`; два сразу — отказ до скачивания. Ни одного — `cdn.teleport.dev`.
+
+Обрыв на LTE: тарбол качается до 5 попыток, каждая докачивает частичный файл (`-C -`),
+паузы между ними 5, 10, 20, 40 с; внутри попытки curl повторяет любую ошибку
+(`--retry 5 --retry-all-errors`: обрыв потока HTTP/2, 429 с `Retry-After`; на curl < 7.71 —
+только `--retry 5`). Сумма сверяется после докачки как обычно. Цена: неверный `TELEPORT_TAG`
+(тег по форме, но такого на портале нет — 404) даёт отказ лишь примерно через 3 минуты.
 
 **Ручки** — `cream set teleport KEY=…` (хук `apply`):
 

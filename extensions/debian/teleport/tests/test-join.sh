@@ -77,6 +77,8 @@ new_root(){
     cat > "$ROOT/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" == --version ]]; then
+    [[ -f "$FAKE/curl.version.fail" ]] && exit 2
+    if [[ -f "$FAKE/curl.version.raw" ]]; then cat "$FAKE/curl.version.raw"; exit 0; fi
     echo "curl $(cat "$FAKE/curl.version" 2>/dev/null || echo 8.5.0) (x86_64-pc-linux-gnu) libcurl"; exit 0
 fi
 echo "$*" >> "$FAKE/curl.log"
@@ -87,6 +89,10 @@ if [[ -n "$out" ]]; then
     # -C - continues the partial file; without it the file starts over. While
     # $FAKE/cuts > 0 a call writes half of what is left and fails as a cut
     # HTTP/2 stream (92).
+    # $FAKE/norange: the server ignores ranges — a resume of a partial file is 33.
+    if [[ -f "$FAKE/norange" && " $* " == *" -C - "* && -s "$out" ]]; then
+        echo "norange" >> "$FAKE/curl.log"; exit 33
+    fi
     [[ " $* " == *" -C - "* && -f "$out" ]] || : > "$out"
     have="$(stat -c %s "$out")"; total="$(stat -c %s "$FAKE/tarball")"
     cuts="$(cat "$FAKE/cuts" 2>/dev/null || echo 0)"
@@ -993,6 +999,34 @@ eq "curl 7.68: код 0" 0 "$rc"
 check "curl 7.68: --retry 5 есть" bash -c '! grep -v -- "--retry 5 " "$1"' _ "$FAKE/curl.log"
 check_not "curl 7.68: без --retry-all-errors" grep -q -- '--retry-all-errors' "$FAKE/curl.log"
 check "curl 7.68: .sha256 тоже с повтором" grep -q -- '--retry 5 .*\.sha256$' "$FAKE/curl.log"
+# retry_all <what> — install over a fresh root; prints yes when the download had --retry-all-errors.
+retry_all(){
+    new_root
+    rm -f "$ROOT/usr/local/bin/teleport"
+    make_tarball 18.11.0
+    "$@"
+    hk install TELEPORT_VERSION=18.11.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_MIRROR=https://mirror.example.org >/dev/null 2>&1 \
+        || { echo "install-failed"; return; }
+    if grep -q -- '--retry-all-errors' "$FAKE/curl.log"; then echo yes; else echo no; fi
+}
+eq "curl 7.71.0 — граница: флаг есть" yes "$(retry_all eval 'echo 7.71.0 > "$FAKE/curl.version"')"
+eq "curl 7.70.9 — флага нет" no "$(retry_all eval 'echo 7.70.9 > "$FAKE/curl.version"')"
+eq "curl 8.0.0 — флаг есть" yes "$(retry_all eval 'echo 8.0.0 > "$FAKE/curl.version"')"
+eq "curl --version с ошибкой — запасной --retry 5" no "$(retry_all eval ': > "$FAKE/curl.version.fail"')"
+eq "curl --version — мусор: запасной --retry 5" no "$(retry_all eval 'echo "garbage x.y" > "$FAKE/curl.version.raw"')"
+eq "curl --version — пусто: запасной --retry 5" no "$(retry_all eval ': > "$FAKE/curl.version.raw"')"
+
+echo "== хук install: сервер без Range (curl 33) — частичный файл сброшен, заново с нуля =="
+new_root
+rm -f "$ROOT/usr/local/bin/teleport"
+make_tarball 18.11.0
+echo 1 > "$FAKE/cuts"; : > "$FAKE/norange"
+msg="$(hk install TELEPORT_VERSION=18.11.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_MIRROR=https://mirror.example.org 2>&1)"; rc=$?
+eq "33: код 0" 0 "$rc"
+eq "33: три вызова — обрыв, отказ докачки, с нуля" 3 "$(grep -c 'tar\.gz$' "$FAKE/curl.log")"
+check "33: сервер отказал в докачке" grep -qx norange "$FAKE/curl.log"
+has "33: в журнале код" "curl 33" "$msg"
+check "33: сумма сошлась — бинарь на месте" grep -q 'v18.11.0' <<< "$("$ROOT/usr/local/bin/teleport" version)"
 
 new_root
 mkdir -p "$ROOT/var/lib/teleport"; echo 12345678-0000 > "$HOST_UUID"
