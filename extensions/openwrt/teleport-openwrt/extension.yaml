@@ -18,7 +18,12 @@
 # configure нет: на загрузке узел поднимает procd (START=95), не cream (А1–А6 не про него).
 schema: cream/v1
 name: teleport-openwrt
-version: 1.1.1
+version: 1.2.0
+# 1.2.0: раздача портала Stvor — TELEPORT_DIST и TELEPORT_TAG (вместе, взаимоисключимы с
+#        TELEPORT_MIRROR и TELEPORT_TARBALL): набор по <база>/teleport/<тег>/<набор>,
+#        редирект на подписанную ссылку — только https. Обрыв на LTE: набор — до 5
+#        попыток с докачкой (-C -) и паузой 5, 10, 20, 40 с; каждый вызов curl —
+#        --retry 5 --retry-all-errors (обрыв потока HTTP/2, 429 с Retry-After).
 # 1.1.1: пин поставленного набора снимается до скачивания нового: прерванная установка
 #        (чужая сумма, обрыв) не выглядит завершённой, restore.sh Stvor берёт пины рецепта.
 # 1.1.0: та же X.Y.Z, другая TELEPORT_SHA256 (пересборка форка, v18.10.0-stvor.3 → stvor.4)
@@ -54,7 +59,11 @@ config:
     TELEPORT_MIRROR: {type: 're:^https?://[A-Za-z0-9.:/-]+$', default: "", empty: true, scope: install,
                       description: "база зеркала <base>/binaries/teleport/<ver>/teleport-v<ver>-openwrt-<arch>-bin.tar.gz (стенд Stvor)"}
     TELEPORT_TARBALL: {type: path, default: "", empty: true, scope: install,
-                       description: "локальный набор openwrt-<arch> (офлайн, нужен TELEPORT_SHA256); взаимоисключим с TELEPORT_MIRROR"}
+                       description: "локальный набор openwrt-<arch> (офлайн, нужен TELEPORT_SHA256); взаимоисключим с TELEPORT_MIRROR и TELEPORT_DIST"}
+    TELEPORT_DIST: {type: 're:^https://[A-Za-z0-9.:/-]+$', default: "", empty: true, scope: install,
+                    description: "раздача портала Stvor <база>/teleport/<тег>/<набор>; только с TELEPORT_TAG и TELEPORT_SHA256"}
+    TELEPORT_TAG: {type: 're:^v[0-9]+\.[0-9]+\.[0-9]+-stvor\.[0-9]+$', default: "", empty: true, scope: install,
+                   description: "тег сборки форка vX.Y.Z-stvor.N (X.Y.Z = TELEPORT_VERSION); только с TELEPORT_DIST"}
     # Подключение. Регулярные выражения — те же, что в ядре files/teleport-core.sh (KEY_TYPE):
     # значения ложатся в YAML в двойных кавычках, кавычек и `$` в них нет.
     TELEPORT_PROXY: {type: 're:^[a-z0-9][a-z0-9.-]{0,252}(:[0-9]{1,5})?$', default: "", empty: true,

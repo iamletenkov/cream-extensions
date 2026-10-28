@@ -14,7 +14,7 @@
 #              /opt/teleport/.cream-owned, the link /usr/bin/teleport
 #   binary     the set teleport-v<ver>-openwrt-<arch>-bin.tar.gz (teleport/teleport,
 #              teleport/fdpass-teleport, teleport/lib/) built by the Stvor stand
-#              (ruling Р7) — from TELEPORT_MIRROR or TELEPORT_TARBALL, always by
+#              (ruling Р7) — from TELEPORT_DIST, TELEPORT_MIRROR or TELEPORT_TARBALL, always by
 #              TELEPORT_SHA256 (no such set on cdn.teleport.dev); the architecture —
 #              `uname -m`
 #   init       /etc/init.d/teleport (procd, files/teleport.init): the instance
@@ -334,14 +334,14 @@ foreign_teleport(){
     [[ -e "$TELEPORT_BIN" || -s "$DATA/host_uuid" ]]
 }
 
-# fetch_set <version> <arch> <sha256> <mirror> <tarball> — the set in place:
-# runtime first (the binaries are patched to it), then the binaries, each by a
-# rename on the same file system (no second copy of 370 MB).
+# fetch_set <version> <arch> <sha256> <mirror> <tarball> <dist> <tag> — the set in
+# place: runtime first (the binaries are patched to it), then the binaries, each
+# by a rename on the same file system (no second copy of 370 MB).
 fetch_set(){
     local version="$1" work src b
     # Scratch on the same file system as the set (renames, not copies); not in
     # TMPDIR of the agent, whose mode the scratch parent would get.
-    fetch_tarball "$@" "$TELEPORT_HOME"
+    fetch_tarball "${@:1:5}" "$TELEPORT_HOME" "${@:6:2}"
     work="$FETCH_WORK" src="$FETCH_SRC"
     tar -xzf "$src" -C "$work" teleport || die "в наборе нет каталога teleport/"
     for b in teleport fdpass-teleport; do
@@ -373,16 +373,14 @@ fetch_set(){
 hook_install(){
     local mode="$1" version="${TELEPORT_VERSION:-$TELEPORT_DEFAULT_VERSION}" sha="${TELEPORT_SHA256:-}"
     local mirror="${TELEPORT_MIRROR:-}" tarball="${TELEPORT_TARBALL:-}" machine arch prev changed=0
+    local dist="${TELEPORT_DIST:-}" tag="${TELEPORT_TAG:-}"
     need_root
     [[ "$version" =~ $RE_VERSION ]] || die "TELEPORT_VERSION='$version': ожидали X.Y.Z"
     [[ "$sha" =~ ^[0-9a-f]{64}$ ]] \
         || die "TELEPORT_SHA256: нужен sha256 набора openwrt-<arch> (64 hex) — на cdn.teleport.dev такого набора нет"
-    [[ -z "$mirror" || "$mirror" =~ ^https?://[A-Za-z0-9.:/-]+$ ]] || die "TELEPORT_MIRROR='$mirror': ожидали URL"
-    if [[ -n "$mirror" && -n "$tarball" ]]; then
-        die "TELEPORT_MIRROR и TELEPORT_TARBALL взаимоисключимы — задайте одно"
-    fi
-    [[ -n "$mirror" || -n "$tarball" ]] \
-        || die "нужен TELEPORT_MIRROR (зеркало стенда Stvor) или TELEPORT_TARBALL — набор openwrt-<arch> есть только там"
+    check_source "$version" "$sha" "$mirror" "$tarball" "$dist" "$tag"
+    [[ -n "$dist" || -n "$mirror" || -n "$tarball" ]] \
+        || die "нужен TELEPORT_DIST (раздача портала Stvor), TELEPORT_MIRROR или TELEPORT_TARBALL — набор openwrt-<arch> есть только там"
     if [[ "${CREAM_PHASE:-live}" == build ]] && joined; then
         die "в $TELEPORT_DATA_GUEST уже есть регистрация — образ стал бы одной нодой на все копии"
     fi
@@ -406,7 +404,7 @@ hook_install(){
     else
         [[ "$prev" == "$version" ]] && pin_change_line "$version" "$sha"
         drop_installed_pin
-        fetch_set "$version" "$arch" "$sha" "$mirror" "$tarball"
+        fetch_set "$version" "$arch" "$sha" "$mirror" "$tarball" "$dist" "$tag"
         write_installed_pin "$version" "$FETCH_SHA"
         changed=1
     fi

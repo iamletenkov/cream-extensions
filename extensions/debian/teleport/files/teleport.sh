@@ -433,11 +433,11 @@ teleport_arch(){
 }
 teleport_tarball(){ echo "teleport-v$1-linux-$2-bin.tar.gz"; }
 
-# fetch_teleport <version> <arch> <sha256> <mirror> <tarball> — the binary in
-# place, checked by sha256 before it is unpacked.
+# fetch_teleport <version> <arch> <sha256> <mirror> <tarball> <dist> <tag> — the
+# binary in place, checked by sha256 before it is unpacked.
 fetch_teleport(){
     local version="$1" work src
-    fetch_tarball "$@" "$ROOT/var/tmp"
+    fetch_tarball "${@:1:5}" "$ROOT/var/tmp" "${@:6:2}"
     work="$FETCH_WORK" src="$FETCH_SRC"
     # Only the agent: tsh, tctl, tbot and teleport-update are ~370 MB more and
     # a node needs none of them.
@@ -456,13 +456,11 @@ fetch_teleport(){
 hook_install(){
     local mode="$1" version="${TELEPORT_VERSION:-$TELEPORT_DEFAULT_VERSION}" sha="${TELEPORT_SHA256:-}"
     local mirror="${TELEPORT_MIRROR:-}" tarball="${TELEPORT_TARBALL:-}" dpkg_arch arch prev changed=0
+    local dist="${TELEPORT_DIST:-}" tag="${TELEPORT_TAG:-}"
     need_root
     [[ "$version" =~ $RE_VERSION ]] || die "TELEPORT_VERSION='$version': ожидали X.Y.Z"
     [[ -z "$sha" || "$sha" =~ ^[0-9a-f]{64}$ ]] || die "TELEPORT_SHA256: ожидали 64 hex"
-    [[ -z "$mirror" || "$mirror" =~ ^https?://[A-Za-z0-9.:/-]+$ ]] || die "TELEPORT_MIRROR='$mirror': ожидали URL"
-    if [[ -n "$mirror" && -n "$tarball" ]]; then
-        die "TELEPORT_MIRROR и TELEPORT_TARBALL взаимоисключимы — задайте одно"
-    fi
+    check_source "$version" "$sha" "$mirror" "$tarball" "$dist" "$tag"
     # In a build a registration would make every copy of the image one node.
     if [[ "${CREAM_PHASE:-live}" == build ]] && joined; then
         die "в /var/lib/teleport уже есть регистрация — образ стал бы одной нодой на все копии"
@@ -479,7 +477,7 @@ hook_install(){
     else
         [[ "$prev" == "$version" ]] && pin_change_line "$version" "$sha"
         drop_installed_pin
-        fetch_teleport "$version" "$arch" "$sha" "$mirror" "$tarball"
+        fetch_teleport "$version" "$arch" "$sha" "$mirror" "$tarball" "$dist" "$tag"
         write_installed_pin "$version" "$FETCH_SHA"
         changed=1
     fi

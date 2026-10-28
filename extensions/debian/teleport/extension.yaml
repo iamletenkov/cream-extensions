@@ -1,6 +1,12 @@
 schema: cream/v1
 name: teleport
-version: 4.2.2
+version: 4.3.0
+# 4.3.0: раздача портала Stvor — TELEPORT_DIST и TELEPORT_TAG (вместе, взаимоисключимы с
+#        TELEPORT_MIRROR и TELEPORT_TARBALL, нужен TELEPORT_SHA256): тарбол по
+#        <база>/teleport/<тег>/<тарбол>, редирект на подписанную ссылку — только https.
+#        Обрыв на LTE: тарбол — до 5 попыток с докачкой (-C -) и паузой 5, 10, 20, 40 с;
+#        каждый вызов curl — --retry 5 и, с curl 7.71, --retry-all-errors (обрыв потока
+#        HTTP/2, 429 с Retry-After); curl 7.68 (Ubuntu 20.04) — без него.
 # 4.2.2: пин поставленного тарбола снимается до скачивания нового: прерванная установка
 #        (чужая сумма, обрыв) не выглядит завершённой.
 # 4.2.1: та же X.Y.Z, другая TELEPORT_SHA256 (пересборка форка, v18.10.0-stvor.3 → stvor.4)
@@ -63,7 +69,11 @@ config:
     TELEPORT_MIRROR: {type: 're:^https?://[A-Za-z0-9.:/-]+$', default: "", empty: true, scope: install,
                       description: "база зеркала <base>/binaries/teleport/<ver>/<тарбол>; пусто — cdn.teleport.dev"}
     TELEPORT_TARBALL: {type: path, default: "", empty: true, scope: install,
-                       description: "локальный тарбол (офлайн, нужен TELEPORT_SHA256); взаимоисключим с TELEPORT_MIRROR"}
+                       description: "локальный тарбол (офлайн, нужен TELEPORT_SHA256); взаимоисключим с TELEPORT_MIRROR и TELEPORT_DIST"}
+    TELEPORT_DIST: {type: 're:^https://[A-Za-z0-9.:/-]+$', default: "", empty: true, scope: install,
+                    description: "раздача портала Stvor <база>/teleport/<тег>/<тарбол>; только с TELEPORT_TAG и TELEPORT_SHA256"}
+    TELEPORT_TAG: {type: 're:^v[0-9]+\.[0-9]+\.[0-9]+-stvor\.[0-9]+$', default: "", empty: true, scope: install,
+                   description: "тег сборки форка vX.Y.Z-stvor.N (X.Y.Z = TELEPORT_VERSION); только с TELEPORT_DIST"}
     # Подключение. Регулярные выражения — те же, что в files/teleport.sh (KEY_TYPE):
     # значения ложатся в YAML в двойных кавычках, кавычек и `$` в них нет.
     TELEPORT_PROXY: {type: 're:^[a-z0-9][a-z0-9.-]{0,252}(:[0-9]{1,5})?$', default: "", empty: true,

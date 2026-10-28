@@ -71,7 +71,9 @@ Stvor из того же тарбола `linux-<arch>` (рулинг Р7); на 
 | `TELEPORT_VERSION` | строка `^[0-9]+\.[0-9]+\.[0-9]+$` | `18.10.0` | версия Teleport; не новее кластера, для bound_keypair — не ниже 18.8.0 *(только при установке)* |
 | `TELEPORT_SHA256` | строка `^[0-9a-f]{64}$` | пусто | sha256 набора openwrt-<arch> архитектуры машины; обязателен (на cdn.teleport.dev набора нет) *(только при установке)* |
 | `TELEPORT_MIRROR` | строка `^https?://[A-Za-z0-9.:/-]+$` | пусто | база зеркала <base>/binaries/teleport/<ver>/teleport-v<ver>-openwrt-<arch>-bin.tar.gz (стенд Stvor) *(только при установке)* |
-| `TELEPORT_TARBALL` | `path` | пусто | локальный набор openwrt-<arch> (офлайн, нужен TELEPORT_SHA256); взаимоисключим с TELEPORT_MIRROR *(только при установке)* |
+| `TELEPORT_TARBALL` | `path` | пусто | локальный набор openwrt-<arch> (офлайн, нужен TELEPORT_SHA256); взаимоисключим с TELEPORT_MIRROR и TELEPORT_DIST *(только при установке)* |
+| `TELEPORT_DIST` | строка `^https://[A-Za-z0-9.:/-]+$` | пусто | раздача портала Stvor <база>/teleport/<тег>/<набор>; только с TELEPORT_TAG и TELEPORT_SHA256 *(только при установке)* |
+| `TELEPORT_TAG` | строка `^v[0-9]+\.[0-9]+\.[0-9]+-stvor\.[0-9]+$` | пусто | тег сборки форка vX.Y.Z-stvor.N (X.Y.Z = TELEPORT_VERSION); только с TELEPORT_DIST *(только при установке)* |
 | `TELEPORT_PROXY` | строка `^[a-z0-9][a-z0-9.-]{0,252}(:[0-9]{1,5})?$` | пусто | прокси кластера host[:port]; пишет только join *(только чтение)* |
 | `TELEPORT_JOIN_METHOD` | `token` \| `bound_keypair` | `token` | метод регистрации; пишет только join *(только чтение)* |
 | `TELEPORT_TOKEN` | строка `^[A-Za-z0-9._-]{8,256}$` | пусто | имя токена bound_keypair (не секрет); у метода token пусто; пишет только join *(только чтение)* |

@@ -128,6 +128,12 @@ RE_LOOPBACK_URI='^https?://(127\.0\.0\.1|localhost|\[::1\])(:[0-9]{1,5})?(/[A-Za
 RE_REG_SECRET='^[[:graph:]]{8,1000}$'
 RE_JOIN_TOKEN='^[A-Za-z0-9._-]{8,256}$'
 RE_VERSION='^[0-9]+\.[0-9]+\.[0-9]+$'
+# Where the tarball comes from (scope: install keys): the old mirror layout, the
+# distribution of the Stvor portal (https only: it answers with a redirect to a
+# signed S3 link) and a tag of the fork, vX.Y.Z-stvor.N (group 1 — X.Y.Z).
+RE_MIRROR='^https?://[A-Za-z0-9.:/-]+$'
+RE_DIST='^https://[A-Za-z0-9.:/-]+$'
+RE_TAG='^v([0-9]+\.[0-9]+\.[0-9]+)-stvor\.[0-9]+$'
 
 # Managed labels: at most 16, keys not reserved (as in TELEPORT_LABELS; the
 # key alphabet already has no `.` of teleport.icon). managed-pending: a
@@ -1492,9 +1498,32 @@ cmd_status(){
     fi
 }
 
-# teleport_url <version> <arch> <mirror>
+# check_source <version> <sha256> <mirror> <tarball> <dist> <tag> — one source of
+# the tarball: TELEPORT_MIRROR, TELEPORT_TARBALL, TELEPORT_DIST with TELEPORT_TAG,
+# or none (cdn.teleport.dev). Refuses before anything is downloaded.
+check_source(){
+    local version="$1" sha="$2" mirror="$3" tarball="$4" dist="$5" tag="$6"
+    [[ -z "$mirror" || "$mirror" =~ $RE_MIRROR ]] || die "TELEPORT_MIRROR='$mirror': ожидали URL"
+    if [[ -n "$mirror" && -n "$tarball" ]]; then
+        die "TELEPORT_MIRROR и TELEPORT_TARBALL взаимоисключимы — задайте одно"
+    fi
+    [[ -z "$dist" && -z "$tag" ]] && return 0
+    [[ -n "$dist" && -n "$tag" ]] || die "TELEPORT_DIST и TELEPORT_TAG задаются вместе"
+    if [[ -n "$mirror" || -n "$tarball" ]]; then
+        die "TELEPORT_DIST взаимоисключим с TELEPORT_MIRROR и TELEPORT_TARBALL — задайте одно"
+    fi
+    [[ "$dist" =~ $RE_DIST ]] || die "TELEPORT_DIST='$dist': ожидали https URL"
+    [[ "$tag" =~ $RE_TAG ]] || die "TELEPORT_TAG='$tag': ожидали тег форка vX.Y.Z-stvor.N"
+    [[ "${BASH_REMATCH[1]}" == "$version" ]] || die "TELEPORT_TAG=$tag — не сборка TELEPORT_VERSION=$version"
+    # The fork's tarball is not the vanilla one: the .sha256 of the CDN never fits it.
+    [[ -n "$sha" ]] || die "TELEPORT_DIST без TELEPORT_SHA256: сумма сборки форка — только из пина"
+}
+
+# teleport_url <version> <arch> <mirror> [<dist> <tag>]
 teleport_url(){
-    if [[ -n "$3" ]]; then
+    if [[ -n "${4:-}" ]]; then
+        echo "${4%/}/teleport/$5/$(teleport_tarball "$1" "$2")"
+    elif [[ -n "$3" ]]; then
         echo "${3%/}/binaries/teleport/$1/$(teleport_tarball "$1" "$2")"
     else
         echo "https://cdn.teleport.dev/$(teleport_tarball "$1" "$2")"
@@ -1502,14 +1531,55 @@ teleport_url(){
 }
 teleport_sha256_url(){ echo "https://cdn.teleport.dev/$(teleport_tarball "$1" "$2").sha256"; }
 
-# fetch_tarball <version> <arch> <sha256> <mirror> <tarball> <work parent> — the
-# tarball of the layer (teleport_tarball) checked by sha256: FETCH_SRC is its
-# path, FETCH_WORK the scratch directory under <work parent> (removed on exit).
-# The layer unpacks it. An empty sha256 is taken from cdn.teleport.dev;
-# FETCH_SHA is the sum the tarball was checked by.
+# curl_retry_flags — the retry flags of every download: --retry 5 and, from curl
+# 7.71, --retry-all-errors (a stream cut mid-way — HTTP/2 error 92 on LTE — is
+# retried too; 429 waits for its Retry-After). curl 7.68 of Ubuntu 20.04 (Jetson
+# Nano) does not know the flag and would refuse the whole call.
+curl_retry_flags(){
+    local v maj min
+    v="$(curl --version 2>/dev/null | head -n 1)" || v=""
+    v="${v#curl }"; v="${v%%[!0-9.]*}"
+    maj="${v%%.*}"; min="${v#*.}"; min="${min%%.*}"
+    if [[ "$maj" =~ ^[0-9]+$ && "$min" =~ ^[0-9]+$ ]] && (( maj > 7 || (maj == 7 && min >= 71) )); then
+        echo "--retry 5 --retry-all-errors"
+    else
+        echo "--retry 5"
+    fi
+}
+
+# download <url> <file> [curl flags…] — a large tarball by attempts of our own,
+# each continuing the partial file (-C -): curl's own --retry starts the transfer
+# over from the byte its call began with, so a cut loses only what one call
+# fetched. 33 — the server ignores ranges: the partial file is dropped. Stalls
+# become retries instead of an endless wait. The sha256 check follows anyway.
+DOWNLOAD_ATTEMPTS=5
+download(){
+    local url="$1" file="$2" i rc delay=5 retry
+    shift 2
+    read -r -a retry <<< "$(curl_retry_flags)"
+    for (( i = 1; ; i++ )); do
+        curl -fL "${retry[@]}" --retry-delay 5 "$@" \
+            --connect-timeout 30 --speed-limit 10240 --speed-time 60 \
+            -C - -o "$file" "$url" && return 0
+        rc=$?
+        (( rc == 33 )) && rm -f -- "$file"
+        (( i < DOWNLOAD_ATTEMPTS )) || return "$rc"
+        warn "попытка $i/$DOWNLOAD_ATTEMPTS: curl $rc — докачка через $delay с"
+        sleep "$delay"
+        delay=$(( delay * 2 ))
+    done
+}
+
+# fetch_tarball <version> <arch> <sha256> <mirror> <tarball> <work parent> [<dist>
+# <tag>] — the tarball of the layer (teleport_tarball) checked by sha256:
+# FETCH_SRC is its path, FETCH_WORK the scratch directory under <work parent>
+# (removed on exit). The layer unpacks it. An empty sha256 is taken from
+# cdn.teleport.dev; FETCH_SHA is the sum the tarball was checked by. <dist> — the
+# distribution of the portal: a redirect to a signed link, followed over https only.
 FETCH_SRC="" FETCH_WORK="" FETCH_SHA=""
 fetch_tarball(){
-    local version="$1" arch="$2" sha="$3" mirror="$4" tarball="$5" parent="$6" work file src url sha_url from_cdn=0
+    local version="$1" arch="$2" sha="$3" mirror="$4" tarball="$5" parent="$6" dist="${7:-}" tag="${8:-}"
+    local work file src url sha_url from_cdn=0 retry proto=()
     install -d -m 0755 "$parent" || die "не создать $parent"
     work="$(mktemp -d "$parent/teleport-install.XXXXXX")" || die "не создать каталог в $parent"
     # shellcheck disable=SC2064  # the path is fixed now, on purpose
@@ -1521,19 +1591,18 @@ fetch_tarball(){
         src="$tarball"
     else
         command -v curl >/dev/null 2>&1 || die "нужен curl"
-        url="$(teleport_url "$version" "$arch" "$mirror")"
+        url="$(teleport_url "$version" "$arch" "$mirror" "$dist" "$tag")"
         sha_url="$(teleport_sha256_url "$version" "$arch")"
+        [[ -n "$dist" ]] && proto=(--proto =https --proto-redir =https)
         if [[ -z "$sha" ]]; then
-            sha="$(curl -fsSL --retry 5 --retry-delay 3 "$sha_url" | awk '{print $1}')" || true
+            read -r -a retry <<< "$(curl_retry_flags)"
+            sha="$(curl -fsSL "${retry[@]}" --retry-delay 3 "$sha_url" | awk '{print $1}')" || true
             [[ "$sha" =~ ^[0-9a-f]{64}$ ]] || die "не получить $sha_url — задайте TELEPORT_SHA256 явно"
             from_cdn=1
             log "sha256 взят с cdn.teleport.dev"
         fi
         log "скачиваю $url"
-        # Stalls become retries instead of an endless wait.
-        curl -fL --retry 5 --retry-delay 5 \
-            --connect-timeout 30 --speed-limit 10240 --speed-time 60 \
-            -o "$work/$file" "$url" || die "тарбол не скачался"
+        download "$url" "$work/$file" "${proto[@]}" || die "тарбол не скачался"
         src="$work/$file"
     fi
     # By value, not `sha256sum -c --quiet`: busybox (OpenWrt) has no --quiet.
