@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.9.3](https://github.com/iamletenkov/cream-extensions/compare/v5.9.2...v5.9.3) (2026-10-28)
+
+
+### Исправлено
+
+* **openwrt:** пины агента и Teleport для восстановления после sysupgrade ([#75](https://github.com/iamletenkov/cream-extensions/issues/75)) ([a52b13e](https://github.com/iamletenkov/cream-extensions/commit/a52b13eb377e1f86a0e7259d42f831a87e2a209b))
+
 ## [5.9.2](https://github.com/iamletenkov/cream-extensions/compare/v5.9.1...v5.9.2) (2026-10-27)
 
 
