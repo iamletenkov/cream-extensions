@@ -35,7 +35,10 @@ teleport-openwrt set-managed`), служба телеметрии шлёт на 
   `group_add_next`/`user_add` из `/lib/functions.sh` (shadow-utils на OpenWrt нет) и
   каталоги `/opt/stvor-agent` и `/etc/stvor-agent-telemetry` (0750
   `root:stvor-telemetry`) и каждый раз выставляет владельца и права состояния (как
-  `configure`). Та же версия и сумма уже стоят — пропуск без сети. Новая
+  `configure`). Та же версия и сумма уже стоят — пропуск без сети. После замены пишет
+  пин поставленного tar.gz `installed-pin` (см. «[`sysupgrade`](#sysupgrade)»); перед
+  скачиванием пин и запись установленного снимаются, так что прерванная замена не выглядит
+  завершённой: повтор прежней пары ставит её заново. Новая
   версия на живой машине — работающие службы перезапускаются фоном. На живой машине
   зовёт `cream run teleport-openwrt reload-apps`, чтобы узел подхватил метку `stvor_agent`.
 - **`configure`** (на каждой загрузке, стадия `system` — до того, как procd поднимет
@@ -132,7 +135,7 @@ RUN_COMMAND cream install --with-deps stvor-agent-openwrt STVOR_AGENT_VERSION=<v
 | загрузка | `configure` (S95) выставляет владельца и права состояния; procd стартует службы из `rc.d`, каждую — только при её токене; `/var/run/stvor-agent-telemetry` init-скрипт создаёт сам |
 | `cream set` (хук `apply`) | перезапуск работающих служб фоном |
 | `cream upgrade` | новый tar.gz; работающие службы перезапускаются |
-| `sysupgrade` с сохранением настроек | `keep.d` хранит `machine-id`, `state.json`, `telemetry-token.src`, оба токена, домен и маркер пользователя; повтор `cream install` возвращает того же агента без новых токенов, `install` и `configure` чинят права ([ниже](#sysupgrade)) |
+| `sysupgrade` с сохранением настроек | `keep.d` хранит `machine-id`, `state.json`, `telemetry-token.src`, оба токена, домен, маркер пользователя и пин tar.gz `installed-pin`; повтор `cream install` возвращает того же агента без новых токенов, `install` и `configure` чинят права ([ниже](#sysupgrade)) |
 | `cream remove` | `stvor-agent disable`, службы выключены, всё поставленное стёрто, `reload-apps` узла |
 
 ## Известные ограничения
@@ -185,7 +188,12 @@ RUN_COMMAND cream install --with-deps stvor-agent-openwrt STVOR_AGENT_VERSION=<v
 - `/etc/cream/stvor-agent-openwrt/` — домен (настройки службы);
 - `/opt/cream/var/ext/stvor-agent-openwrt/user-created` — маркер, что пользователя
   `stvor-telemetry` создало расширение (сам пользователь — в `/etc/passwd`, его хранит
-  OpenWrt).
+  OpenWrt);
+- `/opt/cream/var/ext/stvor-agent-openwrt/installed-pin` — пин поставленного tar.gz, две
+  строки `STVOR_AGENT_VERSION=` и `STVOR_AGENT_SHA256=` (0600, запись атомарная). Пишет
+  `install`/`upgrade` после замены бинаря и init-скриптов (и при пропуске той же пары, если
+  пина ещё нет), `remove` снимает. `/etc/stvor/restore.sh` Stvor ставит агента по нему, а
+  без файла — по пинам рецепта: обновление агента через cream рецепт не переписывает.
 
 Буфер телеметрии, бинарь, init-скрипты и реестр cream не сохраняются. Архив хранит только
 файлы: `tar` создаёт их каталоги заново `0755 root`, а агент не принимает токен меток в
@@ -218,7 +226,8 @@ Stvor — служба восстановления) и `configure` на каж�
   машине с procd, перезапуск работающих служб при обновлении и в `apply`, `remove`,
   окружение `curl` без токена и `CREAM_*`, действие `status` (блок `telemetry`), права токенов
   и состояния после `sysupgrade` (каталоги 0755 от `tar`, ссылки не разыменовываются),
-  `keep.d` не пересекается с `files` расширений OpenWrt. Пин в
+  `keep.d` не пересекается с `files` расширений OpenWrt, `installed-pin` (0600; снят до
+  скачивания — при чужой сумме или обрыве сети не новый, пишется и без сети, если его не было). Пин в
   git — полный или пустой целиком.
 - **L** — `make test-openwrt`: корневая ФС openwrt-builder v0.3.1 в контейнере, настоящие
   cream, busybox, rc.common и `/lib/functions.sh`: `install` поверх `teleport-openwrt` в

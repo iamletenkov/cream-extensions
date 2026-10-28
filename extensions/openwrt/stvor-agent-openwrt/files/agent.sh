@@ -50,6 +50,9 @@ SA_RUN_TELEMETRY="$SA_ROOT/var/run/stvor-agent-telemetry"
 SA_STATE="${CREAM_STATE_DIR:-$SA_ROOT/opt/cream/var/ext/stvor-agent-openwrt}"
 # "version sha256" of the tar.gz in place; the marker of the user this extension made.
 SA_INSTALLED="$SA_STATE/installed"
+# The pin of the tar.gz in place for /etc/stvor/restore.sh of Stvor (kept by
+# keep.d): STVOR_AGENT_VERSION= and STVOR_AGENT_SHA256= lines, 0600.
+SA_PIN="$SA_STATE/installed-pin"
 SA_USER_MARK="$SA_STATE/user-created"
 # The drop-in of the label stvor_agent (files of the manifest): cream lays it
 # before install and removes it after remove.
@@ -130,6 +133,20 @@ sa_check_source(){
         [[ -f "$tarball" ]] || sa_die "STVOR_AGENT_TARBALL=$tarball: файла нет"
     fi
     return 0
+}
+
+# sa_write_pin <version> <sha256>: the pin of the tar.gz in place, atomically
+# (a temporary file of mktemp, 0600, renamed over the pin).
+sa_write_pin(){
+    local tmp
+    mkdir -p -- "$SA_STATE" || return 1
+    tmp="$(mktemp "$SA_STATE/.installed-pin.XXXXXX")" || return 1
+    if chmod 0600 -- "$tmp" && printf 'STVOR_AGENT_VERSION=%s\nSTVOR_AGENT_SHA256=%s\n' "$1" "$2" > "$tmp" \
+        && mv -f -- "$tmp" "$SA_PIN"; then
+        return 0
+    fi
+    rm -f -- "$tmp"
+    return 1
 }
 
 # sa_fetch <work dir> <arch>: the checked tar.gz, its path on stdout.
@@ -392,6 +409,10 @@ sa_hook_install(){
         work="$(mktemp -d "${TMPDIR:-/tmp}/stvor-agent.XXXXXX")"
         # shellcheck disable=SC2064  # the path is fixed now, on purpose
         trap "rm -r -f -- '$work'" EXIT
+        # The pin and the record go before the download: a replacement cut short
+        # (a new binary in place, an init script not) never looks done — a rerun
+        # of the old pair fetches it again instead of pinning it over the new binary.
+        rm -f -- "$SA_PIN" "$SA_INSTALLED"
         file="$(sa_fetch "$work" "$arch")" || exit 1
         mkdir -p -- "$work/x"
         sa_unpack "$file" "$work/x" || exit 1
@@ -402,6 +423,10 @@ sa_hook_install(){
         mkdir -p -- "$SA_STATE" && echo "$SA_VERSION $SA_SHA256" > "$SA_INSTALLED"
         sa_log "установлен $(sa_tarball_name "$SA_VERSION" "$arch")${have:+ (было ${have%% *})}"
     fi
+    # The binary and the init scripts of this pair are in place (just put, or
+    # recorded by an earlier install — before 1.2.0 without the pin).
+    sa_write_pin "$SA_VERSION" "$SA_SHA256" \
+        || sa_log "предупреждение: не записан ${SA_PIN#"$SA_ROOT"} — восстановление после sysupgrade возьмёт пины рецепта Stvor"
     sa_ensure_user || exit 1
     sa_dir "$SA_TELEMETRY_ETC" 0750 || sa_die "не создать ${SA_TELEMETRY_ETC#"$SA_ROOT"}"
     sa_own_state || sa_die "не выставить права ${SA_HOME#"$SA_ROOT"}"
@@ -440,7 +465,7 @@ sa_hook_remove(){
     sa_trash "$SA_RUN_TELEMETRY" || sa_die "не снять ${SA_RUN_TELEMETRY#"$SA_ROOT"}"
     rm -r -f -- "$SA_ETC" "$SA_TELEMETRY_ETC" "$SA_ROOT/var/run/stvor-agent.lock"
     sa_drop_user
-    rm -f -- "$SA_INSTALLED"
+    rm -f -- "$SA_INSTALLED" "$SA_PIN"
     if [[ -e "$SA_LABEL" ]]; then
         rm -f -- "$SA_LABEL"
         sa_reload_label

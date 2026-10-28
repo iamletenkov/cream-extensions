@@ -95,6 +95,7 @@ EOF
 procd_up(){ mkdir -p "$ROOT/var/run/ubus"; : > "$ROOT/var/run/ubus/ubus.sock"; }
 pin(){ printf 'STVOR_AGENT_PIN_VERSION=%s\nSTVOR_AGENT_PIN_SHA256_AMD64=%s\nSTVOR_AGENT_PIN_SHA256_ARM64=%s\n' "$@" > "$HT_EXT/files/pin.env"; }
 mode(){ ls -ld "$1" | cut -c1-10; }
+apin(){ cat "$S/installed-pin" 2>/dev/null | tr '\n' '|'; }
 nothing_installed(){ [[ ! -e "$ROOT/usr/bin/stvor-agent" && ! -e "$ROOT/etc/init.d/stvor-agent" && ! -e "$S/installed" ]]; }
 installed(){ ht_hook install STVOR_AGENT_VERSION=4.1.0 STVOR_AGENT_SHA256="$TGZ_SHA" STVOR_AGENT_MIRROR="$MIRROR"; }
 
@@ -122,8 +123,8 @@ ok
 eq "метка — как у debian" "$(cat "$DEB/files/stvor_agent.command-label")" "$(cat "$SRC/files/stvor_agent.command-label")"
 # Решение владельца 2026-10-23 (Р4 пересмотрен): sysupgrade с сохранением конфигурации
 # хранит агента целиком — machine-id, состояние, токены и домен; буфер телеметрии нет.
-eq "keep.d — machine-id, состояние, токены, домен, маркер пользователя" \
-    "/opt/stvor-agent/machine-id|/opt/stvor-agent/state.json|/opt/stvor-agent/telemetry-token.src|/etc/stvor-agent/token|/etc/stvor-agent-telemetry/token|/etc/cream/stvor-agent-openwrt/|/opt/cream/var/ext/stvor-agent-openwrt/user-created|" \
+eq "keep.d — machine-id, состояние, токены, домен, маркер пользователя, пин tar.gz" \
+    "/opt/stvor-agent/machine-id|/opt/stvor-agent/state.json|/opt/stvor-agent/telemetry-token.src|/etc/stvor-agent/token|/etc/stvor-agent-telemetry/token|/etc/cream/stvor-agent-openwrt/|/opt/cream/var/ext/stvor-agent-openwrt/user-created|/opt/cream/var/ext/stvor-agent-openwrt/installed-pin|" \
     "$(grep -v '^#' "$SRC/files/keep.d" | tr '\n' '|')"
 # Восстановленное лежит на диске до повторной установки: файл, который расширение
 # кладёт через files, cream отверг бы (conflict.file_unowned, рулинг cream Р21).
@@ -167,6 +168,10 @@ eq "/opt/stvor-agent 0750" drwxr-x--- "$(mode "$ROOT/opt/stvor-agent")"
 eq "/etc/stvor-agent-telemetry 0750" drwxr-x--- "$(mode "$ROOT/etc/stvor-agent-telemetry")"
 check "chown root:stvor-telemetry" grep -qx "0:stvor-telemetry -- $ROOT/opt/stvor-agent" "$FAKE/chown.argv"
 eq "запись установленного" "4.1.0 $TGZ_SHA" "$(cat "$S/installed")"
+# Пин поставленного tar.gz: /etc/stvor/restore.sh Stvor берёт из него версию и сумму
+# после sysupgrade (keep.d), а не из рецепта, устаревшего после обновления через cream.
+eq "pin: версия и сумма" "STVOR_AGENT_VERSION=4.1.0|STVOR_AGENT_SHA256=$TGZ_SHA|" "$(apin)"
+eq "pin: 0600" 600 "$(stat -c %a "$S/installed-pin")"
 check "токен меток на месте" grep -q "token=$TOKEN" "$ROOT/etc/stvor-agent/token"
 check_not "токен не в окружении curl" grep -q "$TOKEN" "$FAKE/curl.env"
 check_not "окружение curl — своё (без CREAM_*)" grep -q '^CREAM_' "$FAKE/curl.env"
@@ -178,6 +183,13 @@ check "«уже установлен»" grep -q 'stvor-agent 4.1.0 уже уст
 check_not "curl не звался" ht_called '^curl '
 eq "один пользователь" 1 "$(grep -c '^stvor-telemetry:' "$ROOT/etc/passwd")"
 eq "одна группа" 1 "$(grep -c '^stvor-telemetry:' "$ROOT/etc/group")"
+# Поставлено до 1.2.0 (пина нет): та же пара — пин пишется без сети.
+rm -f "$S/installed-pin"
+: > "$FAKE/calls"
+installed; eq "пина нет — 0" 0 "$?"
+check_not "пина нет — curl не звался" ht_called '^curl '
+eq "пина нет — pin записан" "STVOR_AGENT_VERSION=4.1.0|STVOR_AGENT_SHA256=$TGZ_SHA|" "$(apin)"
+eq "пина нет — 0600" 600 "$(stat -c %a "$S/installed-pin")"
 
 echo "== arm64, релиз GitHub по умолчанию =="
 setup
@@ -229,6 +241,48 @@ make_tgz 4.1.0
 installed; check "сеть упала — отказ" test "$?" -ne 0
 check "ничего не поставлено" nothing_installed
 check "рабочий каталог убран" test -z "$(ls -A "$ROOT/tmp")"
+
+echo "== обновление: сумма не совпала или сеть упала — пин не новый (снят до скачивания) =="
+# Пин снимается до скачивания: прерванная замена не выглядит завершённой, restore.sh
+# Stvor тогда берёт значения рецепта.
+setup
+installed; eq "4.1.0 — 0" 0 "$?"
+make_tgz 4.2.0
+ht_hook install STVOR_AGENT_VERSION=4.2.0 STVOR_AGENT_SHA256="$(printf 'd%.0s' {1..64})" STVOR_AGENT_MIRROR="$MIRROR"
+check "чужая сумма — отказ" test "$?" -ne 0
+check_not "чужая сумма — в пине нет 4.2.0" grep -qs '4.2.0' "$S/installed-pin"
+check_not "чужая сумма — в пине нет чужой суммы" grep -qs 'ddddddddd' "$S/installed-pin"
+check "чужая сумма — пин снят" test ! -e "$S/installed-pin"
+check "чужая сумма — прежний бинарь на месте" test -x "$ROOT/usr/bin/stvor-agent"
+: > "$FAKE/curl-fails"
+ht_hook install STVOR_AGENT_VERSION=4.2.0 STVOR_AGENT_SHA256="$TGZ_SHA" STVOR_AGENT_MIRROR="$MIRROR"
+check "сеть упала — отказ" test "$?" -ne 0
+check "сеть упала — пин снят" test ! -e "$S/installed-pin"
+rm -f "$FAKE/curl-fails"
+ht_hook install STVOR_AGENT_VERSION=4.2.0 STVOR_AGENT_SHA256="$TGZ_SHA" STVOR_AGENT_MIRROR="$MIRROR"
+eq "4.2.0 — 0" 0 "$?"
+eq "4.2.0 — pin новый" "STVOR_AGENT_VERSION=4.2.0|STVOR_AGENT_SHA256=$TGZ_SHA|" "$(apin)"
+check_not "черновика пина не осталось" bash -c 'compgen -G "$1/.installed-pin.*" >/dev/null' _ "$S"
+
+echo "== замена оборвалась после бинаря — повтор прежней пары ставит её заново, пин верный =="
+# Новый бинарь встал, init-скрипт не лёг (sa_die): запись установленного прежней пары
+# не должна дать повтору «уже установлен» и пин прежней пары поверх нового бинаря.
+setup
+installed; eq "4.1.0 — 0" 0 "$?"
+sha41="$TGZ_SHA"; cp "$FAKE/tgz" "$FAKE/tgz41"
+make_tgz 4.2.0
+mv "$ROOT/etc/init.d" "$ROOT/etc/init.d.saved"; : > "$ROOT/etc/init.d"
+ht_hook install STVOR_AGENT_VERSION=4.2.0 STVOR_AGENT_SHA256="$TGZ_SHA" STVOR_AGENT_MIRROR="$MIRROR"
+check "init-скрипт не лёг — отказ" test "$?" -ne 0
+check "фикстура: бинарь уже 4.2.0" grep -q 'stvor-agent 4.2.0' "$ROOT/usr/bin/stvor-agent"
+rm -f "$ROOT/etc/init.d"; mv "$ROOT/etc/init.d.saved" "$ROOT/etc/init.d"
+check "оборвалось — пина нет" test ! -e "$S/installed-pin"
+cp "$FAKE/tgz41" "$FAKE/tgz"; TGZ_SHA="$sha41"
+: > "$FAKE/calls"
+installed; eq "повтор 4.1.0 — 0" 0 "$?"
+check "повтор 4.1.0 — скачан заново" ht_called '^curl '
+check "повтор 4.1.0 — бинарь 4.1.0" grep -q 'stvor-agent 4.1.0' "$ROOT/usr/bin/stvor-agent"
+eq "повтор 4.1.0 — pin прежней пары" "STVOR_AGENT_VERSION=4.1.0|STVOR_AGENT_SHA256=$sha41|" "$(apin)"
 
 echo "== офлайн: STVOR_AGENT_TARBALL без сети =="
 setup
@@ -312,6 +366,7 @@ check_not "shadow очищен" grep -q '^stvor-telemetry:' "$ROOT/etc/shadow"
 check "root на месте" grep -q '^root:' "$ROOT/etc/passwd"
 check "метка снята с узла: reload-apps" ht_called '^cream run teleport-openwrt reload-apps$'
 check "запись установленного снята" test ! -e "$S/installed"
+check "пин снят" test ! -e "$S/installed-pin"
 setup
 installed
 : > "$FAKE/disable-fails"

@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.9.2](https://github.com/iamletenkov/cream-extensions/compare/v5.9.1...v5.9.2) (2026-10-27)
+
+
+### Исправлено
+
+* **release:** подписанный релиз не переподписывается и не перезаписывается ([#71](https://github.com/iamletenkov/cream-extensions/issues/71)) ([57f9c7c](https://github.com/iamletenkov/cream-extensions/commit/57f9c7c10ef5a2dc5e10202fec1c7f650a034c0d))
+
 ## [5.9.1](https://github.com/iamletenkov/cream-extensions/compare/v5.9.0...v5.9.1) (2026-10-27)
 
 
