@@ -5,7 +5,8 @@
 # file goes away on `cream remove stvor-agent`).
 schema: cream/v1
 name: stvor-agent
-version: 4.2.4
+version: 4.2.5
+# 4.2.5: пин пакета stvor-agent 4.4.0.
 # 4.2.4: обрыв на LTE — curl пакета с --retry-all-errors (обрыв потока HTTP/2, 429 с
 #        Retry-After), на curl 7.71+; curl 7.68 (Ubuntu 20.04) — --retry 5, как было.
 # 4.2.3: пин пакета stvor-agent 4.3.1.
