@@ -532,6 +532,10 @@ check "секрет стёрт" test ! -e "$S/registration-secret"
 check_not "LD_PRELOAD до бинаря не дошёл" grep -qx set "$ROOT/fake/preload.log"
 act managed-status; eq "managed-status — 0" 0 "$?"
 check "managed-status: joined и active" grep -q '"joined":true,"active":true' <<< "$(json)"
+act apps-status; eq "apps-status — 0" 0 "$?"
+eq "apps-status: ext, apps.d, зарегистрирован, journal известен" \
+    "teleport-openwrt /etc/cream/teleport-openwrt/apps.d True True False" \
+    "$(json | python3 -c 'import json,sys; o=json.load(sys.stdin); print(o["ext"], o["apps_dir"], o["registered"], o["app_role_known"], o["app_role_missing"])')"
 act status
 check "status: служба procd активна и включена" grep -q 'Служба teleport (procd): active, enabled' "$ROOT/out"
 # Idempotent rerun: the agent restarts with the knobs, no secret needed.
@@ -675,6 +679,12 @@ check "пропуск 0666 назван по правам" grep -q 'права 6
 eq "teleport.yaml 0600" 600 "$(stat -c %a "$Y")"
 bbrun managed-status; eq "managed-status — 0" 0 "$?"
 check "управляемые метки из домена" grep -q '"managed":{"space":"sp-1","env":"dev"}' "$ROOT/out"
+cp "$Y" "$HT_TMP/y.before"
+bbrun apps-status; eq "apps-status без stat — 0" 0 "$?"
+eq "apps-status: web опубликован, wide (0666) — untrusted_path" \
+    "[('web', 'http://127.0.0.1:8080', 'extension', '/etc/cream/teleport-openwrt/apps.d/web.conf')] [('/etc/cream/teleport-openwrt/apps.d/wide.conf', 'untrusted_path')]" \
+    "$(grep -E '^\{' "$ROOT/out" | python3 -c 'import json,sys; o=json.load(sys.stdin); print([(a["name"], a["uri"], a["source"], a.get("file")) for a in o["apps"]], [(d["file"], d["reason"]) for d in o["dropped"]])')"
+check "apps-status не трогает teleport.yaml" cmp -s "$HT_TMP/y.before" "$Y"
 bbrun set-managed space=sp-2 env=dev; eq "set-managed без paste — 0" 0 "$?"
 check "set-managed — без init: deferred" grep -q '"result":"deferred"' "$ROOT/out"
 eq "отсортированный набор в домене" 'TELEPORT_MANAGED_LABELS="env=dev space=sp-2"' "$(grep '^TELEPORT_MANAGED_LABELS=' "$ROOT/etc/cream/teleport-openwrt/config")"

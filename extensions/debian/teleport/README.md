@@ -16,7 +16,7 @@
 | Конфликтует с | способность `teleport-node` |
 | Хуки | `install`, `upgrade`, `remove`, `apply` |
 | Настройка на загрузке | — |
-| Действия | `cream run teleport join`, `cream run teleport join-retry`, `cream run teleport leave`, `cream run teleport set-managed`, `cream run teleport managed-status`, `cream run teleport status`, `cream run teleport render`, `cream run teleport reload-apps`, `cream run teleport hup`, `cream run teleport scrub-token` |
+| Действия | `cream run teleport join`, `cream run teleport join-retry`, `cream run teleport leave`, `cream run teleport set-managed`, `cream run teleport managed-status`, `cream run teleport apps-status`, `cream run teleport status`, `cream run teleport render`, `cream run teleport reload-apps`, `cream run teleport hup`, `cream run teleport scrub-token` |
 | Живая машина | да |
 <!-- /catalog:facts -->
 
@@ -175,6 +175,7 @@ RUN_COMMAND cream install --with-deps teleport
 | `leave` | exclusive | агент выключен, `/var/lib/teleport`, `teleport.yaml`, секрет, ожидание, управляемые метки и `managed-pending` стёрты; JSON `{"result":"left"}` |
 | `set-managed k=v…` | exclusive | полный набор управляемых меток; JSON схемы 1 |
 | `managed-status` | none | управляемые метки, маркер, регистрация, агент; JSON схемы 1 |
+| `apps-status` | none | итог публикации приложений: опубликованные, отброшенные объявления с причиной; JSON схемы 1 |
 | `status` | none | регистрация, служба, ручки, приложения, управляемые и командные метки — текстом |
 | `render` | none | `/etc/teleport.yaml` (0600); `ExecStartPre`/`ExecReload` `teleport.service` |
 | `reload-apps` | exclusive | `teleport-apps.service`: render, HUP с подтверждением новым процессом или restart |
@@ -271,6 +272,39 @@ ICON=mcpVscode                  иконка в веб-морде прокси (
 `app=<имя>`; объявление само задаёт только `teleport.icon`. Изменение каталога
 видит `teleport-apps.path` и делает `reload` (render + HUP). Имя иконки — ключ
 вшитого в прокси набора; неизвестное имя прокси не считает ошибкой.
+
+Что опубликовано и почему — `cream run teleport apps-status` (`lock: none`, только
+читает: файлов не пишет, юнитов не трогает). Это то же решение, по которому `render`
+собирает `app_service` (функция `apps_resolve` ядра; `status` и `join` берут список
+оттуда же), одним JSON-объектом схемы 1:
+
+```json
+{"schema":1,"ext":"teleport","apps_dir":"/etc/cream/teleport/apps.d",
+ "discovery":true,"registered":true,"app_role_missing":false,"app_role_known":true,
+ "apps":[{"name":"code-server","uri":"https://127.0.0.1:9002","source":"extension",
+          "file":"/etc/cream/teleport/apps.d/code-server.conf","icon":"mcpVscode"},
+         {"name":"web","uri":"http://127.0.0.1:8080","source":"operator"}],
+ "dropped":[{"file":"/etc/cream/teleport/apps.d/b.conf","name":"code-server","reason":"name_shadowed"}]}
+```
+
+- `apps` — опубликованное, в порядке `teleport.yaml`: `source` — `operator`
+  (`TELEPORT_APPS`) или `extension` (тогда `file`); `icon` — если задана.
+- `dropped` — что не опубликовано; `name` — если файл прочитан. `reason`:
+  `discovery_off` (`TELEPORT_APPS_DISCOVERY=0`), `untrusted_path` (файл или каталог до
+  `/` — не root, запись группе/прочим, ссылка), `invalid` (не `KEY=VALUE`, чужой ключ,
+  `NAME` не метка DNS, `URI` не петля, `ICON` не имя иконки), `name_shadowed` (имя уже
+  объявлено файлом раньше по glob — тот и опубликован), `overridden_by_operator` (то же
+  имя в `TELEPORT_APPS`), `disabled` (`TELEPORT_APPS_DISABLE`; для приложения оператора
+  `file` — `"TELEPORT_APPS"`). Файлы не `*.conf` не рассматриваются.
+  Имя файла объявления — `[A-Za-z0-9._-]+.conf`; иное (пробел, управляющие знаки)
+  не читается — `invalid`, в журнале имя экранировано. В `file` байты вне
+  `[A-Za-z0-9._/~+-]` даны как `\u00XX`: JSON валиден при любом имени.
+- `registered` — у узла есть identity (как `joined` в `managed-status`);
+  `app_role_missing` — агент текущего запуска пишет в журнал отказ роли App (как
+  `status`); `app_role_known` — слой умеет это определить (оба слоя — да).
+
+Код 0 и объект — всегда, в том числе без `apps.d`, без регистрации и без агента; ручка
+домена не по типу (её отверг бы и `render`) — `{"schema":1,"error":"…"}` и код 3.
 
 ### Управляемые метки — `set-managed`, `managed-status`
 

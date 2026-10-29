@@ -1,6 +1,13 @@
 schema: cream/v1
 name: teleport
-version: 4.3.2
+version: 4.4.0
+# 4.4.0: действие apps-status (lock: none, JSON схемы 1) — итог публикации приложений тем же
+#        решением, что render: опубликованные {name, uri, source, file?, icon?}, отброшенные
+#        объявления apps.d с причиной, discovery, registered, app_role_missing. render, status
+#        и join берут список из того же apps_resolve ядра — teleport.yaml прежний.
+#        Изменение поведения: доверенный файл apps.d с именем вне [A-Za-z0-9._-]+.conf
+#        (пробел, кириллица, +, ~) больше не публикуется — в журнале «пропускаю», в apps-status
+#        invalid; имя файла не попадает в поток render (защита от подмены строк).
 # 4.3.2: TELEPORT_TAG и с локальным TELEPORT_TARBALL (нужен TELEPORT_SHA256): тег ничего не
 #        качает — пишется в installed-pin; тот же тарбол с новым тегом переписывает пин без
 #        переустановки. MIRROR + TAG без DIST — отказ.
@@ -155,6 +162,11 @@ actions:
     phases: [live]
   managed-status:
     summary: "управляемые метки, маркер managed-pending, регистрация, агент — JSON схемы 1"
+    lock: none
+    output: json
+    phases: [live]
+  apps-status:
+    summary: "итог публикации приложений: опубликованные, отброшенные объявления с причиной, флаги — JSON схемы 1"
     lock: none
     output: json
     phases: [live]

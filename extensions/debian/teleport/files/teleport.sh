@@ -25,6 +25,7 @@
 #   set-managed k=v…              the full set of managed labels (stvor-agent);
 #                                 restart only when the config changed; JSON
 #   managed-status                managed labels, marker, registration; JSON
+#   apps-status                   published apps and dropped declarations; JSON
 #
 # Moved from bisquite-teleport-agent 3.x (src/bisquite-teleport) with the
 # paths, unit names and variables of cream (spec stvor-agent §10.1):
