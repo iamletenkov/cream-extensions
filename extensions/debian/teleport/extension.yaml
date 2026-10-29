@@ -5,6 +5,9 @@ version: 4.4.0
 #        решением, что render: опубликованные {name, uri, source, file?, icon?}, отброшенные
 #        объявления apps.d с причиной, discovery, registered, app_role_missing. render, status
 #        и join берут список из того же apps_resolve ядра — teleport.yaml прежний.
+# 4.3.2: TELEPORT_TAG и с локальным TELEPORT_TARBALL (нужен TELEPORT_SHA256): тег ничего не
+#        качает — пишется в installed-pin; тот же тарбол с новым тегом переписывает пин без
+#        переустановки. MIRROR + TAG без DIST — отказ.
 # 4.3.1: installed-pin хранит и тег сборки форка (TELEPORT_TAG=, при TELEPORT_DIST); пин без
 #        тега той же суммы получает его без скачивания.
 # 4.3.0: раздача портала Stvor — TELEPORT_DIST и TELEPORT_TAG (вместе, взаимоисключимы с
@@ -79,7 +82,7 @@ config:
     TELEPORT_DIST: {type: 're:^https://[A-Za-z0-9.:/-]+$', default: "", empty: true, scope: install,
                     description: "раздача портала Stvor <база>/teleport/<тег>/<тарбол>; только с TELEPORT_TAG и TELEPORT_SHA256"}
     TELEPORT_TAG: {type: 're:^v[0-9]+\.[0-9]+\.[0-9]+-stvor\.[0-9]+$', default: "", empty: true, scope: install,
-                   description: "тег сборки форка vX.Y.Z-stvor.N (X.Y.Z = TELEPORT_VERSION); только с TELEPORT_DIST"}
+                   description: "тег сборки форка vX.Y.Z-stvor.N (X.Y.Z = TELEPORT_VERSION); с TELEPORT_DIST или TELEPORT_TARBALL"}
     # Подключение. Регулярные выражения — те же, что в files/teleport.sh (KEY_TYPE):
     # значения ложатся в YAML в двойных кавычках, кавычек и `$` в них нет.
     TELEPORT_PROXY: {type: 're:^[a-z0-9][a-z0-9.-]{0,252}(:[0-9]{1,5})?$', default: "", empty: true,

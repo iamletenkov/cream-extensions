@@ -962,7 +962,9 @@ refuse(){
     check_not "$what: без скачивания" test -s "$FAKE/curl.log"
 }
 refuse "DIST без TAG" "задаются вместе" TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST"
-refuse "TAG без DIST" "задаются вместе" TELEPORT_SHA256="$TB_SHA" TELEPORT_TAG="$TAG"
+refuse "TAG без DIST и TARBALL" "только с TELEPORT_DIST или TELEPORT_TARBALL" TELEPORT_SHA256="$TB_SHA" TELEPORT_TAG="$TAG"
+refuse "MIRROR и TAG" "только с TELEPORT_DIST или TELEPORT_TARBALL" TELEPORT_SHA256="$TB_SHA" TELEPORT_TAG="$TAG" \
+    TELEPORT_MIRROR=https://mirror.example.org
 refuse "DIST и MIRROR" "взаимоисключим" TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST" TELEPORT_TAG="$TAG" \
     TELEPORT_MIRROR=https://mirror.example.org
 cp "$FAKE/tarball" "$TMP/local.tar.gz"
@@ -972,6 +974,31 @@ refuse "DIST по http" "ожидали https" TELEPORT_SHA256="$TB_SHA" TELEPOR
 refuse "тег не форка" "vX.Y.Z-stvor.N" TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST" TELEPORT_TAG=v18.10.0
 refuse "тег другой версии" "TELEPORT_VERSION=18.10.0" TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST" TELEPORT_TAG=v18.11.0-stvor.1
 refuse "DIST без суммы" "TELEPORT_DIST без TELEPORT_SHA256" TELEPORT_DIST="$DIST" TELEPORT_TAG="$TAG"
+refuse "TARBALL и TAG без суммы" "TELEPORT_TARBALL без TELEPORT_SHA256" TELEPORT_TAG="$TAG" \
+    TELEPORT_TARBALL="$TMP/local.tar.gz"
+refuse "TARBALL и тег другой версии" "TELEPORT_VERSION=18.10.0" TELEPORT_SHA256="$TB_SHA" \
+    TELEPORT_TAG=v18.11.0-stvor.1 TELEPORT_TARBALL="$TMP/local.tar.gz"
+
+echo "== хук install: локальный TELEPORT_TARBALL + TELEPORT_TAG (тег — только происхождение) =="
+new_root
+rm -f "$ROOT/usr/local/bin/teleport"
+make_tarball 18.10.0 stvor.5
+cp "$FAKE/tarball" "$TMP/local.tar.gz"
+: > "$FAKE/curl.log"
+msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_TARBALL="$TMP/local.tar.gz" \
+    TELEPORT_TAG="$TAG" 2>&1)"; rc=$?
+eq "tarball+tag: код 0" 0 "$rc"
+check "tarball+tag: бинарь сборки форка" grep -qx '# build stvor.5' "$ROOT/usr/local/bin/teleport"
+check_not "tarball+tag: curl не зовётся" test -s "$FAKE/curl.log"
+eq "tarball+tag: pin — сумма и тег сборки" "TELEPORT_VERSION=18.10.0|TELEPORT_SHA256=$TB_SHA|TELEPORT_TAG=$TAG|" "$(tr '\n' '|' < "$STATE/installed-pin")"
+# The same set under a new tag: the pin is rewritten, the binary stays (no unpack).
+rm -f "$TMP/local.tar.gz"
+before="$(stat -c %Y.%i "$ROOT/usr/local/bin/teleport")"
+msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_TARBALL="$TMP/local.tar.gz" \
+    TELEPORT_TAG=v18.10.0-stvor.6 2>&1)"; rc=$?
+eq "tarball+новый тег: код 0" 0 "$rc"
+eq "tarball+новый тег: бинарь не переставлен" "$before" "$(stat -c %Y.%i "$ROOT/usr/local/bin/teleport")"
+eq "tarball+новый тег: pin переписан" "TELEPORT_VERSION=18.10.0|TELEPORT_SHA256=$TB_SHA|TELEPORT_TAG=v18.10.0-stvor.6|" "$(tr '\n' '|' < "$STATE/installed-pin")"
 
 echo "== хук install: обрыв на LTE — повтор с докачкой =="
 new_root
