@@ -446,24 +446,32 @@ apps_resolve(){
     return 0
 }
 
-# collect_apps — the published apps of apps_resolve: "name<TAB>uri<TAB>source<TAB>icon".
-# Defence in depth: every line is checked again before it reaches render — the
-# name, a loopback URI for a declaration (any http(s) for TELEPORT_APPS), the
-# source (TELEPORT_APPS or a file of apps.d of RE_DECL_FILE), the icon, four
-# fields exactly.
+# app_line_ok <name<TAB>uri<TAB>source<TAB>icon> — defence in depth: a published
+# line of apps_resolve is checked again before render and apps-status use it —
+# four fields exactly, the name, the icon, a loopback URI for a declaration (any
+# http(s) for TELEPORT_APPS), the source (TELEPORT_APPS or a file of apps.d of
+# RE_DECL_FILE). 1 and a journal line otherwise.
+app_line_ok(){
+    local name uri src icon extra tabs="${1//[!$'\t']/}"
+    IFS=$'\t' read -r name uri src icon extra <<< "$1"
+    # Fields are counted by the separators: read collapses empty ones.
+    if [[ ${#tabs} -ne 3 || -n "$extra" || ! "$name" =~ $RE_APP_NAME || ( -n "$icon" && ! "$icon" =~ $RE_APP_ICON ) ]] \
+       || { [[ "$src" == TELEPORT_APPS ]] && [[ ! "$uri" =~ $RE_OPERATOR_URI ]]; } \
+       || { [[ "$src" != TELEPORT_APPS ]] && [[ "$src" != "$APPS_DIR"/* || ! "${src##*/}" =~ $RE_DECL_FILE \
+              || ! "$uri" =~ $RE_LOOPBACK_URI ]]; }; then
+        warn "пропускаю приложение: запись не по форме ($(printf '%q' "$1"))"; return 1
+    fi
+    return 0
+}
+
+# collect_apps — the published apps of apps_resolve that pass app_line_ok:
+# "name<TAB>uri<TAB>source<TAB>icon".
 collect_apps(){
-    local line rest name uri src icon extra
+    local line rest
     while IFS= read -r line; do
         [[ "$line" == app$'\t'* ]] || continue
         rest="${line#app$'\t'}"
-        IFS=$'\t' read -r name uri src icon extra <<< "$rest"
-        if [[ -n "$extra" || ! "$name" =~ $RE_APP_NAME || ( -n "$icon" && ! "$icon" =~ $RE_APP_ICON ) ]] \
-           || { [[ "$src" == TELEPORT_APPS ]] && [[ ! "$uri" =~ $RE_OPERATOR_URI ]]; } \
-           || { [[ "$src" != TELEPORT_APPS ]] && [[ "$src" != "$APPS_DIR"/* || ! "${src##*/}" =~ $RE_DECL_FILE \
-                  || ! "$uri" =~ $RE_LOOPBACK_URI ]]; }; then
-            warn "пропускаю приложение: запись не по форме ($(printf '%q' "$rest"))"; continue
-        fi
-        printf '%s\n' "$rest"
+        app_line_ok "$rest" && printf '%s\n' "$rest"
     done < <(apps_resolve)
     return 0
 }
@@ -1506,6 +1514,10 @@ json_path(){
 # or untrusted_path of the directory, which apps_resolve names as a whole.
 apps_dir_drops(){
     local f out=""
+    # A symlinked apps.d: one entry of the directory, its files not listed.
+    if [[ -L "$APPS_DIR" ]]; then
+        printf '{"file":%s,"reason":"%s"}' "$(json_path "$(guest_path "$APPS_DIR")")" "$1"; return 0
+    fi
     for f in "$APPS_DIR"/*.conf; do
         [[ -f "$f" ]] || continue
         out+="${out:+,}{\"file\":$(json_path "$(guest_path "$f")"),\"reason\":\"$1\"}"
@@ -1537,9 +1549,23 @@ cmd_apps_status(){
     [[ "${C[TELEPORT_APPS_DISCOVERY]}" == 1 ]] && disc=true
     joined && reg=true
     app_role_missing && role=true
-    while IFS=$'\t' read -r kind a b c d; do
+    local line rest
+    while IFS= read -r line; do
+        kind="${line%%$'\t'*}"; rest="${line#*$'\t'}"
+        IFS=$'\t' read -r a b c d <<< "$rest"
         case "$kind" in
             app)
+                # The same check as render's (collect_apps): a line that fails
+                # it is not published — it is a drop, invalid.
+                if ! app_line_ok "$rest"; then
+                    if [[ "$c" == TELEPORT_APPS ]]; then o='{"file":"TELEPORT_APPS"'
+                    elif [[ -n "$c" ]]; then o="{\"file\":$(json_path "$(guest_path "$c")")"
+                    else o="{\"file\":$(json_path "$(guest_path "$APPS_DIR")")"
+                    fi
+                    [[ "$a" =~ $RE_APP_NAME ]] && o+=",\"name\":\"$a\""
+                    dropped+="${dropped:+,}$o,\"reason\":\"invalid\"}"
+                    continue
+                fi
                 o="{\"name\":$(json_str "$a"),\"uri\":$(json_str "$b")"
                 if [[ "$c" == TELEPORT_APPS ]]; then
                     o+=',"source":"operator"'

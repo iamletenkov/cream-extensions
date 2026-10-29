@@ -67,6 +67,9 @@ hook_install(){ L "hook_install $1"; }
 hook_remove(){ L hook_remove; }
 [[ -n "${DROP:-}" ]] && unset -f "$DROP"
 [[ -n "${DROPV:-}" ]] && unset "$DROPV"
+# A substitute apps_resolve: the lines of $FAKE/apps_resolve as is (the re-check
+# of app_line_ok is what is tested).
+if [[ -e "$ROOT/fake/apps_resolve" ]]; then apps_resolve(){ cat "$ROOT/fake/apps_resolve"; }; fi
 core_main "$@"
 EOF
 chmod +x "$EXT/files/teleport.sh"
@@ -153,6 +156,46 @@ check "data_dir слоя" grep -qx '  data_dir: /srv/tp/data' "$Y"
 check "log.output слоя" grep -qx '    output: syslog' "$Y"
 eq "доп. ключи ssh_service — внутри ssh_service" "  pam:|    enabled: false" \
     "$(sed -n '/^ssh_service:/,/^[a-z]/p' "$Y" | grep -A1 '^  pam:' | paste -s -d '|' -)"
+
+echo "== app_line_ok: render и apps-status проверяют записи apps_resolve одним правилом =="
+new_root
+printf 'TELEPORT_PROXY=tp.example.org\n' > "$ROOT/etc/cream/tp-x/config"
+A="/etc/cream/tp-x/apps.d"
+{
+    printf 'app\tgood\thttp://127.0.0.1:8080\t%s/good.conf\t\n' "$ROOT$A"
+    printf 'app\top\thttps://10.0.0.5:8443\tTELEPORT_APPS\t\n'
+    printf 'app\tremote\thttp://10.0.0.1:80\t%s/remote.conf\t\n' "$ROOT$A"
+    printf 'app\tBad_Name\thttp://127.0.0.1:1\tTELEPORT_APPS\t\n'
+    printf 'app\textra\thttp://127.0.0.1:2\tTELEPORT_APPS\t\tmore\n'
+    printf 'app\tforeign\thttp://127.0.0.1:3\t/tmp/x.conf\t\n'
+    printf 'app\ticon\thttp://127.0.0.1:4\tTELEPORT_APPS\tbad icon\n'
+} > "$ROOT/fake/apps_resolve"
+tp render >/dev/null 2>&1
+Y="$ROOT/etc/teleport.yaml"
+eq "render: только записи по форме" "good-lab-host op-lab-host" \
+    "$(sed -n 's/^    - name: "\(.*-lab-host\)"$/\1/p' "$Y" | paste -s -d ' ' -)"
+out="$(tp apps-status 2>/dev/null)"; rc=$?
+eq "apps-status — 0" 0 "$rc"
+eq "apps-status: опубликованы те же, что в render" "['good', 'op']" \
+    "$(python3 -c 'import json,sys; print([a["name"] for a in json.loads(sys.argv[1])["apps"]])' "$out" 2>&1)"
+eq "apps-status: не по форме — dropped invalid" \
+    "[('/etc/cream/tp-x/apps.d/remote.conf', 'remote', 'invalid'), ('TELEPORT_APPS', None, 'invalid'), ('TELEPORT_APPS', 'extra', 'invalid'), ('/tmp/x.conf', 'foreign', 'invalid'), ('TELEPORT_APPS', 'icon', 'invalid')]" \
+    "$(python3 -c 'import json,sys; print([(d["file"], d.get("name"), d["reason"]) for d in json.loads(sys.argv[1])["dropped"]])' "$out" 2>&1)"
+
+echo "== apps-status: apps.d — символическая ссылка: одна запись каталога =="
+new_root
+printf 'TELEPORT_PROXY=tp.example.org\n' > "$ROOT/etc/cream/tp-x/config"
+mkdir -p "$ROOT/srv/real"
+printf 'NAME=a\nURI=http://127.0.0.1:1\n' > "$ROOT/srv/real/a.conf"
+printf 'NAME=b\nURI=http://127.0.0.1:2\n' > "$ROOT/srv/real/b.conf"
+ln -s "$ROOT/srv/real" "$ROOT/etc/cream/tp-x/apps.d"
+out="$(tp apps-status 2>/dev/null)"
+eq "ссылка: одна запись untrusted_path, файлы не перечислены" "[('/etc/cream/tp-x/apps.d', 'untrusted_path')]" \
+    "$(python3 -c 'import json,sys; print([(d["file"], d["reason"]) for d in json.loads(sys.argv[1])["dropped"]])' "$out" 2>&1)"
+printf 'TELEPORT_APPS_DISCOVERY=0\n' >> "$ROOT/etc/cream/tp-x/config"
+out="$(tp apps-status 2>/dev/null)"
+eq "ссылка, discovery 0: одна запись discovery_off" "[('/etc/cream/tp-x/apps.d', 'discovery_off')]" \
+    "$(python3 -c 'import json,sys; print([(d["file"], d["reason"]) for d in json.loads(sys.argv[1])["dropped"]])' "$out" 2>&1)"
 
 echo "== бинарь — только env -u LD_PRELOAD =="
 new_root
