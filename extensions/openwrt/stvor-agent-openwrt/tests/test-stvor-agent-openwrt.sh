@@ -125,8 +125,8 @@ ok
 eq "метка — как у debian" "$(cat "$DEB/files/stvor_agent.command-label")" "$(cat "$SRC/files/stvor_agent.command-label")"
 # Решение владельца 2026-10-23 (Р4 пересмотрен): sysupgrade с сохранением конфигурации
 # хранит агента целиком — machine-id, состояние, токены и домен; буфер телеметрии нет.
-eq "keep.d — machine-id, состояние, токены, домен, маркер пользователя, пин tar.gz" \
-    "/opt/stvor-agent/machine-id|/opt/stvor-agent/state.json|/opt/stvor-agent/telemetry-token.src|/etc/stvor-agent/token|/etc/stvor-agent-telemetry/token|/etc/cream/stvor-agent-openwrt/|/opt/cream/var/ext/stvor-agent-openwrt/user-created|/opt/cream/var/ext/stvor-agent-openwrt/installed-pin|/opt/stvor-agent/last-good.json|" \
+eq "keep.d — machine-id, состояние, токены, ключ робота, корни портала, домен, маркер пользователя, пин tar.gz" \
+    "/opt/stvor-agent/machine-id|/opt/stvor-agent/state.json|/opt/stvor-agent/telemetry-token.src|/etc/stvor-agent/token|/etc/stvor-agent/robot.key|/etc/stvor-agent/robot.key.next|/etc/stvor-agent/ca.pem|/etc/stvor-agent/roots.pem|/etc/stvor-agent-telemetry/token|/etc/cream/stvor-agent-openwrt/|/opt/cream/var/ext/stvor-agent-openwrt/user-created|/opt/cream/var/ext/stvor-agent-openwrt/installed-pin|/opt/stvor-agent/last-good.json|" \
     "$(grep -v '^#' "$SRC/files/keep.d" | tr '\n' '|')"
 # Спека stvor-agent «назначения» §8.4, ADR-0001: last-good.json переживает sysupgrade,
 # файлы отката, скачанное и попытка — нет (после sysupgrade откат берётся по baseline).
@@ -495,6 +495,9 @@ spoil_secrets(){
     chmod 0755 "$ROOT/etc/stvor-agent" "$ROOT/etc/stvor-agent-telemetry" "$h"
     printf 'url=https://stvor.example.org/robot-api\ntoken=t\n' > "$ROOT/etc/stvor-agent-telemetry/token"
     echo '{"schema":1}' > "$h/state.json"; echo fp > "$h/telemetry-token.src"; echo '{"schema":1}' > "$h/last-good.json"
+    echo key > "$ROOT/etc/stvor-agent/robot.key"; echo next > "$ROOT/etc/stvor-agent/robot.key.next"
+    echo roots > "$ROOT/etc/stvor-agent/roots.pem"; chmod 0600 "$ROOT/etc/stvor-agent/roots.pem"
+    chmod 0644 "$ROOT/etc/stvor-agent/robot.key" "$ROOT/etc/stvor-agent/robot.key.next"
     chmod 0644 "$ROOT/etc/stvor-agent/token" "$ROOT/etc/stvor-agent-telemetry/token" "$h/state.json" "$h/telemetry-token.src" "$h/last-good.json"
     rm -f "$FAKE/chown.argv"
 }
@@ -504,6 +507,11 @@ check_secrets(){
     check "$1: /etc/stvor-agent root" owned "0:0 -- $ROOT/etc/stvor-agent"
     eq "$1: токен меток 0600" -rw------- "$(mode "$ROOT/etc/stvor-agent/token")"
     check "$1: токен меток root" owned "0:0 -- $ROOT/etc/stvor-agent/token"
+    for f in robot.key robot.key.next; do
+        eq "$1: $f 0600" -rw------- "$(mode "$ROOT/etc/stvor-agent/$f")"
+        check "$1: $f root" owned "0:0 -- $ROOT/etc/stvor-agent/$f"
+    done
+    eq "$1: roots.pem 0644" -rw-r--r-- "$(mode "$ROOT/etc/stvor-agent/roots.pem")"
     eq "$1: /etc/stvor-agent-telemetry 0750" drwxr-x--- "$(mode "$ROOT/etc/stvor-agent-telemetry")"
     eq "$1: токен телеметрии 0640" -rw-r----- "$(mode "$ROOT/etc/stvor-agent-telemetry/token")"
     check "$1: токен телеметрии root:stvor-telemetry" owned "0:stvor-telemetry -- $ROOT/etc/stvor-agent-telemetry/token"

@@ -302,14 +302,18 @@ sa_own_state(){
 # again 0755 root, and the agent refuses a labels token in a directory wider than
 # 0700. Every path lies in a directory only root writes (nothing there is the
 # telemetry user's to swap); a link is never followed — the agent refuses it too.
-#   /etc/stvor-agent                 0700 root, token 0600 root
+#   /etc/stvor-agent                 0700 root, token, robot.key, robot.key.next 0600 root,
+#                                    roots.pem 0644 root (ca.pem — as the agent wrote it)
 #   /etc/stvor-agent-telemetry       0750 root:stvor-telemetry, token 0640 the same
 #   /opt/stvor-agent/state.json, telemetry-token.src, last-good.json  0600 root
 sa_own_secrets(){
     local f
     if [[ -d "$SA_ETC" && ! -L "$SA_ETC" ]]; then
         chown 0:0 -- "$SA_ETC" && chmod 0700 -- "$SA_ETC" || return 1
-        sa_own_file "$SA_ETC/token" 0 0600 || return 1
+        for f in token robot.key robot.key.next; do
+            sa_own_file "$SA_ETC/$f" 0 0600 || return 1
+        done
+        sa_own_file "$SA_ETC/roots.pem" 0 0644 || return 1
     fi
     if [[ -d "$SA_TELEMETRY_ETC" && ! -L "$SA_TELEMETRY_ETC" ]]; then
         sa_dir "$SA_TELEMETRY_ETC" 0750 || return 1
