@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.12.0](https://github.com/iamletenkov/cream-extensions/compare/v5.11.1...v5.12.0) (2026-10-29)
+
+
+### Добавлено
+
+* **teleport:** действие apps-status — итог публикации приложений ([#86](https://github.com/iamletenkov/cream-extensions/issues/86)) ([f10b8e2](https://github.com/iamletenkov/cream-extensions/commit/f10b8e218e69c63a2362bb421bad1d76fbed6b0c))
+
 ## [5.11.1](https://github.com/iamletenkov/cream-extensions/compare/v5.11.0...v5.11.1) (2026-10-29)
 
 
