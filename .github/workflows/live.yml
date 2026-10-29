@@ -130,11 +130,31 @@ jobs:
       - name: Install PyYAML
         run: python -m pip install --disable-pip-version-check pyyaml
 
+      # stvor-agent приватный: релиз без токена — 404. .deb по пину каталога
+      # качается с AGENT_RELEASES_TOKEN и отдаётся контейнеру локальным зеркалом
+      # (STVOR_AGENT_MIRROR); сумму по-прежнему сверяет хук с pin.env.
+      - name: Local mirror of stvor-agent
+        if: matrix.ext == 'stvor-agent'
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_RELEASES_TOKEN }}
+        run: |
+          set -euo pipefail
+          v="$(sed -n 's/^STVOR_AGENT_PIN_VERSION=//p' extensions/debian/stvor-agent/files/pin.env)"
+          d="$RUNNER_TEMP/agent-mirror"
+          mkdir -p "$d"
+          gh release download "v$v" -R iamletenkov/stvor-agent -p "stvor-agent_${v}_amd64.deb" -D "$d"
+          gw="$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')"
+          nohup python3 -m http.server 8088 --bind "$gw" --directory "$d" > /dev/null 2>&1 &
+          echo "LIVE_MIRROR=http://$gw:8088" >> "$GITHUB_ENV"
+
       - name: tools/live-test.sh
         env:
           EXT: ${{ matrix.ext }}
           DISTRO: ${{ matrix.distro }}
-        run: tools/live-test.sh --distro "$DISTRO" "$EXT"
+        run: |
+          args=()
+          [[ -z "${LIVE_MIRROR:-}" ]] || args+=(--param "STVOR_AGENT_MIRROR=$LIVE_MIRROR")
+          tools/live-test.sh --distro "$DISTRO" "${args[@]}" "$EXT"
 
       - name: Journal of the machine
         if: failure()
