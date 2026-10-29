@@ -1144,6 +1144,52 @@ echo 'ERROR app_service: token does not allow role App' > "$FAKE/journal"
 eq "журнал: нет роли App — app_role_missing" True "$(jx "$(tp apps-status 2>/dev/null)" 'o["app_role_missing"]')"
 : > "$FAKE/journal"
 eq "журнал без отказа — app_role_missing false" False "$(jx "$(tp apps-status 2>/dev/null)" 'o["app_role_missing"]')"
+echo "== apps.d: имена файлов с управляющими знаками не попадают в поток render =="
+# A file name with NEWLINE and TAB would forge a published line of apps_resolve
+# ("app<TAB>name<TAB>uri…") — in an untrusted apps.d too, where no file is read.
+apps_inputs
+EVIL=$'x\napp\tevil\tlocalhost\tTELEPORT_APPS\t\ny.conf'
+evil_files(){
+    local n
+    for n in "$EVIL" $'tab\tevil.conf' $'cr\revil.conf'; do
+        printf 'NAME=evil\nURI=http://127.0.0.1:1\n' > "$APPS/$n"; chmod 0644 "$APPS/$n"
+    done
+}
+no_evil_files(){ rm -f -- "$APPS/$EVIL" "$APPS/"$'tab\tevil.conf' "$APPS/"$'cr\revil.conf'; }
+# n_ctl_names <json> — dropped entries whose file has a control character.
+n_ctl_names(){ jx "$1" 'len([d for d in o["dropped"] if any(ord(ch) < 32 for ch in d["file"])])'; }
+for mode in trusted untrusted discovery_off; do
+    case "$mode" in
+        untrusted) chmod 0775 "$APPS" ;;
+        discovery_off) chmod 0755 "$APPS"; conf TELEPORT_APPS_DISCOVERY=0 ;;
+    esac
+    no_evil_files
+    tp render 2>/dev/null; cp "$Y" "$TMP/y.ref"
+    evil_files
+    tp render 2>"$TMP/err"; rc=$?
+    eq "$mode: render с такими именами — 0" 0 "$rc"
+    check_not "$mode: evil не опубликован" grep -q evil "$Y"
+    check "$mode: teleport.yaml тот же, что без этих файлов" cmp -s "$TMP/y.ref" "$Y"
+    out="$(tp apps-status 2>/dev/null)"; rc=$?
+    eq "$mode: apps-status — 0" 0 "$rc"
+    check "$mode: apps-status — валидный JSON" json_ok "$out"
+    check_not "$mode: apps-status — evil не в apps" grep -q evil <<< "$(jx "$out" '[a["name"] for a in o["apps"]]')"
+    eq "$mode: apps-status — три файла с \\n, \\t, \\r в dropped" 3 "$(n_ctl_names "$out")"
+done
+want="$(jx "$out" 'sorted(d["reason"] for d in o["dropped"] if any(ord(ch) < 32 for ch in d["file"]))')"
+eq "discovery_off: такие файлы — discovery_off" "['discovery_off', 'discovery_off', 'discovery_off']" "$want"
+conf TELEPORT_APPS_DISCOVERY=1
+out="$(tp apps-status 2>/dev/null)"
+eq "доверенный каталог: такие файлы — invalid" "['invalid', 'invalid', 'invalid']" \
+    "$(jx "$out" 'sorted(d["reason"] for d in o["dropped"] if any(ord(ch) < 32 for ch in d["file"]))')"
+check "доверенный каталог: имя файла в JSON — побайтно" grep -qF '"/etc/cream/teleport/apps.d/x\u000aapp\u0009evil\u0009localhost' <<< "$out"
+tp render 2>"$TMP/err"
+check "доверенный каталог: строка журнала без сырого имени" grep -qF "пропускаю \$'" "$TMP/err"
+no_evil_files
+# Defence in depth: collect_apps re-checks every published line.
+check "collect_apps проверяет имя, URI, источник и иконку заново" \
+    grep -q 'запись не по форме' "$EXT/files/teleport-core.sh"
+
 # Nothing configured, no identity: valid and empty, code 0.
 new_root
 out="$(tp apps-status 2>/dev/null)"; rc=$?

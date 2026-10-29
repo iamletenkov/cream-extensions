@@ -292,6 +292,9 @@ ICON=mcpVscode                  иконка в веб-морде прокси (
   объявлено файлом раньше по glob — тот и опубликован), `overridden_by_operator` (то же
   имя в `TELEPORT_APPS`), `disabled` (`TELEPORT_APPS_DISABLE`; для приложения оператора
   `file` — `"TELEPORT_APPS"`). Файлы не `*.conf` не рассматриваются.
+  Имя файла объявления — `[A-Za-z0-9._-]+.conf`; иное (пробел, управляющие знаки)
+  не читается — `invalid`, в журнале имя экранировано. В `file` байты вне
+  `[A-Za-z0-9._/~+-]` даны как `\u00XX`: JSON валиден при любом имени.
 - `registered` — у узла есть identity (как `joined` в `managed-status`);
   `app_role_missing` — агент текущего запуска пишет в журнал отказ роли App (как
   `status`); `app_role_known` — слой умеет это определить (оба слоя — да).

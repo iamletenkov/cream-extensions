@@ -124,6 +124,11 @@ RE_APP_NAME='^[a-z0-9][a-z0-9-]{0,62}$'
 # error for the proxy — it falls back to guessing by app name. See README.
 RE_APP_ICON='^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
 RE_LOOPBACK_URI='^https?://(127\.0\.0\.1|localhost|\[::1\])(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$'
+# The name of a file of apps.d: the lines of apps_resolve are TAB and NEWLINE
+# separated, so a file name never reaches them unless it is of these letters.
+RE_DECL_FILE='^[A-Za-z0-9._-]+\.conf$'
+# An operator's URI as collect_apps re-checks it (TELEPORT_APPS, port expanded).
+RE_OPERATOR_URI='^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$'
 # The first-join secret: bound_keypair — one printable word; token — a join
 # token of Teleport (it lands in teleport.yaml in double quotes).
 RE_REG_SECRET='^[[:graph:]]{8,1000}$'
@@ -381,21 +386,29 @@ apps_dir_trusted(){
 # apps_resolve — the one decision on what is published (render, status, join
 # and apps-status read it, none repeats it). Lines, in this order of fields:
 #   app<TAB>name<TAB>uri<TAB>source<TAB>icon   published; source — a file of apps.d or TELEPORT_APPS
-#   drop<TAB>file<TAB>reason<TAB>name          not published; file — of apps.d or TELEPORT_APPS
+#   drop<TAB>file<TAB>reason<TAB>name          not published; file — of apps.d, TELEPORT_APPS
+#                                              or apps.d itself (discovery_off, untrusted_path:
+#                                              no file of it is named — none was read)
 # The reasons: discovery_off, untrusted_path (the file or a directory up to the
 # root), invalid, name_shadowed (an earlier file by glob has the name),
 # overridden_by_operator (TELEPORT_APPS has it), disabled (TELEPORT_APPS_DISABLE).
 # The name of a drop is empty when the file was not read (or not as a name).
+# A file whose name is not RE_DECL_FILE is skipped with a journal line and no
+# line here: its name could carry TAB or NEWLINE into this stream (apps-status
+# finds such files itself).
 apps_resolve(){
     local -A uri=() src=() disabled=() icon=()
-    local order=() f line name u ic item rc reason=""
+    local order=() f line name u ic item rc
     if [[ -d "$APPS_DIR" || -L "$APPS_DIR" ]]; then
-        if [[ "${C[TELEPORT_APPS_DISCOVERY]}" != 1 ]]; then reason=discovery_off
-        elif ! apps_dir_trusted; then reason=untrusted_path
-        fi
-        for f in "$APPS_DIR"/*.conf; do
+        if [[ "${C[TELEPORT_APPS_DISCOVERY]}" != 1 ]]; then
+            printf 'drop\t%s\tdiscovery_off\t\n' "$APPS_DIR"
+        elif ! apps_dir_trusted; then
+            printf 'drop\t%s\tuntrusted_path\t\n' "$APPS_DIR"
+        else for f in "$APPS_DIR"/*.conf; do
             [[ -f "$f" ]] || continue
-            if [[ -n "$reason" ]]; then printf 'drop\t%s\t%s\t\n' "$f" "$reason"; continue; fi
+            if [[ ! "${f##*/}" =~ $RE_DECL_FILE ]]; then
+                warn "пропускаю $(printf '%q' "$f"): имя файла не ${RE_DECL_FILE}"; continue
+            fi
             line="$(read_decl "$f")"; rc=$?
             case "$rc" in
                 0) ;;
@@ -408,7 +421,7 @@ apps_resolve(){
                 printf 'drop\t%s\tname_shadowed\t%s\n' "$f" "$name"; continue
             fi
             uri[$name]="$u"; src[$name]="$f"; icon[$name]="$ic"; order+=("$name")
-        done
+        done; fi
     fi
     while IFS= read -r item; do
         name="${item%%=*}"; u="${item#*=}"
@@ -434,10 +447,23 @@ apps_resolve(){
 }
 
 # collect_apps — the published apps of apps_resolve: "name<TAB>uri<TAB>source<TAB>icon".
+# Defence in depth: every line is checked again before it reaches render — the
+# name, a loopback URI for a declaration (any http(s) for TELEPORT_APPS), the
+# source (TELEPORT_APPS or a file of apps.d of RE_DECL_FILE), the icon, four
+# fields exactly.
 collect_apps(){
-    local line
+    local line rest name uri src icon extra
     while IFS= read -r line; do
-        [[ "$line" == app$'\t'* ]] && printf '%s\n' "${line#app$'\t'}"
+        [[ "$line" == app$'\t'* ]] || continue
+        rest="${line#app$'\t'}"
+        IFS=$'\t' read -r name uri src icon extra <<< "$rest"
+        if [[ -n "$extra" || ! "$name" =~ $RE_APP_NAME || ( -n "$icon" && ! "$icon" =~ $RE_APP_ICON ) ]] \
+           || { [[ "$src" == TELEPORT_APPS ]] && [[ ! "$uri" =~ $RE_OPERATOR_URI ]]; } \
+           || { [[ "$src" != TELEPORT_APPS ]] && [[ "$src" != "$APPS_DIR"/* || ! "${src##*/}" =~ $RE_DECL_FILE \
+                  || ! "$uri" =~ $RE_LOOPBACK_URI ]]; }; then
+            warn "пропускаю приложение: запись не по форме ($(printf '%q' "$rest"))"; continue
+        fi
+        printf '%s\n' "$rest"
     done < <(apps_resolve)
     return 0
 }
@@ -1462,6 +1488,39 @@ cmd_managed_status(){
 guest_path(){
     if [[ -n "$ROOT" && "$1" == "$ROOT"/* ]]; then printf '%s' "${1#"$ROOT"}"; else printf '%s' "$1"; fi
 }
+# json_path <path> — a JSON string of a file path whatever its bytes: every byte
+# outside [A-Za-z0-9._/~+-] is \u00XX (a name of control or non-UTF-8 bytes
+# stays valid JSON; a multibyte letter comes out as its bytes).
+json_path(){
+    local LC_ALL=C s="$1" out="" c i
+    for (( i = 0; i < ${#s}; i++ )); do
+        c="${s:i:1}"
+        case "$c" in
+            [A-Za-z0-9._/~+-]) out+="$c" ;;
+            *) out+="$(printf '\\u%04x' "'$c")" ;;
+        esac
+    done
+    printf '"%s"' "$out"
+}
+# apps_dir_drops <reason> — a drop of every file of apps.d (JSON): discovery_off
+# or untrusted_path of the directory, which apps_resolve names as a whole.
+apps_dir_drops(){
+    local f out=""
+    for f in "$APPS_DIR"/*.conf; do
+        [[ -f "$f" ]] || continue
+        out+="${out:+,}{\"file\":$(json_path "$(guest_path "$f")"),\"reason\":\"$1\"}"
+    done
+    printf '%s' "$out"
+}
+# apps_badname_drops — the files apps_resolve skipped for their name (invalid).
+apps_badname_drops(){
+    local f out=""
+    for f in "$APPS_DIR"/*.conf; do
+        [[ -f "$f" && ! "${f##*/}" =~ $RE_DECL_FILE ]] || continue
+        out+="${out:+,}{\"file\":$(json_path "$(guest_path "$f")"),\"reason\":\"invalid\"}"
+    done
+    printf '%s' "$out"
+}
 
 # apps-status — reads only (lock: none): the result of apps_resolve, the very
 # decision render takes, as one JSON object of schema 1. Nothing is written,
@@ -1473,7 +1532,7 @@ cmd_apps_status(){
     DIE_JSON=managed_die_json; DIE_CODE=3
     load_conf
     conf_check || die "в $CONF неверные значения — cream show $TELEPORT_EXT"
-    local res kind a b c d apps="" dropped="" disc=false reg=false role=false o
+    local res kind a b c d apps="" dropped="" disc=false reg=false role=false o dir_level=0
     res="$(apps_resolve)" || die "приложения не собраны"
     [[ "${C[TELEPORT_APPS_DISCOVERY]}" == 1 ]] && disc=true
     joined && reg=true
@@ -1485,18 +1544,26 @@ cmd_apps_status(){
                 if [[ "$c" == TELEPORT_APPS ]]; then
                     o+=',"source":"operator"'
                 else
-                    o+=",\"source\":\"extension\",\"file\":$(json_str "$(guest_path "$c")")"
+                    o+=",\"source\":\"extension\",\"file\":$(json_path "$(guest_path "$c")")"
                 fi
                 [[ -n "$d" ]] && o+=",\"icon\":$(json_str "$d")"
                 apps+="${apps:+,}$o}" ;;
             drop)
+                if [[ "$a" == "$APPS_DIR" ]]; then
+                    dir_level=1; o="$(apps_dir_drops "$b")"
+                    [[ -n "$o" ]] && dropped+="${dropped:+,}$o"
+                    continue
+                fi
                 if [[ "$a" == TELEPORT_APPS ]]; then o='{"file":"TELEPORT_APPS"'
-                else o="{\"file\":$(json_str "$(guest_path "$a")")"
+                else o="{\"file\":$(json_path "$(guest_path "$a")")"
                 fi
                 [[ -n "$c" ]] && o+=",\"name\":$(json_str "$c")"
                 dropped+="${dropped:+,}$o,\"reason\":$(json_str "$b")}" ;;
         esac
     done <<< "$res"
+    if [[ -d "$APPS_DIR" || -L "$APPS_DIR" ]] && (( ! dir_level )); then
+        o="$(apps_badname_drops)"; [[ -n "$o" ]] && dropped+="${dropped:+,}$o"
+    fi
     printf '{"schema":1,"ext":%s,"apps_dir":%s,"discovery":%s,"registered":%s,"app_role_missing":%s,"app_role_known":true,"apps":[%s],"dropped":[%s]}\n' \
         "$(json_str "$TELEPORT_EXT")" "$(json_str "$(guest_path "$APPS_DIR")")" "$disc" "$reg" "$role" "$apps" "$dropped"
 }
