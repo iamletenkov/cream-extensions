@@ -51,7 +51,7 @@
 | `/opt/cream/ext/teleport/` | дерево расширения: `hooks/`, `actions/` (тонкие входы), `files/teleport.sh` (слой systemd), `files/teleport-core.sh` (общее ядро, см. «Ядро и слой»), `files/os-logins` (метка `os_logins`, её зовёт Teleport) |
 | `/etc/systemd/system/teleport{,-apps,-token,-join}.*` | юниты (раскладывает cream) |
 | `/etc/cream/teleport/{config,apps.d,command-labels.d}` | домен ручек и объявления |
-| `/var/lib/cream/ext/teleport/{installed-pin,registration-secret,join-pending,join-refused,managed-pending,reload-pending,rollback}` | состояние (каталог 0700, файлы 0600); `installed-pin` — строки `TELEPORT_VERSION=` и `TELEPORT_SHA256=` поставленного тарбола, при `TELEPORT_DIST` — и `TELEPORT_TAG=` сборки форка |
+| `/var/lib/cream/ext/teleport/{installed-pin,registration-secret,join-pending,join-refused,managed-pending,reload-pending,rollback}` | состояние (каталог 0700, файлы 0600); `installed-pin` — строки `TELEPORT_VERSION=` и `TELEPORT_SHA256=` поставленного тарбола, при `TELEPORT_TAG` (с `TELEPORT_DIST` или `TELEPORT_TARBALL`) — и `TELEPORT_TAG=` сборки форка |
 | `/etc/teleport.yaml`, `/var/lib/teleport/`, `/usr/local/bin/teleport` | Teleport |
 
 ## Параметры
@@ -64,7 +64,7 @@
 | `TELEPORT_MIRROR` | строка `^https?://[A-Za-z0-9.:/-]+$` | пусто | база зеркала <base>/binaries/teleport/<ver>/<тарбол>; пусто — cdn.teleport.dev *(только при установке)* |
 | `TELEPORT_TARBALL` | `path` | пусто | локальный тарбол (офлайн, нужен TELEPORT_SHA256); взаимоисключим с TELEPORT_MIRROR и TELEPORT_DIST *(только при установке)* |
 | `TELEPORT_DIST` | строка `^https://[A-Za-z0-9.:/-]+$` | пусто | раздача портала Stvor <база>/teleport/<тег>/<тарбол>; только с TELEPORT_TAG и TELEPORT_SHA256 *(только при установке)* |
-| `TELEPORT_TAG` | строка `^v[0-9]+\.[0-9]+\.[0-9]+-stvor\.[0-9]+$` | пусто | тег сборки форка vX.Y.Z-stvor.N (X.Y.Z = TELEPORT_VERSION); только с TELEPORT_DIST *(только при установке)* |
+| `TELEPORT_TAG` | строка `^v[0-9]+\.[0-9]+\.[0-9]+-stvor\.[0-9]+$` | пусто | тег сборки форка vX.Y.Z-stvor.N (X.Y.Z = TELEPORT_VERSION); с TELEPORT_DIST или TELEPORT_TARBALL *(только при установке)* |
 | `TELEPORT_PROXY` | строка `^[a-z0-9][a-z0-9.-]{0,252}(:[0-9]{1,5})?$` | пусто | прокси кластера host[:port]; пишет только join *(только чтение)* |
 | `TELEPORT_JOIN_METHOD` | `token` \| `bound_keypair` | `token` | метод регистрации; пишет только join *(только чтение)* |
 | `TELEPORT_TOKEN` | строка `^[A-Za-z0-9._-]{8,256}$` | пусто | имя токена bound_keypair (не секрет); у метода token пусто; пишет только join *(только чтение)* |
@@ -101,10 +101,14 @@
   ссылку S3 (тот же или другой хост): curl идёт по редиректу только по https
   (`--proto =https --proto-redir =https`). Задаются вместе и только с `TELEPORT_SHA256`
   (сумма форка на `cdn.teleport.dev` не лежит).
-- `TELEPORT_TARBALL` — локальный тарбол; нужен `TELEPORT_SHA256`.
+- `TELEPORT_TARBALL` — локальный тарбол; нужен `TELEPORT_SHA256`. С `TELEPORT_TAG` (тег той же
+  X.Y.Z, что `TELEPORT_VERSION`) — офлайн-сборка форка: тег ничего не качает, только пишется
+  в `installed-pin`; тот же тарбол с новым тегом переписывает пин без переустановки бинаря.
 
 Источник тарбола — один из трёх: `TELEPORT_MIRROR`, `TELEPORT_DIST` + `TELEPORT_TAG` или
-`TELEPORT_TARBALL`; два сразу — отказ до скачивания. Ни одного — `cdn.teleport.dev`.
+`TELEPORT_TARBALL` (с ним — по желанию `TELEPORT_TAG`); два сразу — отказ до скачивания.
+Ни одного — `cdn.teleport.dev`. `TELEPORT_TAG` без `TELEPORT_DIST` и `TELEPORT_TARBALL`
+(в том числе с `TELEPORT_MIRROR`) — отказ.
 
 Обрыв на LTE: тарбол качается до 5 попыток, каждая докачивает частичный файл (`-C -`),
 паузы между ними 5, 10, 20, 40 с; внутри попытки curl повторяет любую ошибку

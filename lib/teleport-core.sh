@@ -1500,7 +1500,10 @@ cmd_status(){
 
 # check_source <version> <sha256> <mirror> <tarball> <dist> <tag> — one source of
 # the tarball: TELEPORT_MIRROR, TELEPORT_TARBALL, TELEPORT_DIST with TELEPORT_TAG,
-# or none (cdn.teleport.dev). Refuses before anything is downloaded.
+# or none (cdn.teleport.dev). TELEPORT_TAG goes with TELEPORT_DIST (the path of the
+# portal) or with TELEPORT_TARBALL (a local set of the fork: the tag downloads
+# nothing, it names the build in the installed pin). Refuses before anything is
+# downloaded.
 check_source(){
     local version="$1" sha="$2" mirror="$3" tarball="$4" dist="$5" tag="$6"
     [[ -z "$mirror" || "$mirror" =~ $RE_MIRROR ]] || die "TELEPORT_MIRROR='$mirror': ожидали URL"
@@ -1508,15 +1511,23 @@ check_source(){
         die "TELEPORT_MIRROR и TELEPORT_TARBALL взаимоисключимы — задайте одно"
     fi
     [[ -z "$dist" && -z "$tag" ]] && return 0
-    [[ -n "$dist" && -n "$tag" ]] || die "TELEPORT_DIST и TELEPORT_TAG задаются вместе"
-    if [[ -n "$mirror" || -n "$tarball" ]]; then
-        die "TELEPORT_DIST взаимоисключим с TELEPORT_MIRROR и TELEPORT_TARBALL — задайте одно"
+    if [[ -n "$dist" ]]; then
+        [[ -n "$tag" ]] || die "TELEPORT_DIST и TELEPORT_TAG задаются вместе"
+        if [[ -n "$mirror" || -n "$tarball" ]]; then
+            die "TELEPORT_DIST взаимоисключим с TELEPORT_MIRROR и TELEPORT_TARBALL — задайте одно"
+        fi
+        [[ "$dist" =~ $RE_DIST ]] || die "TELEPORT_DIST='$dist': ожидали https URL"
+    elif [[ -z "$tarball" ]]; then
+        # A tag without a set of its own names a build nobody put here.
+        die "TELEPORT_TAG только с TELEPORT_DIST или TELEPORT_TARBALL — без раздачи портала или локального набора тег ничего не называет"
     fi
-    [[ "$dist" =~ $RE_DIST ]] || die "TELEPORT_DIST='$dist': ожидали https URL"
     [[ "$tag" =~ $RE_TAG ]] || die "TELEPORT_TAG='$tag': ожидали тег форка vX.Y.Z-stvor.N"
     [[ "${BASH_REMATCH[1]}" == "$version" ]] || die "TELEPORT_TAG=$tag — не сборка TELEPORT_VERSION=$version"
     # The fork's tarball is not the vanilla one: the .sha256 of the CDN never fits it.
-    [[ -n "$sha" ]] || die "TELEPORT_DIST без TELEPORT_SHA256: сумма сборки форка — только из пина"
+    if [[ -z "$sha" ]]; then
+        [[ -n "$dist" ]] && die "TELEPORT_DIST без TELEPORT_SHA256: сумма сборки форка — только из пина"
+        die "TELEPORT_TARBALL без TELEPORT_SHA256: сумма сборки форка — только из пина"
+    fi
 }
 
 # teleport_url <version> <arch> <mirror> [<dist> <tag>]
@@ -1666,7 +1677,7 @@ drop_installed_pin(){
 }
 
 # write_installed_pin <version> <sha256> [<tag>] — after the binary is in place;
-# the tag of the fork build (TELEPORT_DIST) is a third line: /etc/stvor/restore.sh
+# the tag of the fork build (TELEPORT_DIST or TELEPORT_TARBALL) is a third line: /etc/stvor/restore.sh
 # of Stvor fetches the same build after sysupgrade, not the one of its recipe.
 write_installed_pin(){
     local body

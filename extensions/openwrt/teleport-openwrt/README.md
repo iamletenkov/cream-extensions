@@ -74,7 +74,7 @@ Stvor из того же тарбола `linux-<arch>` (рулинг Р7); на 
 | `TELEPORT_MIRROR` | строка `^https?://[A-Za-z0-9.:/-]+$` | пусто | база зеркала <base>/binaries/teleport/<ver>/teleport-v<ver>-openwrt-<arch>-bin.tar.gz (стенд Stvor) *(только при установке)* |
 | `TELEPORT_TARBALL` | `path` | пусто | локальный набор openwrt-<arch> (офлайн, нужен TELEPORT_SHA256); взаимоисключим с TELEPORT_MIRROR и TELEPORT_DIST *(только при установке)* |
 | `TELEPORT_DIST` | строка `^https://[A-Za-z0-9.:/-]+$` | пусто | раздача портала Stvor <база>/teleport/<тег>/<набор>; только с TELEPORT_TAG и TELEPORT_SHA256 *(только при установке)* |
-| `TELEPORT_TAG` | строка `^v[0-9]+\.[0-9]+\.[0-9]+-stvor\.[0-9]+$` | пусто | тег сборки форка vX.Y.Z-stvor.N (X.Y.Z = TELEPORT_VERSION); только с TELEPORT_DIST *(только при установке)* |
+| `TELEPORT_TAG` | строка `^v[0-9]+\.[0-9]+\.[0-9]+-stvor\.[0-9]+$` | пусто | тег сборки форка vX.Y.Z-stvor.N (X.Y.Z = TELEPORT_VERSION); с TELEPORT_DIST или TELEPORT_TARBALL *(только при установке)* |
 | `TELEPORT_PROXY` | строка `^[a-z0-9][a-z0-9.-]{0,252}(:[0-9]{1,5})?$` | пусто | прокси кластера host[:port]; пишет только join *(только чтение)* |
 | `TELEPORT_JOIN_METHOD` | `token` \| `bound_keypair` | `token` | метод регистрации; пишет только join *(только чтение)* |
 | `TELEPORT_TOKEN` | строка `^[A-Za-z0-9._-]{8,256}$` | пусто | имя токена bound_keypair (не секрет); у метода token пусто; пишет только join *(только чтение)* |
@@ -105,10 +105,14 @@ Stvor из того же тарбола `linux-<arch>` (рулинг Р7); на 
   `vX.Y.Z-stvor.N` той же X.Y.Z, что `TELEPORT_VERSION`. Портал отвечает 302 на подписанную
   ссылку S3 (тот же или другой хост): curl идёт по редиректу только по https
   (`--proto =https --proto-redir =https`). Задаются вместе.
-- `TELEPORT_TARBALL` — локальный набор (офлайн).
+- `TELEPORT_TARBALL` — локальный набор (офлайн). С `TELEPORT_TAG` (тег той же X.Y.Z, что
+  `TELEPORT_VERSION`) — набор сборки форка: тег ничего не качает, только пишется в
+  `installed-pin`; тот же набор с новым тегом переписывает пин без переустановки.
 
 Источник набора — ровно один из трёх: `TELEPORT_MIRROR`, `TELEPORT_DIST` + `TELEPORT_TAG`
-или `TELEPORT_TARBALL`; два сразу или ни одного — отказ до скачивания.
+или `TELEPORT_TARBALL` (с ним — по желанию `TELEPORT_TAG`); два сразу или ни одного — отказ
+до скачивания. `TELEPORT_TAG` без `TELEPORT_DIST` и `TELEPORT_TARBALL` (в том числе с
+`TELEPORT_MIRROR`) — отказ.
 
 Обрыв на LTE: набор качается до 5 попыток, каждая докачивает частичный файл (`-C -`),
 паузы между ними 5, 10, 20, 40 с; внутри попытки curl повторяет любую ошибку
@@ -227,8 +231,8 @@ RUN_COMMAND cream install teleport-openwrt TELEPORT_MIRROR=https://stvor.example
 - `/opt/teleport/.cream-owned` — маркер владения cream;
 - `/opt/cream/var/ext/teleport-openwrt/agent-enabled` — узел стартует на загрузке;
 - `/opt/cream/var/ext/teleport-openwrt/installed-pin` — пин поставленного набора, строки
-  `TELEPORT_VERSION=<X.Y.Z>` и `TELEPORT_SHA256=<64 hex>`, при `TELEPORT_DIST` — третья
-  `TELEPORT_TAG=<vX.Y.Z-stvor.N>` (пин без тега той же суммы получает его без скачивания); пишет `install`/`upgrade`
+  `TELEPORT_VERSION=<X.Y.Z>` и `TELEPORT_SHA256=<64 hex>`, при `TELEPORT_TAG` (с `TELEPORT_DIST` или
+  `TELEPORT_TARBALL`) — третья `TELEPORT_TAG=<vX.Y.Z-stvor.N>` (пин без тега той же суммы получает его без скачивания); пишет `install`/`upgrade`
   после каждой замены набора, снимает — перед скачиванием нового (файла нет — набор не
   подтверждён). Стабильный интерфейс: `/etc/stvor/restore.sh` Stvor берёт
   версию и сумму набора отсюда, а не из своей копии (иначе после обновления через cream
