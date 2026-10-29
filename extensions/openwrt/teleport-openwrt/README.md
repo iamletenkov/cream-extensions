@@ -174,6 +174,9 @@ RUN_COMMAND cream install teleport-openwrt TELEPORT_MIRROR=https://stvor.example
 ([формат](../../debian/teleport/README.md#приложения-других-расширений--appsd)) с
 `"ext":"teleport-openwrt"` и `apps_dir` `/etc/cream/teleport-openwrt/apps.d`;
 `app_role_missing` — по файлу журнала агента с его последнего старта.
+Адреса приложений — одна метка `<имя>-<нода>.<прокси>` (до 1.4.0 — `<имя>.<нода>.<прокси>`,
+старые ссылки не работают), имя + `-` + нода ≤ 63 знаков, иначе приложение не публикуется
+(`invalid`, `detail: "name_too_long"`) — [подробно](../../debian/teleport/README.md#приложения-других-расширений--appsd).
 
 ## Известные ограничения
 

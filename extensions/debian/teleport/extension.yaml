@@ -1,6 +1,10 @@
 schema: cream/v1
 name: teleport
-version: 4.4.0
+version: 4.5.0
+# 4.5.0: адреса приложений одноуровневые <имя>-<нода>.<прокси> (раньше <имя>.<нода>.<прокси>)
+#        — один wildcard-сертификат *.<прокси>; старые ссылки перестают работать (public_addr
+#        и заголовок Host). Имя + нода длиннее 62 знаков (метка DNS > 63) — приложение не
+#        публикуется: строка журнала, в apps-status — dropped invalid, detail name_too_long.
 # 4.4.0: действие apps-status (lock: none, JSON схемы 1) — итог публикации приложений тем же
 #        решением, что render: опубликованные {name, uri, source, file?, icon?}, отброшенные
 #        объявления apps.d с причиной, discovery, registered, app_role_missing. render, status

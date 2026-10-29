@@ -27,11 +27,11 @@ app_service:
   apps:
     - name: "code-server-lab-1"
       uri: "https://127.0.0.1:9002"
-      public_addr: "code-server.lab-1.teleport.example.org"
+      public_addr: "code-server-lab-1.teleport.example.org"
       insecure_skip_verify: true
       rewrite:
         headers:
-          - "Host: code-server.lab-1.teleport.example.org"
+          - "Host: code-server-lab-1.teleport.example.org"
       labels:
         "env": "prod"
         "site": "lab"
@@ -40,10 +40,10 @@ app_service:
         "teleport.icon": "mcpVscode"
     - name: "web-lab-1"
       uri: "http://127.0.0.1:8080"
-      public_addr: "web.lab-1.teleport.example.org"
+      public_addr: "web-lab-1.teleport.example.org"
       rewrite:
         headers:
-          - "Host: web.lab-1.teleport.example.org"
+          - "Host: web-lab-1.teleport.example.org"
       labels:
         "env": "prod"
         "site": "lab"
@@ -52,10 +52,10 @@ app_service:
         "teleport.icon": "grafana"
     - name: "jupyter-lab-1"
       uri: "http://[::1]:8888/lab"
-      public_addr: "jupyter.lab-1.teleport.example.org"
+      public_addr: "jupyter-lab-1.teleport.example.org"
       rewrite:
         headers:
-          - "Host: jupyter.lab-1.teleport.example.org"
+          - "Host: jupyter-lab-1.teleport.example.org"
       labels:
         "env": "prod"
         "site": "lab"

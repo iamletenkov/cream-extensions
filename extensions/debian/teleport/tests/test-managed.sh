@@ -1190,6 +1190,46 @@ no_evil_files
 check "collect_apps проверяет имя, URI, источник и иконку заново" \
     grep -q 'запись не по форме' "$EXT/files/teleport-core.sh"
 
+echo "== адрес приложения — одна метка DNS <имя>-<нода>.<прокси>, не длиннее 63 =="
+# The node lab-1 (5): a name of 57 gives a label of 63 — published; 58 gives 64 —
+# not published, in apps-status invalid with detail name_too_long. The same rule
+# for an operator's app (TELEPORT_APPS) and a declaration of apps.d.
+registered
+N57="$(printf 'a%.0s' $(seq 57))"; N58="$(printf 'b%.0s' $(seq 58))"
+D57="$(printf 'c%.0s' $(seq 57))"; D58="$(printf 'd%.0s' $(seq 58))"
+conf "TELEPORT_APPS=web=8080 $N57=8081 $N58=8082"
+APPS="$ROOT/etc/cream/teleport/apps.d"; chmod 0755 "$APPS"
+printf 'NAME=%s\nURI=http://127.0.0.1:9001\n' "$D57" > "$APPS/d57.conf"
+printf 'NAME=%s\nURI=http://127.0.0.1:9002\n' "$D58" > "$APPS/d58.conf"
+chmod 0644 "$APPS/d57.conf" "$APPS/d58.conf"
+tp render 2>"$TMP/err"; rc=$?
+eq "render с длинными именами — 0" 0 "$rc"
+eq "web: public_addr и Host — web-lab-1.<прокси>" \
+    "web-lab-1.teleport.example.org ['Host: web-lab-1.teleport.example.org']" \
+    "$(yq "' '.join(str(v) for v in next((a['public_addr'], a['rewrite']['headers']) for a in y['app_service']['apps'] if a['name'] == 'web-lab-1'))")"
+eq "опубликованы: метка 63 — оператор и apps.d" \
+    "['$D57-lab-1.teleport.example.org', 'web-lab-1.teleport.example.org', '$N57-lab-1.teleport.example.org']" \
+    "$(yq "[a['public_addr'] for a in y['app_service']['apps']]")"
+check "метка 63 из apps.d — Host той же метки" grep -qF "Host: $D57-lab-1.teleport.example.org" "$Y"
+check_not "метка 64 оператора — не опубликована" grep -q "$N58" "$Y"
+check_not "метка 64 из apps.d — не опубликована" grep -q "$D58" "$Y"
+check "метка 64 оператора — строка журнала" grep -qF "пропускаю приложение '$N58': адрес $N58-lab-1 — метка DNS длиннее 63" "$TMP/err"
+check "метка 64 из apps.d — строка журнала" grep -qF "пропускаю приложение '$D58'" "$TMP/err"
+out="$(tp apps-status 2>/dev/null)"
+eq "apps-status: опубликованное — те же три" "['$D57', 'web', '$N57']" "$(jx "$out" '[a["name"] for a in o["apps"]]')"
+eq "apps-status: метка 64 — invalid, name_too_long" \
+    "[('/etc/cream/teleport/apps.d/d58.conf', '$D58', 'invalid', 'name_too_long'), ('TELEPORT_APPS', '$N58', 'invalid', 'name_too_long')]" \
+    "$(jx "$out" '[(d["file"], d.get("name"), d["reason"], d.get("detail")) for d in o["dropped"]]')"
+# The node counts too: lab-12 (6) makes the names of 57 labels of 64.
+conf TELEPORT_NODENAME=lab-12
+tp render 2>/dev/null
+eq "нода lab-12 — имя 57 уже не помещается" "['web-lab-12.teleport.example.org']" \
+    "$(yq "[a['public_addr'] for a in y['app_service']['apps']]")"
+eq "нода lab-12 — apps-status: четыре name_too_long" 4 \
+    "$(jx "$(tp apps-status 2>/dev/null)" 'len([d for d in o["dropped"] if d.get("detail") == "name_too_long"])')"
+# A form error stays invalid without detail (the reference mixed.json).
+check_not "у прочих invalid детали нет" grep -q detail "$FIXTURES/apps-status/mixed.json"
+
 # Nothing configured, no identity: valid and empty, code 0.
 new_root
 out="$(tp apps-status 2>/dev/null)"; rc=$?
