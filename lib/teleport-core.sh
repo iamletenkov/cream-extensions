@@ -3,7 +3,8 @@
 # catalog (spec cream 2026-10-20-openwrt §4.2, rulings Р3, Р11): the knobs, the
 # render of /etc/teleport.yaml, join with its retry and refusal, labels, apps.d,
 # command labels, bound_keypair, the managed labels of stvor-agent (set-managed,
-# managed-status — contract schema 1), status and the dispatch of the actions.
+# managed-status — contract schema 1), apps-status (the result of apps.d, schema 1),
+# status and the dispatch of the actions.
 #
 # ONE COPY IN GIT: lib/teleport-core.sh. tools/catalog-snapshot.sh (the release
 # snapshot) and tools/stage-catalog.sh (cream validate, tests, path source) lay it
@@ -337,13 +338,17 @@ nodename(){ resolve_nodename && echo "$NODE"; }
 
 # ---------------------------------------------------------------------------
 # Приложения: apps.d + TELEPORT_APPS − TELEPORT_APPS_DISABLE
-# Выход: строки "имя<TAB>URI<TAB>источник<TAB>иконка", пропуски — в stderr.
+# Выход collect_apps: строки "имя<TAB>URI<TAB>источник<TAB>иконка", пропуски — в
+# stderr. apps_resolve — то же решение целиком, с отброшенным (apps-status).
 # ---------------------------------------------------------------------------
+# read_decl <file> — one checked line "name<TAB>uri<TAB>file<TAB>icon" or a
+# failure: 2 — the file is not trusted, 1 — not a valid declaration (then the
+# name, when it was read and is a DNS label, is the only output).
 read_decl(){
     local f="$1" line key val name="" uri="" icon="" why
     # A symlink would pass the owner check while pointing at anyone's file.
-    # The directory chain is checked once by collect_apps.
-    why="$(trusted_node "$f" "файл")" || { warn "пропускаю $f: $why"; return 1; }
+    # The directory chain is checked once by apps_resolve.
+    why="$(trusted_node "$f" "файл")" || { warn "пропускаю $f: $why"; return 2; }
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ "$line" =~ ^[[:space:]]*(#.*)?$ ]] && continue
         if [[ ! "$line" =~ ^([A-Z]+)=(.*)$ ]]; then
@@ -358,9 +363,9 @@ read_decl(){
         esac
     done < "$f"
     [[ "$name" =~ $RE_APP_NAME ]] || { warn "пропускаю $f: NAME='$name' не метка DNS"; return 1; }
-    [[ "$uri" =~ $RE_LOOPBACK_URI ]] || { warn "пропускаю $f: URI='$uri' — в apps.d только петля"; return 1; }
+    [[ "$uri" =~ $RE_LOOPBACK_URI ]] || { warn "пропускаю $f: URI='$uri' — в apps.d только петля"; echo "$name"; return 1; }
     if [[ -n "$icon" && ! "$icon" =~ $RE_APP_ICON ]]; then
-        warn "пропускаю $f: ICON='$icon' не имя иконки"; return 1
+        warn "пропускаю $f: ICON='$icon' не имя иконки"; echo "$name"; return 1
     fi
     # The icon goes last: an empty field between two tabs collapses on read.
     printf '%s\t%s\t%s\t%s\n' "$name" "$uri" "$f" "$icon"
@@ -373,17 +378,34 @@ apps_dir_trusted(){
     why="$(trusted_path "$APPS_DIR" "каталог")" || { warn "пропускаю $APPS_DIR: $why"; return 1; }
 }
 
-collect_apps(){
+# apps_resolve — the one decision on what is published (render, status, join
+# and apps-status read it, none repeats it). Lines, in this order of fields:
+#   app<TAB>name<TAB>uri<TAB>source<TAB>icon   published; source — a file of apps.d or TELEPORT_APPS
+#   drop<TAB>file<TAB>reason<TAB>name          not published; file — of apps.d or TELEPORT_APPS
+# The reasons: discovery_off, untrusted_path (the file or a directory up to the
+# root), invalid, name_shadowed (an earlier file by glob has the name),
+# overridden_by_operator (TELEPORT_APPS has it), disabled (TELEPORT_APPS_DISABLE).
+# The name of a drop is empty when the file was not read (or not as a name).
+apps_resolve(){
     local -A uri=() src=() disabled=() icon=()
-    local order=() f line name u ic item
-    if [[ "${C[TELEPORT_APPS_DISCOVERY]}" == 1 && ( -d "$APPS_DIR" || -L "$APPS_DIR" ) ]] \
-       && apps_dir_trusted; then
+    local order=() f line name u ic item rc reason=""
+    if [[ -d "$APPS_DIR" || -L "$APPS_DIR" ]]; then
+        if [[ "${C[TELEPORT_APPS_DISCOVERY]}" != 1 ]]; then reason=discovery_off
+        elif ! apps_dir_trusted; then reason=untrusted_path
+        fi
         for f in "$APPS_DIR"/*.conf; do
             [[ -f "$f" ]] || continue
-            line="$(read_decl "$f")" || continue
+            if [[ -n "$reason" ]]; then printf 'drop\t%s\t%s\t\n' "$f" "$reason"; continue; fi
+            line="$(read_decl "$f")"; rc=$?
+            case "$rc" in
+                0) ;;
+                2) printf 'drop\t%s\tuntrusted_path\t\n' "$f"; continue ;;
+                *) printf 'drop\t%s\tinvalid\t%s\n' "$f" "$line"; continue ;;
+            esac
             IFS=$'\t' read -r name u _ ic <<< "$line"
             if [[ -n "${uri[$name]:-}" ]]; then
-                warn "пропускаю $f: приложение '$name' уже объявлено в ${src[$name]}"; continue
+                warn "пропускаю $f: приложение '$name' уже объявлено в ${src[$name]}"
+                printf 'drop\t%s\tname_shadowed\t%s\n' "$f" "$name"; continue
             fi
             uri[$name]="$u"; src[$name]="$f"; icon[$name]="$ic"; order+=("$name")
         done
@@ -392,7 +414,10 @@ collect_apps(){
         name="${item%%=*}"; u="${item#*=}"
         [[ "$u" =~ ^[0-9]+$ ]] && u="http://127.0.0.1:$u"
         # The operator's entry wins over a declaration of the same name.
-        [[ -n "${uri[$name]:-}" ]] || order+=("$name")
+        if [[ -z "${uri[$name]:-}" ]]; then order+=("$name")
+        elif [[ "${src[$name]}" != TELEPORT_APPS ]]; then
+            printf 'drop\t%s\toverridden_by_operator\t%s\n' "${src[$name]}" "$name"
+        fi
         uri[$name]="$u"; src[$name]="TELEPORT_APPS"
     done < <(split_list "${C[TELEPORT_APPS]}")
     # The operator's icon wins over the declaration's, the same way the
@@ -400,9 +425,21 @@ collect_apps(){
     while IFS= read -r item; do icon[${item%%=*}]="${item#*=}"; done < <(split_list "${C[TELEPORT_APPS_ICONS]}")
     while IFS= read -r item; do disabled[$item]=1; done < <(split_list "${C[TELEPORT_APPS_DISABLE]}")
     for name in "${order[@]}"; do
-        [[ -n "${disabled[$name]:-}" ]] && continue
-        printf '%s\t%s\t%s\t%s\n' "$name" "${uri[$name]}" "${src[$name]}" "${icon[$name]:-}"
+        if [[ -n "${disabled[$name]:-}" ]]; then
+            printf 'drop\t%s\tdisabled\t%s\n' "${src[$name]}" "$name"; continue
+        fi
+        printf 'app\t%s\t%s\t%s\t%s\n' "$name" "${uri[$name]}" "${src[$name]}" "${icon[$name]:-}"
     done
+    return 0
+}
+
+# collect_apps — the published apps of apps_resolve: "name<TAB>uri<TAB>source<TAB>icon".
+collect_apps(){
+    local line
+    while IFS= read -r line; do
+        [[ "$line" == app$'\t'* ]] && printf '%s\n' "${line#app$'\t'}"
+    done < <(apps_resolve)
+    return 0
 }
 
 # The static labels of the node and of every app: TELEPORT_LABELS, over them
@@ -1418,6 +1455,52 @@ cmd_managed_status(){
     emit_managed
 }
 
+# ---------------------------------------------------------------------------
+# apps-status: итог публикации приложений (контракт stvor-agent, схема 1)
+# ---------------------------------------------------------------------------
+# guest_path <path> — the path on the machine: without the scratch root.
+guest_path(){
+    if [[ -n "$ROOT" && "$1" == "$ROOT"/* ]]; then printf '%s' "${1#"$ROOT"}"; else printf '%s' "$1"; fi
+}
+
+# apps-status — reads only (lock: none): the result of apps_resolve, the very
+# decision render takes, as one JSON object of schema 1. Nothing is written,
+# no unit is touched. A knob out of type is an error (code 3, as in
+# managed-status): render refuses the same file. registered — the identity of
+# the node (as "joined" of managed-status); app_role_missing — what status
+# reports (the layer reads the agent's journal; app_role_known: the layer can).
+cmd_apps_status(){
+    DIE_JSON=managed_die_json; DIE_CODE=3
+    load_conf
+    conf_check || die "в $CONF неверные значения — cream show $TELEPORT_EXT"
+    local res kind a b c d apps="" dropped="" disc=false reg=false role=false o
+    res="$(apps_resolve)" || die "приложения не собраны"
+    [[ "${C[TELEPORT_APPS_DISCOVERY]}" == 1 ]] && disc=true
+    joined && reg=true
+    app_role_missing && role=true
+    while IFS=$'\t' read -r kind a b c d; do
+        case "$kind" in
+            app)
+                o="{\"name\":$(json_str "$a"),\"uri\":$(json_str "$b")"
+                if [[ "$c" == TELEPORT_APPS ]]; then
+                    o+=',"source":"operator"'
+                else
+                    o+=",\"source\":\"extension\",\"file\":$(json_str "$(guest_path "$c")")"
+                fi
+                [[ -n "$d" ]] && o+=",\"icon\":$(json_str "$d")"
+                apps+="${apps:+,}$o}" ;;
+            drop)
+                if [[ "$a" == TELEPORT_APPS ]]; then o='{"file":"TELEPORT_APPS"'
+                else o="{\"file\":$(json_str "$(guest_path "$a")")"
+                fi
+                [[ -n "$c" ]] && o+=",\"name\":$(json_str "$c")"
+                dropped+="${dropped:+,}$o,\"reason\":$(json_str "$b")}" ;;
+        esac
+    done <<< "$res"
+    printf '{"schema":1,"ext":%s,"apps_dir":%s,"discovery":%s,"registered":%s,"app_role_missing":%s,"app_role_known":true,"apps":[%s],"dropped":[%s]}\n' \
+        "$(json_str "$TELEPORT_EXT")" "$(json_str "$(guest_path "$APPS_DIR")")" "$disc" "$reg" "$role" "$apps" "$dropped"
+}
+
 fmt_time(){ date -d "@$1" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || printf '%s' "$1"; }
 
 # Registered / refused / waiting for the network / not registered.
@@ -1696,6 +1779,7 @@ case "${1:-}" in
     status) cmd_status ;;
     set-managed) shift; cmd_set_managed "$@" ;;
     managed-status) cmd_managed_status ;;
+    apps-status) cmd_apps_status ;;
     render) cmd_render ;;
     reload-apps) cmd_reload_apps ;;
     hup) cmd_hup ;;
@@ -1708,6 +1792,6 @@ case "${1:-}" in
     hook-upgrade) hook_install upgrade ;;
     hook-remove) hook_remove ;;
     hook-apply) cmd_apply ;;
-    *) die "неизвестная команда '${1:-}' (join|join-retry|leave|status|set-managed|managed-status|render|reload-apps|hup|scrub-token|hook-*)" ;;
+    *) die "неизвестная команда '${1:-}' (join|join-retry|leave|status|set-managed|managed-status|apps-status|render|reload-apps|hup|scrub-token|hook-*)" ;;
 esac
 }

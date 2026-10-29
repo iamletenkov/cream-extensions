@@ -19,7 +19,7 @@ systemd и набор Teleport с glibc рядом (вариант A
 | Конфликтует с | способность `teleport-node` |
 | Хуки | `install`, `upgrade`, `remove`, `apply` |
 | Настройка на загрузке | — |
-| Действия | `cream run teleport-openwrt join`, `cream run teleport-openwrt join-retry`, `cream run teleport-openwrt leave`, `cream run teleport-openwrt set-managed`, `cream run teleport-openwrt managed-status`, `cream run teleport-openwrt status`, `cream run teleport-openwrt render`, `cream run teleport-openwrt reload-apps`, `cream run teleport-openwrt hup`, `cream run teleport-openwrt scrub-token` |
+| Действия | `cream run teleport-openwrt join`, `cream run teleport-openwrt join-retry`, `cream run teleport-openwrt leave`, `cream run teleport-openwrt set-managed`, `cream run teleport-openwrt managed-status`, `cream run teleport-openwrt apps-status`, `cream run teleport-openwrt status`, `cream run teleport-openwrt render`, `cream run teleport-openwrt reload-apps`, `cream run teleport-openwrt hup`, `cream run teleport-openwrt scrub-token` |
 | Живая машина | да |
 <!-- /catalog:facts -->
 
@@ -166,6 +166,10 @@ RUN_COMMAND cream install teleport-openwrt TELEPORT_MIRROR=https://stvor.example
 подтверждением новым pid, если `teleport.yaml` изменился; `join-retry` — тик экземпляра
 `join`; `scrub-token` — ручной (join и тик стирают секрет сами); `hup` — только для
 `ExecReload` systemd, здесь отказ с кодом 2.
+`apps-status` — тот же JSON схемы 1
+([формат](../../debian/teleport/README.md#приложения-других-расширений--appsd)) с
+`"ext":"teleport-openwrt"` и `apps_dir` `/etc/cream/teleport-openwrt/apps.d`;
+`app_role_missing` — по файлу журнала агента с его последнего старта.
 
 ## Известные ограничения
 

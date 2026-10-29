@@ -226,7 +226,7 @@ tp(){
         CREAM_CONFIG_FILE="$CONF" CREAM_SECRETS_FILE="$ROOT/etc/cream/teleport/secrets" CREAM_ACTION="$a")
     case "$a" in
         set-managed|leave) env+=(CREAM_LOCK_FD=9 CREAM_LOCK_MODE=exclusive CREAM_OUTPUT=json) ;;
-        managed-status) env+=(CREAM_OUTPUT=json) ;;
+        managed-status|apps-status) env+=(CREAM_OUTPUT=json) ;;
     esac
     env "${env[@]}" "$STAGED/actions/$a" "$@" 9>"$TMP/lock"
 }
@@ -1078,6 +1078,87 @@ eq "агент остановлен — HUP нет" 0 "$(hups)"
 echo "== reload-apps — одна сериализованная точка =="
 check "манифест: reload-apps — lock: exclusive" grep -qx '    lock: exclusive' <<< "$(awk '/^  reload-apps:/{f=1; next} f && /^  [a-z]/{exit} f' "$EXT/extension.yaml")"
 check "teleport-apps.service ждёт блокировку" grep -qx 'ExecStart=/usr/bin/cream run --lock-timeout 6m teleport reload-apps' "$EXT/files/teleport-apps.service"
+
+echo "== apps-status: итог публикации приложений, JSON схемы 1 =="
+check "apps-status: lock none" grep -qx '    lock: none' <<< "$(manifest_action apps-status)"
+check "apps-status: output json" grep -qx '    output: json' <<< "$(manifest_action apps-status)"
+check "apps-status: вход исполняемый" test -x "$EXT/actions/apps-status"
+AS_FIX="$FIXTURES/apps-status"
+# jx <json> <python expression over o> — a value of the object; eval is over the
+# fixed expressions of this file only.
+jx(){ python3 -c 'import json, sys; o = json.loads(sys.argv[1]); print(eval(sys.argv[2]))' "$1" "$2" 2>&1; }
+# The reference inputs: every fate of a declaration and of an operator's app.
+apps_inputs(){
+    registered
+    conf "TELEPORT_APPS_DISABLE=grafana api" "TELEPORT_APPS_ICONS=web=grafana"
+    APPS="$ROOT/etc/cream/teleport/apps.d"; chmod 0755 "$APPS"
+    decl(){ printf '%s\n' "${@:2}" > "$APPS/$1"; chmod 0644 "$APPS/$1"; }
+    decl a-code.conf NAME=code-server URI=https://127.0.0.1:9002 ICON=mcpVscode
+    decl b-code.conf NAME=code-server URI=http://127.0.0.1:9003
+    decl c-web.conf NAME=web URI=http://127.0.0.1:9000
+    decl d-grafana.conf NAME=grafana URI=http://127.0.0.1:3000
+    decl e-bad.conf NAME=bad URI=http://10.0.0.1:80
+    decl f-foreign.conf NAME=foreign URI=http://127.0.0.1:7000
+    decl g-jupyter.conf '# a comment' NAME=jupyter 'URI=http://[::1]:8888/lab'
+    decl notes.txt NAME=notes URI=http://127.0.0.1:1
+    echo "$APPS/f-foreign.conf" >> "$FAKE/foreign"
+}
+apps_inputs
+tp render 2>/dev/null
+# render.yaml — teleport.yaml of these inputs from the core before apps_resolve.
+check "render на эталонных входах — тот же teleport.yaml, что до apps_resolve" cmp -s "$AS_FIX/render.yaml" "$Y"
+cp "$Y" "$TMP/y.before"
+: > "$FAKE/systemctl.log"
+out="$(tp apps-status 2>"$TMP/err")"; rc=$?
+eq "apps-status — 0" 0 "$rc"
+check "apps-status — один JSON-объект" json_ok "$out"
+check "apps-status — образец: оператор, объявления, все причины" same_as_fixture "$out" apps-status/mixed.json
+check "apps-status — пропуски в журнале, как у render" grep -q "пропускаю $APPS/b-code.conf" "$TMP/err"
+check "apps-status не трогает teleport.yaml" cmp -s "$TMP/y.before" "$Y"
+check_not "apps-status не трогает юнит" grep -qE '^(restart|reload|start|stop|kill)' "$FAKE/systemctl.log"
+eq "apps-status — пути на машине, не под корнем стенда" 0 "$(grep -c "$ROOT" <<< "$out")"
+# The same inputs, one knob at a time.
+conf TELEPORT_APPS_DISCOVERY=0
+out="$(tp apps-status 2>/dev/null)"
+eq "discovery 0 — discovery false" False "$(jx "$out" 'o["discovery"]')"
+eq "discovery 0 — объявления: discovery_off" \
+    "[('a-code.conf', 'discovery_off'), ('b-code.conf', 'discovery_off'), ('c-web.conf', 'discovery_off'), ('d-grafana.conf', 'discovery_off'), ('e-bad.conf', 'discovery_off'), ('f-foreign.conf', 'discovery_off'), ('g-jupyter.conf', 'discovery_off'), ('TELEPORT_APPS', 'disabled')]" \
+    "$(jx "$out" '[(d["file"].split("/")[-1], d["reason"]) for d in o["dropped"]]')"
+eq "discovery 0 — только приложения оператора" "[('web', 'operator')]" "$(jx "$out" '[(a["name"], a["source"]) for a in o["apps"]]')"
+conf TELEPORT_APPS_DISCOVERY=1
+chmod 0775 "$APPS"
+out="$(tp apps-status 2>"$TMP/err")"
+eq "apps.d с записью группе — все объявления: untrusted_path" "{'untrusted_path'}" \
+    "$(jx "$out" '{d["reason"] for d in o["dropped"] if d["file"] != "TELEPORT_APPS"}')"
+eq "apps.d с записью группе — 7 файлов *.conf" 7 "$(jx "$out" 'len([d for d in o["dropped"] if d["file"] != "TELEPORT_APPS"])')"
+check "apps.d с записью группе — строка журнала" grep -q "пропускаю $APPS" "$TMP/err"
+chmod 0755 "$APPS"
+# app_role_missing: the journal of the current run of teleport.service (the
+# layer asks `systemctl show teleport.service -p InvocationID --value`; the fake
+# above knows the form `show -p <Prop> --value teleport.service`).
+printf '#!/bin/sh\ncat "$FAKE/journal" 2>/dev/null\n' > "$ROOT/bin/journalctl"
+mv "$ROOT/bin/systemctl" "$ROOT/bin/systemctl.fake"
+printf '#!/bin/sh\n[ "$1 $2 $3" = "show teleport.service -p" ] && exec "$0.fake" show -p "$4" --value teleport.service\nexec "$0.fake" "$@"\n' > "$ROOT/bin/systemctl"
+chmod +x "$ROOT/bin/journalctl" "$ROOT/bin/systemctl"
+echo 'ERROR app_service: token does not allow role App' > "$FAKE/journal"
+eq "журнал: нет роли App — app_role_missing" True "$(jx "$(tp apps-status 2>/dev/null)" 'o["app_role_missing"]')"
+: > "$FAKE/journal"
+eq "журнал без отказа — app_role_missing false" False "$(jx "$(tp apps-status 2>/dev/null)" 'o["app_role_missing"]')"
+# Nothing configured, no identity: valid and empty, code 0.
+new_root
+out="$(tp apps-status 2>/dev/null)"; rc=$?
+eq "пустой домен — 0" 0 "$rc"
+eq "пустой домен — пусто, не зарегистрирован" "True False [] []" \
+    "$(jx "$out" '" ".join(map(str, (o["discovery"], o["registered"], o["apps"], o["dropped"])))')"
+rmdir "$ROOT/etc/cream/teleport/apps.d"
+out="$(tp apps-status 2>/dev/null)"; rc=$?
+eq "нет apps.d — 0 и валидный JSON" "0 1" "$rc $(jx "$out" 'o["schema"]')"
+# A knob out of type: render refuses it — apps-status says so (code 3).
+echo 'TELEPORT_APPS="bad name"' > "$CONF"
+out="$(tp apps-status 2>/dev/null)"; rc=$?
+eq "ручка не по типу — 3" 3 "$rc"
+check "ручка не по типу — объект с error" json_ok "$out"
+check "ручка не по типу — error" grep -q '"error":' <<< "$out"
 
 echo
 echo "проверок: $((pass + fail)), не прошло: $fail"

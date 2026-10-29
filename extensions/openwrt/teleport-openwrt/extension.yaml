@@ -18,7 +18,9 @@
 # configure нет: на загрузке узел поднимает procd (START=95), не cream (А1–А6 не про него).
 schema: cream/v1
 name: teleport-openwrt
-version: 1.2.1
+version: 1.3.0
+# 1.3.0: действие apps-status (lock: none, JSON схемы 1) — итог публикации приложений тем же
+#        решением, что render (как teleport 4.4.0); app_role_missing — по файлу журнала агента.
 # 1.2.1: installed-pin хранит и тег сборки форка (TELEPORT_TAG=, при TELEPORT_DIST): restore.sh
 #        Stvor после sysupgrade берёт ту же сборку; пин без тега получает его без скачивания.
 # 1.2.0: раздача портала Stvor — TELEPORT_DIST и TELEPORT_TAG (вместе, взаимоисключимы с
@@ -142,6 +144,11 @@ actions:
     phases: [live]
   managed-status:
     summary: "управляемые метки, маркер managed-pending, регистрация, агент — JSON схемы 1"
+    lock: none
+    output: json
+    phases: [live]
+  apps-status:
+    summary: "итог публикации приложений: опубликованные, отброшенные объявления с причиной, флаги — JSON схемы 1"
     lock: none
     output: json
     phases: [live]
