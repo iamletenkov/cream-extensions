@@ -56,6 +56,7 @@ setup(){
     # $FAKE/cuts > 0 a call writes half of what is left and fails as a cut HTTP/2
     # stream, 92); else /webapi/find by $FAKE/net (up — a proxy).
     ht_fake curl '[[ "${1:-}" == --version ]] && { echo "curl 8.12.1 (x86_64-openwrt-linux-musl)"; exit 0; }
+env | grep -iE "^(https?|all|no)_proxy=" >> "$FAKE/curl.env"
 out=""; prev=""
 for a in "$@"; do [[ "$prev" == -o ]] && out="$a"; prev="$a"; done
 if [[ -n "$out" ]]; then
@@ -365,11 +366,23 @@ check "локальный набор — файл оператора цел" tes
 echo "== install: раздача портала TELEPORT_DIST + TELEPORT_TAG, обрыв на LTE =="
 DIST=https://stvor.example.org/dist
 TAG=v18.10.0-stvor.5
+# agent_files [<proxy>] — what stvor-agent v2 lays: its config and the pinned roots.
+agent_files(){
+    mkdir -p "$ROOT/etc/stvor-agent"
+    printf 'url=https://stvor.example.org/robot-api/v1\n' > "$ROOT/etc/stvor-agent/token"
+    [[ -n "${1:-}" ]] && printf 'proxy=%s\n' "$1" >> "$ROOT/etc/stvor-agent/token"
+    echo '-----BEGIN CERTIFICATE-----' > "$ROOT/etc/stvor-agent/roots.pem"
+}
 setup
 make_set 18.10.0 stvor.5
+agent_files
 echo 2 > "$FAKE/cuts"
-ht_hook install TELEPORT_SHA256="$SET_SHA" TELEPORT_DIST="$DIST" TELEPORT_TAG="$TAG"; eq "dist — 0" 0 "$?"
+ht_hook install TELEPORT_SHA256="$SET_SHA" TELEPORT_DIST="$DIST" TELEPORT_TAG="$TAG" \
+    HTTPS_PROXY=http://env-proxy:3128 http_proxy=http://env-proxy:3128; eq "dist — 0" 0 "$?"
 dl="$(grep -- ' -o ' "$FAKE/curl.argv")"
+check "dist — только корни агента" bash -c '! grep -vF -- "--cacert $2/etc/stvor-agent/roots.pem --capath " <<< "$1"' _ "$dl" "$ROOT"
+check "dist — без proxy= прокси явно нет" bash -c '! grep -vF -- "--noproxy *" <<< "$1"' _ "$dl"
+check_not "dist — прокси окружения curl не видит" test -s "$FAKE/curl.env"
 eq "dist — три вызова curl (два обрыва)" 3 "$(grep -c . <<< "$dl")"
 check "dist — URL <база>/teleport/<тег>/<набор>" \
     grep -qE " https://stvor\.example\.org/dist/teleport/v18\.10\.0-stvor\.5/teleport-v18\.10\.0-openwrt-amd64-bin\.tar\.gz$" <<< "$dl"
@@ -386,6 +399,22 @@ ht_hook install TELEPORT_SHA256="$SET_SHA" TELEPORT_DIST="$DIST" TELEPORT_TAG="$
 check_not "dist, старый pin — без скачивания" test -s "$FAKE/curl.argv"
 eq "dist, старый pin — тег дописан" "TELEPORT_VERSION=18.10.0|TELEPORT_SHA256=$SET_SHA|TELEPORT_TAG=$TAG|" "$(tr '\n' '|' < "$S/installed-pin")"
 eq "dist — паузы перед докачкой" "5|10" "$(paste -s -d '|' "$FAKE/sleep.argv")"
+# proxy= of the agent config — explicitly to curl.
+setup
+make_set 18.10.0 stvor.5
+agent_files http://proxy.lan:3128
+ht_hook install TELEPORT_SHA256="$SET_SHA" TELEPORT_DIST="$DIST" TELEPORT_TAG="$TAG" HTTPS_PROXY=http://env-proxy:3128
+eq "dist, proxy= — 0" 0 "$?"
+check "dist, proxy= — --proxy из token" grep -qF -- "--proxy http://proxy.lan:3128 " "$FAKE/curl.argv"
+check_not "dist, proxy= — без --noproxy" grep -qF -- "--noproxy" "$FAKE/curl.argv"
+check_not "dist, proxy= — прокси окружения curl не видит" test -s "$FAKE/curl.env"
+# No pinned roots — a refusal before any download, no fallback to the system roots.
+setup
+make_set 18.10.0 stvor.5
+agent_files; rm -f "$ROOT/etc/stvor-agent/roots.pem"
+ht_hook install TELEPORT_SHA256="$SET_SHA" TELEPORT_DIST="$DIST" TELEPORT_TAG="$TAG"; eq "dist без roots.pem — 1" 1 "$?"
+check "dist без roots.pem — причина" grep -qF "нет /etc/stvor-agent/roots.pem" "$ROOT/out"
+check_not "dist без roots.pem — без скачивания" test -s "$FAKE/curl.argv"
 # refuse <what> <text> KEY=VALUE… — install refused before any download.
 refuse(){
     local what="$1" text="$2"; shift 2
@@ -428,6 +457,7 @@ refuse "DIST по http" "ожидали https" TELEPORT_DIST=http://stvor.exampl
 refuse "тег другой версии" "TELEPORT_VERSION=18.10.0" TELEPORT_DIST="$DIST" TELEPORT_TAG=v18.11.0-stvor.1
 setup
 make_set 18.10.0
+agent_files
 echo 9 > "$FAKE/cuts"
 ht_hook install TELEPORT_SHA256="$SET_SHA" TELEPORT_DIST="$DIST" TELEPORT_TAG="$TAG"; eq "попытки кончились — 1" 1 "$?"
 eq "попытки кончились — пять вызовов curl" 5 "$(grep -c -- ' -o ' "$FAKE/curl.argv")"

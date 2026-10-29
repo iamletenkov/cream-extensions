@@ -82,6 +82,7 @@ if [[ "${1:-}" == --version ]]; then
     echo "curl $(cat "$FAKE/curl.version" 2>/dev/null || echo 8.5.0) (x86_64-pc-linux-gnu) libcurl"; exit 0
 fi
 echo "$*" >> "$FAKE/curl.log"
+env | grep -iE '^(https?|all|no)_proxy=' >> "$FAKE/curl.env"
 out=""; prev=""
 for a in "$@"; do [[ "$prev" == -o ]] && out="$a"; prev="$a"; done
 if [[ -n "$out" ]]; then
@@ -933,11 +934,25 @@ echo "== хук install: раздача портала TELEPORT_DIST + TELEPORT_
 # The portal answers <base>/teleport/<tag>/<tarball> with 302 to a signed S3 link.
 DIST=https://stvor.example.org/dist
 TAG=v18.10.0-stvor.5
+# agent_files [<proxy>] — what stvor-agent v2 lays: its config and the pinned roots.
+agent_files(){
+    mkdir -p "$ROOT/etc/stvor-agent"
+    printf 'url=https://stvor.example.org/robot-api/v1\n' > "$ROOT/etc/stvor-agent/token"
+    [[ -n "${1:-}" ]] && printf 'proxy=%s\r\n' "$1" >> "$ROOT/etc/stvor-agent/token"
+    echo '-----BEGIN CERTIFICATE-----' > "$ROOT/etc/stvor-agent/roots.pem"
+}
 new_root
 rm -f "$ROOT/usr/local/bin/teleport"
 make_tarball 18.10.0 stvor.5
-msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST/" TELEPORT_TAG="$TAG" 2>&1)"; rc=$?
+agent_files
+msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST/" TELEPORT_TAG="$TAG" \
+    HTTPS_PROXY=http://env-proxy:3128 https_proxy=http://env-proxy:3128 ALL_PROXY=http://env-proxy:3128 2>&1)"; rc=$?
 eq "dist: код 0" 0 "$rc"
+dl="$(grep -- ' -o ' "$FAKE/curl.log")"
+check "dist: только корни агента (--cacert roots.pem)" grep -qF -- "--cacert $ROOT/etc/stvor-agent/roots.pem --capath " <<< "$dl"
+check_not "dist: --capath не системный" grep -qE -- '--capath /etc/ssl' <<< "$dl"
+check "dist: без proxy= — прокси явно нет" grep -qF -- "--noproxy *" <<< "$dl"
+check_not "dist: прокси окружения curl не видит" test -s "$FAKE/curl.env"
 check "dist: URL <база>/teleport/<тег>/<тарбол>" \
     grep -qE " https://stvor\.example\.org/dist/teleport/v18\.10\.0-stvor\.5/teleport-v18\.10\.0-linux-amd64-bin\.tar\.gz$" "$FAKE/curl.log"
 check "dist: идёт по редиректу" grep -qE -- '^-fL ' "$FAKE/curl.log"
@@ -952,6 +967,38 @@ hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DI
 eq "dist: старый pin — код 0" 0 "$?"
 check_not "dist: старый pin — без скачивания" grep -q ' -o ' "$FAKE/curl.log"
 eq "dist: старый pin — тег дописан" "TELEPORT_VERSION=18.10.0|TELEPORT_SHA256=$TB_SHA|TELEPORT_TAG=$TAG|" "$(tr '\n' '|' < "$STATE/installed-pin")"
+# proxy= of the agent config: passed to curl explicitly, the environment is not.
+new_root
+rm -f "$ROOT/usr/local/bin/teleport"
+make_tarball 18.10.0 stvor.5
+agent_files http://proxy.lan:3128
+msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST/" TELEPORT_TAG="$TAG" \
+    HTTPS_PROXY=http://env-proxy:3128 NO_PROXY='*' 2>&1)"; rc=$?
+eq "dist, proxy=: код 0" 0 "$rc"
+dl="$(grep -- ' -o ' "$FAKE/curl.log")"
+check "dist, proxy=: --proxy из token" grep -qF -- "--proxy http://proxy.lan:3128 " <<< "$dl"
+check_not "dist, proxy=: без --noproxy" grep -qF -- "--noproxy" <<< "$dl"
+check_not "dist, proxy=: прокси окружения curl не видит" test -s "$FAKE/curl.env"
+# proxy= that is not an address: a refusal, not a download without the proxy.
+new_root
+rm -f "$ROOT/usr/local/bin/teleport"
+make_tarball 18.10.0 stvor.5
+agent_files 'http://a b'
+msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST/" TELEPORT_TAG="$TAG" 2>&1)"; rc=$?
+check "dist, кривой proxy=: отказ" test "$rc" -ne 0
+has "dist, кривой proxy=: причина" "— не адрес" "$msg"
+check_not "dist, кривой proxy=: без скачивания" grep -qs -- ' -o ' "$FAKE/curl.log"
+# No pinned roots: a refusal before any download, no fallback to the system roots.
+new_root
+rm -f "$ROOT/usr/local/bin/teleport"
+make_tarball 18.10.0 stvor.5
+agent_files; rm -f "$ROOT/etc/stvor-agent/roots.pem"
+msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST/" TELEPORT_TAG="$TAG" 2>&1)"; rc=$?
+check "dist без roots.pem: отказ" test "$rc" -ne 0
+has "dist без roots.pem: причина" "нет /etc/stvor-agent/roots.pem" "$msg"
+check_not "dist без roots.pem: без скачивания" grep -qs -- ' -o ' "$FAKE/curl.log"
+# The mirror and the CDN are not the portal: the system roots, no --cacert.
+check_not "зеркало: без корней агента" grep -qs -- '--cacert' <<< "$(grep -h -- 'mirror.example.org' "$TMP"/root.*/fake/curl.log 2>/dev/null)"
 # refuse <what> <text> KEY=VALUE… — install refused before any download.
 refuse(){
     local what="$1" text="$2"; shift 2
