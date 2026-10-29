@@ -396,7 +396,33 @@ refuse(){
     check_not "$what — без скачивания" test -s "$FAKE/curl.argv"
 }
 refuse "DIST без TAG" "задаются вместе" TELEPORT_DIST="$DIST"
-refuse "TAG без DIST" "задаются вместе" TELEPORT_TAG="$TAG"
+refuse "TAG без DIST и TARBALL" "только с TELEPORT_DIST или TELEPORT_TARBALL" TELEPORT_TAG="$TAG"
+refuse "MIRROR и TAG" "только с TELEPORT_DIST или TELEPORT_TARBALL" TELEPORT_TAG="$TAG" TELEPORT_MIRROR=https://stvor.example.org/dist/teleport
+refuse "DIST и TARBALL" "взаимоисключим" TELEPORT_DIST="$DIST" TELEPORT_TAG="$TAG" TELEPORT_TARBALL="$HT_TMP/local-set.tar.gz"
+refuse "TARBALL и тег другой версии" "TELEPORT_VERSION=18.10.0" TELEPORT_TAG=v18.11.0-stvor.1 TELEPORT_TARBALL="$HT_TMP/local-set.tar.gz"
+setup
+make_set 18.10.0 stvor.5
+cp "$FAKE/set" "$HT_TMP/local-set.tar.gz"
+ht_hook install TELEPORT_TARBALL="$HT_TMP/local-set.tar.gz" TELEPORT_TAG="$TAG"; eq "TARBALL и TAG без суммы — 1" 1 "$?"
+check "TARBALL и TAG без суммы — причина" grep -q 'TELEPORT_SHA256' "$ROOT/out"
+check_not "TARBALL и TAG без суммы — бинаря нет" test -e "$ROOT/opt/teleport/bin/teleport"
+
+echo "== install: локальный TELEPORT_TARBALL + TELEPORT_TAG (тег — только происхождение) =="
+setup
+make_set 18.10.0 stvor.5
+cp "$FAKE/set" "$HT_TMP/local-set.tar.gz"
+ht_hook install TELEPORT_SHA256="$SET_SHA" TELEPORT_TARBALL="$HT_TMP/local-set.tar.gz" TELEPORT_TAG="$TAG"
+eq "tarball+tag — 0" 0 "$?"
+check "tarball+tag — без сети" test ! -s "$FAKE/curl.argv"
+check "tarball+tag — набор сборки форка" grep -qx '# build stvor.5' "$ROOT/opt/teleport/bin/teleport"
+eq "tarball+tag — pin: сумма и тег сборки" "TELEPORT_VERSION=18.10.0|TELEPORT_SHA256=$SET_SHA|TELEPORT_TAG=$TAG|" "$(tr '\n' '|' < "$S/installed-pin")"
+# The same set under a new tag: the pin is rewritten, the set stays (no unpack).
+rm -f "$HT_TMP/local-set.tar.gz"
+before="$(stat -c %Y.%i "$ROOT/opt/teleport/bin/teleport")"
+ht_hook install TELEPORT_SHA256="$SET_SHA" TELEPORT_TARBALL="$HT_TMP/local-set.tar.gz" TELEPORT_TAG=v18.10.0-stvor.6
+eq "tarball+новый тег — 0" 0 "$?"
+eq "tarball+новый тег — набор не переставлен" "$before" "$(stat -c %Y.%i "$ROOT/opt/teleport/bin/teleport")"
+eq "tarball+новый тег — pin переписан" "TELEPORT_VERSION=18.10.0|TELEPORT_SHA256=$SET_SHA|TELEPORT_TAG=v18.10.0-stvor.6|" "$(tr '\n' '|' < "$S/installed-pin")"
 refuse "DIST и MIRROR" "взаимоисключим" TELEPORT_DIST="$DIST" TELEPORT_TAG="$TAG" TELEPORT_MIRROR=https://stvor.example.org/dist/teleport
 refuse "DIST по http" "ожидали https" TELEPORT_DIST=http://stvor.example.org/dist TELEPORT_TAG="$TAG"
 refuse "тег другой версии" "TELEPORT_VERSION=18.10.0" TELEPORT_DIST="$DIST" TELEPORT_TAG=v18.11.0-stvor.1
