@@ -146,6 +146,8 @@ jobs:
           ref: ${{ vars.STVOR_AGENT_REF || 'main' }}
           path: .stvor-agent
           persist-credentials: false
+          # stvor-agent приватный: читает PAT владельца (Contents: read только на stvor-agent).
+          token: ${{ secrets.AGENT_RELEASES_TOKEN }}
 
       # cream validate скачивает .deb по новому пину и сверяет sha256 —
       # первая настоящая проверка пина.
