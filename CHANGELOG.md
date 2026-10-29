@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.13.0](https://github.com/iamletenkov/cream-extensions/compare/v5.12.0...v5.13.0) (2026-10-29)
+
+
+### Добавлено
+
+* **teleport:** закреплённые корни портала при загрузке; keep.d ключа робота ([#91](https://github.com/iamletenkov/cream-extensions/issues/91)) ([4c3c6b4](https://github.com/iamletenkov/cream-extensions/commit/4c3c6b4c38d654c4d8a62aee659d96f970979066))
+* **teleport:** одноуровневые адреса приложений &lt;имя&gt;-&lt;нода&gt;.&lt;прокси&gt; ([#90](https://github.com/iamletenkov/cream-extensions/issues/90)) ([27e78aa](https://github.com/iamletenkov/cream-extensions/commit/27e78aaca94ef2b61484a6a0a1ea22a853e896ae))
+
 ## [5.12.0](https://github.com/iamletenkov/cream-extensions/compare/v5.11.1...v5.12.0) (2026-10-29)
 
 

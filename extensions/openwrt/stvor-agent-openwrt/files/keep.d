@@ -12,11 +12,19 @@
 # new firmware the extension is installed again; the portal issues nothing new. The archive keeps files only: install and configure
 # (every boot) give the directories and files back their owners and modes. The
 # telemetry buffer, the binary, the init scripts and the registry of cream are
-# not kept. The archive holds the tokens: a secret of root level.
+# not kept. The key of the robot (agent v2, ADR-0003 of the agent: robot.key and,
+# mid-rotation, robot.key.next), the dev CA of the portal (ca.pem) and the pinned
+# roots of the Teleport hook (roots.pem) are kept as well: without the key the
+# robot is a stranger to the portal after sysupgrade and must be enrolled again.
+# The archive holds the tokens and the key: a secret of root level.
 /opt/stvor-agent/machine-id
 /opt/stvor-agent/state.json
 /opt/stvor-agent/telemetry-token.src
 /etc/stvor-agent/token
+/etc/stvor-agent/robot.key
+/etc/stvor-agent/robot.key.next
+/etc/stvor-agent/ca.pem
+/etc/stvor-agent/roots.pem
 /etc/stvor-agent-telemetry/token
 /etc/cream/stvor-agent-openwrt/
 /opt/cream/var/ext/stvor-agent-openwrt/user-created

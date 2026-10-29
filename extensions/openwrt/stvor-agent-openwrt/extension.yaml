@@ -25,8 +25,11 @@
 #             machine-id, state, tokens, domain, last-good.json — Р4 revised 2026-10-23).
 schema: cream/v1
 name: stvor-agent-openwrt
-version: 1.3.3
-# 1.3.3: пин tar.gz stvor-agent 5.0.0.
+version: 1.3.4
+# 1.3.4: пин tar.gz stvor-agent 5.0.0.
+# 1.3.3: keep.d хранит и ключ робота агента v2 (robot.key, robot.key.next), ca.pem и
+#        roots.pem /etc/stvor-agent: после sysupgrade робот тот же, без нового enroll;
+#        install и configure возвращают ключам 0600 root, roots.pem — 0644 root.
 # 1.3.2: пин tar.gz stvor-agent 4.4.0.
 # 1.3.1: обрыв на LTE — curl tar.gz с --retry-all-errors (обрыв потока HTTP/2, 429 с
 #        Retry-After).

@@ -142,7 +142,7 @@ RUN_COMMAND cream install --with-deps stvor-agent-openwrt STVOR_AGENT_VERSION=<v
 | загрузка | `configure` (S95) выставляет владельца и права состояния; procd стартует службы из `rc.d`, каждую — только при её токене; `/var/run/stvor-agent-telemetry` init-скрипт создаёт сам |
 | `cream set` (хук `apply`) | перезапуск работающих служб фоном |
 | `cream upgrade` | новый tar.gz; работающие службы перезапускаются |
-| `sysupgrade` с сохранением настроек | `keep.d` хранит `machine-id`, `state.json`, `telemetry-token.src`, оба токена, домен, маркер пользователя и пин tar.gz `installed-pin`; повтор `cream install` возвращает того же агента без новых токенов, `install` и `configure` чинят права ([ниже](#sysupgrade)) |
+| `sysupgrade` с сохранением настроек | `keep.d` хранит `machine-id`, `state.json`, `telemetry-token.src`, оба токена, ключ робота и корни, домен, маркер пользователя и пин tar.gz `installed-pin`; повтор `cream install` возвращает того же агента без новых токенов, `install` и `configure` чинят права ([ниже](#sysupgrade)) |
 | `cream remove` | `stvor-agent disable`, службы выключены, всё поставленное стёрто, `reload-apps` узла |
 
 ## Известные ограничения
@@ -193,6 +193,10 @@ RUN_COMMAND cream install --with-deps stvor-agent-openwrt STVOR_AGENT_VERSION=<v
   токена меток, под который выдан токен телеметрии;
 - `/etc/stvor-agent/token` и `/etc/stvor-agent-telemetry/token` — токены меток и
   телеметрии;
+- `/etc/stvor-agent/robot.key`, `robot.key.next` (на время ротации), `ca.pem` (dev-CA
+  портала) и `roots.pem` (закреплённые корни хука Teleport) — личность робота агента v2
+  (ADR-0003 агента): без ключа после `sysupgrade` робот для портала чужой и нужен новый
+  `enroll`. `install` и `configure` возвращают ключам 0600 root, `roots.pem` — 0644 root;
 - `/etc/cream/stvor-agent-openwrt/` — домен (настройки службы);
 - `/opt/cream/var/ext/stvor-agent-openwrt/user-created` — маркер, что пользователя
   `stvor-telemetry` создало расширение (сам пользователь — в `/etc/passwd`, его хранит
