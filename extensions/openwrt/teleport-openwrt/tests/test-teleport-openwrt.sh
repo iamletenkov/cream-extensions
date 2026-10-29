@@ -685,6 +685,28 @@ eq "apps-status: web опубликован, wide (0666) — untrusted_path" \
     "[('web', 'http://127.0.0.1:8080', 'extension', '/etc/cream/teleport-openwrt/apps.d/web.conf')] [('/etc/cream/teleport-openwrt/apps.d/wide.conf', 'untrusted_path')]" \
     "$(grep -E '^\{' "$ROOT/out" | python3 -c 'import json,sys; o=json.load(sys.stdin); print([(a["name"], a["uri"], a["source"], a.get("file")) for a in o["apps"]], [(d["file"], d["reason"]) for d in o["dropped"]])')"
 check "apps-status не трогает teleport.yaml" cmp -s "$HT_TMP/y.before" "$Y"
+# One label <name>-<node>.<proxy> of at most 63: the node bb-node (7) — a name of
+# 55 is published, of 56 is not (TELEPORT_APPS and apps.d alike).
+check "web: public_addr — одна метка web-bb-node" grep -qx '      public_addr: "web-bb-node.teleport.example.org"' "$Y"
+check "web: Host — та же метка" grep -qx '          - "Host: web-bb-node.teleport.example.org"' "$Y"
+O55="$(printf 'o%.0s' $(seq 55))"; O56="$(printf 'p%.0s' $(seq 56))"
+X55="$(printf 'x%.0s' $(seq 55))"; X56="$(printf 'y%.0s' $(seq 56))"
+printf 'NAME=%s\nURI=http://127.0.0.1:9001\n' "$X55" > "$ROOT/etc/cream/teleport-openwrt/apps.d/x55.conf"
+printf 'NAME=%s\nURI=http://127.0.0.1:9002\n' "$X56" > "$ROOT/etc/cream/teleport-openwrt/apps.d/x56.conf"
+chmod 0644 "$ROOT/etc/cream/teleport-openwrt/apps.d/x55.conf" "$ROOT/etc/cream/teleport-openwrt/apps.d/x56.conf"
+echo "TELEPORT_APPS=\"$O55=8081 $O56=8082\"" >> "$ROOT/etc/cream/teleport-openwrt/config"
+bbrun render; eq "render с длинными именами — 0" 0 "$?"
+check "метка 63 из apps.d — опубликована" grep -qx "      public_addr: \"$X55-bb-node.teleport.example.org\"" "$Y"
+check "метка 63 оператора — опубликована" grep -qx "      public_addr: \"$O55-bb-node.teleport.example.org\"" "$Y"
+check_not "метка 64 из apps.d — нет" grep -q "$X56" "$Y"
+check_not "метка 64 оператора — нет" grep -q "$O56" "$Y"
+check "метка 64 — строка журнала" grep -qF "пропускаю приложение '$O56': адрес $O56-bb-node — метка DNS длиннее 63" "$ROOT/out"
+bbrun apps-status; eq "apps-status с длинными именами — 0" 0 "$?"
+eq "apps-status: метка 64 — invalid, name_too_long" \
+    "[('/etc/cream/teleport-openwrt/apps.d/x56.conf', '$X56', 'invalid', 'name_too_long'), ('TELEPORT_APPS', '$O56', 'invalid', 'name_too_long')]" \
+    "$(grep -E '^\{' "$ROOT/out" | python3 -c 'import json,sys; o=json.load(sys.stdin); print([(d["file"], d.get("name"), d["reason"], d.get("detail")) for d in o["dropped"] if d["reason"] == "invalid"])')"
+rm -f "$ROOT/etc/cream/teleport-openwrt/apps.d/x55.conf" "$ROOT/etc/cream/teleport-openwrt/apps.d/x56.conf"
+sed -i '/^TELEPORT_APPS=/d' "$ROOT/etc/cream/teleport-openwrt/config"
 bbrun set-managed space=sp-2 env=dev; eq "set-managed без paste — 0" 0 "$?"
 check "set-managed — без init: deferred" grep -q '"result":"deferred"' "$ROOT/out"
 eq "отсортированный набор в домене" 'TELEPORT_MANAGED_LABELS="env=dev space=sp-2"' "$(grep '^TELEPORT_MANAGED_LABELS=' "$ROOT/etc/cream/teleport-openwrt/config")"

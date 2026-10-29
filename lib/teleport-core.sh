@@ -334,12 +334,27 @@ proxy_host(){ echo "${1%%:*}"; }
 # one) or the hostname. Called in the main shell, so a die there prints the
 # JSON of an action (DIE_JSON); nodename is the same for $(…) of a log line.
 resolve_nodename(){
-    local n="${1-${C[TELEPORT_NODENAME]}}"
-    [[ -n "$n" ]] || n="$(hostname -s 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+    local n
+    n="$(node_candidate "$@")"
     [[ "$n" =~ $RE_NODENAME ]] || die "имя ноды '$n' (hostname) не метка DNS — задайте TELEPORT_NODENAME"
     NODE="$n"
 }
 nodename(){ resolve_nodename && echo "$NODE"; }
+# node_candidate [TELEPORT_NODENAME] — the knob (by default the loaded one) or
+# the hostname, unchecked.
+node_candidate(){
+    local n="${1-${C[TELEPORT_NODENAME]}}"
+    [[ -n "$n" ]] || n="$(hostname -s 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+    printf '%s' "$n"
+}
+# app_node — the node of the apps' addresses without a die (apps-status, status
+# answer where render refuses the name): empty when it is not a DNS label.
+app_node(){
+    local n
+    n="$(node_candidate)"
+    [[ "$n" =~ $RE_NODENAME ]] && printf '%s' "$n"
+    return 0
+}
 
 # ---------------------------------------------------------------------------
 # Приложения: apps.d + TELEPORT_APPS − TELEPORT_APPS_DISABLE
@@ -446,13 +461,17 @@ apps_resolve(){
     return 0
 }
 
-# app_line_ok <name<TAB>uri<TAB>source<TAB>icon> — defence in depth: a published
-# line of apps_resolve is checked again before render and apps-status use it —
-# four fields exactly, the name, the icon, a loopback URI for a declaration (any
-# http(s) for TELEPORT_APPS), the source (TELEPORT_APPS or a file of apps.d of
-# RE_DECL_FILE). 1 and a journal line otherwise.
+# app_line_ok <name<TAB>uri<TAB>source<TAB>icon> [node] — defence in depth: a
+# published line of apps_resolve is checked again before render and apps-status
+# use it — four fields exactly, the name, the icon, a loopback URI for a
+# declaration (any http(s) for TELEPORT_APPS), the source (TELEPORT_APPS or a
+# file of apps.d of RE_DECL_FILE). 1 and a journal line otherwise.
+# With the node: the app's address <name>-<node>.<proxy> is one DNS label under
+# the wildcard certificate *.<proxy> — name + 1 + node of at most APP_LABEL_MAX
+# (63); a longer one is not published: 2 and a journal line.
+APP_LABEL_MAX=63
 app_line_ok(){
-    local name uri src icon extra tabs="${1//[!$'\t']/}"
+    local name uri src icon extra tabs="${1//[!$'\t']/}" node="${2:-}"
     IFS=$'\t' read -r name uri src icon extra <<< "$1"
     # Fields are counted by the separators: read collapses empty ones.
     if [[ ${#tabs} -ne 3 || -n "$extra" || ! "$name" =~ $RE_APP_NAME || ( -n "$icon" && ! "$icon" =~ $RE_APP_ICON ) ]] \
@@ -461,17 +480,22 @@ app_line_ok(){
               || ! "$uri" =~ $RE_LOOPBACK_URI ]]; }; then
         warn "пропускаю приложение: запись не по форме ($(printf '%q' "$1"))"; return 1
     fi
+    if [[ -n "$node" ]] && (( ${#name} + 1 + ${#node} > APP_LABEL_MAX )); then
+        warn "пропускаю приложение '$name': адрес $name-$node — метка DNS длиннее $APP_LABEL_MAX знаков (имя + нода не длиннее $((APP_LABEL_MAX - 1)))"
+        return 2
+    fi
     return 0
 }
 
 # collect_apps — the published apps of apps_resolve that pass app_line_ok:
 # "name<TAB>uri<TAB>source<TAB>icon".
 collect_apps(){
-    local line rest
+    local line rest node
+    node="$(app_node)"
     while IFS= read -r line; do
         [[ "$line" == app$'\t'* ]] || continue
         rest="${line#app$'\t'}"
-        app_line_ok "$rest" && printf '%s\n' "$rest"
+        app_line_ok "$rest" "$node" && printf '%s\n' "$rest"
     done < <(apps_resolve)
     return 0
 }
@@ -726,7 +750,8 @@ render_file(){
             while IFS=$'\t' read -r name uri _ icon; do
                 echo "    - name: \"$name-$node\""
                 echo "      uri: \"$uri\""
-                echo "      public_addr: \"$name.$node.$host\""
+                # One label under the wildcard certificate *.<proxy>.
+                echo "      public_addr: \"$name-$node.$host\""
                 # Loopback https carries a localhost certificate (mkcert,
                 # self-signed); nobody outside can sit on the loopback path.
                 if [[ "$uri" =~ ^https://(127\.0\.0\.1|localhost|\[::1\])([:/]|$) ]]; then
@@ -739,7 +764,7 @@ render_file(){
                 if [[ "$uri" =~ ^https?://(127\.0\.0\.1|localhost|\[::1\])([:/]|$) ]]; then
                     echo "      rewrite:"
                     echo "        headers:"
-                    echo "          - \"Host: $name.$node.$host\""
+                    echo "          - \"Host: $name-$node.$host\""
                 fi
                 echo "      labels:"
                 while IFS=$'\t' read -r k v; do [[ -n "$k" ]] && echo "        \"$k\": \"$v\""; done <<< "$labels"
@@ -1544,8 +1569,9 @@ cmd_apps_status(){
     DIE_JSON=managed_die_json; DIE_CODE=3
     load_conf
     conf_check || die "в $CONF неверные значения — cream show $TELEPORT_EXT"
-    local res kind a b c d apps="" dropped="" disc=false reg=false role=false o dir_level=0
+    local res kind a b c d apps="" dropped="" disc=false reg=false role=false o dir_level=0 node lok
     res="$(apps_resolve)" || die "приложения не собраны"
+    node="$(app_node)"
     [[ "${C[TELEPORT_APPS_DISCOVERY]}" == 1 ]] && disc=true
     joined && reg=true
     app_role_missing && role=true
@@ -1556,14 +1582,18 @@ cmd_apps_status(){
         case "$kind" in
             app)
                 # The same check as render's (collect_apps): a line that fails
-                # it is not published — it is a drop, invalid.
-                if ! app_line_ok "$rest"; then
+                # it is not published — it is a drop, invalid (detail
+                # name_too_long: <name>-<node> is longer than a DNS label).
+                app_line_ok "$rest" "$node"; lok=$?
+                if (( lok )); then
                     if [[ "$c" == TELEPORT_APPS ]]; then o='{"file":"TELEPORT_APPS"'
                     elif [[ -n "$c" ]]; then o="{\"file\":$(json_path "$(guest_path "$c")")"
                     else o="{\"file\":$(json_path "$(guest_path "$APPS_DIR")")"
                     fi
                     [[ "$a" =~ $RE_APP_NAME ]] && o+=",\"name\":\"$a\""
-                    dropped+="${dropped:+,}$o,\"reason\":\"invalid\"}"
+                    o+=',"reason":"invalid"'
+                    (( lok == 2 )) && o+=',"detail":"name_too_long"'
+                    dropped+="${dropped:+,}$o}"
                     continue
                 fi
                 o="{\"name\":$(json_str "$a"),\"uri\":$(json_str "$b")"
