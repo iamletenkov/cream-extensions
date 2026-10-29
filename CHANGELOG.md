@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.11.1](https://github.com/iamletenkov/cream-extensions/compare/v5.11.0...v5.11.1) (2026-10-29)
+
+
+### Исправлено
+
+* **teleport:** тег сборки форка вместе с локальным тарболом ([#84](https://github.com/iamletenkov/cream-extensions/issues/84)) ([898c65e](https://github.com/iamletenkov/cream-extensions/commit/898c65ea53dc4fcedab49de0ce2c8c79cab36ad5))
+
 ## [5.11.0](https://github.com/iamletenkov/cream-extensions/compare/v5.10.0...v5.11.0) (2026-10-28)
 
 
