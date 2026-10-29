@@ -90,6 +90,8 @@ jobs:
           ref: ${{ vars.STVOR_AGENT_REF || 'main' }}
           path: .stvor-agent
           persist-credentials: false
+          # stvor-agent приватный: читает PAT владельца (Contents: read только на stvor-agent).
+          token: ${{ secrets.AGENT_RELEASES_TOKEN }}
 
       # Одна точка входа, та же, что запускают руками: CI и локальный прогон
       # не должны расходиться. check.sh доводит до конца все проверки, даже
