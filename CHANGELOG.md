@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.14.1](https://github.com/iamletenkov/cream-extensions/compare/v5.14.0...v5.14.1) (2026-10-30)
+
+
+### Исправлено
+
+* **stvor-agent:** без жёсткой зависимости от teleport — агент ставится до него ([#95](https://github.com/iamletenkov/cream-extensions/issues/95)) ([5dc4bcf](https://github.com/iamletenkov/cream-extensions/commit/5dc4bcfe1867c606aba29d486e72824414be375e))
+
 ## [5.14.0](https://github.com/iamletenkov/cream-extensions/compare/v5.13.0...v5.14.0) (2026-10-29)
 
 
