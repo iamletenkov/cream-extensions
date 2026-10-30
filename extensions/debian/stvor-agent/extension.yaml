@@ -5,7 +5,8 @@
 # file goes away on `cream remove stvor-agent`).
 schema: cream/v1
 name: stvor-agent
-version: 4.3.0
+version: 4.3.1
+# 4.3.1: пин пакета stvor-agent 5.1.0.
 # 4.3.0: без depends teleport — скрипт установки портала (auth v2) ставит агент и
 #        делает enroll до `cream install teleport`; drop-in метки cream кладёт и
 #        без teleport (Р11), render teleport подхватит его при своей установке.
