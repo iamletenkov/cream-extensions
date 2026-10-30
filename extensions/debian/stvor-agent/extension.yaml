@@ -5,7 +5,11 @@
 # file goes away on `cream remove stvor-agent`).
 schema: cream/v1
 name: stvor-agent
-version: 4.2.6
+version: 4.3.0
+# 4.3.0: без depends teleport — скрипт установки портала (auth v2) ставит агент и
+#        делает enroll до `cream install teleport`; drop-in метки cream кладёт и
+#        без teleport (Р11), render teleport подхватит его при своей установке.
+#        Метке по-прежнему нужен teleport >= 4.0.2 той же мажорной версии (README).
 # 4.2.6: пин пакета stvor-agent 5.0.0.
 # 4.2.5: пин пакета stvor-agent 4.4.0.
 # 4.2.4: обрыв на LTE — curl пакета с --retry-all-errors (обрыв потока HTTP/2, 429 с
@@ -33,9 +37,10 @@ platform:
   commands: [dpkg, sha256sum]
 targets: {build: exec, live: "yes"}
 provides: [stvor-agent]
-# Major of `teleport` is the version of the managed labels interface and of
-# the command-labels.d contract (spec stvor-agent §10.2).
-depends: [{name: teleport, version: ">=4.0.2 <5"}]
+# No depends on `teleport`: the portal's install script puts the agent on and
+# enrolls it before `cream install teleport`. The command label still needs
+# teleport >= 4.0.2 of the same major (managed labels interface, spec
+# stvor-agent §10.2) — the catalog ships one; see README.
 hooks:
   install: {timeout: 10m}
   upgrade: {timeout: 10m}

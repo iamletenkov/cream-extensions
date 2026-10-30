@@ -175,7 +175,10 @@ eq "os: Debian >= 12, Ubuntu >= 20.04" "[{'id': 'debian', 'version': '>=12'}, {'
     "$(manifest 'm["platform"]["os"]')"
 eq "targets" "{'build': 'exec', 'live': 'yes'}" "$(manifest 'm["targets"]')"
 eq "provides" "['stvor-agent']" "$(manifest 'm["provides"]')"
-eq "depends: teleport >=4.0.2 <5 (метка без бинаря)" "[{'name': 'teleport', 'version': '>=4.0.2 <5'}]" "$(manifest 'm["depends"]')"
+# Без жёсткой зависимости от teleport: скрипт установки портала ставит агент и
+# делает enroll до `cream install teleport`; drop-in метки cream кладёт и без
+# teleport (Р11), а render teleport подхватит его при своей установке.
+eq "depends: нет (teleport ставится после агента)" "None" "$(manifest 'm.get("depends")')"
 eq "хуки" "['apply', 'install', 'remove', 'upgrade']" "$(manifest 'sorted(m["hooks"])')"
 eq "действия — только status (здоровье, cream v1 без хука check)" "['status']" "$(manifest 'sorted(m.get("actions") or {})')"
 eq "status: json, без замка, только live" "json none ['live']" \
@@ -563,8 +566,10 @@ EOF
     chmod +x "$CAT/extensions/teleport/hooks/"*
     cp -a "$EXT" "$CAT/extensions/stvor-agent"
     # The container: a real .deb stvor-agent 4.0.0 whose binary logs its
-    # calls; cream installs teleport, then stvor-agent from that .deb with
-    # explicit version and sum; then removes stvor-agent.
+    # calls; cream installs stvor-agent from that .deb with explicit version
+    # and sum BEFORE teleport (the portal install script enrolls first): the
+    # drop-in lands in teleport's directory anyway (cream R11); then teleport;
+    # removing teleport keeps the drop-in; then removes stvor-agent.
     inner='set -u
 dpkg-deb -x /cream.deb /tmp/creamx && install -m 0755 /tmp/creamx/usr/bin/cream /usr/bin/cream
 cp -a /src /tmp/cat
@@ -577,20 +582,21 @@ r(){ "$@" >/tmp/out 2>&1; c=$?; [ $c -eq 0 ] || { echo "--- $* -> $c"; cat /tmp/
 res(){ if [ "$1" = 0 ]; then echo "CHECK ok $2"; else echo "CHECK fail $2"; fi; }
 r cream system init; res $? "cream system init"
 r cream source add dev --path /tmp/cat --sync; res $? "cream source add --sync"
-r cream install teleport; res $? "cream install teleport"
 r cream install stvor-agent STVOR_AGENT_DEB=/tmp/stvor-agent_4.0.0_amd64.deb STVOR_AGENT_VERSION=4.0.0 STVOR_AGENT_SHA256=$sum
-res $? "cream install stvor-agent"
+res $? "cream install stvor-agent до teleport"
 f=/etc/cream/teleport/command-labels.d/stvor_agent
 [ "$(cat $f 2>/dev/null)" = "command=/usr/bin/stvor-agent version --label" ]; res $? "drop-in на месте после install"
 [ "$(stat -c %a $f 2>/dev/null)" = 644 ]; res $? "drop-in 0644"
 [ "$(dpkg-query -W -f="\${Status}" stvor-agent 2>/dev/null)" = "install ok installed" ]; res $? "пакет установлен"
+r cream install teleport; res $? "cream install teleport после агента"
 r cream install stvor-agent STVOR_AGENT_DEB=/tmp/stvor-agent_4.0.0_amd64.deb STVOR_AGENT_VERSION=4.0.0 STVOR_AGENT_SHA256=$sum
 res $? "повтор install — код 0"
 r cream set stvor-agent STVOR_AGENT_INTERVAL=120; res $? "cream set интервала"
 grep -qx STVOR_AGENT_INTERVAL=120 /etc/cream/stvor-agent/config; res $? "интервал в /etc/cream/stvor-agent/config"
 r cream set stvor-agent STVOR_AGENT_INTERVAL=30; [ $? -ne 0 ]; res $? "интервал 30 — отказ cream"
 r cream set stvor-agent STVOR_AGENT_VERSION=4.0.1; [ $? -ne 0 ]; res $? "ключ scope: install через set — отказ cream"
-r cream remove teleport; [ $? -ne 0 ]; res $? "remove teleport при установленной обёртке — отказ"
+r cream remove teleport; res $? "remove teleport при установленной обёртке — проходит (depends нет)"
+[ "$(cat $f 2>/dev/null)" = "command=/usr/bin/stvor-agent version --label" ]; res $? "drop-in остаётся после remove teleport"
 r cream remove stvor-agent; res $? "cream remove stvor-agent"
 [ ! -e $f ]; res $? "drop-in убран remove"
 grep -qx disable /tmp/stvor-agent.calls; res $? "remove звал stvor-agent disable"
@@ -605,7 +611,7 @@ true'
             "CHECK fail "*) bad "cream: ${line#CHECK fail }"; n=$((n + 1)) ;;
         esac
     done <<< "$out"
-    eq "cream: все проверки контейнера отработали" 17 "$n"
+    eq "cream: все проверки контейнера отработали" 18 "$n"
     if (( fail )); then
         printf '%s\n' "$out" | grep -v '^CHECK ok ' >&3
     fi
