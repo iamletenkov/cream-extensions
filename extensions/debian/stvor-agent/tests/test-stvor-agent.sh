@@ -175,7 +175,10 @@ eq "os: Debian >= 12, Ubuntu >= 20.04" "[{'id': 'debian', 'version': '>=12'}, {'
     "$(manifest 'm["platform"]["os"]')"
 eq "targets" "{'build': 'exec', 'live': 'yes'}" "$(manifest 'm["targets"]')"
 eq "provides" "['stvor-agent']" "$(manifest 'm["provides"]')"
-eq "depends: teleport >=4.0.2 <5 (метка без бинаря)" "[{'name': 'teleport', 'version': '>=4.0.2 <5'}]" "$(manifest 'm["depends"]')"
+# Без жёсткой зависимости от teleport: скрипт установки портала ставит агент и
+# делает enroll до `cream install teleport`; drop-in метки cream кладёт и без
+# teleport (Р11), а render teleport подхватит его при своей установке.
+eq "depends: нет (teleport ставится после агента)" "None" "$(manifest 'm.get("depends")')"
 eq "хуки" "['apply', 'install', 'remove', 'upgrade']" "$(manifest 'sorted(m["hooks"])')"
 eq "действия — только status (здоровье, cream v1 без хука check)" "['status']" "$(manifest 'sorted(m.get("actions") or {})')"
 eq "status: json, без замка, только live" "json none ['live']" \

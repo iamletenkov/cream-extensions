@@ -14,7 +14,7 @@ set-managed`). Само расширение — тонкое: ставит `.de
 | cream | ≥ 1.0.0 |
 | Даёт | `stvor-agent` |
 | Требует | — |
-| Зависит от | [`teleport`](../teleport/README.md) |
+| Зависит от | — (метке нужен [`teleport`](../teleport/README.md) ≥ 4.0.2, см. ниже) |
 | Конфликтует с | — |
 | Хуки | `install`, `upgrade`, `remove`, `apply` |
 | Настройка на загрузке | — |
@@ -58,9 +58,14 @@ set-managed`). Само расширение — тонкое: ставит `.de
 R32). Агент — статический Go-бинарь, пакет зависит только от `cream`; юнит пакета
 (`Type=exec`, `ProtectClock`, `ProtectKernelLogs`) требует systemd ≥ 245 — у focal 245.
 
-Зависит от `teleport >=4.0.2 <5`: мажор `teleport` — версия интерфейса
-управляемых меток и контракта `command-labels.d`. Пока стоит обёртка,
-`cream remove teleport` отказывает (67).
+Жёсткой зависимости от `teleport` нет (с 4.3.0): скрипт установки портала ставит
+агент и делает enroll раньше `cream install teleport`. Метке нужен `teleport`
+≥ 4.0.2 той же мажорной версии 4 — мажор `teleport` это версия интерфейса
+управляемых меток и контракта `command-labels.d`; каталог везёт подходящий.
+cream кладёт drop-in и без установленного `teleport` (создаёт
+`/etc/cream/teleport/command-labels.d`, правило Р11), а render `teleport`
+подхватывает его при своей установке. `cream remove teleport` теперь не
+отказывает: drop-in остаётся, метки нет, пока `teleport` не поставят снова.
 
 **Метка `stvor_agent`.** Файл `files/stvor_agent.command-label` cream кладёт
 в `/etc/cream/teleport/command-labels.d/stvor_agent` (поле `files`
