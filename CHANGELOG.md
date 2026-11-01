@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.14.2](https://github.com/iamletenkov/cream-extensions/compare/v5.14.1...v5.14.2) (2026-11-01)
+
+
+### Исправлено
+
+* **teleport:** без корней агента раздача портала идёт по системным корням ([#98](https://github.com/iamletenkov/cream-extensions/issues/98)) ([80bde52](https://github.com/iamletenkov/cream-extensions/commit/80bde5281194f4a7c3c2313ecb14f23eddb7a442))
+
 ## [5.14.1](https://github.com/iamletenkov/cream-extensions/compare/v5.14.0...v5.14.1) (2026-10-30)
 
 
