@@ -1794,7 +1794,7 @@ download(){
 # (removed on exit). The layer unpacks it. An empty sha256 is taken from
 # cdn.teleport.dev; FETCH_SHA is the sum the tarball was checked by. <dist> — the
 # distribution of the portal: a redirect to a signed link, followed over https only,
-# trusted by the pinned roots of stvor-agent alone (dist_flags).
+# trusted by the pinned roots of stvor-agent when it laid them (dist_flags).
 FETCH_SRC="" FETCH_WORK="" FETCH_SHA=""
 
 # The files of stvor-agent v2 (ADR-0003 of the agent): its config (url=, proxy=)
@@ -1817,16 +1817,22 @@ agent_proxy(){
 }
 
 # dist_flags <capath dir> — DIST_FLAGS: the curl flags of the portal distribution:
-# https only (the redirect too), the pinned roots of the agent as the only CA —
-# --capath points at a directory holding just a copy of them, so the default CA
-# directory curl was built with does not add the system roots — and the proxy of
-# the agent config, or explicitly none. No roots — a refusal, no fallback.
+# https only (the redirect too) and the proxy of the agent config, or explicitly none.
+# The pinned roots of the agent, when it laid them, are the only CA — --capath points
+# at a directory holding just a copy of them, so the default CA directory curl was
+# built with does not add the system roots. No roots (no agent, or not registered
+# yet) — the system roots, as plain Teleport: Teleport does not depend on the agent;
+# the tarball is still checked by TELEPORT_SHA256, the cluster by TELEPORT_CA_PIN.
 dist_flags(){
     local capath="$1" proxy
-    [[ -s "$AGENT_ROOTS" ]] || die "нет ${AGENT_ROOTS#"$ROOT"} — корней портала нет (stvor-agent v2 не зарегистрирован?); на системные корни раздача не откатывается"
-    mkdir -m 0700 -- "$capath" && cp -- "$AGENT_ROOTS" "$capath/roots.pem" \
-        || die "не создать $capath"
-    DIST_FLAGS=(--proto =https --proto-redir =https --cacert "$AGENT_ROOTS" --capath "$capath")
+    DIST_FLAGS=(--proto =https --proto-redir =https)
+    if [[ -s "$AGENT_ROOTS" ]]; then
+        mkdir -m 0700 -- "$capath" && cp -- "$AGENT_ROOTS" "$capath/roots.pem" \
+            || die "не создать $capath"
+        DIST_FLAGS+=(--cacert "$AGENT_ROOTS" --capath "$capath")
+    else
+        log "нет ${AGENT_ROOTS#"$ROOT"} — раздача по системным корням"
+    fi
     proxy="$(agent_proxy)"
     if [[ -n "$proxy" ]]; then
         [[ "$proxy" =~ ^[^[:space:][:cntrl:]]+$ ]] || die "proxy= в ${AGENT_CONFIG#"$ROOT"} — не адрес"

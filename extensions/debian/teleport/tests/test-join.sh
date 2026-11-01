@@ -988,15 +988,40 @@ msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DI
 check "dist, кривой proxy=: отказ" test "$rc" -ne 0
 has "dist, кривой proxy=: причина" "— не адрес" "$msg"
 check_not "dist, кривой proxy=: без скачивания" grep -qs -- ' -o ' "$FAKE/curl.log"
-# No pinned roots: a refusal before any download, no fallback to the system roots.
+# No agent at all (installed without a binding ticket): the system roots, https only,
+# no proxy — Teleport does not depend on the agent.
 new_root
 rm -f "$ROOT/usr/local/bin/teleport"
 make_tarball 18.10.0 stvor.5
-agent_files; rm -f "$ROOT/etc/stvor-agent/roots.pem"
+rm -r -f "$ROOT/etc/stvor-agent"
+msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST/" TELEPORT_TAG="$TAG" \
+    HTTPS_PROXY=http://env-proxy:3128 2>&1)"; rc=$?
+eq "dist без агента: код 0" 0 "$rc"
+dl="$(grep -- ' -o ' "$FAKE/curl.log")"
+check_not "dist без агента: без --cacert" grep -qF -- "--cacert" <<< "$dl"
+check_not "dist без агента: без --capath" grep -qF -- "--capath" <<< "$dl"
+check "dist без агента: только https, и в редиректе" grep -qF -- '--proto =https --proto-redir =https' <<< "$dl"
+check "dist без агента: прокси явно нет" grep -qF -- "--noproxy *" <<< "$dl"
+check_not "dist без агента: прокси окружения curl не видит" test -s "$FAKE/curl.env"
+check "dist без агента: бинарь сборки форка" grep -qx '# build stvor.5' "$ROOT/usr/local/bin/teleport"
+# The agent config without roots.pem (not registered yet): the system roots, its proxy=.
+new_root
+rm -f "$ROOT/usr/local/bin/teleport"
+make_tarball 18.10.0 stvor.5
+agent_files http://proxy.lan:3128; rm -f "$ROOT/etc/stvor-agent/roots.pem"
 msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST/" TELEPORT_TAG="$TAG" 2>&1)"; rc=$?
-check "dist без roots.pem: отказ" test "$rc" -ne 0
-has "dist без roots.pem: причина" "нет /etc/stvor-agent/roots.pem" "$msg"
-check_not "dist без roots.pem: без скачивания" grep -qs -- ' -o ' "$FAKE/curl.log"
+eq "dist без roots.pem: код 0" 0 "$rc"
+dl="$(grep -- ' -o ' "$FAKE/curl.log")"
+check_not "dist без roots.pem: без --cacert" grep -qF -- "--cacert" <<< "$dl"
+check "dist без roots.pem: --proxy из token" grep -qF -- "--proxy http://proxy.lan:3128 " <<< "$dl"
+# The sum still guards the tarball on the system roots.
+new_root
+rm -f "$ROOT/usr/local/bin/teleport"
+make_tarball 18.10.0 stvor.5
+msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$(printf '0%.0s' {1..64})" TELEPORT_DIST="$DIST/" TELEPORT_TAG="$TAG" 2>&1)"; rc=$?
+check "dist без агента, чужая сумма: отказ" test "$rc" -ne 0
+has "dist без агента, чужая сумма: причина" "sha256 не совпал" "$msg"
+check_not "dist без агента, чужая сумма: бинаря нет" test -e "$ROOT/usr/local/bin/teleport"
 # The mirror and the CDN are not the portal: the system roots, no --cacert.
 check_not "зеркало: без корней агента" grep -qs -- '--cacert' <<< "$(grep -h -- 'mirror.example.org' "$TMP"/root.*/fake/curl.log 2>/dev/null)"
 # refuse <what> <text> KEY=VALUE… — install refused before any download.
