@@ -1,6 +1,10 @@
 schema: cream/v1
 name: teleport
-version: 4.6.0
+version: 4.6.1
+# 4.6.1: Teleport не зависит от агента: нет /etc/stvor-agent/roots.pem (агент не ставился
+#        или не привязан) — раздача портала по системным корням (ca-certificates), только
+#        https и TELEPORT_SHA256, кластер — TELEPORT_CA_PIN, как у обычного Teleport;
+#        roots.pem есть — по-прежнему только он.
 # 4.6.0: раздача портала (TELEPORT_DIST) — только закреплённые корни stvor-agent v2:
 #        curl --cacert /etc/stvor-agent/roots.pem (и --capath на каталог с их копией —
 #        без системных корней); нет roots.pem — отказ до скачивания. Прокси — только

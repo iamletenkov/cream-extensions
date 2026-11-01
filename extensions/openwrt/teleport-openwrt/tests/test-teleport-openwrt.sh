@@ -408,13 +408,17 @@ eq "dist, proxy= — 0" 0 "$?"
 check "dist, proxy= — --proxy из token" grep -qF -- "--proxy http://proxy.lan:3128 " "$FAKE/curl.argv"
 check_not "dist, proxy= — без --noproxy" grep -qF -- "--noproxy" "$FAKE/curl.argv"
 check_not "dist, proxy= — прокси окружения curl не видит" test -s "$FAKE/curl.env"
-# No pinned roots — a refusal before any download, no fallback to the system roots.
+# No agent at all (installed without a binding ticket) — the system roots, https only.
 setup
 make_set 18.10.0 stvor.5
-agent_files; rm -f "$ROOT/etc/stvor-agent/roots.pem"
-ht_hook install TELEPORT_SHA256="$SET_SHA" TELEPORT_DIST="$DIST" TELEPORT_TAG="$TAG"; eq "dist без roots.pem — 1" 1 "$?"
-check "dist без roots.pem — причина" grep -qF "нет /etc/stvor-agent/roots.pem" "$ROOT/out"
-check_not "dist без roots.pem — без скачивания" test -s "$FAKE/curl.argv"
+rm -r -f "$ROOT/etc/stvor-agent"
+ht_hook install TELEPORT_SHA256="$SET_SHA" TELEPORT_DIST="$DIST" TELEPORT_TAG="$TAG"; eq "dist без агента — 0" 0 "$?"
+dl="$(grep -- ' -o ' "$FAKE/curl.argv")"
+check_not "dist без агента — без --cacert" grep -qF -- "--cacert" <<< "$dl"
+check_not "dist без агента — без --capath" grep -qF -- "--capath" <<< "$dl"
+check "dist без агента — только https" bash -c '! grep -v -- "--proto =https --proto-redir =https" <<< "$1"' _ "$dl"
+check "dist без агента — прокси явно нет" bash -c '! grep -vF -- "--noproxy *" <<< "$1"' _ "$dl"
+check "dist без агента — набор на месте" grep -qx '# build stvor.5' "$ROOT/opt/teleport/bin/teleport"
 # refuse <what> <text> KEY=VALUE… — install refused before any download.
 refuse(){
     local what="$1" text="$2"; shift 2
