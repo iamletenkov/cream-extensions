@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.15.1](https://github.com/iamletenkov/cream-extensions/compare/v5.15.0...v5.15.1) (2026-11-02)
+
+
+### Исправлено
+
+* **teleport:** закрытый /dist — токен агента в хуке teleport, ключ sbk_ в stvor-agent ([#101](https://github.com/iamletenkov/cream-extensions/issues/101)) ([45342fc](https://github.com/iamletenkov/cream-extensions/commit/45342fcab5ffb906454f8a795eb27fd9437d6325))
+
 ## [5.15.0](https://github.com/iamletenkov/cream-extensions/compare/v5.14.2...v5.15.0) (2026-11-02)
 
 
