@@ -408,6 +408,15 @@ eq "dist, proxy= — 0" 0 "$?"
 check "dist, proxy= — --proxy из token" grep -qF -- "--proxy http://proxy.lan:3128 " "$FAKE/curl.argv"
 check_not "dist, proxy= — без --noproxy" grep -qF -- "--noproxy" "$FAKE/curl.argv"
 check_not "dist, proxy= — прокси окружения curl не видит" test -s "$FAKE/curl.env"
+# The access token of the agent (/var/run/stvor-agent on OpenWrt) — a header file.
+setup
+make_set 18.10.0 stvor.5
+agent_files; mkdir -p "$ROOT/var/run/stvor-agent"
+printf 'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_abcde\n' > "$ROOT/var/run/stvor-agent/access-token"
+ht_hook install TELEPORT_SHA256="$SET_SHA" TELEPORT_DIST="$DIST" TELEPORT_TAG="$TAG"; eq "dist, токен агента — 0" 0 "$?"
+dl="$(grep -- ' -o ' "$FAKE/curl.argv")"
+check "dist, токен агента — заголовок файлом" bash -c '! grep -vE -- "-H @[^ ]+" <<< "$1"' _ "$dl"
+check_not "dist, токен агента — токена нет в argv" grep -qF AbCdEfGhIjKlMnOp "$FAKE/curl.argv"
 # No agent at all (installed without a binding ticket) — the system roots, https only.
 setup
 make_set 18.10.0 stvor.5

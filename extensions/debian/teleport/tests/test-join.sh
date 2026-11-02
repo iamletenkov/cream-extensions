@@ -82,6 +82,7 @@ if [[ "${1:-}" == --version ]]; then
     echo "curl $(cat "$FAKE/curl.version" 2>/dev/null || echo 8.5.0) (x86_64-pc-linux-gnu) libcurl"; exit 0
 fi
 echo "$*" >> "$FAKE/curl.log"
+prev=""; for a in "$@"; do [[ "$prev" == -H && "$a" == @* ]] && cat "${a#@}" >> "$FAKE/curl.headers"; prev="$a"; done
 env | grep -iE '^(https?|all|no)_proxy=' >> "$FAKE/curl.env"
 out=""; prev=""
 for a in "$@"; do [[ "$prev" == -o ]] && out="$a"; prev="$a"; done
@@ -988,6 +989,28 @@ msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DI
 check "dist, кривой proxy=: отказ" test "$rc" -ne 0
 has "dist, кривой proxy=: причина" "— не адрес" "$msg"
 check_not "dist, кривой proxy=: без скачивания" grep -qs -- ' -o ' "$FAKE/curl.log"
+# The access token of the agent (/run/stvor-agent/access-token): the bearer of the
+# download, as a header file — never in the argv of curl.
+TOK=AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_abcde
+new_root
+rm -f "$ROOT/usr/local/bin/teleport"
+make_tarball 18.10.0 stvor.5
+agent_files; mkdir -p "$ROOT/run/stvor-agent"; printf '%s\n' "$TOK" > "$ROOT/run/stvor-agent/access-token"
+msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST/" TELEPORT_TAG="$TAG" 2>&1)"; rc=$?
+eq "dist, токен агента: код 0" 0 "$rc"
+dl="$(grep -- ' -o ' "$FAKE/curl.log")"
+check "dist, токен агента: заголовок файлом" grep -qE -- "-H @[^ ]+" <<< "$dl"
+check_not "dist, токен агента: токена нет в argv" grep -qF -- "$TOK" "$FAKE/curl.log"
+check "dist, токен агента: Authorization: Bearer" grep -qx "Authorization: Bearer $TOK" "$FAKE/curl.headers"
+# A token file not of the form: no header (the portal answers 401 itself), no leak.
+new_root
+rm -f "$ROOT/usr/local/bin/teleport"
+make_tarball 18.10.0 stvor.5
+agent_files; mkdir -p "$ROOT/run/stvor-agent"; printf 'bad token\n' > "$ROOT/run/stvor-agent/access-token"
+msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST/" TELEPORT_TAG="$TAG" 2>&1)"; rc=$?
+eq "dist, кривой токен: код 0" 0 "$rc"
+check_not "dist, кривой токен: без заголовка" test -s "$FAKE/curl.headers"
+has "dist, кривой токен: предупреждение" "не токен" "$msg"
 # No agent at all (installed without a binding ticket): the system roots, https only,
 # no proxy — Teleport does not depend on the agent.
 new_root
@@ -1003,6 +1026,7 @@ check_not "dist без агента: без --capath" grep -qF -- "--capath" <<<
 check "dist без агента: только https, и в редиректе" grep -qF -- '--proto =https --proto-redir =https' <<< "$dl"
 check "dist без агента: прокси явно нет" grep -qF -- "--noproxy *" <<< "$dl"
 check_not "dist без агента: прокси окружения curl не видит" test -s "$FAKE/curl.env"
+check_not "dist без агента: без заголовка" grep -qF -- "-H @" <<< "$dl"
 check "dist без агента: бинарь сборки форка" grep -qx '# build stvor.5' "$ROOT/usr/local/bin/teleport"
 # The agent config without roots.pem (not registered yet): the system roots, its proxy=.
 new_root

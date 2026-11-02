@@ -1801,6 +1801,9 @@ FETCH_SRC="" FETCH_WORK="" FETCH_SHA=""
 # and the bundle of pinned roots it writes for this hook (0644).
 AGENT_CONFIG="$ROOT/etc/stvor-agent/token"
 AGENT_ROOTS="$ROOT/etc/stvor-agent/roots.pem"
+# The access token of the robot scope the agent keeps (0600 root, one line of 43
+# base64url): the bearer of the download from /dist. /run on Debian, /var/run on OpenWrt.
+AGENT_TOKENS=("$ROOT/run/stvor-agent/access-token" "$ROOT/var/run/stvor-agent/access-token")
 
 # agent_proxy — the proxy= line of the agent config (none — nothing): the proxy of
 # the portal is that one, never the environment.
@@ -1816,16 +1819,31 @@ agent_proxy(){
     done < "$AGENT_CONFIG"
 }
 
-# dist_flags <capath dir> — DIST_FLAGS: the curl flags of the portal distribution:
+# dist_flags <work dir> — DIST_FLAGS: the curl flags of the portal distribution:
 # https only (the redirect too) and the proxy of the agent config, or explicitly none.
+# The access token of the agent, when there is one, goes as `Authorization: Bearer`
+# from a header file in <work dir> (curl -H @file): never in the argv of curl.
 # The pinned roots of the agent, when it laid them, are the only CA — --capath points
 # at a directory holding just a copy of them, so the default CA directory curl was
 # built with does not add the system roots. No roots (no agent, or not registered
 # yet) — the system roots, as plain Teleport: Teleport does not depend on the agent;
 # the tarball is still checked by TELEPORT_SHA256, the cluster by TELEPORT_CA_PIN.
 dist_flags(){
-    local capath="$1" proxy
+    local work="$1" capath="$1/capath" proxy file token=""
     DIST_FLAGS=(--proto =https --proto-redir =https)
+    for file in "${AGENT_TOKENS[@]}"; do
+        [[ -s "$file" ]] || continue
+        IFS= read -r token < "$file" || [[ -n "$token" ]] || token=""
+        if [[ "$token" =~ ^[A-Za-z0-9_-]{43}$ ]]; then
+            ( umask 077; printf 'Authorization: Bearer %s\n' "$token" > "$work/.auth" ) \
+                || die "не записать $work/.auth"
+            DIST_FLAGS+=(-H "@$work/.auth")
+        else
+            warn "${file#"$ROOT"} — не токен доступа; качаю без него"
+        fi
+        token=""
+        break
+    done
     if [[ -s "$AGENT_ROOTS" ]]; then
         mkdir -m 0700 -- "$capath" && cp -- "$AGENT_ROOTS" "$capath/roots.pem" \
             || die "не создать $capath"
@@ -1862,7 +1880,7 @@ fetch_tarball(){
         url="$(teleport_url "$version" "$arch" "$mirror" "$dist" "$tag")"
         sha_url="$(teleport_sha256_url "$version" "$arch")"
         if [[ -n "$dist" ]]; then
-            dist_flags "$work/capath"
+            dist_flags "$work"
             proto=("${DIST_FLAGS[@]}")
         fi
         if [[ -z "$sha" ]]; then
