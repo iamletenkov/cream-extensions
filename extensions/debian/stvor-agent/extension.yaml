@@ -7,7 +7,7 @@ schema: cream/v1
 name: stvor-agent
 version: 4.4.0
 # 4.4.0: STVOR_AGENT_AUTH_FILE — файл с ключом зеркала (sbk_ сборщика для закрытого /dist):
-#        Authorization: Bearer файлом заголовка, только к STVOR_AGENT_MIRROR, не в argv;
+#        Authorization: Bearer файлом заголовка, только к https-зеркалу и https-редиректу, не в argv;
 #        файла нет — предупреждение и скачивание без ключа; не ключ — отказ до сети.
 # 4.3.1: пин пакета stvor-agent 5.1.0.
 # 4.3.0: без depends teleport — скрипт установки портала (auth v2) ставит агент и

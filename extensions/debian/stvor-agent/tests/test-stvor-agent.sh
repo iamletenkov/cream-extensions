@@ -268,6 +268,13 @@ eq "ключ /dist — Authorization: Bearer" "Authorization: Bearer $KEY" "$(ca
 check_not "ключ /dist — не в argv" grep -qF -- "$KEY" "$FAKE/curl.argv"
 check_not "ключ /dist — не в окружении curl" grep -qF -- "$KEY" "$FAKE/curl.env"
 check_not "ключ /dist — файл заголовка убран" bash -c 'find "$1/tmp" -name .auth | grep -q .' _ "$ROOT"
+check "ключ /dist — только https, и в редиректе" grep -qF -- '--proto =https --proto-redir =https' "$FAKE/curl.argv"
+# A key over plain http: a refusal before any network — the key is never sent in clear.
+new_root; printf '%s\n' "$KEY" > "$ROOT/tmp/dist.key"
+out="$(hook install STVOR_AGENT_MIRROR=http://portal.example.org/dist/teleport STVOR_AGENT_AUTH_FILE="$ROOT/tmp/dist.key" 2>&1)"; rc=$?
+check "ключ /dist по http — отказ" test "$rc" -ne 0
+eq "ключ /dist по http — без скачивания" "" "$(net)"
+check "ключ /dist по http — причина" grep -qF "только https" <<< "$out"
 # No file (a later upgrade without the secret): a warning, the download without it.
 new_root
 out="$(hook install STVOR_AGENT_MIRROR="$MIRROR" STVOR_AGENT_AUTH_FILE="$ROOT/tmp/none.key" 2>&1)"; rc=$?

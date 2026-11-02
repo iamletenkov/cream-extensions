@@ -14,7 +14,7 @@
 #   STVOR_AGENT_AUTH_FILE  absolute path of a file with the bearer of the mirror
 #       (the key of the builder sbk_ of the portal /dist, a build secret): sent as
 #       `Authorization: Bearer` from a header file (curl -H @file), never in argv;
-#       only to STVOR_AGENT_MIRROR. No file (a later upgrade without the secret) —
+#       only to an https STVOR_AGENT_MIRROR, https in the redirect too. No file (a later upgrade without the secret) —
 #       a warning and the download without it.
 #   default source — the GitHub release of the version
 # The labels token is never an input here: `stvor-agent enable` takes it on
@@ -106,6 +106,7 @@ sa_check_source(){
             SA_BEARER="${SA_BEARER%$'\r'}"
             [[ "$SA_BEARER" =~ $RE_SA_BEARER ]] \
                 || { SA_BEARER=""; sa_die "STVOR_AGENT_AUTH_FILE: в файле не ключ (одна строка, base64url/токен)"; }
+            [[ "$mirror" == https://* ]] || sa_die "STVOR_AGENT_AUTH_FILE: ключ — только https, а зеркало $mirror"
         else
             sa_log "ВНИМАНИЕ: STVOR_AGENT_AUTH_FILE=$STVOR_AGENT_AUTH_FILE — файла нет, качаю без ключа"
         fi
@@ -147,7 +148,7 @@ sa_fetch(){
         local auth=()
         if [[ -n "${SA_BEARER:-}" ]]; then
             ( umask 077; printf 'Authorization: Bearer %s\n' "$SA_BEARER" > "$work/.auth" ) || return 1
-            auth=(-H "@$work/.auth")
+            auth=(--proto "=https" --proto-redir "=https" -H "@$work/.auth")
         fi
         # Stalls become retries instead of an endless wait.
         sa_run curl -fL "${retry[@]}" --retry-delay 5 "${auth[@]}" \
