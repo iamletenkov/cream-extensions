@@ -100,17 +100,23 @@ disable` (и хук `remove`) убирает токен и `state.json`. Доч�
 | `STVOR_AGENT_SHA256` | строка `^[0-9a-f]{64}$` | пусто | sha256 .deb архитектуры машины; задаётся вместе с STVOR_AGENT_VERSION *(только при установке)* |
 | `STVOR_AGENT_MIRROR` | `str` | пусто | база зеркала, файл плоско <база>/stvor-agent_<версия>_<arch>.deb; пусто — релиз GitHub *(только при установке)* |
 | `STVOR_AGENT_DEB` | `path` | пусто | локальный .deb (офлайн, абсолютный путь); взаимоисключим с STVOR_AGENT_MIRROR *(только при установке)* |
+| `STVOR_AGENT_AUTH_FILE` | `path` | пусто | файл с ключом зеркала (sbk_ сборщика для закрытого /dist портала, секрет сборки): Authorization: Bearer только к STVOR_AGENT_MIRROR, не в argv *(только при установке)* |
 | `STVOR_AGENT_INTERVAL` | строка `^([6-9][0-9]\|[1-5][0-9]{2}\|600)$` | `60` | период опроса портала, секунды, 60–600 |
 | `STVOR_AGENT_LOG_LEVEL` | `info` \| `debug` | `info` | уровень журнала службы |
 <!-- /catalog:params -->
 
-Параметры установки (`STVOR_AGENT_VERSION`, `_SHA256`, `_MIRROR`, `_DEB`) —
+Параметры установки (`STVOR_AGENT_VERSION`, `_SHA256`, `_MIRROR`, `_DEB`, `_AUTH_FILE`) —
 только через `cream install`, `cream set` им отказывает. Повтор
 `cream install stvor-agent` с новой версией и суммой перезапускает хук
 `install` — так портал обновляет агента.
 
 - `STVOR_AGENT_MIRROR` — так раздаёт `/dist/teleport/` портала;
   `STVOR_AGENT_DEB` с `STVOR_AGENT_MIRROR` — отказ.
+- `STVOR_AGENT_AUTH_FILE` — закрытый `/dist`: путь к файлу с ключом сборщика `sbk_` (секрет
+  сборки, в bisquite — `RUN_COMMAND --mount=type=secret,id=stvor-dist …
+  STVOR_AGENT_AUTH_FILE=/run/secrets/stvor-dist`). Ключ уходит только к зеркалу как
+  `Authorization: Bearer` из файла заголовка, в argv и журнал не попадает; файла нет —
+  предупреждение и скачивание без ключа.
 - Версия и сумма обе пусты — берутся из пина каталога `files/pin.env`
   (`STVOR_AGENT_PIN_VERSION`, `STVOR_AGENT_PIN_SHA256_AMD64`,
   `STVOR_AGENT_PIN_SHA256_ARM64`). Задана одна из двух — отказ: явная пара
