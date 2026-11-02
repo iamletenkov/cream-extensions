@@ -86,6 +86,7 @@ teleport-openwrt set-managed`), служба телеметрии шлёт на 
 | `STVOR_AGENT_SHA256` | строка `^[0-9a-f]{64}$` | пусто | sha256 tar.gz архитектуры машины; задаётся вместе с STVOR_AGENT_VERSION *(только при установке)* |
 | `STVOR_AGENT_MIRROR` | `str` | пусто | база зеркала, файл плоско <база>/stvor-agent_<версия>_linux_<arch>.tar.gz; пусто — релиз GitHub *(только при установке)* |
 | `STVOR_AGENT_TARBALL` | `path` | пусто | локальный tar.gz (офлайн, абсолютный путь); взаимоисключим с STVOR_AGENT_MIRROR *(только при установке)* |
+| `STVOR_AGENT_AUTH_FILE` | `path` | пусто | файл с ключом зеркала (sbk_ сборщика для закрытого /dist портала, секрет сборки): Authorization: Bearer только к https STVOR_AGENT_MIRROR, не в argv *(только при установке)* |
 | `STVOR_AGENT_INTERVAL` | строка `^([6-9][0-9]\|[1-5][0-9]{2}\|600)$` | `60` | период опроса портала, секунды, 60–600 |
 | `STVOR_AGENT_LOG_LEVEL` | `info` \| `debug` | `info` | уровень журнала службы |
 <!-- /catalog:params -->

@@ -11,6 +11,11 @@
 #       means the catalog pin files/pin.env
 #   STVOR_AGENT_MIRROR  base URL, the file lies flat: <base>/<deb name>
 #   STVOR_AGENT_DEB     absolute path of a local .deb (offline)
+#   STVOR_AGENT_AUTH_FILE  absolute path of a file with the bearer of the mirror
+#       (the key of the builder sbk_ of the portal /dist, a build secret): sent as
+#       `Authorization: Bearer` from a header file (curl -H @file), never in argv;
+#       only to an https STVOR_AGENT_MIRROR, https in the redirect too. No file (a later upgrade without the secret) —
+#       a warning and the download without it.
 #   default source — the GitHub release of the version
 # The labels token is never an input here: `stvor-agent enable` takes it on
 # stdin. Children (curl, dpkg, stvor-agent) get a minimal environment of their
@@ -20,6 +25,7 @@ SA_RELEASES=https://github.com/iamletenkov/stvor-agent/releases/download
 RE_SA_VERSION='^[0-9]+\.[0-9]+\.[0-9]+$'
 RE_SA_SHA256='^[0-9a-f]{64}$'
 RE_SA_URL='^https?://[A-Za-z0-9._~:/%+-]+$'
+RE_SA_BEARER='^[A-Za-z0-9._~+/=-]{16,512}$'
 
 # Units of the package: labels and, from 4.1.0, telemetry (Stvor ADR-0034).
 SA_UNITS=(stvor-agent.service stvor-agent-telemetry.service)
@@ -93,6 +99,18 @@ sa_check_source(){
         sa_die "STVOR_AGENT_MIRROR и STVOR_AGENT_DEB взаимоисключающие — задайте один"
     fi
     [[ -z "$mirror" || "$mirror" =~ $RE_SA_URL ]] || sa_die "STVOR_AGENT_MIRROR='$mirror': ожидали http(s) URL"
+    SA_BEARER=""
+    if [[ -n "$mirror" && -n "${STVOR_AGENT_AUTH_FILE:-}" ]]; then
+        if [[ -s "$STVOR_AGENT_AUTH_FILE" ]]; then
+            IFS= read -r SA_BEARER < "$STVOR_AGENT_AUTH_FILE" || [[ -n "$SA_BEARER" ]] || SA_BEARER=""
+            SA_BEARER="${SA_BEARER%$'\r'}"
+            [[ "$SA_BEARER" =~ $RE_SA_BEARER ]] \
+                || { SA_BEARER=""; sa_die "STVOR_AGENT_AUTH_FILE: в файле не ключ (одна строка, base64url/токен)"; }
+            [[ "$mirror" == https://* ]] || sa_die "STVOR_AGENT_AUTH_FILE: ключ — только https, а зеркало $mirror"
+        else
+            sa_log "ВНИМАНИЕ: STVOR_AGENT_AUTH_FILE=$STVOR_AGENT_AUTH_FILE — файла нет, качаю без ключа"
+        fi
+    fi
     if [[ -n "$deb" ]]; then
         [[ "$deb" == /* ]] || sa_die "STVOR_AGENT_DEB=$deb: нужен абсолютный путь"
         [[ -f "$deb" ]] || sa_die "STVOR_AGENT_DEB=$deb: файла нет"
@@ -127,8 +145,13 @@ sa_fetch(){
         url="$(sa_url "$SA_VERSION" "$arch" "${STVOR_AGENT_MIRROR:-}")"
         sa_log "скачиваю $url"
         read -r -a retry <<< "$(sa_curl_retry)"
+        local auth=()
+        if [[ -n "${SA_BEARER:-}" ]]; then
+            ( umask 077; printf 'Authorization: Bearer %s\n' "$SA_BEARER" > "$work/.auth" ) || return 1
+            auth=(--proto "=https" --proto-redir "=https" -H "@$work/.auth")
+        fi
         # Stalls become retries instead of an endless wait.
-        sa_run curl -fL "${retry[@]}" --retry-delay 5 \
+        sa_run curl -fL "${retry[@]}" --retry-delay 5 "${auth[@]}" \
             --connect-timeout 30 --speed-limit 10240 --speed-time 60 \
             -o "$file" "$url" || { sa_log "ОШИБКА: пакет агента не скачался"; return 1; }
     fi

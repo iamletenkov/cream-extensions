@@ -18,7 +18,9 @@
 # configure нет: на загрузке узел поднимает procd (START=95), не cream (А1–А6 не про него).
 schema: cream/v1
 name: teleport-openwrt
-version: 1.5.1
+version: 1.5.2
+# 1.5.2: раздача портала — с токеном доступа агента (/var/run/stvor-agent/access-token),
+#        Authorization: Bearer файлом заголовка, токена нет в argv curl.
 # 1.5.1: Teleport не зависит от агента: нет /etc/stvor-agent/roots.pem — раздача портала
 #        по системным корням, только https и TELEPORT_SHA256; roots.pem есть — только он.
 # 1.5.0: раздача портала (TELEPORT_DIST) — только закреплённые корни stvor-agent v2:

@@ -63,7 +63,8 @@ setup(){
     ht_fake lock
     # curl: -o — копия $FAKE/tgz; окружение — в $FAKE/curl.env.
     ht_fake curl 'env > "$FAKE/curl.env"; out=""; prev=""
-for a in "$@"; do [[ "$prev" == -o ]] && out="$a"; prev="$a"; done
+for a in "$@"; do [[ "$prev" == -o ]] && out="$a"; [[ "$prev" == -H && "$a" == @* ]] && cat "${a#@}" >> "$FAKE/curl.headers"; prev="$a"; done
+printf "%s\n" "$*" >> "$FAKE/curl.argv"
 [[ -f "$FAKE/curl-fails" || ! -f "$FAKE/tgz" ]] && exit 22
 cp "$FAKE/tgz" "$out"'
     ht_fake cream 'env > "$FAKE/cream.env"'
@@ -99,7 +100,7 @@ pin(){ printf 'STVOR_AGENT_PIN_VERSION=%s\nSTVOR_AGENT_PIN_SHA256_AMD64=%s\nSTVO
 mode(){ ls -ld "$1" | cut -c1-10; }
 apin(){ cat "$S/installed-pin" 2>/dev/null | tr '\n' '|'; }
 nothing_installed(){ [[ ! -e "$ROOT/usr/bin/stvor-agent" && ! -e "$ROOT/etc/init.d/stvor-agent" && ! -e "$S/installed" ]]; }
-installed(){ ht_hook install STVOR_AGENT_VERSION=4.1.0 STVOR_AGENT_SHA256="$TGZ_SHA" STVOR_AGENT_MIRROR="$MIRROR"; }
+installed(){ ht_hook install STVOR_AGENT_VERSION=4.1.0 STVOR_AGENT_SHA256="$TGZ_SHA" STVOR_AGENT_MIRROR="$MIRROR" "$@"; }
 
 echo "== манифест: ключи debian/stvor-agent, зависимость, файлы =="
 python3 - "$SRC/extension.yaml" "$DEB/extension.yaml" <<'PY' || bad "манифест не сходится с debian/stvor-agent"
@@ -184,6 +185,25 @@ eq "pin: 0600" 600 "$(stat -c %a "$S/installed-pin")"
 check "токен меток на месте" grep -q "token=$TOKEN" "$ROOT/etc/stvor-agent/token"
 check_not "токен не в окружении curl" grep -q "$TOKEN" "$FAKE/curl.env"
 check_not "окружение curl — своё (без CREAM_*)" grep -q '^CREAM_' "$FAKE/curl.env"
+
+echo "== install: ключ закрытого /dist — файл заголовка, только https =="
+KEY=sbk_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_abcde
+setup; printf '%s\n' "$KEY" > "$ROOT/dist.key"
+installed STVOR_AGENT_AUTH_FILE="$ROOT/dist.key"; eq "ключ — 0" 0 "$?"
+check "ключ — Authorization: Bearer файлом" grep -qx "Authorization: Bearer $KEY" "$FAKE/curl.headers"
+check_not "ключ — не в argv" grep -qF -- "$KEY" "$FAKE/curl.argv"
+check "ключ — только https, и в редиректе" grep -qF -- "--proto =https --proto-redir =https -H @" "$FAKE/curl.argv"
+setup; printf '%s\n' "$KEY" > "$ROOT/dist.key"
+ht_hook install STVOR_AGENT_VERSION=4.1.0 STVOR_AGENT_SHA256="$TGZ_SHA" STVOR_AGENT_MIRROR=http://stvor.example.org/dist/teleport STVOR_AGENT_AUTH_FILE="$ROOT/dist.key"
+check "ключ по http — отказ" test "$?" -ne 0
+check_not "ключ по http — без скачивания" test -s "$FAKE/curl.argv"
+setup; printf 'sbk_a b\n' > "$ROOT/dist.key"
+installed STVOR_AGENT_AUTH_FILE="$ROOT/dist.key"
+check "не ключ — отказ" test "$?" -ne 0
+check_not "не ключ — без скачивания" test -s "$FAKE/curl.argv"
+setup
+installed STVOR_AGENT_AUTH_FILE="$ROOT/none.key"; eq "файла ключа нет — 0" 0 "$?"
+check_not "файла ключа нет — без заголовка" test -s "$FAKE/curl.headers"
 
 echo "== повтор той же пары — пропуск без сети, пользователь не двоится =="
 : > "$FAKE/calls"

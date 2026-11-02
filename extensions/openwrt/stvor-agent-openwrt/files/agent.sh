@@ -18,6 +18,8 @@
 #       the tar.gz of this machine's architecture; both or neither — neither
 #       means the catalog pin files/pin.env
 #   STVOR_AGENT_MIRROR   base URL, the file lies flat: <base>/<tar.gz name>
+#   STVOR_AGENT_AUTH_FILE  absolute path of a file with the bearer of the mirror (sbk_
+#       of the portal /dist): a header file (curl -H @file), https only, never in argv
 #   STVOR_AGENT_TARBALL  absolute path of a local tar.gz (offline)
 #   default source — the GitHub release of the version
 # The labels token is never an input here: `stvor-agent enable` takes it on
@@ -41,6 +43,7 @@ SA_RELEASES=https://github.com/iamletenkov/stvor-agent/releases/download
 RE_SA_VERSION='^[0-9]+\.[0-9]+\.[0-9]+$'
 RE_SA_SHA256='^[0-9a-f]{64}$'
 RE_SA_URL='^https?://[A-Za-z0-9._~:/%+-]+$'
+RE_SA_BEARER='^[A-Za-z0-9._~+/=-]{16,512}$'
 SA_SERVICES=(stvor-agent stvor-agent-telemetry)
 # The applier: not in SA_SERVICES — never enabled or restarted by this extension.
 SA_APPLY=stvor-agent-apply
@@ -137,6 +140,18 @@ sa_check_source(){
         sa_die "STVOR_AGENT_MIRROR и STVOR_AGENT_TARBALL взаимоисключающие — задайте один"
     fi
     [[ -z "$mirror" || "$mirror" =~ $RE_SA_URL ]] || sa_die "STVOR_AGENT_MIRROR='$mirror': ожидали http(s) URL"
+    SA_BEARER=""
+    if [[ -n "$mirror" && -n "${STVOR_AGENT_AUTH_FILE:-}" ]]; then
+        if [[ -s "$STVOR_AGENT_AUTH_FILE" ]]; then
+            IFS= read -r SA_BEARER < "$STVOR_AGENT_AUTH_FILE" || [[ -n "$SA_BEARER" ]] || SA_BEARER=""
+            SA_BEARER="${SA_BEARER%$'\r'}"
+            [[ "$SA_BEARER" =~ $RE_SA_BEARER ]] \
+                || { SA_BEARER=""; sa_die "STVOR_AGENT_AUTH_FILE: в файле не ключ (одна строка, base64url/токен)"; }
+            [[ "$mirror" == https://* ]] || sa_die "STVOR_AGENT_AUTH_FILE: ключ — только https, а зеркало $mirror"
+        else
+            sa_log "ВНИМАНИЕ: STVOR_AGENT_AUTH_FILE=$STVOR_AGENT_AUTH_FILE — файла нет, качаю без ключа"
+        fi
+    fi
     if [[ -n "$tarball" ]]; then
         [[ "$tarball" == /* ]] || sa_die "STVOR_AGENT_TARBALL=$tarball: нужен абсолютный путь"
         [[ -f "$tarball" ]] || sa_die "STVOR_AGENT_TARBALL=$tarball: файла нет"
@@ -171,7 +186,12 @@ sa_fetch(){
         # Stalls become retries instead of an endless wait; --retry-all-errors
         # (curl 8 of OpenWrt 25.12) retries a stream cut mid-way — HTTP/2 error
         # 92 on LTE — too, and 429 waits for its Retry-After.
-        sa_run curl -fL --retry 5 --retry-all-errors --retry-delay 5 \
+        local auth=()
+        if [[ -n "${SA_BEARER:-}" ]]; then
+            ( umask 077; printf 'Authorization: Bearer %s\n' "$SA_BEARER" > "$work/.auth" ) || return 1
+            auth=(--proto "=https" --proto-redir "=https" -H "@$work/.auth")
+        fi
+        sa_run curl -fL --retry 5 --retry-all-errors --retry-delay 5 "${auth[@]}" \
             --connect-timeout 30 --speed-limit 10240 --speed-time 60 \
             -o "$file" "$url" || { sa_log "ОШИБКА: tar.gz агента не скачался"; return 1; }
     fi
