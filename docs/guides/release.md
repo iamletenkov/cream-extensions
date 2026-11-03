@@ -107,7 +107,9 @@ Stvor. Входы и выходы этого репозитория:
 | выпуск cream → сюда | job `dispatch-extensions` в `iamletenkov/cream` | `cream-bump.yml`: PR `build(tools): пин cream X.Y.Z` (`tools/cream-pin.env`, суммы из `SHA256SUMS`) | там: `EXTENSIONS_BUMP_ENABLED`, `EXTENSIONS_DISPATCH_TOKEN` |
 | выпуск stvor-agent → сюда | job `dispatch-extensions` в `iamletenkov/stvor-agent` | `agent-bump.yml`: PR `feat(stvor-agent): пин агента X.Y.Z` (`files/pin.env`, patch расширения) | там: `EXTENSIONS_BUMP_ENABLED`, `EXTENSIONS_DISPATCH_TOKEN` |
 | выпуск отсюда → bisquite | job `dispatch-bisquite` | `extensions-bump.yml` в bisquite: PR подъёма снимка каталога | здесь: `BISQUITE_BUMP_ENABLED`, `BISQUITE_DISPATCH_TOKEN` <!-- check-names: allow: имена переменной и секрета GitHub --> |
-| выпуск отсюда → Stvor | job `dispatch-stvor` | `robot-pins-bump.yml` в stvor: PR `CREAM_EXTENSIONS_*` в `.env.example` | здесь: `STVOR_BUMP_ENABLED`, `STVOR_DISPATCH_TOKEN` |
+
+Stvor в этой цепочке нет: портал находит новые теги сам (`releases.discover` раз
+в 6 ч), выпуск каталога от него не зависит.
 
 - Выключатель — переменная репозитория (`gh variable set <ИМЯ> --body true`;
   выключить — `gh variable delete <ИМЯ>`). Без секрета job пишет предупреждение и
