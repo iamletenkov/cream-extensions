@@ -1,5 +1,17 @@
 # Changelog
 
+## [5.16.0](https://github.com/iamletenkov/cream-extensions/compare/v5.15.1...v5.16.0) (2026-11-06)
+
+
+### Добавлено
+
+* **stvor-agent:** пин агента 5.2.0 ([#106](https://github.com/iamletenkov/cream-extensions/issues/106)) ([b2eea74](https://github.com/iamletenkov/cream-extensions/commit/b2eea74c322873f72b7d105960fe6110da774663))
+
+
+### Исправлено
+
+* **hooks:** gitleaks не отказывает коммиту из одних удалений ([#104](https://github.com/iamletenkov/cream-extensions/issues/104)) ([3ab9d54](https://github.com/iamletenkov/cream-extensions/commit/3ab9d547a5cc094709375dd9269a560935a21599))
+
 ## [5.15.1](https://github.com/iamletenkov/cream-extensions/compare/v5.15.0...v5.15.1) (2026-11-02)
 
 
