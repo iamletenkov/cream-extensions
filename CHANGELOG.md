@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.18.0](https://github.com/iamletenkov/cream-extensions/compare/v5.17.0...v5.18.0) (2026-11-06)
+
+
+### Добавлено
+
+* **stvor-agent:** пин агента 5.3.0 ([#109](https://github.com/iamletenkov/cream-extensions/issues/109)) ([4b4c876](https://github.com/iamletenkov/cream-extensions/commit/4b4c8764bf62737885d7a5c05d7b453819a51f64))
+
 ## [5.17.0](https://github.com/iamletenkov/cream-extensions/compare/v5.16.0...v5.17.0) (2026-11-06)
 
 
