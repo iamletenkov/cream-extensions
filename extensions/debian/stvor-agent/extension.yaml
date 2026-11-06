@@ -5,7 +5,8 @@
 # file goes away on `cream remove stvor-agent`).
 schema: cream/v1
 name: stvor-agent
-version: 4.4.1
+version: 4.4.2
+# 4.4.2: пин пакета stvor-agent 5.2.1.
 # 4.4.1: пин пакета stvor-agent 5.2.0.
 # 4.4.0: STVOR_AGENT_AUTH_FILE — файл с ключом зеркала (sbk_ сборщика для закрытого /dist):
 #        Authorization: Bearer файлом заголовка, только к https-зеркалу и https-редиректу, не в argv;
