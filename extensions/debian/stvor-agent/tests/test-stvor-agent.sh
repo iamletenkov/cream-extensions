@@ -194,7 +194,7 @@ for h in install upgrade remove apply; do
 done
 eq "ключи scope: install" "['STVOR_AGENT_AUTH_FILE', 'STVOR_AGENT_DEB', 'STVOR_AGENT_MIRROR', 'STVOR_AGENT_SHA256', 'STVOR_AGENT_VERSION']" \
     "$(manifest 'sorted(k for k, d in m["config"]["keys"].items() if d.get("scope") == "install")')"
-eq "ключи scope: config" "['STVOR_AGENT_INTERVAL', 'STVOR_AGENT_LOG_LEVEL']" \
+eq "ключи scope: config" "['STVOR_AGENT_INTERVAL', 'STVOR_AGENT_LOG_LEVEL', 'STVOR_AGENT_NEIGHBORS_OFF']" \
     "$(manifest 'sorted(k for k, d in m["config"]["keys"].items() if d.get("scope", "config") == "config")')"
 eq "секретных ключей нет (токен — не ручка cream)" "[]" \
     "$(manifest '[k for k, d in m["config"]["keys"].items() if d.get("secret")]')"
@@ -212,6 +212,17 @@ PY
 }
 for v in 60 61 99 100 300 599 600; do check "интервал $v допустим" interval_ok "$v"; done
 for v in 0 59 601 1000 6000 060 '' 6a; do check_not "интервал '$v' — отказ" interval_ok "$v"; done
+# 5.4.0: the local ban of neighbour sources — a comma list of mdns, lldp, wifi, all; empty — the portal policy.
+neighbors_ok(){
+    python3 - "$EXT/extension.yaml" "$1" <<'PY'
+import re, sys, yaml
+k = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))["config"]["keys"]["STVOR_AGENT_NEIGHBORS_OFF"]
+assert k["type"].startswith("re:") and k.get("default", "") == "" and k.get("empty") is True, k
+sys.exit(0 if re.search(k["type"][3:], sys.argv[2]) else 1)
+PY
+}
+for v in mdns lldp wifi all mdns,wifi lldp,mdns,wifi; do check "запрет соседей '$v' допустим" neighbors_ok "$v"; done
+for v in 'mdns,' ',mdns' 'arp' 'MDNS' 'mdns wifi' 'mdns;id' '$(id)'; do check_not "запрет соседей '$v' — отказ" neighbors_ok "$v"; done
 eq "files — только drop-in командной метки" \
     "[{'src': 'files/stvor_agent.command-label', 'dst': '/etc/cream/teleport/command-labels.d/stvor_agent', 'mode': '0644'}]" \
     "$(manifest 'm["files"]')"
@@ -489,7 +500,7 @@ echo "== apply =="
 new_root; mkdir -p "$ROOT/run/systemd/system"
 hook apply CREAM_CHANGED_KEYS=STVOR_AGENT_INTERVAL >/dev/null 2>&1; rc=$?
 eq "apply — код 0" 0 "$rc"
-eq "apply — неблокирующий try-restart" "systemctl --no-block try-restart stvor-agent.service" "$(calls)"
+eq "apply — неблокирующий try-restart обеих служб (телеметрия читает запрет mDNS)" "systemctl --no-block try-restart stvor-agent.service stvor-agent-telemetry.service" "$(calls)"
 new_root
 hook apply >/dev/null 2>&1; rc=$?
 eq "apply без systemd — код 0, ничего" "0 " "$rc $(calls)"

@@ -221,7 +221,7 @@ sa_hook_apply(){
         sa_log "systemd не запущен — настройки подхватит служба при старте"
         return 0
     fi
-    sa_run systemctl --no-block try-restart stvor-agent.service
+    sa_run systemctl --no-block try-restart stvor-agent.service stvor-agent-telemetry.service
 }
 
 # action status: `stvor-agent status --json` with the wrapper's verdict on
