@@ -25,7 +25,8 @@
 #             machine-id, state, tokens, domain, last-good.json — Р4 revised 2026-10-23).
 schema: cream/v1
 name: stvor-agent-openwrt
-version: 1.4.3
+version: 1.4.4
+# 1.4.4: пин tar.gz stvor-agent 5.3.1.
 # 1.4.3: пин tar.gz stvor-agent 5.3.0.
 # 1.4.2: пин tar.gz stvor-agent 5.2.1.
 # 1.4.1: пин tar.gz stvor-agent 5.2.0.

@@ -5,7 +5,8 @@
 # file goes away on `cream remove stvor-agent`).
 schema: cream/v1
 name: stvor-agent
-version: 4.4.3
+version: 4.4.4
+# 4.4.4: пин пакета stvor-agent 5.3.1.
 # 4.4.3: пин пакета stvor-agent 5.3.0.
 # 4.4.2: пин пакета stvor-agent 5.2.1.
 # 4.4.1: пин пакета stvor-agent 5.2.0.
