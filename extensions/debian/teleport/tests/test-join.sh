@@ -100,9 +100,14 @@ if [[ -n "$out" ]]; then
     cuts="$(cat "$FAKE/cuts" 2>/dev/null || echo 0)"
     if (( cuts > 0 )); then
         echo $((cuts - 1)) > "$FAKE/cuts"
-        # $FAKE/token.next: the agent renews its access token while this call runs.
+        # $FAKE/token.next, $FAKE/roots.next: the agent writes its access token, its
+        # pinned roots while this call runs.
         if [[ -f "$FAKE/token.next" ]]; then
+            mkdir -p "$CREAM_ROOT/run/stvor-agent"
             cp -- "$FAKE/token.next" "$CREAM_ROOT/run/stvor-agent/access-token"
+        fi
+        if [[ -f "$FAKE/roots.next" ]]; then
+            cp -- "$FAKE/roots.next" "$CREAM_ROOT/etc/stvor-agent/roots.pem"
         fi
         tail -c +$((have + 1)) "$FAKE/tarball" | head -c $(( (total - have) / 2 )) >> "$out"; exit 92
     fi
@@ -1030,6 +1035,34 @@ eq "dist, токен обновлён между попытками: две по
 eq "dist, токен обновлён между попытками: заголовки попыток" \
     "Authorization: Bearer $TOK|Authorization: Bearer $TOK2" "$(paste -sd'|' "$FAKE/curl.headers")"
 check_not "dist, токен обновлён между попытками: токенов нет в argv" grep -qE -- "$TOK|$TOK2" "$FAKE/curl.log"
+# No token yet when the download starts (the hook came right after the agent asked for
+# it, before the file was written): the token written during the cut attempt goes with
+# the next one.
+new_root
+rm -f "$ROOT/usr/local/bin/teleport"
+make_tarball 18.10.0 stvor.5
+agent_files
+printf '%s\n' "$TOK" > "$FAKE/token.next"; echo 1 > "$FAKE/cuts"
+msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST/" TELEPORT_TAG="$TAG" 2>&1)"; rc=$?
+eq "dist, токен появился между попытками: код 0" 0 "$rc"
+eq "dist, токен появился между попытками: две попытки" 2 "$(grep -c -- ' -o ' "$FAKE/curl.log")"
+check_not "dist, токен появился между попытками: первая без заголовка" \
+    grep -qF -- "-H @" <<< "$(grep -m1 -- ' -o ' "$FAKE/curl.log")"
+eq "dist, токен появился между попытками: вторая с Bearer" \
+    "Authorization: Bearer $TOK" "$(paste -sd'|' "$FAKE/curl.headers")"
+# The same for the pinned roots of the agent (a stand with its own CA): written during
+# the cut attempt — the next one trusts only them.
+new_root
+rm -f "$ROOT/usr/local/bin/teleport"
+make_tarball 18.10.0 stvor.5
+agent_files; rm -f "$ROOT/etc/stvor-agent/roots.pem"
+echo '-----BEGIN CERTIFICATE-----' > "$FAKE/roots.next"; echo 1 > "$FAKE/cuts"
+msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST/" TELEPORT_TAG="$TAG" 2>&1)"; rc=$?
+eq "dist, корни появились между попытками: код 0" 0 "$rc"
+check_not "dist, корни появились между попытками: первая по системным" \
+    grep -qF -- "--cacert" <<< "$(grep -m1 -- ' -o ' "$FAKE/curl.log")"
+check "dist, корни появились между попытками: вторая только по корням агента" \
+    grep -qF -- "--cacert $ROOT/etc/stvor-agent/roots.pem --capath " <<< "$(grep -- ' -o ' "$FAKE/curl.log" | tail -n 1)"
 # A token file that turned bad between attempts: the attempt goes with the token read
 # before (the portal judges it), not without one.
 new_root
