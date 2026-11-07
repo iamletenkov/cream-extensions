@@ -1772,11 +1772,18 @@ curl_retry_flags(){
 # become retries instead of an endless wait. The sha256 check follows anyway.
 DOWNLOAD_ATTEMPTS=5
 download(){
-    local url="$1" file="$2" i rc delay=5 retry
+    local url="$1" file="$2" i rc delay=5 retry flags
     shift 2
+    flags=("$@")
     read -r -a retry <<< "$(curl_retry_flags)"
     for (( i = 1; ; i++ )); do
-        curl -fL "${retry[@]}" --retry-delay 5 "$@" \
+        # The token lives minutes and may not be written yet, the roots too: every
+        # retry from the portal goes with what the agent holds now.
+        if (( i > 1 )) && [[ -n "$DIST_WORK" ]]; then
+            dist_flags "$DIST_WORK"
+            flags=("${DIST_FLAGS[@]}")
+        fi
+        curl -fL "${retry[@]}" --retry-delay 5 "${flags[@]}" \
             --connect-timeout 30 --speed-limit 10240 --speed-time 60 \
             -C - -o "$file" "$url" && return 0
         rc=$?
@@ -1819,32 +1826,50 @@ agent_proxy(){
     done < "$AGENT_CONFIG"
 }
 
+# dist_auth <header file> — writes `Authorization: Bearer <token>` of the access token
+# the agent holds now (0600, replaced whole); 1 — no token of the form (the file is
+# left as it was: an attempt goes with the token read before, the portal judges it).
+dist_auth(){
+    local file token=""
+    for file in "${AGENT_TOKENS[@]}"; do
+        [[ -s "$file" ]] || continue
+        IFS= read -r token < "$file" || [[ -n "$token" ]] || token=""
+        if [[ "$token" =~ ^[A-Za-z0-9_-]{43}$ ]]; then
+            ( umask 077; printf 'Authorization: Bearer %s\n' "$token" > "$1.new" && mv -f -- "$1.new" "$1" ) \
+                || die "не записать $1"
+            return 0
+        fi
+        warn "${file#"$ROOT"} — не токен доступа"
+        return 1
+    done
+    return 1
+}
+# DIST_WORK — the work dir of a download from the portal: download builds DIST_FLAGS
+# in it again before every retry (fetch_tarball sets it, "" — not from the portal).
+DIST_WORK=""
+
 # dist_flags <work dir> — DIST_FLAGS: the curl flags of the portal distribution:
 # https only (the redirect too) and the proxy of the agent config, or explicitly none.
 # The access token of the agent, when there is one, goes as `Authorization: Bearer`
-# from a header file in <work dir> (curl -H @file): never in the argv of curl.
+# from a header file in <work dir> (curl -H @file): never in the argv of curl. Called
+# again before every retry (download): a token or roots written meanwhile are taken.
 # The pinned roots of the agent, when it laid them, are the only CA — --capath points
 # at a directory holding just a copy of them, so the default CA directory curl was
 # built with does not add the system roots. No roots (no agent, or not registered
 # yet) — the system roots, as plain Teleport: Teleport does not depend on the agent;
 # the tarball is still checked by TELEPORT_SHA256, the cluster by TELEPORT_CA_PIN.
 dist_flags(){
-    local work="$1" capath="$1/capath" proxy file token=""
+    local work="$1" capath="$1/capath" proxy
     DIST_FLAGS=(--proto =https --proto-redir =https)
-    for file in "${AGENT_TOKENS[@]}"; do
-        [[ -s "$file" ]] || continue
-        IFS= read -r token < "$file" || [[ -n "$token" ]] || token=""
-        if [[ "$token" =~ ^[A-Za-z0-9_-]{43}$ ]]; then
-            ( umask 077; printf 'Authorization: Bearer %s\n' "$token" > "$work/.auth" ) \
-                || die "не записать $work/.auth"
-            DIST_FLAGS+=(-H "@$work/.auth")
-        else
-            warn "${file#"$ROOT"} — не токен доступа; качаю без него"
-        fi
-        token=""
-        break
-    done
+    # A token read before stays when the file is not of the form now: the portal
+    # judges it. None yet — no header, the portal refuses (401) and the next retry
+    # reads the file again.
+    dist_auth "$work/.auth" || true
+    if [[ -s "$work/.auth" ]]; then
+        DIST_FLAGS+=(-H "@$work/.auth")
+    fi
     if [[ -s "$AGENT_ROOTS" ]]; then
+        rm -r -f -- "$capath"
         mkdir -m 0700 -- "$capath" && cp -- "$AGENT_ROOTS" "$capath/roots.pem" \
             || die "не создать $capath"
         DIST_FLAGS+=(--cacert "$AGENT_ROOTS" --capath "$capath")
@@ -1866,6 +1891,7 @@ PROXY_ENV=(http_proxy HTTP_PROXY https_proxy HTTPS_PROXY all_proxy ALL_PROXY no_
 fetch_tarball(){
     local version="$1" arch="$2" sha="$3" mirror="$4" tarball="$5" parent="$6" dist="${7:-}" tag="${8:-}"
     local work file src url sha_url from_cdn=0 retry proto=()
+    DIST_WORK=""
     install -d -m 0755 "$parent" || die "не создать $parent"
     work="$(mktemp -d "$parent/teleport-install.XXXXXX")" || die "не создать каталог в $parent"
     # shellcheck disable=SC2064  # the path is fixed now, on purpose
@@ -1882,6 +1908,7 @@ fetch_tarball(){
         if [[ -n "$dist" ]]; then
             dist_flags "$work"
             proto=("${DIST_FLAGS[@]}")
+            DIST_WORK="$work"
         fi
         if [[ -z "$sha" ]]; then
             read -r -a retry <<< "$(curl_retry_flags)"
