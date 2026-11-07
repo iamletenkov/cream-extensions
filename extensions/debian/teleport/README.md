@@ -192,6 +192,10 @@ RUN_COMMAND cream install --with-deps teleport
 | `hup` | none | `ExecReload` `teleport.service`: адресный HUP с подтверждением, иначе `reload-pending` |
 | `scrub-token` | exclusive | `teleport-token.service`: стирает секрет первого входа |
 
+`join` и `join-retry` берут один эксклюзивный замок cream, поэтому тик `teleport-join.timer` не пересекается с
+новым `join`. Новый секрет (например, от `stvor-agent connect`) приходит только новым `join`, а повтор берёт имя
+токена и секрет из текущего состояния.
+
 ## Известные ограничения
 
 - Только Debian ≥ 12 и Ubuntu ≥ 20.04; Ubuntu 18.04 (systemd 237) не
