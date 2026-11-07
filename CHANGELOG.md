@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.20.1](https://github.com/iamletenkov/cream-extensions/compare/v5.20.0...v5.20.1) (2026-11-07)
+
+
+### Исправлено
+
+* **teleport:** токен и корни агента перечитываются перед каждой попыткой скачивания ([#115](https://github.com/iamletenkov/cream-extensions/issues/115)) ([6c691e0](https://github.com/iamletenkov/cream-extensions/commit/6c691e089780699a24fd58b43818693908520970))
+
 ## [5.20.0](https://github.com/iamletenkov/cream-extensions/compare/v5.19.0...v5.20.0) (2026-11-07)
 
 
