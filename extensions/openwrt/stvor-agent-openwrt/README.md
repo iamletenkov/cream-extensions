@@ -89,6 +89,7 @@ teleport-openwrt set-managed`), служба телеметрии шлёт на 
 | `STVOR_AGENT_AUTH_FILE` | `path` | пусто | файл с ключом зеркала (sbk_ сборщика для закрытого /dist портала, секрет сборки): Authorization: Bearer только к https STVOR_AGENT_MIRROR, не в argv *(только при установке)* |
 | `STVOR_AGENT_INTERVAL` | строка `^([6-9][0-9]\|[1-5][0-9]{2}\|600)$` | `60` | период опроса портала, секунды, 60–600 |
 | `STVOR_AGENT_LOG_LEVEL` | `info` \| `debug` | `info` | уровень журнала службы |
+| `STVOR_AGENT_NEIGHBORS_OFF` | строка `^(mdns\|lldp\|wifi\|all)(,(mdns\|lldp\|wifi\|all))*$` | пусто | локальный запрет источников соседей (агент ≥ 5.4.0): mdns, lldp, wifi, all через запятую; стоит над политикой портала; пусто — по политике |
 <!-- /catalog:params -->
 
 Ключи — те же, что у [stvor-agent](../../debian/stvor-agent/README.md#параметры)

@@ -103,6 +103,7 @@ disable` (и хук `remove`) убирает токен и `state.json`. Доч�
 | `STVOR_AGENT_AUTH_FILE` | `path` | пусто | файл с ключом зеркала (sbk_ сборщика для закрытого /dist портала, секрет сборки): Authorization: Bearer только к STVOR_AGENT_MIRROR, не в argv *(только при установке)* |
 | `STVOR_AGENT_INTERVAL` | строка `^([6-9][0-9]\|[1-5][0-9]{2}\|600)$` | `60` | период опроса портала, секунды, 60–600 |
 | `STVOR_AGENT_LOG_LEVEL` | `info` \| `debug` | `info` | уровень журнала службы |
+| `STVOR_AGENT_NEIGHBORS_OFF` | строка `^(mdns\|lldp\|wifi\|all)(,(mdns\|lldp\|wifi\|all))*$` | пусто | локальный запрет источников соседей (агент ≥ 5.4.0): mdns, lldp, wifi, all через запятую; стоит над политикой портала; пусто — по политике |
 <!-- /catalog:params -->
 
 Параметры установки (`STVOR_AGENT_VERSION`, `_SHA256`, `_MIRROR`, `_DEB`, `_AUTH_FILE`) —
@@ -125,7 +126,7 @@ disable` (и хук `remove`) убирает токен и `state.json`. Доч�
   `…/releases/download/v<версия>/stvor-agent_<версия>_<arch>.deb`. Архитектура —
   `dpkg --print-architecture`: `amd64` или `arm64`.
 
-Настройки службы (`STVOR_AGENT_INTERVAL`, `STVOR_AGENT_LOG_LEVEL`) лежат в
+Настройки службы (`STVOR_AGENT_INTERVAL`, `STVOR_AGENT_LOG_LEVEL`, `STVOR_AGENT_NEIGHBORS_OFF`) лежат в
 `/etc/cream/stvor-agent/config`; служба читает его как `EnvironmentFile`:
 
 ```sh

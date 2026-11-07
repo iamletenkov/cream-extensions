@@ -828,7 +828,7 @@ check_not "нет соседней копии при CI=1 — красный" en
 check "CI=false — локальный пропуск" env CI=false STVOR_AGENT_DIR="$TMP/none" "$CHK" >/dev/null 2>&1
 
 echo "== reload-apps: drop-in раньше бинаря, HUP во время перезапуска =="
-hups(){ wc -l < "$FAKE/hup.log" 2>/dev/null | tr -d ' ' || echo 0; }
+hups(){ { wc -l < "$FAKE/hup.log"; } 2>/dev/null | tr -d ' ' || echo 0; }
 pidnow(){ cat "$ROOT/run/teleport.pid"; }
 alive(){ grep -qa tp-proc "/proc/$1/cmdline" 2>/dev/null; }
 # The order of `cream install stvor-agent`: cream lays command-labels.d/stvor_agent,

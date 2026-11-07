@@ -25,7 +25,8 @@
 #             machine-id, state, tokens, domain, last-good.json — Р4 revised 2026-10-23).
 schema: cream/v1
 name: stvor-agent-openwrt
-version: 1.4.4
+version: 1.5.0
+# 1.5.0: пин tar.gz stvor-agent 5.4.0; ключ STVOR_AGENT_NEIGHBORS_OFF, как у debian/stvor-agent.
 # 1.4.4: пин tar.gz stvor-agent 5.3.1.
 # 1.4.3: пин tar.gz stvor-agent 5.3.0.
 # 1.4.2: пин tar.gz stvor-agent 5.2.1.
@@ -118,6 +119,11 @@ config:
       type: "enum:info,debug"
       default: info
       description: "уровень журнала службы"
+    STVOR_AGENT_NEIGHBORS_OFF:
+      type: "re:^(mdns|lldp|wifi|all)(,(mdns|lldp|wifi|all))*$"
+      default: ""
+      empty: true
+      description: "локальный запрет источников соседей (агент ≥ 5.4.0): mdns, lldp, wifi, all через запятую; стоит над политикой портала; пусто — по политике"
 files:
   - {src: files/stvor_agent.command-label, dst: /etc/cream/teleport-openwrt/command-labels.d/stvor_agent, mode: "0644"}
   - {src: files/keep.d, dst: /lib/upgrade/keep.d/stvor-agent, mode: "0644"}
