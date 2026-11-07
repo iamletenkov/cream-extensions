@@ -1776,6 +1776,9 @@ download(){
     shift 2
     read -r -a retry <<< "$(curl_retry_flags)"
     for (( i = 1; ; i++ )); do
+        # The token lives minutes, a large download may take longer: every attempt
+        # goes with the token the agent holds now.
+        [[ -z "$DIST_AUTH" ]] || dist_auth "$DIST_AUTH" || true
         curl -fL "${retry[@]}" --retry-delay 5 "$@" \
             --connect-timeout 30 --speed-limit 10240 --speed-time 60 \
             -C - -o "$file" "$url" && return 0
@@ -1819,31 +1822,47 @@ agent_proxy(){
     done < "$AGENT_CONFIG"
 }
 
+# dist_auth <header file> — writes `Authorization: Bearer <token>` of the access token
+# the agent holds now (0600, replaced whole); 1 — no token of the form (the file is
+# left as it was: an attempt goes with the token read before, the portal judges it).
+dist_auth(){
+    local file token=""
+    for file in "${AGENT_TOKENS[@]}"; do
+        [[ -s "$file" ]] || continue
+        IFS= read -r token < "$file" || [[ -n "$token" ]] || token=""
+        if [[ "$token" =~ ^[A-Za-z0-9_-]{43}$ ]]; then
+            ( umask 077; printf 'Authorization: Bearer %s\n' "$token" > "$1.new" && mv -f -- "$1.new" "$1" ) \
+                || die "не записать $1"
+            return 0
+        fi
+        warn "${file#"$ROOT"} — не токен доступа"
+        return 1
+    done
+    return 1
+}
+# DIST_AUTH — the header file of dist_flags, rewritten by download before every attempt.
+DIST_AUTH=""
+
 # dist_flags <work dir> — DIST_FLAGS: the curl flags of the portal distribution:
 # https only (the redirect too) and the proxy of the agent config, or explicitly none.
 # The access token of the agent, when there is one, goes as `Authorization: Bearer`
-# from a header file in <work dir> (curl -H @file): never in the argv of curl.
+# from a header file in <work dir> (curl -H @file): never in the argv of curl; download
+# reads the token again before every attempt (dist_auth).
 # The pinned roots of the agent, when it laid them, are the only CA — --capath points
 # at a directory holding just a copy of them, so the default CA directory curl was
 # built with does not add the system roots. No roots (no agent, or not registered
 # yet) — the system roots, as plain Teleport: Teleport does not depend on the agent;
 # the tarball is still checked by TELEPORT_SHA256, the cluster by TELEPORT_CA_PIN.
 dist_flags(){
-    local work="$1" capath="$1/capath" proxy file token=""
+    local work="$1" capath="$1/capath" proxy
     DIST_FLAGS=(--proto =https --proto-redir =https)
-    for file in "${AGENT_TOKENS[@]}"; do
-        [[ -s "$file" ]] || continue
-        IFS= read -r token < "$file" || [[ -n "$token" ]] || token=""
-        if [[ "$token" =~ ^[A-Za-z0-9_-]{43}$ ]]; then
-            ( umask 077; printf 'Authorization: Bearer %s\n' "$token" > "$work/.auth" ) \
-                || die "не записать $work/.auth"
-            DIST_FLAGS+=(-H "@$work/.auth")
-        else
-            warn "${file#"$ROOT"} — не токен доступа; качаю без него"
-        fi
-        token=""
-        break
-    done
+    DIST_AUTH=""
+    if dist_auth "$work/.auth"; then
+        DIST_AUTH="$work/.auth"
+        DIST_FLAGS+=(-H "@$DIST_AUTH")
+    elif [[ -s "${AGENT_TOKENS[0]}" || -s "${AGENT_TOKENS[1]}" ]]; then
+        warn "качаю без токена доступа"
+    fi
     if [[ -s "$AGENT_ROOTS" ]]; then
         mkdir -m 0700 -- "$capath" && cp -- "$AGENT_ROOTS" "$capath/roots.pem" \
             || die "не создать $capath"

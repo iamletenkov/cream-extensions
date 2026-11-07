@@ -100,6 +100,10 @@ if [[ -n "$out" ]]; then
     cuts="$(cat "$FAKE/cuts" 2>/dev/null || echo 0)"
     if (( cuts > 0 )); then
         echo $((cuts - 1)) > "$FAKE/cuts"
+        # $FAKE/token.next: the agent renews its access token while this call runs.
+        if [[ -f "$FAKE/token.next" ]]; then
+            cp -- "$FAKE/token.next" "$CREAM_ROOT/run/stvor-agent/access-token"
+        fi
         tail -c +$((have + 1)) "$FAKE/tarball" | head -c $(( (total - have) / 2 )) >> "$out"; exit 92
     fi
     tail -c +$((have + 1)) "$FAKE/tarball" >> "$out"; exit 0
@@ -1011,6 +1015,32 @@ msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DI
 eq "dist, кривой токен: код 0" 0 "$rc"
 check_not "dist, кривой токен: без заголовка" test -s "$FAKE/curl.headers"
 has "dist, кривой токен: предупреждение" "не токен" "$msg"
+# The token lives minutes, the attempts of a large download may take longer: every
+# attempt reads the token file again — the one the agent renewed meanwhile — and the
+# header file holds only the current token.
+TOK2=ZyXwVuTsRqPoNmLkJiHgFeDcBa9876543210_-edcba
+new_root
+rm -f "$ROOT/usr/local/bin/teleport"
+make_tarball 18.10.0 stvor.5
+agent_files; mkdir -p "$ROOT/run/stvor-agent"; printf '%s\n' "$TOK" > "$ROOT/run/stvor-agent/access-token"
+printf '%s\n' "$TOK2" > "$FAKE/token.next"; echo 1 > "$FAKE/cuts"
+msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST/" TELEPORT_TAG="$TAG" 2>&1)"; rc=$?
+eq "dist, токен обновлён между попытками: код 0" 0 "$rc"
+eq "dist, токен обновлён между попытками: две попытки" 2 "$(grep -c -- ' -o ' "$FAKE/curl.log")"
+eq "dist, токен обновлён между попытками: заголовки попыток" \
+    "Authorization: Bearer $TOK|Authorization: Bearer $TOK2" "$(paste -sd'|' "$FAKE/curl.headers")"
+check_not "dist, токен обновлён между попытками: токенов нет в argv" grep -qE -- "$TOK|$TOK2" "$FAKE/curl.log"
+# A token file that turned bad between attempts: the attempt goes with the token read
+# before (the portal judges it), not without one.
+new_root
+rm -f "$ROOT/usr/local/bin/teleport"
+make_tarball 18.10.0 stvor.5
+agent_files; mkdir -p "$ROOT/run/stvor-agent"; printf '%s\n' "$TOK" > "$ROOT/run/stvor-agent/access-token"
+printf 'bad token\n' > "$FAKE/token.next"; echo 1 > "$FAKE/cuts"
+msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST/" TELEPORT_TAG="$TAG" 2>&1)"; rc=$?
+eq "dist, токен испорчен между попытками: код 0" 0 "$rc"
+eq "dist, токен испорчен между попытками: прежний токен" \
+    "Authorization: Bearer $TOK|Authorization: Bearer $TOK" "$(paste -sd'|' "$FAKE/curl.headers")"
 # No agent at all (installed without a binding ticket): the system roots, https only,
 # no proxy — Teleport does not depend on the agent.
 new_root
