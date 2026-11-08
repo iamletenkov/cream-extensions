@@ -5,7 +5,8 @@
 # delivery of the agent /t/agent.tar.gz (OPENWRT_AGENT_TARBALL of
 # tools/test-openwrt.sh: stvor-agent_<v>_linux_amd64.tar.gz of the agent's
 # repository — the real binary and its procd init scripts); without it the
-# delivery is a fake of the same layout. /catalog (read-only) — the staged tree.
+# delivery is a fake of the same layout (that of agent 5.6.0: init.d/stvor-agent-apply
+# and init.d/stvor-agent-connect too). /catalog (read-only) — the staged tree.
 # procd is not PID 1: services are enabled (rc.d) but not started; the boot and
 # the labels from the portal are checked on a VM (README of the extension).
 set -eu
@@ -19,6 +20,7 @@ has() { [ -e "$1" ] || fail "нет $1"; }
 hasnt() { [ ! -e "$1" ] && [ ! -L "$1" ] || fail "лишнее $1"; }
 eq() { [ "$2" = "$3" ] || fail "$1: ждали «$2», получили «$3»"; }
 mode() { ls -ld "$1" | cut -c1-10; }
+V=5.6.0
 owner() { ls -ld "$1" | awk '{print $3 ":" $4}'; }
 
 . /etc/os-release
@@ -52,8 +54,8 @@ else
 	cat >/opt/agent/stvor-agent <<'EOF'
 #!/bin/sh
 case "$1" in
-version) [ "${2:-}" = --label ] && exit 0; echo "stvor-agent 4.1.0 (fake)" ;;
-status) echo "версия:               4.1.0" ;;
+version) [ "${2:-}" = --label ] && exit 0; echo "stvor-agent 5.6.0 (fake)" ;;
+status) echo "версия:               5.6.0" ;;
 disable) rm -f /etc/stvor-agent/token ;;
 esac
 exit 0
@@ -62,6 +64,11 @@ EOF
 		printf '#!/bin/sh /etc/rc.common\nUSE_PROCD=1\nSTART=99\nSTOP=01\nstart_service() {\n\t[ -f /etc/%s/token ] || return 0\n\tprocd_open_instance\n\tprocd_set_param command /usr/bin/stvor-agent run\n\tprocd_close_instance\n}\n' \
 			"$s" >"/opt/agent/init.d/$s"
 	done
+	# The applier and the connect service: started only while their state exists.
+	printf '#!/bin/sh /etc/rc.common\nUSE_PROCD=1\nSTART=99\nSTOP=01\nstart_service() {\n\t[ -f /opt/stvor-agent/apply/plan.json ] || return 0\n\tprocd_open_instance\n\tprocd_set_param command /usr/bin/stvor-agent apply\n\tprocd_close_instance\n}\n' \
+		>/opt/agent/init.d/stvor-agent-apply
+	printf '#!/bin/sh /etc/rc.common\nUSE_PROCD=1\nSTART=99\nSTOP=01\nstart_service() {\n\t[ -f /opt/stvor-agent/connect/state.json ] || return 0\n\tprocd_open_instance\n\tprocd_set_param command /usr/bin/stvor-agent connect --resume\n\tprocd_set_param respawn 3600 30 0\n\tprocd_close_instance\n}\n' \
+		>/opt/agent/init.d/stvor-agent-connect
 	chmod 0755 /opt/agent/stvor-agent /opt/agent/init.d/*
 	echo license >/opt/agent/LICENSE
 	tar -czf /opt/agent.tar.gz -C /opt/agent stvor-agent init.d LICENSE
@@ -70,13 +77,20 @@ fi
 sha=$(sha256sum /opt/agent.tar.gz | cut -d' ' -f1)
 
 step "фаза build: install из файла"
-cream install stvor-agent-openwrt STVOR_AGENT_VERSION=4.1.0 STVOR_AGENT_SHA256="$sha" STVOR_AGENT_TARBALL=/opt/agent.tar.gz
+cream install stvor-agent-openwrt STVOR_AGENT_VERSION=$V STVOR_AGENT_SHA256="$sha" STVOR_AGENT_TARBALL=/opt/agent.tar.gz
 has /usr/bin/stvor-agent
 eq "бинарь 0755" -rwxr-xr-x "$(mode /usr/bin/stvor-agent)"
 for s in stvor-agent stvor-agent-telemetry; do
 	eq "/etc/init.d/$s 0755" -rwxr-xr-x "$(mode "/etc/init.d/$s")"
 	set -- /etc/rc.d/S[0-9]*"$s"
 	[ -e "$1" ] || fail "$s не включён (rc.d)"
+done
+# The applier and the connect service: put, never enabled (the agent turns them on).
+for s in stvor-agent-apply stvor-agent-connect; do
+	eq "/etc/init.d/$s 0755" -rwxr-xr-x "$(mode "/etc/init.d/$s")"
+	for f in /etc/rc.d/*"$s"; do
+		[ ! -e "$f" ] && [ ! -L "$f" ] || fail "$s включён: $f"
+	done
 done
 grep -q '^stvor-telemetry:x:[0-9]*:[0-9]*:Stvor agent telemetry:/var/run/stvor-agent-telemetry:/bin/false$' /etc/passwd ||
 	fail "пользователь stvor-telemetry: $(grep stvor /etc/passwd || true)"
@@ -87,9 +101,26 @@ eq "/etc/stvor-agent-telemetry" "drwxr-x--- root:stvor-telemetry" \
 	"$(mode /etc/stvor-agent-telemetry) $(owner /etc/stvor-agent-telemetry)"
 grep -qx '/etc/stvor-agent/token' /lib/upgrade/keep.d/stvor-agent || fail "keep.d: $(grep -v '^#' /lib/upgrade/keep.d/stvor-agent)"
 has /etc/cream/teleport-openwrt/command-labels.d/stvor_agent
-out=$(cream install stvor-agent-openwrt STVOR_AGENT_VERSION=4.1.0 STVOR_AGENT_SHA256="$sha" STVOR_AGENT_TARBALL=/opt/agent.tar.gz 2>&1) ||
+out=$(cream install stvor-agent-openwrt STVOR_AGENT_VERSION=$V STVOR_AGENT_SHA256="$sha" STVOR_AGENT_TARBALL=/opt/agent.tar.gz 2>&1) ||
 	fail "повтор install: $out"
 eq "один пользователь" 1 "$(grep -c '^stvor-telemetry:' /etc/passwd)"
+
+step "переустановка посреди подключения: ссылка rc.d службы подключения остаётся"
+# What `stvor-agent connect` does on a machine: its state (0700 root) and enable.
+mkdir -p /opt/stvor-agent/connect
+chmod 0700 /opt/stvor-agent/connect
+echo '{"step":"claim"}' >/opt/stvor-agent/connect/state.json
+chmod 0600 /opt/stvor-agent/connect/state.json
+/etc/init.d/stvor-agent-connect enable
+[ -L /etc/rc.d/S99stvor-agent-connect ] || fail "rc.common не включил службу подключения: $(ls /etc/rc.d)"
+out=$(cream install --reinstall stvor-agent-openwrt STVOR_AGENT_VERSION=$V STVOR_AGENT_SHA256="$sha" STVOR_AGENT_TARBALL=/opt/agent.tar.gz 2>&1) ||
+	fail "переустановка посреди подключения: $out"
+[ -L /etc/rc.d/S99stvor-agent-connect ] || fail "ссылка rc.d службы подключения снята переустановкой"
+eq "/etc/init.d/stvor-agent-connect 0755" -rwxr-xr-x "$(mode /etc/init.d/stvor-agent-connect)"
+/etc/rc.d/S95cream-configure boot
+eq "connect/ после configure" "drwx------ root:root" "$(mode /opt/stvor-agent/connect) $(owner /opt/stvor-agent/connect)"
+eq "connect/state.json после configure" "-rw------- root:root" \
+	"$(mode /opt/stvor-agent/connect/state.json) $(owner /opt/stvor-agent/connect/state.json)"
 
 # A restore (keep.d of 1.1.0, a backup) brings the state back as 0:0 0755.
 SHADOW_OWNER=$(owner /etc/shadow)
@@ -119,7 +150,7 @@ fixed() {
 step "права состояния: повтор install и configure на загрузке чинят восстановленное"
 spoil
 # After sysupgrade the registry is empty and the hook runs; here --reinstall does that.
-out=$(cream install --reinstall stvor-agent-openwrt STVOR_AGENT_VERSION=4.1.0 STVOR_AGENT_SHA256="$sha" STVOR_AGENT_TARBALL=/opt/agent.tar.gz 2>&1) ||
+out=$(cream install --reinstall stvor-agent-openwrt STVOR_AGENT_VERSION=$V STVOR_AGENT_SHA256="$sha" STVOR_AGENT_TARBALL=/opt/agent.tar.gz 2>&1) ||
 	fail "install поверх восстановленного: $out"
 fixed install
 spoil
@@ -137,10 +168,10 @@ grep -q 'command: \["/usr/bin/stvor-agent", "version", "--label"\]' /etc/telepor
 
 step "stvor-agent status и version"
 st=$(stvor-agent status 2>&1) || true
-echo "$st" | grep -q '^версия: *4\.1\.0' || fail "stvor-agent status: $st"
+echo "$st" | grep -q "^версия: *$V" || fail "stvor-agent status: $st"
 if [ "$REAL" = 1 ]; then
 	echo "$st" | grep -q '^включён: *нет' || fail "агент включён без токена: $st"
-	stvor-agent version | grep -q '^stvor-agent 4\.1\.0' || fail "version: $(stvor-agent version)"
+	stvor-agent version | grep -q "^stvor-agent $V" || fail "version: $(stvor-agent version)"
 fi
 eq "метка без токена пуста" "" "$(stvor-agent version --label)"
 
@@ -157,7 +188,8 @@ ln -sfn /etc /opt/stvor-agent/telemetry/etc
 CREAM_PHASE=live cream remove stvor-agent-openwrt
 has /etc/os-release
 eq "корзин нет" "" "$(find /opt /var/run -maxdepth 1 -name '.stvor-agent-trash.*')"
-for p in /usr/bin/stvor-agent /etc/init.d/stvor-agent /etc/init.d/stvor-agent-telemetry /etc/stvor-agent \
+for p in /usr/bin/stvor-agent /etc/init.d/stvor-agent /etc/init.d/stvor-agent-telemetry \
+	/etc/init.d/stvor-agent-apply /etc/init.d/stvor-agent-connect /etc/stvor-agent \
 	/etc/stvor-agent-telemetry /opt/stvor-agent /lib/upgrade/keep.d/stvor-agent \
 	/etc/cream/teleport-openwrt/command-labels.d/stvor_agent; do
 	hasnt "$p"

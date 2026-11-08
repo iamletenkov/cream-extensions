@@ -8,7 +8,9 @@
 # install   — tar.gz → sha256 → /usr/bin/stvor-agent, /etc/init.d/stvor-agent{,-telemetry}
 #             (enabled; they start only with their token), /etc/init.d/stvor-agent-apply
 #             when the release has it (agent >= 4.4.0; never enabled here — the
-#             agent enables it for an attempt of the applier), the user and group
+#             agent enables it for an attempt of the applier), /etc/init.d/stvor-agent-connect
+#             when the release has it (agent >= 5.6.0; never enabled here — `stvor-agent
+#             connect` enables it, an rc.d link already there stays), the user and group
 #             stvor-telemetry (user_add/group_add_next of /lib/functions.sh), the
 #             state /opt/stvor-agent (0750 root:stvor-telemetry); on a live machine —
 #             reload-apps of teleport-openwrt for the label stvor_agent.
@@ -17,7 +19,7 @@
 #             machine-id, state.json, the tokens and their directories, the
 #             telemetry tree of stvor-telemetry. No network.
 # apply     — running services restart in the background.
-# remove    — stvor-agent disable, services off, the binary, the init scripts,
+# remove    — the connect service stopped, stvor-agent disable, services off, the binary, the init scripts,
 #             tokens, the state and the user (if this extension made it) gone;
 #             refused while the applier runs or is enabled (an attempt).
 # files     — the drop-in of the command label stvor_agent of teleport-openwrt,
@@ -25,7 +27,10 @@
 #             machine-id, state, tokens, domain, last-good.json — Р4 revised 2026-10-23).
 schema: cream/v1
 name: stvor-agent-openwrt
-version: 1.5.2
+version: 1.6.0
+# 1.6.0: init.d/stvor-agent-connect из tar.gz (агент >= 5.6.0; служба подключения одной командой,
+#        procd): ставится обычным файлом, не включается и не запускается, ссылка в rc.d не
+#        трогается; remove останавливает её до stvor-agent disable, выключает и стирает.
 # 1.5.2: пин tar.gz stvor-agent 5.5.1.
 # 1.5.1: пин tar.gz stvor-agent 5.5.0.
 # 1.5.0: пин tar.gz stvor-agent 5.4.0; ключ STVOR_AGENT_NEIGHBORS_OFF, как у debian/stvor-agent.

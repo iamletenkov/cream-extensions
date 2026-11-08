@@ -18,7 +18,7 @@
 # the user stvor-telemetry by the real /lib/functions.sh, the label stvor_agent
 # in teleport.yaml, `stvor-agent status`, remove. The delivery is a fake of the
 # release layout, or the real one: OPENWRT_AGENT_TARBALL=<file> —
-# stvor-agent_<v>_linux_amd64.tar.gz of the agent's repository (version 4.1.0).
+# stvor-agent_<v>_linux_amd64.tar.gz of the agent's repository (version 5.6.0).
 # Two more containers check sysupgrade with kept settings of a robot (ruling Р4,
 # revised 2026-10-23): scenario-sysupgrade-save.sh lays out a registered node and
 # an enabled agent and makes the archive by the real `sysupgrade -b` into the

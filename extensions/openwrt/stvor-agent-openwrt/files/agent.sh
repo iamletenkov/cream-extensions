@@ -10,6 +10,12 @@
 # portal assigns (agent spec "assignments" §6.1, ADR-0001 of stvor-agent):
 # installed here, never enabled, started or restarted — the agent service
 # enables and starts it for an attempt, the applier stops and disables itself.
+# From agent 5.6.0 it also carries `init.d/stvor-agent-connect` — the procd
+# service of the one-command connect (spec Stvor 2026-11-07-one-command-connect
+# §14, Р1): installed here, never enabled, started or restarted — `stvor-agent
+# connect` enables and starts it, `connect --resume` stops and disables it on
+# its outcome; an rc.d link already there (a reinstall in the middle of a
+# connect) stays as it is.
 # https://github.com/iamletenkov/stvor-agent
 #
 # Keys of the domain (cream passes them as environment) — those of
@@ -29,8 +35,10 @@
 # hook (its lock and phase).
 #
 # Layout (the agent picks the OpenWrt paths by /etc/os-release itself):
-#   /usr/bin/stvor-agent, /etc/init.d/stvor-agent{,-telemetry,-apply} — from the tar.gz
+#   /usr/bin/stvor-agent, /etc/init.d/stvor-agent{,-telemetry,-apply,-connect} — from the tar.gz
 #   /opt/stvor-agent/apply   an attempt of the applier (plan.json while it runs)
+#   /opt/stvor-agent/connect the connect in progress (0700 root, the agent's; never
+#                            touched here but by remove)
 #   /opt/stvor-agent         state.json, machine-id, telemetry/ (0750 root:stvor-telemetry;
 #                            /var is tmpfs on OpenWrt)
 #   /etc/stvor-agent-telemetry  the telemetry token directory (0750 root:stvor-telemetry)
@@ -47,6 +55,10 @@ RE_SA_BEARER='^[A-Za-z0-9._~+/=-]{16,512}$'
 SA_SERVICES=(stvor-agent stvor-agent-telemetry)
 # The applier: not in SA_SERVICES — never enabled or restarted by this extension.
 SA_APPLY=stvor-agent-apply
+# The connect service: not in SA_SERVICES either — the agent turns it on and off.
+SA_CONNECT=stvor-agent-connect
+# Optional init scripts of the tar.gz: put when the release has them, never enabled.
+SA_OPTIONAL=("$SA_APPLY" "$SA_CONNECT")
 SA_USER=stvor-telemetry
 
 SA_ROOT="${CREAM_ROOT:-}"
@@ -204,10 +216,10 @@ sa_fetch(){
 
 # sa_unpack <tar.gz> <dir>: the members this extension installs, each a regular
 # file (not a link) — a release without them is refused before anything changes.
-# init.d/stvor-agent-apply is optional (releases before 4.4.0 have none), but
-# when present it is a regular file too.
+# init.d/stvor-agent-apply and init.d/stvor-agent-connect are optional (releases
+# before 4.4.0 and 5.6.0 have none), but when present each is a regular file too.
 sa_unpack(){
-    local m a="$2/init.d/$SA_APPLY"
+    local m a
     sa_run tar -xzf "$1" -C "$2" || { sa_log "ОШИБКА: tar.gz агента не распаковался"; return 1; }
     for m in stvor-agent "${SA_SERVICES[@]/#/init.d/}"; do
         if [[ ! -f "$2/$m" || -L "$2/$m" ]]; then
@@ -215,10 +227,13 @@ sa_unpack(){
             return 1
         fi
     done
-    if [[ -L "$a" || ( -e "$a" && ! -f "$a" ) ]]; then
-        sa_log "ОШИБКА: init.d/$SA_APPLY в tar.gz — не обычный файл"
-        return 1
-    fi
+    for m in "${SA_OPTIONAL[@]}"; do
+        a="$2/init.d/$m"
+        if [[ -L "$a" || ( -e "$a" && ! -f "$a" ) ]]; then
+            sa_log "ОШИБКА: init.d/$m в tar.gz — не обычный файл"
+            return 1
+        fi
+    done
 }
 
 # sa_put <src> <dst>: 0755 by a rename on the destination file system — a running
@@ -461,11 +476,15 @@ sa_hook_install(){
         for s in "${SA_SERVICES[@]}"; do
             sa_put "$work/x/init.d/$s" "$SA_INIT_DIR/$s" || sa_die "не установить /etc/init.d/$s"
         done
-        # The applier: put by a rename (a running attempt keeps its procd
-        # instance), not enabled. A release without it leaves the old one be.
-        if [[ -f "$work/x/init.d/$SA_APPLY" ]]; then
-            sa_put "$work/x/init.d/$SA_APPLY" "$SA_INIT_DIR/$SA_APPLY" || sa_die "не установить /etc/init.d/$SA_APPLY"
-        fi
+        # The applier and the connect service: put by a rename (a running
+        # attempt or connect keeps its procd instance, an rc.d link keeps
+        # pointing at the script), never enabled or disabled here. A release
+        # without one leaves the old one be.
+        for s in "${SA_OPTIONAL[@]}"; do
+            if [[ -f "$work/x/init.d/$s" ]]; then
+                sa_put "$work/x/init.d/$s" "$SA_INIT_DIR/$s" || sa_die "не установить /etc/init.d/$s"
+            fi
+        done
         mkdir -p -- "$SA_STATE" && echo "$SA_VERSION $SA_SHA256" > "$SA_INSTALLED"
         sa_log "установлен $(sa_tarball_name "$SA_VERSION" "$arch")${have:+ (было ${have%% *})}"
     fi
@@ -506,6 +525,10 @@ sa_hook_remove(){
     if [[ -e "$SA_APPLY_PLAN" || -L "$SA_APPLY_PLAN" ]]; then
         sa_log "предупреждение: ${SA_APPLY_PLAN#"$SA_ROOT"} есть, а применитель не работает и не включён — попытка брошена, снимается"
     fi
+    # A connect in progress stops first: it would enable the agent and join the
+    # node again while everything is being removed. It is disabled with the
+    # rest below; its state goes with /opt/stvor-agent.
+    if sa_procd_running; then sa_svc "$SA_CONNECT" stop || true; fi
     if [[ -x "$SA_BIN" ]]; then
         sa_run "$SA_BIN" disable >/dev/null 2>&1 || sa_log "предупреждение: stvor-agent disable не прошёл — службы и токены снимаются здесь"
     fi
@@ -518,7 +541,7 @@ sa_hook_remove(){
         uid="$(sa_uid)" || sa_die "нет uid пользователя $SA_USER — ничего не снято"
         sa_wait_user_gone "$uid" || sa_die "процессы $SA_USER не завершились — ничего не снято, повторите cream remove"
     fi
-    for s in "${SA_SERVICES[@]}" "$SA_APPLY"; do
+    for s in "${SA_SERVICES[@]}" "${SA_OPTIONAL[@]}"; do
         sa_svc "$s" disable || true
         rm -f -- "$SA_INIT_DIR/$s"
     done
