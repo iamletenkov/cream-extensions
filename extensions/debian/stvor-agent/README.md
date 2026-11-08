@@ -48,7 +48,7 @@ set-managed`). Само расширение — тонкое: ставит `.de
 служба телеметрии `active` и её токен `ok`. Иначе код 1, в `problems` — строки вида
 `agent.enabled:false`, `agent.service:inactive`, `telemetry.service:failed`,
 `telemetry.token:absent|rejected|no_access|corrupt`, `agent.not_installed`,
-`agent.status_failed`. Сразу после `enable` токен телеметрии ещё `absent` —
+`agent.status_failed`. Сразу после `connect` токен телеметрии ещё `absent` —
 это не здорово, пока служба меток его не получит.
 
 Пин пакета — `files/pin.env` (версия и суммы по архитектурам из `SHA256SUMS`
@@ -82,12 +82,14 @@ HUP новейшему процессу Teleport с подтверждением
 процесса. Хуки обёртки `teleport-apps.service` не запускают. До `join` юнит
 ничего не делает (`ConditionPathExists=/etc/teleport.yaml`).
 
-**Токен меток — не настройка cream.** Хуки токен не принимают и службу сами не
+**Привязка к порталу — не настройка cream.** Хуки код и ключ не принимают и службу сами не
 включают. Юнит `stvor-agent.service` включает **пакет** при установке
-(`postinst`), но старт ждёт токена: в юните `ConditionPathExists=/etc/stvor-agent/token`,
-и до токена служба при загрузке тихо пропускается (`inactive`, не `failed`).
-Токен пишет `stvor-agent enable` (токен на stdin) — он же запускает службу; `stvor-agent
-disable` (и хук `remove`) убирает токен и `state.json`. Дочерние
+(`postinst`), но старт ждёт ключа робота: в юните `ConditionPathExists=/etc/stvor-agent/robot.key`,
+и до привязки служба при загрузке тихо пропускается (`inactive`, не `failed`).
+Ключ привязывает `stvor-agent connect` (агент ≥ 5.5.0: одноразовый код `stc_…` из карточки
+робота на stdin; он же регистрирует узел Teleport и запускает службу) или `stvor-agent enroll`
+(билет на stdin, узел уже в Teleport); `stvor-agent disable` (и хук `remove`) убирает ключ,
+токены и `state.json`. Дочерние
 процессы хуков (`curl`, `dpkg`, `stvor-agent`) получают своё минимальное
 окружение (`PATH`, `LANG`, `DEBIAN_FRONTEND`).
 
@@ -140,13 +142,16 @@ sudo cream set stvor-agent STVOR_AGENT_INTERVAL=120   # хук apply перез�
 ```sh
 sudo cream install --with-deps teleport TELEPORT_VERSION=18.10.0 TELEPORT_SHA256=<пин arch> TELEPORT_MIRROR=https://<домен>/dist/teleport
 sudo cream install --with-deps stvor-agent STVOR_AGENT_VERSION=<v> STVOR_AGENT_SHA256=<пин arch> STVOR_AGENT_MIRROR=https://<домен>/dist/teleport
-printf '%s' "$LABEL_TOKEN" | sudo stvor-agent enable 'URL=https://<домен>/robot-api/v1/labels'
+read -rs C && printf '%s' "$C" | sudo stvor-agent connect URL=https://<домен>; unset C
 # офлайн: STVOR_AGENT_DEB=/путь/stvor-agent_<v>_<arch>.deb вместо зеркала
 ```
 
-В образе bisquite (VMFILE) пакет ставится на сборке: юнит включён, но без токена
+В образе bisquite (VMFILE) пакет ставится на сборке: юнит включён, но без ключа робота
 служба не стартует; метка `stvor_agent` попадает в первый render `teleport`.
-Токен — на первой загрузке тем же `stvor-agent enable`, в образ не кладётся.
+Код подключения — на первой загрузке: `printf '%s' '<код>' | stvor-agent connect
+URL=https://<домен> WAIT=0` последней командой (код 75 — подключение идёт в фоне,
+юнит `stvor-agent-connect` переживает перезагрузку); в образ код не кладётся, в фазе
+сборки `connect` отказывает.
 
 ```dockerfile
 RUN_COMMAND cream install --with-deps stvor-agent
@@ -157,15 +162,15 @@ RUN_COMMAND cream install --with-deps stvor-agent
 | Когда | Что происходит |
 |---|---|
 | сборка образа / `cream install` | drop-in метки (cream, до хука), `.deb` по пину или явной паре, sha256, `dpkg -i`; на живой машине — reload меток |
-| загрузка | служба `stvor-agent` стартует, только если есть токен |
+| загрузка | служба `stvor-agent` стартует, только если есть ключ робота; незаконченный `connect` продолжает `stvor-agent-connect` |
 | `cream set` (хук `apply`) | `try-restart` службы без ожидания |
 | `cream upgrade` | новый `.deb`; `postinst` перезапускает включённую службу |
 | `cream remove` | `stvor-agent disable`, стоп обоих юнитов, `dpkg -r`, каталоги телеметрии стёрты; drop-in метки снимает cream |
 
 ## Известные ограничения
 
-- Токен меток cream не хранит и хуки его не принимают: включить агента —
-  только `stvor-agent enable` на машине.
+- Код подключения и ключ робота cream не хранит и хуки их не принимают: привязать агента —
+  только `stvor-agent connect` (или `enroll`) на машине.
 - Пока стоит обёртка, `cream remove teleport` отказывает (67).
 
 ## Проверки
