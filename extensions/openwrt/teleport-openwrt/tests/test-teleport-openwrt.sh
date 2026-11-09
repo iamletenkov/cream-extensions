@@ -107,6 +107,9 @@ echo "init $*" >> "$FAKE/calls"
 up(){
     [[ -e "$S/agent-enabled" || -e "$R/var/run/teleport.start" ]] || return 0
     [[ "$1" == restart || ! -f "$FAKE/ubus.list" ]] || return 0
+    # What the agent reads when it comes up: teleport.yaml and the first-join secret.
+    cp -f "$R/etc/teleport.yaml" "$FAKE/yaml.at-up" 2>/dev/null
+    cp -f "$S/registration-secret" "$FAKE/secret.at-up" 2>/dev/null || rm -f "$FAKE/secret.at-up"
     p=$(( $(cat "$FAKE/pid") + 1 )); echo "$p" > "$FAKE/pid"
     [[ -e "$FAKE/agent.dead" ]] || printf '{"teleport":{"instances":{"teleport":{"running":true,"pid":%s}}}}\n' "$p" > "$FAKE/ubus.list"
     case "$(cat "$FAKE/agent")" in
@@ -604,6 +607,34 @@ act join-retry; eq "тик — 0" 0 "$?"
 check "тик: маркер снят — цикл повтора кончится сам" test ! -e "$S/join-pending"
 check "тик: агент включён" test -e "$S/agent-enabled"
 check_not "тик не останавливает службу (он внутри неё)" grep -qE '^init (stop|restart)|^ubus call service delete' "$FAKE/calls"
+
+echo "== повтор после нового join: имя токена и секрет — нового поколения (как debian/teleport) =="
+# stvor-agent connect зовёт join с новым поколением (bound_keypair), пока прежний join ждёт
+# сети: join и join-retry — под одним замком cream (манифест сверен с debian/teleport выше),
+# новый join заменяет секрет и имя токена, тик берёт их из текущего состояния, а не из
+# прошлого запуска; секрета прошлого поколения на машине нет.
+bk_join(){ act join TELEPORT_PROXY="$PROXY" TELEPORT_JOIN_METHOD=bound_keypair TELEPORT_TOKEN="$1" \
+    TELEPORT_REGISTRATION_SECRET=- TELEPORT_ENV=dev <<< "$2"; }
+GEN1='gen1-secret-AAAAAAAA'; GEN2='gen2-secret-BBBBBBBB'
+setup; installed; procd_up
+bk_join bk-robot-gen1 "$GEN1"; eq "join поколения 1 без сети — 0" 0 "$?"
+eq "поколение 1 — pending" pending "$(json | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
+bk_join bk-robot-gen2 "$GEN2"; eq "join поколения 2 без сети — 0" 0 "$?"
+eq "поколение 2 — pending" pending "$(json | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
+eq "секрет — поколения 2" "$GEN2" "$(cat "$S/registration-secret")"
+eq "секрет 0600" 600 "$(stat -c %a "$S/registration-secret")"
+check "имя токена — поколения 2" grep -qx 'TELEPORT_TOKEN="bk-robot-gen2"' "$ROOT/etc/cream/teleport-openwrt/config"
+check_not "секрета поколения 1 на машине нет" grep -rqF -- "$GEN1" "$ROOT/etc" "$ROOT/opt" "$S"
+echo up > "$FAKE/net"
+: > "$FAKE/calls"; rm -f "$FAKE/yaml.at-up" "$FAKE/secret.at-up"
+act join-retry; eq "тик после нового join — 0" 0 "$?"
+check "тик: зарегистрирован" test -s "$D/host_uuid"
+check "тик: агент поднят с именем токена поколения 2" grep -qx '    token_name: "bk-robot-gen2"' "$FAKE/yaml.at-up"
+check_not "тик: имени поколения 1 в конфиге агента нет" grep -q 'bk-robot-gen1' "$FAKE/yaml.at-up"
+check "тик: путь секрета в конфиге агента" grep -q 'registration_secret_path: ' "$FAKE/yaml.at-up"
+eq "тик: агент прочёл секрет поколения 2" "$GEN2" "$(cat "$FAKE/secret.at-up" 2>/dev/null)"
+check "тик: секрет стёрт после регистрации" test ! -e "$S/registration-secret"
+check "тик: маркер ожидания снят" test ! -e "$S/join-pending"
 
 echo "== join: отказ кластера — из журнала узла с отсечкой по времени =="
 setup; installed; procd_up
