@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.22.0](https://github.com/iamletenkov/cream-extensions/compare/v5.21.1...v5.22.0) (2026-11-09)
+
+
+### Добавлено
+
+* **stvor-agent-openwrt:** служба подключения init.d/stvor-agent-connect из tar.gz ([#122](https://github.com/iamletenkov/cream-extensions/issues/122)) ([dc892dd](https://github.com/iamletenkov/cream-extensions/commit/dc892ddec06f824f1d265766e620315292ab904d))
+* **stvor-agent:** пин агента 5.6.0 ([#121](https://github.com/iamletenkov/cream-extensions/issues/121)) ([3b02169](https://github.com/iamletenkov/cream-extensions/commit/3b02169f21e7bde85fd2b50954b29cf51e387168))
+
 ## [5.21.1](https://github.com/iamletenkov/cream-extensions/compare/v5.21.0...v5.21.1) (2026-11-08)
 
 
