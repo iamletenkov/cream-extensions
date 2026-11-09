@@ -22,7 +22,8 @@ TOKEN="tok-$RANDOM$RANDOM-label-secret"
 
 # make_tgz <version> [без <член>]: stvor-agent_<v>_linux_<arch>.tar.gz в $FAKE/tgz:
 # бинарь-подделка (version, disable) и init-скрипты, пишущие журнал вызовов
-# (stvor-agent-apply — с агента 4.4.0; выпуски до него идут «без init.d/stvor-agent-apply»).
+# (stvor-agent-apply — с агента 4.4.0; выпуски до него идут «без init.d/stvor-agent-apply»;
+# stvor-agent-connect — с агента 5.6.0, раньше — «без init.d/stvor-agent-connect»).
 make_tgz(){
     local d m; d="$(mktemp -d "$HT_TMP/tgz.XXXXXX")"
     mkdir -p "$d/init.d"
@@ -35,7 +36,7 @@ make_tgz(){
         echo '[[ "$*" == "status --json" ]] && { cat "$FAKE/status.json" 2>/dev/null; exit "$(cat "$FAKE/status-rc" 2>/dev/null || echo 0)"; }'
         echo 'exit 0'
     } > "$d/stvor-agent"
-    for m in stvor-agent stvor-agent-apply stvor-agent-telemetry; do
+    for m in stvor-agent stvor-agent-apply stvor-agent-connect stvor-agent-telemetry; do
         {
             echo '#!/usr/bin/env bash'
             printf 'FAKE=%q\nme=%q\n' "$FAKE" "$m"
@@ -165,6 +166,13 @@ check "init-скрипт из tar.gz" grep -q 'echo "init $me $\*"' "$ROOT/etc/i
 # enable и start делает служба агента на время попытки, stop и disable — он сам.
 eq "init применителя 0755" -rwxr-xr-x "$(mode "$ROOT/etc/init.d/stvor-agent-apply")"
 check_not "применитель не включён" ht_called '^init stvor-agent-apply '
+# Служба подключения (агент >= 5.6.0, спека Stvor «подключение одной командой» §14 Р1):
+# ставится обычным файлом, не включается и не запускается — `stvor-agent connect`
+# включает её сам, ссылка в rc.d продолжает подключение после перезагрузки.
+eq "init подключения 0755" -rwxr-xr-x "$(mode "$ROOT/etc/init.d/stvor-agent-connect")"
+check "init подключения из tar.gz" grep -q 'echo "init $me $\*"' "$ROOT/etc/init.d/stvor-agent-connect"
+check_not "служба подключения не тронута" ht_called '^init stvor-agent-connect '
+check_not "ссылки подключения в rc.d нет" test -n "$(find "$ROOT/etc" -name '*stvor-agent-connect' ! -path '*/init.d/*' 2>/dev/null)"
 check "man не ставится" test ! -e "$ROOT/usr/bin/stvor-agent.8.gz"
 check "enable агента" ht_called '^init stvor-agent enable$'
 check "enable телеметрии" ht_called '^init stvor-agent-telemetry enable$'
@@ -277,6 +285,22 @@ tar -czf "$FAKE/tgz" -C "$d" .; TGZ_SHA="$(sha256sum "$FAKE/tgz" | cut -d' ' -f1
 installed; check "init применителя — ссылка: отказ" test "$?" -ne 0
 check "сообщение называет применитель" grep -q 'init.d/stvor-agent-apply' "$ROOT/out"
 check "ничего не поставлено" nothing_installed
+setup
+make_tgz 4.1.0 "без init.d/stvor-agent-connect"
+installed; eq "выпуск без службы подключения (до 5.6.0) — 0" 0 "$?"
+check "init агента поставлен" test -x "$ROOT/etc/init.d/stvor-agent"
+check "init подключения не появился" test ! -e "$ROOT/etc/init.d/stvor-agent-connect"
+for kind in link dir; do
+    setup
+    make_tgz 4.1.0 "без init.d/stvor-agent-connect"
+    d="$(mktemp -d "$HT_TMP/tgz.XXXXXX")"; tar -xzf "$FAKE/tgz" -C "$d"
+    if [[ "$kind" == link ]]; then ln -s /bin/sh "$d/init.d/stvor-agent-connect"; else mkdir "$d/init.d/stvor-agent-connect"; fi
+    tar -czf "$FAKE/tgz" -C "$d" .; TGZ_SHA="$(sha256sum "$FAKE/tgz" | cut -d' ' -f1)"
+    installed; check "init подключения — $kind: отказ" test "$?" -ne 0
+    check "init подключения — $kind: сообщение называет службу" grep -q 'init.d/stvor-agent-connect' "$ROOT/out"
+    check "init подключения — $kind: ничего не поставлено" nothing_installed
+    check "init подключения — $kind: init подключения нет" test ! -e "$ROOT/etc/init.d/stvor-agent-connect"
+done
 make_tgz 4.1.0
 : > "$FAKE/curl-fails"
 installed; check "сеть упала — отказ" test "$?" -ne 0
@@ -360,6 +384,23 @@ wait
 sleep 0.2
 check_not "применитель не перезапущен и не включён" ht_called '^init stvor-agent-apply (restart|stop|start|enable|disable)$'
 rm -f "$FAKE/running-stvor-agent-apply"
+# Переустановка посреди подключения: служба подключения включена (ссылка в rc.d) и
+# работает — скрипт заменяется переименованием, ссылка и экземпляр не трогаются.
+mkdir -p "$ROOT/etc/rc.d" "$ROOT/opt/stvor-agent/connect"
+ln -s ../init.d/stvor-agent-connect "$ROOT/etc/rc.d/S99stvor-agent-connect"
+echo '{"step":"join"}' > "$ROOT/opt/stvor-agent/connect/state.json"
+: > "$FAKE/running-stvor-agent-connect"; : > "$FAKE/enabled-stvor-agent-connect"
+: > "$FAKE/calls"
+make_tgz 4.4.0
+ht_hook install STVOR_AGENT_VERSION=4.4.0 STVOR_AGENT_SHA256="$TGZ_SHA" STVOR_AGENT_MIRROR="$MIRROR"
+eq "upgrade до 4.4.0 посреди подключения — 0" 0 "$?"
+wait
+sleep 0.2
+check_not "служба подключения не тронута при обновлении" ht_called '^init stvor-agent-connect '
+eq "ссылка rc.d подключения на месте" ../init.d/stvor-agent-connect "$(readlink "$ROOT/etc/rc.d/S99stvor-agent-connect")"
+eq "init подключения обновлён, 0755" -rwxr-xr-x "$(mode "$ROOT/etc/init.d/stvor-agent-connect")"
+check "состояние подключения на месте" test -f "$ROOT/opt/stvor-agent/connect/state.json"
+rm -f "$FAKE/running-stvor-agent-connect" "$FAKE/enabled-stvor-agent-connect"
 check "токен меток на месте" grep -q "token=$TOKEN" "$ROOT/etc/stvor-agent/token"
 setup
 procd_up
@@ -408,7 +449,13 @@ check "служба выключена" ht_called '^init stvor-agent disable$'
 check "телеметрия выключена" ht_called '^init stvor-agent-telemetry disable$'
 check "применитель остановлен" ht_called '^init stvor-agent-apply stop$'
 check "применитель выключен" ht_called '^init stvor-agent-apply disable$'
-for p in usr/bin/stvor-agent etc/init.d/stvor-agent etc/init.d/stvor-agent-apply etc/init.d/stvor-agent-telemetry etc/stvor-agent \
+check "служба подключения остановлена" ht_called '^init stvor-agent-connect stop$'
+check "служба подключения выключена" ht_called '^init stvor-agent-connect disable$'
+# Подключение не идёт дальше, пока агент выключается: остановлено до stvor-agent disable;
+# выключается вместе с остальными, после выхода процессов stvor-telemetry.
+first(){ grep -nE -- "$1" "$FAKE/calls" | head -n 1 | cut -d: -f1; }
+check "служба подключения остановлена до stvor-agent disable" test "$(first '^init stvor-agent-connect stop$')" -lt "$(first '^agent disable$')"
+for p in usr/bin/stvor-agent etc/init.d/stvor-agent etc/init.d/stvor-agent-apply etc/init.d/stvor-agent-connect etc/init.d/stvor-agent-telemetry etc/stvor-agent \
     etc/stvor-agent-telemetry opt/stvor-agent var/run/stvor-agent-telemetry \
     etc/cream/teleport-openwrt/command-labels.d/stvor_agent; do
     check "снято /$p" test ! -e "$ROOT/$p"
@@ -605,6 +652,21 @@ ht_hook configure; eq "configure до install (нет пользователя) 
 check "configure до install — сказано" grep -q 'пользователя stvor-telemetry нет' "$ROOT/out"
 check "configure до install — chown не звался" test ! -e "$FAKE/chown.argv"
 
+echo "== состояние подключения: install и configure не трогают /opt/stvor-agent/connect =="
+# connect/ (0700 root) — код, секрет Teleport и шаг подключения; права ведёт агент.
+setup
+installed
+C="$ROOT/opt/stvor-agent/connect"
+mkdir -p "$C"; chmod 0700 "$C"
+echo '{"step":"claim"}' > "$C/state.json"; echo code > "$C/code"; chmod 0600 "$C/state.json" "$C/code"
+rm -f "$FAKE/chown.argv"
+ht_hook configure; eq "configure с connect/ — 0" 0 "$?"
+installed; eq "повтор install с connect/ — 0" 0 "$?"
+eq "connect/ 0700" drwx------ "$(mode "$C")"
+eq "connect/state.json 0600" -rw------- "$(mode "$C/state.json")"
+eq "connect/code 0600" -rw------- "$(mode "$C/code")"
+check_not "connect/ не перевладевается" grep -q -- "/opt/stvor-agent/connect" "$FAKE/chown.argv"
+
 echo "== remove: дерево пользователя — через закрытую корзину, после выхода его процессов =="
 setup
 procd_up
@@ -633,6 +695,7 @@ ht_fake sleep
 ht_hook remove; check "remove — отказ" test "$?" -ne 0
 check "сказано о процессах" grep -q 'процессы stvor-telemetry не завершились — ничего не снято' "$ROOT/out"
 check "службы остановлены" ht_called '^init stvor-agent-telemetry stop$'
+check "служба подключения остановлена" ht_called '^init stvor-agent-connect stop$'
 check_not "службы не выключены" ht_called '^init .* disable$'
 for p in usr/bin/stvor-agent etc/init.d/stvor-agent etc/init.d/stvor-agent-telemetry opt/stvor-agent/telemetry/buffer; do
     check "осталось /$p" test -e "$ROOT/$p"
