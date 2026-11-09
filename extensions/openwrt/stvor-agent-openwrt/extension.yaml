@@ -27,7 +27,8 @@
 #             machine-id, state, tokens, domain, last-good.json — Р4 revised 2026-10-23).
 schema: cream/v1
 name: stvor-agent-openwrt
-version: 1.6.0
+version: 1.6.1
+# 1.6.1: пин tar.gz stvor-agent 5.6.0.
 # 1.6.0: init.d/stvor-agent-connect из tar.gz (агент >= 5.6.0; служба подключения одной командой,
 #        procd): ставится обычным файлом, не включается и не запускается, ссылка в rc.d не
 #        трогается; remove останавливает её до stvor-agent disable, выключает и стирает.
