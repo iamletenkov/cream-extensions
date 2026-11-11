@@ -90,9 +90,10 @@ teleport-openwrt set-managed`), служба телеметрии шлёт на 
 |---|---|---|---|
 | `STVOR_AGENT_VERSION` | строка `^[0-9]+\.[0-9]+\.[0-9]+$` | пусто | версия агента; задаётся вместе с STVOR_AGENT_SHA256, пусто — пин каталога (files/pin.env) *(только при установке)* |
 | `STVOR_AGENT_SHA256` | строка `^[0-9a-f]{64}$` | пусто | sha256 tar.gz архитектуры машины; задаётся вместе с STVOR_AGENT_VERSION *(только при установке)* |
-| `STVOR_AGENT_MIRROR` | `str` | пусто | база зеркала, файл плоско <база>/stvor-agent_<версия>_linux_<arch>.tar.gz; пусто — релиз GitHub *(только при установке)* |
-| `STVOR_AGENT_TARBALL` | `path` | пусто | локальный tar.gz (офлайн, абсолютный путь); взаимоисключим с STVOR_AGENT_MIRROR *(только при установке)* |
-| `STVOR_AGENT_AUTH_FILE` | `path` | пусто | файл с ключом зеркала (sbk_ сборщика для закрытого /dist портала, секрет сборки): Authorization: Bearer только к https STVOR_AGENT_MIRROR, на stdin curl — не в argv и не на диске *(только при установке)* |
+| `STVOR_AGENT_MIRROR` | `str` | пусто | устарел (адрес с версией ломается на подъёме пина) — STVOR_AGENT_DIST; база зеркала, файл плоско <база>/stvor-agent_<версия>_linux_<arch>.tar.gz; пусто — релиз GitHub *(только при установке)* |
+| `STVOR_AGENT_DIST` | строка `^https://[A-Za-z0-9.:/-]+$` | пусто | раздача портала Stvor https://<домен>/dist: файл <DIST>/stvor-agent/v<версия>/stvor-agent_<версия>_linux_<arch>.tar.gz, версия — пары или пина; взаимоисключим с STVOR_AGENT_MIRROR и STVOR_AGENT_TARBALL *(только при установке)* |
+| `STVOR_AGENT_TARBALL` | `path` | пусто | локальный tar.gz (офлайн, абсолютный путь); взаимоисключим с STVOR_AGENT_DIST и STVOR_AGENT_MIRROR *(только при установке)* |
+| `STVOR_AGENT_AUTH_FILE` | `path` | пусто | файл с ключом зеркала (sbk_ сборщика для закрытого /dist портала, секрет сборки): Authorization: Bearer только к STVOR_AGENT_DIST или https STVOR_AGENT_MIRROR, на stdin curl — не в argv и не на диске *(только при установке)* |
 | `STVOR_AGENT_INTERVAL` | строка `^([6-9][0-9]\|[1-5][0-9]{2}\|600)$` | `60` | период опроса портала, секунды, 60–600 |
 | `STVOR_AGENT_LOG_LEVEL` | `info` \| `debug` | `info` | уровень журнала службы |
 | `STVOR_AGENT_NEIGHBORS_OFF` | строка `^(mdns\|lldp\|wifi\|all)(,(mdns\|lldp\|wifi\|all))*$` | пусто | локальный запрет источников соседей (агент ≥ 5.4.0): mdns, lldp, wifi, all через запятую; стоит над политикой портала; пусто — по политике |
@@ -103,8 +104,13 @@ teleport-openwrt set-managed`), служба телеметрии шлёт на 
 Параметры установки — только через `cream install`, `cream set` им отказывает. Повтор
 `cream install stvor-agent-openwrt` с новой версией и суммой — обновление агента.
 
-- `STVOR_AGENT_MIRROR` — так раздаёт `/dist/teleport/` портала (файл плоско
-  `<база>/stvor-agent_<версия>_linux_<arch>.tar.gz`); с `STVOR_AGENT_TARBALL` — отказ.
+- `STVOR_AGENT_DIST=https://<домен>/dist` — раздача портала Stvor: файл
+  `<DIST>/stvor-agent/v<версия>/stvor-agent_<версия>_linux_<arch>.tar.gz`, версия — явной
+  пары или пина; только https (и в редиректе), без userinfo, query и fragment.
+- `STVOR_AGENT_MIRROR` — **устарел**, оставлен для совместимости (файл плоско
+  `<база>/stvor-agent_<версия>_linux_<arch>.tar.gz`, база с версией ломается на подъёме
+  пина); при установке — предупреждение. Новым — `STVOR_AGENT_DIST`.
+- `STVOR_AGENT_DIST`, `STVOR_AGENT_MIRROR` и `STVOR_AGENT_TARBALL` взаимоисключающие.
 - Версия и сумма обе пусты — пин каталога `files/pin.env` (`STVOR_AGENT_PIN_VERSION`,
   `STVOR_AGENT_PIN_SHA256_AMD64`, `STVOR_AGENT_PIN_SHA256_ARM64` — суммы tar.gz). Задана
   одна из двух — отказ. Пин без версии или без суммы своей архитектуры — отказ до
@@ -129,16 +135,16 @@ cream, `teleport-openwrt`, регистрирует узел, ставит эт�
 и узлом `teleport-openwrt`:
 
 ```sh
-cream install --with-deps stvor-agent-openwrt STVOR_AGENT_VERSION=<v> STVOR_AGENT_SHA256=<сумма tar.gz arch> STVOR_AGENT_MIRROR=https://<домен>/dist/teleport
+cream install --with-deps stvor-agent-openwrt STVOR_AGENT_VERSION=<v> STVOR_AGENT_SHA256=<сумма tar.gz arch> STVOR_AGENT_DIST=https://<домен>/dist
 printf '%s' "$LABEL_TOKEN" | stvor-agent enable 'URL=https://<домен>/robot-api/v1/labels'
-# офлайн: STVOR_AGENT_TARBALL=/путь/stvor-agent_<v>_linux_<arch>.tar.gz вместо зеркала
+# офлайн: STVOR_AGENT_TARBALL=/путь/stvor-agent_<v>_linux_<arch>.tar.gz вместо раздачи
 ```
 
 В образе (VMFILE bisquite) агент ставится на сборке: службы включены, но без токена не
 стартуют; токен — на первой загрузке тем же `stvor-agent enable`, в образ не кладётся.
 
 ```dockerfile
-RUN_COMMAND cream install --with-deps stvor-agent-openwrt STVOR_AGENT_VERSION=<v> STVOR_AGENT_SHA256=<сумма> STVOR_AGENT_MIRROR=https://<домен>/dist/teleport
+RUN_COMMAND cream install --with-deps stvor-agent-openwrt STVOR_AGENT_VERSION=<v> STVOR_AGENT_SHA256=<сумма> STVOR_AGENT_DIST=https://<домен>/dist
 ```
 
 ## Этапы

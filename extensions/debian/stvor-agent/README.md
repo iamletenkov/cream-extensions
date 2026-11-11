@@ -100,24 +100,32 @@ HUP новейшему процессу Teleport с подтверждением
 |---|---|---|---|
 | `STVOR_AGENT_VERSION` | строка `^[0-9]+\.[0-9]+\.[0-9]+$` | пусто | версия пакета агента; задаётся вместе с STVOR_AGENT_SHA256, пусто — пин каталога (files/pin.env) *(только при установке)* |
 | `STVOR_AGENT_SHA256` | строка `^[0-9a-f]{64}$` | пусто | sha256 .deb архитектуры машины; задаётся вместе с STVOR_AGENT_VERSION *(только при установке)* |
-| `STVOR_AGENT_MIRROR` | `str` | пусто | база зеркала, файл плоско <база>/stvor-agent_<версия>_<arch>.deb; пусто — релиз GitHub *(только при установке)* |
-| `STVOR_AGENT_DEB` | `path` | пусто | локальный .deb (офлайн, абсолютный путь); взаимоисключим с STVOR_AGENT_MIRROR *(только при установке)* |
-| `STVOR_AGENT_AUTH_FILE` | `path` | пусто | файл с ключом зеркала (sbk_ сборщика для закрытого /dist портала, секрет сборки): Authorization: Bearer только к STVOR_AGENT_MIRROR, на stdin curl — не в argv и не на диске *(только при установке)* |
+| `STVOR_AGENT_MIRROR` | `str` | пусто | устарел (адрес с версией ломается на подъёме пина) — STVOR_AGENT_DIST; база зеркала, файл плоско <база>/stvor-agent_<версия>_<arch>.deb; пусто — релиз GitHub *(только при установке)* |
+| `STVOR_AGENT_DIST` | строка `^https://[A-Za-z0-9.:/-]+$` | пусто | раздача портала Stvor https://<домен>/dist: файл <DIST>/stvor-agent/v<версия>/stvor-agent_<версия>_<arch>.deb, версия — пары или пина; взаимоисключим с STVOR_AGENT_MIRROR и STVOR_AGENT_DEB *(только при установке)* |
+| `STVOR_AGENT_DEB` | `path` | пусто | локальный .deb (офлайн, абсолютный путь); взаимоисключим с STVOR_AGENT_DIST и STVOR_AGENT_MIRROR *(только при установке)* |
+| `STVOR_AGENT_AUTH_FILE` | `path` | пусто | файл с ключом зеркала (sbk_ сборщика для закрытого /dist портала, секрет сборки): Authorization: Bearer только к STVOR_AGENT_DIST или STVOR_AGENT_MIRROR, на stdin curl — не в argv и не на диске *(только при установке)* |
 | `STVOR_AGENT_INTERVAL` | строка `^([6-9][0-9]\|[1-5][0-9]{2}\|600)$` | `60` | период опроса портала, секунды, 60–600 |
 | `STVOR_AGENT_LOG_LEVEL` | `info` \| `debug` | `info` | уровень журнала службы |
 | `STVOR_AGENT_NEIGHBORS_OFF` | строка `^(mdns\|lldp\|wifi\|all)(,(mdns\|lldp\|wifi\|all))*$` | пусто | локальный запрет источников соседей (агент ≥ 5.4.0): mdns, lldp, wifi, all через запятую; стоит над политикой портала; пусто — по политике |
 <!-- /catalog:params -->
 
-Параметры установки (`STVOR_AGENT_VERSION`, `_SHA256`, `_MIRROR`, `_DEB`, `_AUTH_FILE`) —
+Параметры установки (`STVOR_AGENT_VERSION`, `_SHA256`, `_DIST`, `_MIRROR`, `_DEB`, `_AUTH_FILE`) —
 только через `cream install`, `cream set` им отказывает. Повтор
 `cream install stvor-agent` с новой версией и суммой перезапускает хук
 `install` — так портал обновляет агента.
 
-- `STVOR_AGENT_MIRROR` — так раздаёт `/dist/teleport/` портала;
-  `STVOR_AGENT_DEB` с `STVOR_AGENT_MIRROR` — отказ.
+- `STVOR_AGENT_DIST=https://<домен>/dist` — раздача портала Stvor: файл
+  `<DIST>/stvor-agent/v<версия>/stvor-agent_<версия>_<arch>.deb`, версия — явной пары или
+  пина каталога, поэтому подъём пина не требует нового адреса. Только https (и в
+  редиректе), без userinfo, query и fragment — иначе отказ до сети.
+- `STVOR_AGENT_MIRROR` — **устарел**, оставлен для совместимости: файл плоско
+  `<база>/stvor-agent_<версия>_<arch>.deb`, база с версией ломается на каждом подъёме пина;
+  при установке — предупреждение в журнале. Новым — `STVOR_AGENT_DIST`.
+- `STVOR_AGENT_DIST`, `STVOR_AGENT_MIRROR` и `STVOR_AGENT_DEB` взаимоисключающие — двое
+  сразу дают отказ.
 - `STVOR_AGENT_AUTH_FILE` — закрытый `/dist`: путь к файлу с ключом сборщика `sbk_` (секрет
   сборки, в bisquite — `RUN_COMMAND --mount=type=secret,id=stvor-dist …
-  STVOR_AGENT_AUTH_FILE=/run/secrets/stvor-dist`). Ключ уходит только к зеркалу как
+  STVOR_AGENT_AUTH_FILE=/run/secrets/stvor-dist`). Ключ уходит только к раздаче (или зеркалу) как
   `Authorization: Bearer` на stdin curl (`-H @-`): ни в argv, ни в журнал, ни в файл на диске
   машины не попадает (удалённый файл остаётся в свободных блоках диска и в собранном
   образе); файла нет — предупреждение и скачивание без ключа.
@@ -142,9 +150,9 @@ sudo cream set stvor-agent STVOR_AGENT_INTERVAL=120   # хук apply перез�
 
 ```sh
 sudo cream install --with-deps teleport TELEPORT_VERSION=18.10.0 TELEPORT_SHA256=<пин arch> TELEPORT_MIRROR=https://<домен>/dist/teleport
-sudo cream install --with-deps stvor-agent STVOR_AGENT_VERSION=<v> STVOR_AGENT_SHA256=<пин arch> STVOR_AGENT_MIRROR=https://<домен>/dist/teleport
+sudo cream install --with-deps stvor-agent STVOR_AGENT_VERSION=<v> STVOR_AGENT_SHA256=<пин arch> STVOR_AGENT_DIST=https://<домен>/dist
 read -rs C && printf '%s' "$C" | sudo stvor-agent connect URL=https://<домен>; unset C
-# офлайн: STVOR_AGENT_DEB=/путь/stvor-agent_<v>_<arch>.deb вместо зеркала
+# офлайн: STVOR_AGENT_DEB=/путь/stvor-agent_<v>_<arch>.deb вместо раздачи
 ```
 
 В образе bisquite (VMFILE) пакет ставится на сборке: юнит включён, но без ключа робота
