@@ -102,7 +102,7 @@ HUP новейшему процессу Teleport с подтверждением
 | `STVOR_AGENT_SHA256` | строка `^[0-9a-f]{64}$` | пусто | sha256 .deb архитектуры машины; задаётся вместе с STVOR_AGENT_VERSION *(только при установке)* |
 | `STVOR_AGENT_MIRROR` | `str` | пусто | база зеркала, файл плоско <база>/stvor-agent_<версия>_<arch>.deb; пусто — релиз GitHub *(только при установке)* |
 | `STVOR_AGENT_DEB` | `path` | пусто | локальный .deb (офлайн, абсолютный путь); взаимоисключим с STVOR_AGENT_MIRROR *(только при установке)* |
-| `STVOR_AGENT_AUTH_FILE` | `path` | пусто | файл с ключом зеркала (sbk_ сборщика для закрытого /dist портала, секрет сборки): Authorization: Bearer только к STVOR_AGENT_MIRROR, не в argv *(только при установке)* |
+| `STVOR_AGENT_AUTH_FILE` | `path` | пусто | файл с ключом зеркала (sbk_ сборщика для закрытого /dist портала, секрет сборки): Authorization: Bearer только к STVOR_AGENT_MIRROR, на stdin curl — не в argv и не на диске *(только при установке)* |
 | `STVOR_AGENT_INTERVAL` | строка `^([6-9][0-9]\|[1-5][0-9]{2}\|600)$` | `60` | период опроса портала, секунды, 60–600 |
 | `STVOR_AGENT_LOG_LEVEL` | `info` \| `debug` | `info` | уровень журнала службы |
 | `STVOR_AGENT_NEIGHBORS_OFF` | строка `^(mdns\|lldp\|wifi\|all)(,(mdns\|lldp\|wifi\|all))*$` | пусто | локальный запрет источников соседей (агент ≥ 5.4.0): mdns, lldp, wifi, all через запятую; стоит над политикой портала; пусто — по политике |
@@ -118,8 +118,9 @@ HUP новейшему процессу Teleport с подтверждением
 - `STVOR_AGENT_AUTH_FILE` — закрытый `/dist`: путь к файлу с ключом сборщика `sbk_` (секрет
   сборки, в bisquite — `RUN_COMMAND --mount=type=secret,id=stvor-dist …
   STVOR_AGENT_AUTH_FILE=/run/secrets/stvor-dist`). Ключ уходит только к зеркалу как
-  `Authorization: Bearer` из файла заголовка, в argv и журнал не попадает; файла нет —
-  предупреждение и скачивание без ключа.
+  `Authorization: Bearer` на stdin curl (`-H @-`): ни в argv, ни в журнал, ни в файл на диске
+  машины не попадает (удалённый файл остаётся в свободных блоках диска и в собранном
+  образе); файла нет — предупреждение и скачивание без ключа.
 - Версия и сумма обе пусты — берутся из пина каталога `files/pin.env`
   (`STVOR_AGENT_PIN_VERSION`, `STVOR_AGENT_PIN_SHA256_AMD64`,
   `STVOR_AGENT_PIN_SHA256_ARM64`). Задана одна из двух — отказ: явная пара

@@ -63,7 +63,11 @@ setup(){
     ht_fake chown
     ht_fake lock
     # curl: -o — копия $FAKE/tgz; окружение — в $FAKE/curl.env.
+    # $FAKE/needle — секрет: файлы под корнем с ним во время curl — в $FAKE/curl.secret-files.
     ht_fake curl 'env > "$FAKE/curl.env"; out=""; prev=""
+if [[ -f "$FAKE/needle" ]]; then
+    { grep -rlF --exclude-dir=fake -f "$FAKE/needle" -- "$(dirname "$FAKE")" || true; } >> "$FAKE/curl.secret-files"
+fi
 for a in "$@"; do [[ "$prev" == -o ]] && out="$a"; [[ "$prev" == -H && "$a" == @* ]] && cat "${a#@}" >> "$FAKE/curl.headers"; prev="$a"; done
 printf "%s\n" "$*" >> "$FAKE/curl.argv"
 [[ -f "$FAKE/curl-fails" || ! -f "$FAKE/tgz" ]] && exit 22
@@ -194,13 +198,20 @@ check "токен меток на месте" grep -q "token=$TOKEN" "$ROOT/etc/
 check_not "токен не в окружении curl" grep -q "$TOKEN" "$FAKE/curl.env"
 check_not "окружение curl — своё (без CREAM_*)" grep -q '^CREAM_' "$FAKE/curl.env"
 
-echo "== install: ключ закрытого /dist — файл заголовка, только https =="
+echo "== install: ключ закрытого /dist — на stdin curl, не на диске, только https =="
+# Файл ключа — вызывающего (секрет сборки), вне корня машины; заголовок с ключом не
+# пишется ни в один файл машины: удалённый, он остаётся в свободных блоках флеша и образа.
 KEY=sbk_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_abcde
-setup; printf '%s\n' "$KEY" > "$ROOT/dist.key"
-installed STVOR_AGENT_AUTH_FILE="$ROOT/dist.key"; eq "ключ — 0" 0 "$?"
-check "ключ — Authorization: Bearer файлом" grep -qx "Authorization: Bearer $KEY" "$FAKE/curl.headers"
+setup; printf '%s\n' "$KEY" > "$HT_TMP/dist.key"; printf '%s' "$KEY" > "$FAKE/needle"
+installed STVOR_AGENT_AUTH_FILE="$HT_TMP/dist.key"; eq "ключ — 0" 0 "$?"
+check "ключ — Authorization: Bearer со stdin" grep -qx "Authorization: Bearer $KEY" "$FAKE/curl.headers"
+check "ключ — заголовок со stdin (-H @-)" grep -qF -- " -H @- " "$FAKE/curl.argv"
+check "ключ — файлы под корнем проверены во время curl" test -f "$FAKE/curl.secret-files"
+eq "ключ — во время curl ни одного файла с ключом" "" "$(cat "$FAKE/curl.secret-files" 2>/dev/null)"
+check_not "ключ — после хука ни одного файла с ключом" grep -rqF --exclude-dir=fake -- "$KEY" "$ROOT"
 check_not "ключ — не в argv" grep -qF -- "$KEY" "$FAKE/curl.argv"
-check "ключ — только https, и в редиректе" grep -qF -- "--proto =https --proto-redir =https -H @" "$FAKE/curl.argv"
+check_not "ключ — не в окружении curl" grep -qF -- "$KEY" "$FAKE/curl.env"
+check "ключ — только https, и в редиректе" grep -qF -- "--proto =https --proto-redir =https -H @-" "$FAKE/curl.argv"
 setup; printf '%s\n' "$KEY" > "$ROOT/dist.key"
 ht_hook install STVOR_AGENT_VERSION=4.1.0 STVOR_AGENT_SHA256="$TGZ_SHA" STVOR_AGENT_MIRROR=http://stvor.example.org/dist/teleport STVOR_AGENT_AUTH_FILE="$ROOT/dist.key"
 check "ключ по http — отказ" test "$?" -ne 0

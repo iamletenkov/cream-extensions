@@ -13,9 +13,11 @@
 #   STVOR_AGENT_DEB     absolute path of a local .deb (offline)
 #   STVOR_AGENT_AUTH_FILE  absolute path of a file with the bearer of the mirror
 #       (the key of the builder sbk_ of the portal /dist, a build secret): sent as
-#       `Authorization: Bearer` from a header file (curl -H @file), never in argv;
-#       only to an https STVOR_AGENT_MIRROR, https in the redirect too. No file (a later upgrade without the secret) —
-#       a warning and the download without it.
+#       `Authorization: Bearer` on the stdin of curl (curl -H @-) — never in argv,
+#       never in a file of this machine (a deleted file stays in the free blocks of
+#       the disk and in an image built from it); only to an https
+#       STVOR_AGENT_MIRROR, https in the redirect too. No file (a later upgrade
+#       without the secret) — a warning and the download without it.
 #   default source — the GitHub release of the version
 # The labels token is never an input here: `stvor-agent enable` takes it on
 # stdin. Children (curl, dpkg, stvor-agent) get a minimal environment of their
@@ -134,6 +136,19 @@ sa_curl_retry(){
     fi
 }
 
+# sa_with_bearer <command…>: the command with `Authorization: Bearer` of
+# SA_BEARER on its stdin (for curl -H @-), none — the command as is. A pipe from
+# the printf builtin: no file (not even the temporary file of a here-string, which
+# bash < 5.1 — Ubuntu 20.04 — writes to TMPDIR), no argv of another process.
+# curl reads the header while it parses its options, before any network.
+sa_with_bearer(){
+    if [[ -n "${SA_BEARER:-}" ]]; then
+        printf 'Authorization: Bearer %s\n' "$SA_BEARER" | "$@"
+    else
+        "$@"
+    fi
+}
+
 # sa_fetch <work dir> <arch>: the checked .deb, its path on stdout.
 sa_fetch(){
     local work="$1" arch="$2" file url retry
@@ -146,12 +161,9 @@ sa_fetch(){
         sa_log "скачиваю $url"
         read -r -a retry <<< "$(sa_curl_retry)"
         local auth=()
-        if [[ -n "${SA_BEARER:-}" ]]; then
-            ( umask 077; printf 'Authorization: Bearer %s\n' "$SA_BEARER" > "$work/.auth" ) || return 1
-            auth=(--proto "=https" --proto-redir "=https" -H "@$work/.auth")
-        fi
+        [[ -z "${SA_BEARER:-}" ]] || auth=(--proto "=https" --proto-redir "=https" -H @-)
         # Stalls become retries instead of an endless wait.
-        sa_run curl -fL "${retry[@]}" --retry-delay 5 "${auth[@]}" \
+        sa_with_bearer sa_run curl -fL "${retry[@]}" --retry-delay 5 "${auth[@]}" \
             --connect-timeout 30 --speed-limit 10240 --speed-time 60 \
             -o "$file" "$url" || { sa_log "ОШИБКА: пакет агента не скачался"; return 1; }
     fi
