@@ -1,5 +1,18 @@
 # Changelog
 
+## [5.23.0](https://github.com/iamletenkov/cream-extensions/compare/v5.22.0...v5.23.0) (2026-11-11)
+
+
+### Добавлено
+
+* **stvor-agent:** STVOR_AGENT_DIST и замечания ревью [#126](https://github.com/iamletenkov/cream-extensions/issues/126) (прокси вне argv, curl -q, линт lib/) ([#127](https://github.com/iamletenkov/cream-extensions/issues/127)) ([6a6b64a](https://github.com/iamletenkov/cream-extensions/commit/6a6b64a1ec12f800ed005ddc94422ab0a125d4f3))
+* **stvor-agent:** пин агента 5.6.1 ([#124](https://github.com/iamletenkov/cream-extensions/issues/124)) ([07938b2](https://github.com/iamletenkov/cream-extensions/commit/07938b2f5325729d0c05b6ea3d8417106a24dd69))
+
+
+### Исправлено
+
+* **security:** учётные данные /dist не касаются диска машины ([#126](https://github.com/iamletenkov/cream-extensions/issues/126)) ([116c4f4](https://github.com/iamletenkov/cream-extensions/commit/116c4f428e90728d3707db7de2657cabdffb4f47))
+
 ## [5.22.0](https://github.com/iamletenkov/cream-extensions/compare/v5.21.1...v5.22.0) (2026-11-09)
 
 
