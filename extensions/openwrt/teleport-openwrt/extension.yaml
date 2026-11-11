@@ -18,7 +18,9 @@
 # configure нет: на загрузке узел поднимает procd (START=95), не cream (А1–А6 не про него).
 schema: cream/v1
 name: teleport-openwrt
-version: 1.5.5
+version: 1.5.6
+# 1.5.6: прокси раздачи портала и токен доступа — в конфиге curl на stdin (-K -), не
+#        --proxy в argv; curl с -q первым (как teleport 4.6.6).
 # 1.5.5: токен доступа агента к раздаче портала — на stdin curl (-H @-), не файлом
 #        заголовка в /opt/teleport на флеше (как teleport 4.6.5).
 # 1.5.4: поведение то же; тест — повтор (join-retry) после нового join берёт имя токена и

@@ -87,6 +87,63 @@ v="$(variant header-stdin)"; printf 'ok_get(){ printf "%%s\\n" "$1" | curl -fL -
 out="$("$LINT" "$v" 2>&1)"; rc=$?
 eq "header-stdin — код 0" 0 "$rc"
 [[ "$rc" == 0 ]] || echo "$out" >&2
+# The joined form -H@file: curl takes it as well.
+v="$(variant header-file-joined)"; printf 'ok_get(){ curl -fL -H@/var/tmp/h -o /dev/null https://example.org/x; }\n' >> "$v/files/helper.sh"
+expect header-file-joined header-file "files/helper.sh:4"
+v="$(variant header-file-joined-q)"; printf 'ok_get(){ curl -fL -H"@$1/.auth" https://example.org/x; }\n' >> "$v/files/helper.sh"
+expect header-file-joined-q header-file "files/helper.sh:4"
+# -H@- and -H @- before a line continuation are stdin: not a finding.
+v="$(variant header-stdin-forms)"
+printf 'ok_get(){ printf "%%s\\n" "$1" | curl -fL -H@- -o /dev/null https://example.org/x; }\n' >> "$v/files/helper.sh"
+printf 'ok_put(){ printf "%%s\\n" "$1" | curl -fL -H @-\\\n    -o /dev/null https://example.org/x; }\n' >> "$v/files/helper.sh"
+out="$("$LINT" "$v" 2>&1)"; rc=$?
+eq "header-stdin-forms — код 0" 0 "$rc"
+[[ "$rc" == 0 ]] || echo "$out" >&2
+# The shared core lib/ (LINT_LIB; by default <repo>/lib when no directory is
+# given): the rule header-file reads its *.sh too — the leak of 2026-11 was there.
+mkdir -p "$TMP/lib/tests"
+printf '#!/usr/bin/env bash\nget(){ curl -fL -H "@$WORK/.auth" https://example.org/x; }\n' > "$TMP/lib/core.sh"
+out="$(LINT_LIB="$TMP/lib" "$LINT" "$FX" 2>&1)"; rc=$?
+eq "header-file в lib — код 1" 1 "$rc"
+has "header-file в lib — место" "lib/core.sh:2: [header-file]" "$out"
+printf '#!/usr/bin/env bash\nget(){ printf x | curl -fL -H @- https://example.org/x; }\n' > "$TMP/lib/core.sh"
+printf 'curl -H @/tmp/fixture https://example.org/x\n' > "$TMP/lib/tests/test-core.sh"
+out="$(LINT_LIB="$TMP/lib" "$LINT" "$FX" 2>&1)"; rc=$?
+eq "lib чистая, lib/tests не читается — код 0" 0 "$rc"
+[[ "$rc" == 0 ]] || echo "$out" >&2
+# A quote after @ is still a file: -H @"$f", -H@"$f", --header @'$f'.
+v="$(variant header-file-at-quote)"; printf 'ok_get(){ curl -fL -H @"$1" https://example.org/x; }\n' >> "$v/files/helper.sh"
+expect header-file-at-quote header-file "files/helper.sh:4"
+v="$(variant header-file-joined-at-quote)"; printf 'ok_get(){ curl -fL -H@"$1" https://example.org/x; }\n' >> "$v/files/helper.sh"
+expect header-file-joined-at-quote header-file "files/helper.sh:4"
+v="$(variant header-file-long-at-quote)"; printf "auth=(--header @'/var/tmp/h')\n" >> "$v/hooks/install"
+expect header-file-long-at-quote header-file "hooks/install:"
+v="$(variant header-stdin-at-quote)"; printf 'ok_get(){ printf x | curl -fL -H @"-" https://example.org/x; }\n' >> "$v/files/helper.sh"
+out="$("$LINT" "$v" 2>&1)"; rc=$?
+eq "header-stdin-at-quote (-H @\"-\") — код 0" 0 "$rc"
+[[ "$rc" == 0 ]] || echo "$out" >&2
+
+# A curl config from a file (-K <file>, --config <file>) carries the header and the
+# proxy password the same way: on a line of curl or in an array of its flags; -K -
+# (stdin) is fine. --config of another tool (teleport start --config …) is not curl.
+v="$(variant curl-config-file)"; printf 'ok_get(){ curl -q -fL -K "$1/curlrc" https://example.org/x; }\n' >> "$v/files/helper.sh"
+expect curl-config-file curl-config-file "files/helper.sh:4"
+v="$(variant curl-config-long)"; printf 'ok_get(){ curl -q --config /var/tmp/c https://example.org/x; }\n' >> "$v/files/helper.sh"
+expect curl-config-long curl-config-file "files/helper.sh:4"
+v="$(variant curl-config-array)"; printf 'flags=(--proto =https -K"$work/cfg")\n' >> "$v/hooks/install"
+expect curl-config-array curl-config-file "hooks/install:"
+v="$(variant curl-config-stdin)"
+printf 'ok_get(){ printf x | curl -q -fL -K - https://example.org/x; }\n' >> "$v/files/helper.sh"
+printf 'ok_put(){ printf x | curl -q --config - https://example.org/x; }\n' >> "$v/files/helper.sh"
+printf 'flags+=(-K -)\n' >> "$v/hooks/install"
+printf 'ok_run(){ teleport start --config /etc/teleport.yaml; openssl enc -K "$1" -nopad; }\n' >> "$v/files/helper.sh"
+out="$("$LINT" "$v" 2>&1)"; rc=$?
+eq "curl-config-stdin и чужой --config — код 0" 0 "$rc"
+[[ "$rc" == 0 ]] || echo "$out" >&2
+mkdir -p "$TMP/lib2"; printf '#!/usr/bin/env bash\nDIST_FLAGS+=(-K "$work/cfg")\n' > "$TMP/lib2/core.sh"
+out="$(LINT_LIB="$TMP/lib2" "$LINT" "$FX" 2>&1)"; rc=$?
+eq "curl-config-file в lib — код 1" 1 "$rc"
+has "curl-config-file в lib — место" "lib/core.sh:2: [curl-config-file]" "$out"
 
 # CREAM_* is the hook's environment: not assigned, no unknown names.
 v="$(variant cream-assign)"; printf 'export CREAM_ROOT=/tmp/x\n' >> "$v/hooks/remove"

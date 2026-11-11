@@ -57,6 +57,34 @@ setup(){
     # stream, 92); else /webapi/find by $FAKE/net (up — a proxy). -H @<file> — the
     # header into $FAKE/curl.headers (@- — from stdin); $FAKE/needle — a secret: the
     # files under the root holding it while curl runs go to $FAKE/curl.secret-files.
+    # -K - — the config on stdin (curlcfg: curl.config, curl.headers, curl.proxy).
+    cat > "$FAKE/curlcfg" <<'EOF'
+#!/usr/bin/env bash
+# curl -K -: the config on stdin into $FAKE/curl.config; its header and proxy
+# values, unquoted (\c -> c), into $FAKE/curl.headers and $FAKE/curl.proxy. A quote
+# not escaped inside a value — curl would end the string there: the line goes to
+# $FAKE/curl.config-bad.
+unq(){
+    local s="$1" o="" i c
+    for (( i = 0; i < ${#s}; i++ )); do
+        c="${s:i:1}"
+        if [[ "$c" == '\' ]]; then
+            i=$((i + 1)); c="${s:i:1}"
+        elif [[ "$c" == '"' ]]; then
+            printf '%s\n' "$s" >> "$FAKE/curl.config-bad"
+        fi
+        o+="$c"
+    done
+    printf '%s\n' "$o"
+}
+while IFS= read -r l || [[ -n "$l" ]]; do
+    printf '%s\n' "$l" >> "$FAKE/curl.config"
+    case "$l" in
+        'header = "'*'"') v="${l#'header = "'}"; unq "${v%'"'}" >> "$FAKE/curl.headers" ;;
+        'proxy = "'*'"') v="${l#'proxy = "'}"; unq "${v%'"'}" >> "$FAKE/curl.proxy" ;;
+    esac
+done
+EOF
     ht_fake curl '[[ "${1:-}" == --version ]] && { echo "curl 8.12.1 (x86_64-openwrt-linux-musl)"; exit 0; }
 env | grep -iE "^(https?|all|no)_proxy=" >> "$FAKE/curl.env"
 if [[ -f "$FAKE/needle" ]]; then
@@ -66,6 +94,7 @@ out=""; prev=""
 for a in "$@"; do
     [[ "$prev" == -o ]] && out="$a"
     [[ "$prev" == -H && "$a" == @* ]] && cat -- "${a#@}" >> "$FAKE/curl.headers"
+    [[ "$prev" == -K && "$a" == - ]] && FAKE="$FAKE" bash "$FAKE/curlcfg"
     prev="$a"
 done
 if [[ -n "$out" ]]; then
@@ -398,7 +427,7 @@ check_not "dist — прокси окружения curl не видит" test -
 eq "dist — три вызова curl (два обрыва)" 3 "$(grep -c . <<< "$dl")"
 check "dist — URL <база>/teleport/<тег>/<набор>" \
     grep -qE " https://stvor\.example\.org/dist/teleport/v18\.10\.0-stvor\.5/teleport-v18\.10\.0-openwrt-amd64-bin\.tar\.gz$" <<< "$dl"
-check "dist — по редиректу, только https" bash -c '! grep -v -- "^-fL .*--proto =https --proto-redir =https" <<< "$1"' _ "$dl"
+check "dist — curl -q первым (без ~/.curlrc), по редиректу, только https" bash -c '! grep -v -- "^-q -fL .*--proto =https --proto-redir =https" <<< "$1"' _ "$dl"
 check "dist — повтор на любой ошибке" bash -c '! grep -v -- "--retry 5 --retry-all-errors" <<< "$1"' _ "$dl"
 check "dist — докачка частичного файла" bash -c '! grep -v -- " -C - -o " <<< "$1"' _ "$dl"
 check "dist — набор из частей на месте" grep -qx '# build stvor.5' "$ROOT/opt/teleport/bin/teleport"
@@ -417,9 +446,25 @@ make_set 18.10.0 stvor.5
 agent_files http://proxy.lan:3128
 ht_hook install TELEPORT_SHA256="$SET_SHA" TELEPORT_DIST="$DIST" TELEPORT_TAG="$TAG" HTTPS_PROXY=http://env-proxy:3128
 eq "dist, proxy= — 0" 0 "$?"
-check "dist, proxy= — --proxy из token" grep -qF -- "--proxy http://proxy.lan:3128 " "$FAKE/curl.argv"
+eq "dist, proxy= — прокси из token в конфиге stdin" "http://proxy.lan:3128" "$(cat "$FAKE/curl.proxy" 2>/dev/null)"
+check "dist, proxy= — конфиг со stdin (-K -)" grep -qF -- " -K - " "$FAKE/curl.argv"
+check_not "dist, proxy= — прокси не в argv" grep -qF -- "proxy.lan" "$FAKE/curl.argv"
 check_not "dist, proxy= — без --noproxy" grep -qF -- "--noproxy" "$FAKE/curl.argv"
 check_not "dist, proxy= — прокси окружения curl не видит" test -s "$FAKE/curl.env"
+# The user and password of the proxy — on the stdin of curl in its config (-K -), never
+# in the argv nor in a file under /opt/teleport; a quote and a backslash are escaped.
+setup
+make_set 18.10.0 stvor.5
+PX='http://us"er:pa\ss@proxy.lan:3128'
+agent_files "$PX"
+printf '%s' 'pa\ss' > "$FAKE/needle"
+ht_hook install TELEPORT_SHA256="$SET_SHA" TELEPORT_DIST="$DIST" TELEPORT_TAG="$TAG"; eq "dist, прокси с паролем — 0" 0 "$?"
+eq "dist, прокси с паролем — адрес целиком в конфиге stdin" "$PX" "$(cat "$FAKE/curl.proxy" 2>/dev/null)"
+check_not "dist, прокси с паролем — кавычка в значении экранирована" test -s "$FAKE/curl.config-bad"
+check_not "dist, прокси с паролем — пароля нет в argv" grep -qF -- 'pa\ss' "$FAKE/curl.argv"
+check_not "dist, прокси с паролем — пароля нет в журнале" grep -qF -- 'pa\ss' "$ROOT/out"
+eq "dist, прокси с паролем — во время curl пароль только в конфиге агента" \
+    "$ROOT/etc/stvor-agent/token" "$(sort -u "$FAKE/curl.secret-files" 2>/dev/null)"
 # The access token of the agent (/var/run/stvor-agent on OpenWrt, tmpfs) — on the
 # stdin of curl (-H @-): never a header file under /opt/teleport (the flash keeps a
 # deleted file in its free blocks), nor the argv of curl.
@@ -431,7 +476,8 @@ printf '%s\n' "$TOK" > "$ROOT/var/run/stvor-agent/access-token"
 printf '%s' "$TOK" > "$FAKE/needle"
 ht_hook install TELEPORT_SHA256="$SET_SHA" TELEPORT_DIST="$DIST" TELEPORT_TAG="$TAG"; eq "dist, токен агента — 0" 0 "$?"
 dl="$(grep -- ' -o ' "$FAKE/curl.argv")"
-check "dist, токен агента — заголовок со stdin (-H @-)" bash -c '! grep -vE -- "-H @- " <<< "$1"' _ "$dl"
+check "dist, токен агента — заголовок в конфиге со stdin (-K -)" bash -c '! grep -vF -- " -K - " <<< "$1"' _ "$dl"
+check_not "dist, токен агента — заголовок не из файла" grep -qF -- "-H @" <<< "$dl"
 check "dist, токен агента — Authorization: Bearer" grep -qx "Authorization: Bearer $TOK" "$FAKE/curl.headers"
 check "dist, токен агента — файлы под корнем проверены во время curl" test -s "$FAKE/curl.secret-files"
 eq "dist, токен агента — во время curl токен только в файле агента" \

@@ -141,7 +141,7 @@ hook(){
         CREAM_EXT_DIR="$ROOT/ext" CREAM_ETC_DIR="$ROOT/etc/cream/stvor-agent" \
         CREAM_STATE_DIR="$ROOT/var/lib/cream/ext/stvor-agent" CREAM_ROOT="$ROOT" \
         CREAM_CONFIG_FILE="$ROOT/etc/cream/stvor-agent/config" CREAM_SECRETS_FILE="$ROOT/etc/cream/stvor-agent/secrets" \
-        STVOR_AGENT_VERSION= STVOR_AGENT_SHA256= STVOR_AGENT_MIRROR= STVOR_AGENT_DEB= STVOR_AGENT_AUTH_FILE= \
+        STVOR_AGENT_VERSION= STVOR_AGENT_SHA256= STVOR_AGENT_MIRROR= STVOR_AGENT_DIST= STVOR_AGENT_DEB= STVOR_AGENT_AUTH_FILE= \
         STVOR_AGENT_INTERVAL=60 STVOR_AGENT_LOG_LEVEL=info \
         "$@" "$ROOT/ext/hooks/$name"
 }
@@ -199,7 +199,7 @@ check_not "обёртка не маскирует юниты и не завод�
 for h in install upgrade remove apply; do
     check "hooks/$h исполняемый" test -x "$EXT/hooks/$h"
 done
-eq "ключи scope: install" "['STVOR_AGENT_AUTH_FILE', 'STVOR_AGENT_DEB', 'STVOR_AGENT_MIRROR', 'STVOR_AGENT_SHA256', 'STVOR_AGENT_VERSION']" \
+eq "ключи scope: install" "['STVOR_AGENT_AUTH_FILE', 'STVOR_AGENT_DEB', 'STVOR_AGENT_DIST', 'STVOR_AGENT_MIRROR', 'STVOR_AGENT_SHA256', 'STVOR_AGENT_VERSION']" \
     "$(manifest 'sorted(k for k, d in m["config"]["keys"].items() if d.get("scope") == "install")')"
 eq "ключи scope: config" "['STVOR_AGENT_INTERVAL', 'STVOR_AGENT_LOG_LEVEL', 'STVOR_AGENT_NEIGHBORS_OFF']" \
     "$(manifest 'sorted(k for k, d in m["config"]["keys"].items() if d.get("scope", "config") == "config")')"
@@ -273,8 +273,8 @@ new_root
 hook install STVOR_AGENT_MIRROR="$MIRROR/" >/dev/null 2>&1; rc=$?
 eq "зеркало — код 0" 0 "$rc"
 eq "зеркало — файл плоско в базе" "curl $MIRROR/stvor-agent_4.0.0_amd64.deb" "$(net)"
-check "зеркало — повтор на любой ошибке (обрыв HTTP/2, 429)" \
-    grep -q -- '^-fL --retry 5 --retry-all-errors --retry-delay 5 ' "$FAKE/curl.argv"
+check "зеркало — curl -q первым (без ~/.curlrc), повтор на любой ошибке (обрыв HTTP/2, 429)" \
+    grep -q -- '^-q -fL --retry 5 --retry-all-errors --retry-delay 5 ' "$FAKE/curl.argv"
 # The key of the builder (sbk_ of the portal) from a build secret: the bearer of the
 # download, on the stdin of curl (-H @-) — never in a file on the disk of the machine
 # (a deleted file stays in its free blocks and in the image), nor in the argv of curl,
@@ -284,6 +284,7 @@ new_root; printf '%s\n' "$KEY" > "$TMP/dist.key"; printf '%s' "$KEY" > "$FAKE/ne
 out="$(hook install STVOR_AGENT_MIRROR="$MIRROR" STVOR_AGENT_AUTH_FILE="$TMP/dist.key" 2>&1)"; rc=$?
 eq "ключ /dist — код 0" 0 "$rc"
 check "ключ /dist — заголовок со stdin (-H @-)" grep -qF -- ' -H @- ' "$FAKE/curl.argv"
+check "ключ /dist — curl -q первым (без ~/.curlrc)" grep -q -- '^-q -fL ' "$FAKE/curl.argv"
 eq "ключ /dist — Authorization: Bearer" "Authorization: Bearer $KEY" "$(cat "$FAKE/curl.headers" 2>/dev/null)"
 check "ключ /dist — файлы под корнем проверены во время curl" test -f "$FAKE/curl.secret-files"
 eq "ключ /dist — во время curl ни одного файла с ключом" "" "$(cat "$FAKE/curl.secret-files" 2>/dev/null)"
@@ -314,11 +315,57 @@ check_not "ключ /dist не того вида — значение не в ж
 new_root; printf '%s\n' "$KEY" > "$ROOT/tmp/dist.key"
 hook install STVOR_AGENT_AUTH_FILE="$ROOT/tmp/dist.key" >/dev/null 2>&1
 check_not "ключ /dist без зеркала — GitHub его не получает" test -s "$FAKE/curl.headers"
+# STVOR_AGENT_DIST — the distribution of the portal: <DIST>/stvor-agent/v<version>/<file>,
+# the version of the pair or of the catalog pin — a raise of the pin needs no new address.
+DIST=https://portal.example.org/dist
+new_root
+hook install STVOR_AGENT_DIST="$DIST/" >/dev/null 2>&1; rc=$?
+eq "раздача — код 0" 0 "$rc"
+eq "раздача — путь по версии пина" "curl $DIST/stvor-agent/v4.0.0/stvor-agent_4.0.0_amd64.deb" "$(net)"
+eq "раздача — dpkg -i" "dpkg -i stvor-agent_4.0.0_amd64.deb $SUM_AMD64" "$(installed)"
+check "раздача — только https, и в редиректе" grep -qF -- '--proto =https --proto-redir =https' "$FAKE/curl.argv"
+new_root; echo arm64 > "$FAKE/arch"
+hook install STVOR_AGENT_DIST="$DIST" >/dev/null 2>&1
+eq "раздача arm64 — свой файл" "curl $DIST/stvor-agent/v4.0.0/stvor-agent_4.0.0_arm64.deb" "$(net)"
+new_root
+echo "fake stvor-agent 4.1.0" > "$FAKE/deb-amd64"
+hook install STVOR_AGENT_DIST="$DIST" STVOR_AGENT_VERSION=4.1.0 \
+    STVOR_AGENT_SHA256="$(sha256sum < "$FAKE/deb-amd64" | cut -d' ' -f1)" >/dev/null 2>&1; rc=$?
+eq "раздача, явная версия — код 0" 0 "$rc"
+eq "раздача, явная версия — её каталог" "curl $DIST/stvor-agent/v4.1.0/stvor-agent_4.1.0_amd64.deb" "$(net)"
+# The key of the builder to the distribution — the stdin of curl, as to a mirror.
+new_root; printf '%s\n' "$KEY" > "$TMP/dist.key"; printf '%s' "$KEY" > "$FAKE/needle"
+out="$(hook install STVOR_AGENT_DIST="$DIST" STVOR_AGENT_AUTH_FILE="$TMP/dist.key" 2>&1)"; rc=$?
+eq "раздача с ключом — код 0" 0 "$rc"
+eq "раздача с ключом — Authorization: Bearer" "Authorization: Bearer $KEY" "$(cat "$FAKE/curl.headers" 2>/dev/null)"
+check "раздача с ключом — -H @-" grep -qF -- ' -H @- ' "$FAKE/curl.argv"
+eq "раздача с ключом — ни одного файла с ключом во время curl" "" "$(cat "$FAKE/curl.secret-files" 2>/dev/null)"
+check_not "раздача с ключом — не в argv" grep -qF -- "$KEY" "$FAKE/curl.argv"
+check_not "раздача с ключом — не в журнале" grep -qF -- "$KEY" <<< "$out"
+# One source: the distribution with a mirror or a local .deb — a refusal before any network.
+new_root
+out="$(hook install STVOR_AGENT_DIST="$DIST" STVOR_AGENT_MIRROR="$MIRROR" 2>&1)"; rc=$?
+check "раздача и зеркало — отказ" test "$rc" -ne 0
+check "раздача и зеркало — причина" grep -q 'взаимоисключ' <<< "$out"
+eq "раздача и зеркало — без сети" "" "$(net)"
+new_root; cp "$FAKE/deb-amd64" "$TMP/local.deb"
+out="$(hook install STVOR_AGENT_DIST="$DIST" STVOR_AGENT_DEB="$TMP/local.deb" 2>&1)"; rc=$?
+check "раздача и .deb — отказ" test "$rc" -ne 0
+check "раздача и .deb — причина" grep -q 'взаимоисключ' <<< "$out"
+eq "раздача и .deb — dpkg не звался" "" "$(installed)"
+# https only (the key goes there): http or a stray character — a refusal before any network.
+for bad in http://portal.example.org/dist 'https://portal.example.org/dist?x=1' 'https://u@portal.example.org/dist'; do
+    new_root
+    out="$(hook install STVOR_AGENT_DIST="$bad" 2>&1)"; rc=$?
+    check "раздача $bad — отказ" test "$rc" -ne 0
+    eq "раздача $bad — без сети" "" "$(net)"
+    check "раздача $bad — причина" grep -qF 'STVOR_AGENT_DIST' <<< "$out"
+done
 # curl 7.68 (Ubuntu 20.04, Jetson Nano) does not know --retry-all-errors.
 new_root; echo 7.68.0 > "$FAKE/curl.version"
 hook install >/dev/null 2>&1; rc=$?
 eq "curl 7.68 — код 0" 0 "$rc"
-check "curl 7.68 — --retry 5 без --retry-all-errors" grep -q -- '^-fL --retry 5 --retry-delay 5 ' "$FAKE/curl.argv"
+check "curl 7.68 — --retry 5 без --retry-all-errors" grep -q -- '^-q -fL --retry 5 --retry-delay 5 ' "$FAKE/curl.argv"
 check_not "curl 7.68 — флага нет" grep -q -- '--retry-all-errors' "$FAKE/curl.argv"
 
 new_root
