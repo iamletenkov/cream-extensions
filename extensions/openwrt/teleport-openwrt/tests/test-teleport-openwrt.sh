@@ -61,8 +61,22 @@ setup(){
     cat > "$FAKE/curlcfg" <<'EOF'
 #!/usr/bin/env bash
 # curl -K -: the config on stdin into $FAKE/curl.config; its header and proxy
-# values, unquoted (\c -> c), into $FAKE/curl.headers and $FAKE/curl.proxy.
-unq(){ local s="$1" o="" i c; for (( i = 0; i < ${#s}; i++ )); do c="${s:i:1}"; if [[ "$c" == '\' ]]; then i=$((i + 1)); c="${s:i:1}"; fi; o+="$c"; done; printf '%s\n' "$o"; }
+# values, unquoted (\c -> c), into $FAKE/curl.headers and $FAKE/curl.proxy. A quote
+# not escaped inside a value — curl would end the string there: the line goes to
+# $FAKE/curl.config-bad.
+unq(){
+    local s="$1" o="" i c
+    for (( i = 0; i < ${#s}; i++ )); do
+        c="${s:i:1}"
+        if [[ "$c" == '\' ]]; then
+            i=$((i + 1)); c="${s:i:1}"
+        elif [[ "$c" == '"' ]]; then
+            printf '%s\n' "$s" >> "$FAKE/curl.config-bad"
+        fi
+        o+="$c"
+    done
+    printf '%s\n' "$o"
+}
 while IFS= read -r l || [[ -n "$l" ]]; do
     printf '%s\n' "$l" >> "$FAKE/curl.config"
     case "$l" in
@@ -446,6 +460,7 @@ agent_files "$PX"
 printf '%s' 'pa\ss' > "$FAKE/needle"
 ht_hook install TELEPORT_SHA256="$SET_SHA" TELEPORT_DIST="$DIST" TELEPORT_TAG="$TAG"; eq "dist, прокси с паролем — 0" 0 "$?"
 eq "dist, прокси с паролем — адрес целиком в конфиге stdin" "$PX" "$(cat "$FAKE/curl.proxy" 2>/dev/null)"
+check_not "dist, прокси с паролем — кавычка в значении экранирована" test -s "$FAKE/curl.config-bad"
 check_not "dist, прокси с паролем — пароля нет в argv" grep -qF -- 'pa\ss' "$FAKE/curl.argv"
 check_not "dist, прокси с паролем — пароля нет в журнале" grep -qF -- 'pa\ss' "$ROOT/out"
 eq "dist, прокси с паролем — во время curl пароль только в конфиге агента" \

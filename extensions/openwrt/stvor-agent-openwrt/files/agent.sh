@@ -155,7 +155,8 @@ sa_select(){
     SA_SHA256="$s"
 }
 
-# sa_check_source: STVOR_AGENT_MIRROR and STVOR_AGENT_TARBALL, before any network.
+# sa_check_source: STVOR_AGENT_DIST, STVOR_AGENT_MIRROR and STVOR_AGENT_TARBALL, before
+# any network.
 sa_check_source(){
     local mirror="${STVOR_AGENT_MIRROR:-}" tarball="${STVOR_AGENT_TARBALL:-}" dist="${STVOR_AGENT_DIST:-}" src
     if [[ -n "$tarball" && ( -n "$mirror" || -n "$dist" ) ]]; then
