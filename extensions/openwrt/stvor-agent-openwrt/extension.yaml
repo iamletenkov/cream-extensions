@@ -27,7 +27,9 @@
 #             machine-id, state, tokens, domain, last-good.json — Р4 revised 2026-10-23).
 schema: cream/v1
 name: stvor-agent-openwrt
-version: 1.6.3
+version: 1.7.0
+# 1.7.0: ключ STVOR_AGENT_DIST — как у debian/stvor-agent 4.6.0: файл
+#        <DIST>/stvor-agent/v<версия>/<tar.gz>; STVOR_AGENT_MIRROR устарел.
 # 1.6.3: ключ /dist — заголовок Authorization на stdin curl (-H @-), не файлом в рабочем
 #        каталоге (как debian/stvor-agent 4.5.5).
 # 1.6.2: пин tar.gz stvor-agent 5.6.1.
@@ -109,19 +111,25 @@ config:
       default: ""
       empty: true
       scope: install
-      description: "база зеркала, файл плоско <база>/stvor-agent_<версия>_linux_<arch>.tar.gz; пусто — релиз GitHub"
+      description: "устарел (адрес с версией ломается на подъёме пина) — STVOR_AGENT_DIST; база зеркала, файл плоско <база>/stvor-agent_<версия>_linux_<arch>.tar.gz; пусто — релиз GitHub"
+    STVOR_AGENT_DIST:
+      type: "re:^https://[A-Za-z0-9.:/-]+$"
+      default: ""
+      empty: true
+      scope: install
+      description: "раздача портала Stvor https://<домен>/dist: файл <DIST>/stvor-agent/v<версия>/stvor-agent_<версия>_linux_<arch>.tar.gz, версия — пары или пина; взаимоисключим с STVOR_AGENT_MIRROR и STVOR_AGENT_TARBALL"
     STVOR_AGENT_TARBALL:
       type: path
       default: ""
       empty: true
       scope: install
-      description: "локальный tar.gz (офлайн, абсолютный путь); взаимоисключим с STVOR_AGENT_MIRROR"
+      description: "локальный tar.gz (офлайн, абсолютный путь); взаимоисключим с STVOR_AGENT_DIST и STVOR_AGENT_MIRROR"
     STVOR_AGENT_AUTH_FILE:
       type: path
       default: ""
       empty: true
       scope: install
-      description: "файл с ключом зеркала (sbk_ сборщика для закрытого /dist портала, секрет сборки): Authorization: Bearer только к https STVOR_AGENT_MIRROR, на stdin curl — не в argv и не на диске"
+      description: "файл с ключом зеркала (sbk_ сборщика для закрытого /dist портала, секрет сборки): Authorization: Bearer только к STVOR_AGENT_DIST или https STVOR_AGENT_MIRROR, на stdin curl — не в argv и не на диске"
     STVOR_AGENT_INTERVAL:
       type: "re:^([6-9][0-9]|[1-5][0-9]{2}|600)$"
       default: "60"

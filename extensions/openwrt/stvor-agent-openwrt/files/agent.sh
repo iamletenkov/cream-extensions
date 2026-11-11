@@ -23,11 +23,16 @@
 #   STVOR_AGENT_VERSION + STVOR_AGENT_SHA256  explicit version and sha256 of
 #       the tar.gz of this machine's architecture; both or neither — neither
 #       means the catalog pin files/pin.env
-#   STVOR_AGENT_MIRROR   base URL, the file lies flat: <base>/<tar.gz name>
+#   STVOR_AGENT_DIST     the distribution of the Stvor portal, https://<host>/dist:
+#       the file is <DIST>/stvor-agent/v<version>/<tar.gz name>, the version of the
+#       pair or of the catalog pin — a raise of the pin needs no new address
+#   STVOR_AGENT_MIRROR   deprecated: base URL, the file lies flat: <base>/<tar.gz name>
+#       (an address with the version in it breaks on every raise of the pin)
 #   STVOR_AGENT_AUTH_FILE  absolute path of a file with the bearer of the mirror (sbk_
 #       of the portal /dist): on the stdin of curl (curl -H @-), https only, never in
 #       argv, never in a file of this machine (the flash keeps a deleted file)
-#   STVOR_AGENT_TARBALL  absolute path of a local tar.gz (offline)
+#   STVOR_AGENT_TARBALL  absolute path of a local tar.gz (offline); DIST, MIRROR and
+#       TARBALL exclude each other
 #   default source — the GitHub release of the version
 # The labels token is never an input here: `stvor-agent enable` takes it on
 # stdin. Children (curl, tar, stvor-agent) get a minimal environment of their
@@ -53,6 +58,8 @@ RE_SA_VERSION='^[0-9]+\.[0-9]+\.[0-9]+$'
 RE_SA_SHA256='^[0-9a-f]{64}$'
 RE_SA_URL='^https?://[A-Za-z0-9._~:/%+-]+$'
 RE_SA_BEARER='^[A-Za-z0-9._~+/=-]{16,512}$'
+# STVOR_AGENT_DIST: https only (the key goes there), no userinfo, query or fragment.
+RE_SA_DIST='^https://[A-Za-z0-9.:/-]+$'
 SA_SERVICES=(stvor-agent stvor-agent-telemetry)
 # The applier: not in SA_SERVICES — never enabled or restarted by this extension.
 SA_APPLY=stvor-agent-apply
@@ -87,9 +94,11 @@ sa_log(){ >&2 echo "stvor-agent: $*"; }
 sa_die(){ >&2 echo "stvor-agent: ОШИБКА: $*"; exit 1; }
 
 sa_tarball_name(){ echo "stvor-agent_$1_linux_$2.tar.gz"; }
-# sa_url <version> <arch> <mirror>
+# sa_url <version> <arch> <mirror> [<dist>]
 sa_url(){
-    if [[ -n "$3" ]]; then
+    if [[ -n "${4:-}" ]]; then
+        echo "${4%/}/stvor-agent/v$1/$(sa_tarball_name "$1" "$2")"
+    elif [[ -n "$3" ]]; then
         echo "${3%/}/$(sa_tarball_name "$1" "$2")"
     else
         echo "$SA_RELEASES/v$1/$(sa_tarball_name "$1" "$2")"
@@ -148,19 +157,26 @@ sa_select(){
 
 # sa_check_source: STVOR_AGENT_MIRROR and STVOR_AGENT_TARBALL, before any network.
 sa_check_source(){
-    local mirror="${STVOR_AGENT_MIRROR:-}" tarball="${STVOR_AGENT_TARBALL:-}"
-    if [[ -n "$mirror" && -n "$tarball" ]]; then
-        sa_die "STVOR_AGENT_MIRROR и STVOR_AGENT_TARBALL взаимоисключающие — задайте один"
+    local mirror="${STVOR_AGENT_MIRROR:-}" tarball="${STVOR_AGENT_TARBALL:-}" dist="${STVOR_AGENT_DIST:-}" src
+    if [[ -n "$tarball" && ( -n "$mirror" || -n "$dist" ) ]]; then
+        sa_die "STVOR_AGENT_TARBALL взаимоисключающий с STVOR_AGENT_DIST и STVOR_AGENT_MIRROR — задайте один"
     fi
     [[ -z "$mirror" || "$mirror" =~ $RE_SA_URL ]] || sa_die "STVOR_AGENT_MIRROR='$mirror': ожидали http(s) URL"
+    if [[ -n "$dist" ]]; then
+        [[ -z "$mirror" ]] || sa_die "STVOR_AGENT_DIST и STVOR_AGENT_MIRROR взаимоисключающие — задайте один (MIRROR устарел)"
+        [[ "$dist" =~ $RE_SA_DIST ]] || sa_die "STVOR_AGENT_DIST='$dist': ожидали https://<домен>/dist"
+    elif [[ -n "$mirror" ]]; then
+        sa_log "STVOR_AGENT_MIRROR устарел: адрес с версией ломается на подъёме пина — задайте STVOR_AGENT_DIST=https://<домен>/dist"
+    fi
+    src="${dist:-$mirror}"
     SA_BEARER=""
-    if [[ -n "$mirror" && -n "${STVOR_AGENT_AUTH_FILE:-}" ]]; then
+    if [[ -n "$src" && -n "${STVOR_AGENT_AUTH_FILE:-}" ]]; then
         if [[ -s "$STVOR_AGENT_AUTH_FILE" ]]; then
             IFS= read -r SA_BEARER < "$STVOR_AGENT_AUTH_FILE" || [[ -n "$SA_BEARER" ]] || SA_BEARER=""
             SA_BEARER="${SA_BEARER%$'\r'}"
             [[ "$SA_BEARER" =~ $RE_SA_BEARER ]] \
                 || { SA_BEARER=""; sa_die "STVOR_AGENT_AUTH_FILE: в файле не ключ (одна строка, base64url/токен)"; }
-            [[ "$mirror" == https://* ]] || sa_die "STVOR_AGENT_AUTH_FILE: ключ — только https, а зеркало $mirror"
+            [[ "$src" == https://* ]] || sa_die "STVOR_AGENT_AUTH_FILE: ключ — только https, а зеркало $src"
         else
             sa_log "ВНИМАНИЕ: STVOR_AGENT_AUTH_FILE=$STVOR_AGENT_AUTH_FILE — файла нет, качаю без ключа"
         fi
@@ -206,13 +222,17 @@ sa_fetch(){
         cp -- "$STVOR_AGENT_TARBALL" "$file" || return 1
     else
         command -v curl >/dev/null 2>&1 || { sa_log "ОШИБКА: нет curl — поставьте его (apk add curl) или задайте STVOR_AGENT_TARBALL"; return 1; }
-        url="$(sa_url "$SA_VERSION" "$arch" "${STVOR_AGENT_MIRROR:-}")"
+        url="$(sa_url "$SA_VERSION" "$arch" "${STVOR_AGENT_MIRROR:-}" "${STVOR_AGENT_DIST:-}")"
         sa_log "скачиваю $url"
         # Stalls become retries instead of an endless wait; --retry-all-errors
         # (curl 8 of OpenWrt 25.12) retries a stream cut mid-way — HTTP/2 error
         # 92 on LTE — too, and 429 waits for its Retry-After.
         local auth=()
-        [[ -z "${SA_BEARER:-}" ]] || auth=(--proto "=https" --proto-redir "=https" -H @-)
+        # The distribution, and any source with the key: https only, the redirect too.
+        if [[ -n "${SA_BEARER:-}" || -n "${STVOR_AGENT_DIST:-}" ]]; then
+            auth=(--proto "=https" --proto-redir "=https")
+        fi
+        [[ -z "${SA_BEARER:-}" ]] || auth+=(-H @-)
         sa_with_bearer sa_run curl -fL --retry 5 --retry-all-errors --retry-delay 5 "${auth[@]}" \
             --connect-timeout 30 --speed-limit 10240 --speed-time 60 \
             -o "$file" "$url" || { sa_log "ОШИБКА: tar.gz агента не скачался"; return 1; }

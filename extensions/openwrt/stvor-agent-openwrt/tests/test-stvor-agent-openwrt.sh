@@ -248,6 +248,41 @@ echo mips > "$FAKE/uname"
 ht_hook install STVOR_AGENT_VERSION=4.1.0 STVOR_AGENT_SHA256="$TGZ_SHA"; check "mips — отказ" test "$?" -ne 0
 check "сообщение об архитектуре" grep -q 'архитектура mips не поддерживается' "$ROOT/out"
 
+echo "== раздача портала STVOR_AGENT_DIST: <DIST>/stvor-agent/v<версия>/<файл> =="
+# Версия — из пары или пина каталога: подъём пина не требует нового адреса.
+DIST=https://stvor.example.org/dist
+setup
+ht_hook install STVOR_AGENT_VERSION=4.1.0 STVOR_AGENT_SHA256="$TGZ_SHA" STVOR_AGENT_DIST="$DIST/"; eq "раздача — 0" 0 "$?"
+check "раздача — путь по версии" ht_called "^curl .* $DIST/stvor-agent/v4.1.0/stvor-agent_4.1.0_linux_amd64.tar.gz$"
+check "раздача — только https, и в редиректе" grep -qF -- "--proto =https --proto-redir =https" "$FAKE/curl.argv"
+eq "раздача — запись установленного" "4.1.0 $TGZ_SHA" "$(cat "$S/installed")"
+setup
+pin 4.1.0 "$TGZ_SHA" "$(printf 'b%.0s' {1..64})"
+ht_hook install STVOR_AGENT_DIST="$DIST"; eq "раздача по пину — 0" 0 "$?"
+check "раздача по пину — каталог версии пина" ht_called "^curl .* $DIST/stvor-agent/v4.1.0/stvor-agent_4.1.0_linux_amd64.tar.gz$"
+setup; printf '%s\n' "$KEY" > "$HT_TMP/dist.key"; printf '%s' "$KEY" > "$FAKE/needle"
+ht_hook install STVOR_AGENT_VERSION=4.1.0 STVOR_AGENT_SHA256="$TGZ_SHA" STVOR_AGENT_DIST="$DIST" \
+    STVOR_AGENT_AUTH_FILE="$HT_TMP/dist.key"; eq "раздача с ключом — 0" 0 "$?"
+check "раздача с ключом — Authorization: Bearer со stdin" grep -qx "Authorization: Bearer $KEY" "$FAKE/curl.headers"
+check "раздача с ключом — -H @-" grep -qF -- " -H @- " "$FAKE/curl.argv"
+eq "раздача с ключом — ни одного файла с ключом во время curl" "" "$(cat "$FAKE/curl.secret-files" 2>/dev/null)"
+check_not "раздача с ключом — не в argv" grep -qF -- "$KEY" "$FAKE/curl.argv"
+check_not "раздача с ключом — не в журнале" grep -qF -- "$KEY" "$ROOT/out"
+setup
+ht_hook install STVOR_AGENT_VERSION=4.1.0 STVOR_AGENT_SHA256="$TGZ_SHA" STVOR_AGENT_DIST="$DIST" STVOR_AGENT_MIRROR="$MIRROR"
+check "раздача и зеркало — отказ" test "$?" -ne 0
+check "раздача и зеркало — причина" grep -q 'взаимоисключ' "$ROOT/out"
+ht_hook install STVOR_AGENT_VERSION=4.1.0 STVOR_AGENT_SHA256="$TGZ_SHA" STVOR_AGENT_DIST="$DIST" STVOR_AGENT_TARBALL=/x.tar.gz
+check "раздача и файл — отказ" test "$?" -ne 0
+check "раздача и файл — причина" grep -q 'взаимоисключ' "$ROOT/out"
+for bad in http://stvor.example.org/dist 'https://stvor.example.org/dist?x=1' 'https://u@stvor.example.org/dist'; do
+    ht_hook install STVOR_AGENT_VERSION=4.1.0 STVOR_AGENT_SHA256="$TGZ_SHA" STVOR_AGENT_DIST="$bad"
+    check "раздача $bad — отказ" test "$?" -ne 0
+    check "раздача $bad — причина" grep -qF 'STVOR_AGENT_DIST' "$ROOT/out"
+done
+check_not "раздача, отказы — сети не было" ht_called '^curl '
+check "раздача, отказы — ничего не поставлено" nothing_installed
+
 echo "== пин каталога: пустой — отказ до сети, полный — по архитектуре =="
 setup
 pin "" "" ""
