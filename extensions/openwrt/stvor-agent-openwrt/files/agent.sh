@@ -233,7 +233,8 @@ sa_fetch(){
             auth=(--proto "=https" --proto-redir "=https")
         fi
         [[ -z "${SA_BEARER:-}" ]] || auth+=(-H @-)
-        sa_with_bearer sa_run curl -fL --retry 5 --retry-all-errors --retry-delay 5 "${auth[@]}" \
+        # -q first: no ~/.curlrc (a trace or -v there would write the key to a file).
+        sa_with_bearer sa_run curl -q -fL --retry 5 --retry-all-errors --retry-delay 5 "${auth[@]}" \
             --connect-timeout 30 --speed-limit 10240 --speed-time 60 \
             -o "$file" "$url" || { sa_log "ОШИБКА: tar.gz агента не скачался"; return 1; }
     fi

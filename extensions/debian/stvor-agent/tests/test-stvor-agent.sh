@@ -273,8 +273,8 @@ new_root
 hook install STVOR_AGENT_MIRROR="$MIRROR/" >/dev/null 2>&1; rc=$?
 eq "зеркало — код 0" 0 "$rc"
 eq "зеркало — файл плоско в базе" "curl $MIRROR/stvor-agent_4.0.0_amd64.deb" "$(net)"
-check "зеркало — повтор на любой ошибке (обрыв HTTP/2, 429)" \
-    grep -q -- '^-fL --retry 5 --retry-all-errors --retry-delay 5 ' "$FAKE/curl.argv"
+check "зеркало — curl -q первым (без ~/.curlrc), повтор на любой ошибке (обрыв HTTP/2, 429)" \
+    grep -q -- '^-q -fL --retry 5 --retry-all-errors --retry-delay 5 ' "$FAKE/curl.argv"
 # The key of the builder (sbk_ of the portal) from a build secret: the bearer of the
 # download, on the stdin of curl (-H @-) — never in a file on the disk of the machine
 # (a deleted file stays in its free blocks and in the image), nor in the argv of curl,
@@ -284,6 +284,7 @@ new_root; printf '%s\n' "$KEY" > "$TMP/dist.key"; printf '%s' "$KEY" > "$FAKE/ne
 out="$(hook install STVOR_AGENT_MIRROR="$MIRROR" STVOR_AGENT_AUTH_FILE="$TMP/dist.key" 2>&1)"; rc=$?
 eq "ключ /dist — код 0" 0 "$rc"
 check "ключ /dist — заголовок со stdin (-H @-)" grep -qF -- ' -H @- ' "$FAKE/curl.argv"
+check "ключ /dist — curl -q первым (без ~/.curlrc)" grep -q -- '^-q -fL ' "$FAKE/curl.argv"
 eq "ключ /dist — Authorization: Bearer" "Authorization: Bearer $KEY" "$(cat "$FAKE/curl.headers" 2>/dev/null)"
 check "ключ /dist — файлы под корнем проверены во время curl" test -f "$FAKE/curl.secret-files"
 eq "ключ /dist — во время curl ни одного файла с ключом" "" "$(cat "$FAKE/curl.secret-files" 2>/dev/null)"
@@ -364,7 +365,7 @@ done
 new_root; echo 7.68.0 > "$FAKE/curl.version"
 hook install >/dev/null 2>&1; rc=$?
 eq "curl 7.68 — код 0" 0 "$rc"
-check "curl 7.68 — --retry 5 без --retry-all-errors" grep -q -- '^-fL --retry 5 --retry-delay 5 ' "$FAKE/curl.argv"
+check "curl 7.68 — --retry 5 без --retry-all-errors" grep -q -- '^-q -fL --retry 5 --retry-delay 5 ' "$FAKE/curl.argv"
 check_not "curl 7.68 — флага нет" grep -q -- '--retry-all-errors' "$FAKE/curl.argv"
 
 new_root
