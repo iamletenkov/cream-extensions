@@ -87,6 +87,30 @@ v="$(variant header-stdin)"; printf 'ok_get(){ printf "%%s\\n" "$1" | curl -fL -
 out="$("$LINT" "$v" 2>&1)"; rc=$?
 eq "header-stdin — код 0" 0 "$rc"
 [[ "$rc" == 0 ]] || echo "$out" >&2
+# The joined form -H@file: curl takes it as well.
+v="$(variant header-file-joined)"; printf 'ok_get(){ curl -fL -H@/var/tmp/h -o /dev/null https://example.org/x; }\n' >> "$v/files/helper.sh"
+expect header-file-joined header-file "files/helper.sh:4"
+v="$(variant header-file-joined-q)"; printf 'ok_get(){ curl -fL -H"@$1/.auth" https://example.org/x; }\n' >> "$v/files/helper.sh"
+expect header-file-joined-q header-file "files/helper.sh:4"
+# -H@- and -H @- before a line continuation are stdin: not a finding.
+v="$(variant header-stdin-forms)"
+printf 'ok_get(){ printf "%%s\\n" "$1" | curl -fL -H@- -o /dev/null https://example.org/x; }\n' >> "$v/files/helper.sh"
+printf 'ok_put(){ printf "%%s\\n" "$1" | curl -fL -H @-\\\n    -o /dev/null https://example.org/x; }\n' >> "$v/files/helper.sh"
+out="$("$LINT" "$v" 2>&1)"; rc=$?
+eq "header-stdin-forms — код 0" 0 "$rc"
+[[ "$rc" == 0 ]] || echo "$out" >&2
+# The shared core lib/ (LINT_LIB; by default <repo>/lib when no directory is
+# given): the rule header-file reads its *.sh too — the leak of 2026-11 was there.
+mkdir -p "$TMP/lib/tests"
+printf '#!/usr/bin/env bash\nget(){ curl -fL -H "@$WORK/.auth" https://example.org/x; }\n' > "$TMP/lib/core.sh"
+out="$(LINT_LIB="$TMP/lib" "$LINT" "$FX" 2>&1)"; rc=$?
+eq "header-file в lib — код 1" 1 "$rc"
+has "header-file в lib — место" "lib/core.sh:2: [header-file]" "$out"
+printf '#!/usr/bin/env bash\nget(){ printf x | curl -fL -H @- https://example.org/x; }\n' > "$TMP/lib/core.sh"
+printf 'curl -H @/tmp/fixture https://example.org/x\n' > "$TMP/lib/tests/test-core.sh"
+out="$(LINT_LIB="$TMP/lib" "$LINT" "$FX" 2>&1)"; rc=$?
+eq "lib чистая, lib/tests не читается — код 0" 0 "$rc"
+[[ "$rc" == 0 ]] || echo "$out" >&2
 
 # CREAM_* is the hook's environment: not assigned, no unknown names.
 v="$(variant cream-assign)"; printf 'export CREAM_ROOT=/tmp/x\n' >> "$v/hooks/remove"

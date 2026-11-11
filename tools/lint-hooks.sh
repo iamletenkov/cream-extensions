@@ -23,9 +23,12 @@
 #                     `secret: true`) is not given to cream as `KEY=value` in
 #                     argv — `KEY=-` and stdin (visible in `ps` otherwise);
 #   [header-file]     a header of curl is never read from a file (`-H @file`,
-#                     `--header @file`): a bearer written to the disk of the
-#                     machine outlives its rm in the free blocks and in an image
-#                     built from it — `-H @-` and the header on stdin;
+#                     `-H@file`, `--header @file`): a bearer written to the disk
+#                     of the machine outlives its rm in the free blocks and in an
+#                     image built from it — `-H @-` and the header on stdin. This
+#                     rule alone reads the *.sh of the shared core lib/ too
+#                     (LINT_LIB; by default <repo>/lib when no directory is
+#                     given, none otherwise; lib/tests/ is not read);
 #   [cream-env]       `CREAM_*` is the environment cream gives the hook: never
 #                     assigned, and only the names cream defines;
 #   [stage-cream]     `hooks.configure.stage: cloud-user` needs
@@ -71,6 +74,15 @@ CREAM_ENV=(
     CREAM_OUTPUT CREAM_SOURCES CREAM_CACHE
 )
 CLOUD_USER_CREAM="1.1.1"
+
+# The shared core lib/: read by the rule header-file (see above).
+if [[ -n "${LINT_LIB+x}" ]]; then
+    LIB_DIR="$LINT_LIB"
+elif (( $# )); then
+    LIB_DIR=""
+else
+    LIB_DIR="$REPO/lib"
+fi
 
 dirs=()
 if (( $# )); then
@@ -175,8 +187,9 @@ check_header() {
 BLOCKING='(^|[^[:alnum:]_-])systemctl([[:space:]].*)?[[:space:]](start|restart|try-restart|reload-or-restart|try-reload-or-restart|condrestart|isolate)([[:space:]]|$)'
 CREAM_SET='(^|[^[:alnum:]_-])cream([[:space:]]+-[^[:space:]]+)*[[:space:]]+(config[[:space:]]+)?set([[:space:]]|$)'
 CREAM_CALL='(^|[^[:alnum:]_-])cream[[:space:]]'
-# curl -H/--header @<file>: anything after @ but a lone "-" (stdin).
-HEADER_FILE='(^|[[:space:]"'"'"'(])(-H|--header)[[:space:]]+["'"'"']?@([^-[:space:]"'"'"']|-[^[:space:]"'"'"')])'
+# curl -H/--header @<file>, -H@<file> too: anything after @ but a lone "-"
+# (stdin; a line continuation may follow it).
+HEADER_FILE='(^|[[:space:]"'"'"'(])(-H|--header)[[:space:]]*["'"'"']?@([^-[:space:]"'"'"']|-[^[:space:]"'"'"')\\])'
 SOURCE_LIB='(^|[[:space:];&|(])(source|\.)[[:space:]]+[^;&|]*(^|[/"'"'"'[:space:]])lib/'
 CREAM_ASSIGN='(^|[[:space:];&|(])((export|local|readonly|declare|typeset)([[:space:]]+-[A-Za-z]+)*[[:space:]]+)?CREAM_[A-Z0-9_]+(\+)?='
 
@@ -312,6 +325,19 @@ for d in "${dirs[@]}"; do
         done < "$f"
     done < <(find "$d" -type f -not -name README.md -print0 | sort -z)
 done
+
+if [[ -n "$LIB_DIR" && -d "$LIB_DIR" ]]; then
+    while IFS= read -r -d '' f; do
+        n=0
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            n=$((n + 1))
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            if [[ "$line" =~ $HEADER_FILE ]]; then
+                report "lib/${f#"$LIB_DIR"/}:$n" header-file "заголовок curl из файла — секрет на диске; -H @- и заголовок на stdin"
+            fi
+        done < "$f"
+    done < <(find "$LIB_DIR" -path "$LIB_DIR/tests" -prune -o -type f -name '*.sh' -print0 | sort -z)
+fi
 
 if (( found )); then
     echo "lint-hooks: нарушения в хуках и действиях cream/v1 (см. выше; правила — docs/reference/lint-rules.md)" >&2
