@@ -54,6 +54,8 @@ new_root(){
     FAKE="$ROOT/fake"
     mkdir -p "$ROOT/bin" "$FAKE" "$ROOT/tmp" "$ROOT/etc/stvor-agent"
     cp -a "$EXT" "$ROOT/ext"
+    # As cream lays it: without tests/ (their literals are not files of the machine).
+    rm -r -f -- "$ROOT/ext/tests"
     # The labels token of an enabled agent: no hook may touch it.
     printf 'url=https://portal.example.org/robot-api/v1/labels\ntoken=%s\n' "$TOKEN" > "$ROOT/etc/stvor-agent/token"
     local f
@@ -68,6 +70,11 @@ new_root(){
     cat >> "$ROOT/bin/curl" <<'EOF'
 if [[ "${1:-}" == --version ]]; then
     echo "curl $(cat "$FAKE/curl.version" 2>/dev/null || echo 8.5.0) (x86_64-pc-linux-gnu) libcurl"; exit 0
+fi
+# $FAKE/needle: a secret; every file under the root holding it while curl runs
+# (the header written to disk) is listed in $FAKE/curl.secret-files.
+if [[ -f "$FAKE/needle" ]]; then
+    { grep -rlF --exclude-dir=fake -f "$FAKE/needle" -- "$(dirname "$FAKE")" || true; } >> "$FAKE/curl.secret-files"
 fi
 out=""; url=""
 while (( $# )); do
@@ -269,16 +276,21 @@ eq "зеркало — файл плоско в базе" "curl $MIRROR/stvor-ag
 check "зеркало — повтор на любой ошибке (обрыв HTTP/2, 429)" \
     grep -q -- '^-fL --retry 5 --retry-all-errors --retry-delay 5 ' "$FAKE/curl.argv"
 # The key of the builder (sbk_ of the portal) from a build secret: the bearer of the
-# download, as a header file — never in the argv of curl, nor in the environment.
+# download, on the stdin of curl (-H @-) — never in a file on the disk of the machine
+# (a deleted file stays in its free blocks and in the image), nor in the argv of curl,
+# nor in the environment. The key file itself is the caller's (outside the root).
 KEY=sbk_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_abcde
-new_root; printf '%s\n' "$KEY" > "$ROOT/tmp/dist.key"
-hook install STVOR_AGENT_MIRROR="$MIRROR" STVOR_AGENT_AUTH_FILE="$ROOT/tmp/dist.key" >/dev/null 2>&1; rc=$?
+new_root; printf '%s\n' "$KEY" > "$TMP/dist.key"; printf '%s' "$KEY" > "$FAKE/needle"
+out="$(hook install STVOR_AGENT_MIRROR="$MIRROR" STVOR_AGENT_AUTH_FILE="$TMP/dist.key" 2>&1)"; rc=$?
 eq "ключ /dist — код 0" 0 "$rc"
-check "ключ /dist — заголовок файлом" grep -qE -- ' -H @[^ ]+ ' "$FAKE/curl.argv"
+check "ключ /dist — заголовок со stdin (-H @-)" grep -qF -- ' -H @- ' "$FAKE/curl.argv"
 eq "ключ /dist — Authorization: Bearer" "Authorization: Bearer $KEY" "$(cat "$FAKE/curl.headers" 2>/dev/null)"
+check "ключ /dist — файлы под корнем проверены во время curl" test -f "$FAKE/curl.secret-files"
+eq "ключ /dist — во время curl ни одного файла с ключом" "" "$(cat "$FAKE/curl.secret-files" 2>/dev/null)"
+check_not "ключ /dist — после хука ни одного файла с ключом" grep -rqF --exclude-dir=fake -- "$KEY" "$ROOT"
 check_not "ключ /dist — не в argv" grep -qF -- "$KEY" "$FAKE/curl.argv"
 check_not "ключ /dist — не в окружении curl" grep -qF -- "$KEY" "$FAKE/curl.env"
-check_not "ключ /dist — файл заголовка убран" bash -c 'find "$1/tmp" -name .auth | grep -q .' _ "$ROOT"
+check_not "ключ /dist — не в журнале хука" grep -qF -- "$KEY" <<< "$out"
 check "ключ /dist — только https, и в редиректе" grep -qF -- '--proto =https --proto-redir =https' "$FAKE/curl.argv"
 # A key over plain http: a refusal before any network — the key is never sent in clear.
 new_root; printf '%s\n' "$KEY" > "$ROOT/tmp/dist.key"

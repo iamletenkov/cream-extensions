@@ -1783,7 +1783,7 @@ download(){
             dist_flags "$DIST_WORK"
             flags=("${DIST_FLAGS[@]}")
         fi
-        curl -fL "${retry[@]}" --retry-delay 5 "${flags[@]}" \
+        with_dist_header curl -fL "${retry[@]}" --retry-delay 5 "${flags[@]}" \
             --connect-timeout 30 --speed-limit 10240 --speed-time 60 \
             -C - -o "$file" "$url" && return 0
         rc=$?
@@ -1826,17 +1826,16 @@ agent_proxy(){
     done < "$AGENT_CONFIG"
 }
 
-# dist_auth <header file> — writes `Authorization: Bearer <token>` of the access token
-# the agent holds now (0600, replaced whole); 1 — no token of the form (the file is
-# left as it was: an attempt goes with the token read before, the portal judges it).
+# dist_auth — DIST_HEADER: `Authorization: Bearer <token>` of the access token the
+# agent holds now, in memory only; 1 — no token of the form (DIST_HEADER is left as
+# it was: an attempt goes with the token read before, the portal judges it).
 dist_auth(){
     local file token=""
     for file in "${AGENT_TOKENS[@]}"; do
         [[ -s "$file" ]] || continue
         IFS= read -r token < "$file" || [[ -n "$token" ]] || token=""
         if [[ "$token" =~ ^[A-Za-z0-9_-]{43}$ ]]; then
-            ( umask 077; printf 'Authorization: Bearer %s\n' "$token" > "$1.new" && mv -f -- "$1.new" "$1" ) \
-                || die "не записать $1"
+            DIST_HEADER="Authorization: Bearer $token"
             return 0
         fi
         warn "${file#"$ROOT"} — не токен доступа"
@@ -1847,12 +1846,29 @@ dist_auth(){
 # DIST_WORK — the work dir of a download from the portal: download builds DIST_FLAGS
 # in it again before every retry (fetch_tarball sets it, "" — not from the portal).
 DIST_WORK=""
+# DIST_HEADER — the bearer header of the portal download (dist_auth), "" — none.
+DIST_HEADER=""
+
+# with_dist_header <command…> — the command with DIST_HEADER on its stdin (for curl
+# -H @-), none — the command as is. The token never touches a file of the machine
+# (/var/tmp on Debian, /opt/teleport on the flash of OpenWrt keep a deleted file in
+# their free blocks and in an image built from them) nor the argv of a process: a
+# pipe from the printf builtin, not a here-string (bash < 5.1 writes that to
+# TMPDIR). curl reads the header while it parses its options, before any network.
+with_dist_header(){
+    if [[ -n "$DIST_HEADER" ]]; then
+        printf '%s\n' "$DIST_HEADER" | "$@"
+    else
+        "$@"
+    fi
+}
 
 # dist_flags <work dir> — DIST_FLAGS: the curl flags of the portal distribution:
 # https only (the redirect too) and the proxy of the agent config, or explicitly none.
 # The access token of the agent, when there is one, goes as `Authorization: Bearer`
-# from a header file in <work dir> (curl -H @file): never in the argv of curl. Called
-# again before every retry (download): a token or roots written meanwhile are taken.
+# on the stdin of curl (-H @-, with_dist_header): never in a file, never in the argv
+# of curl. Called again before every retry (download): a token or roots written
+# meanwhile are taken.
 # The pinned roots of the agent, when it laid them, are the only CA — --capath points
 # at a directory holding just a copy of them, so the default CA directory curl was
 # built with does not add the system roots. No roots (no agent, or not registered
@@ -1864,9 +1880,9 @@ dist_flags(){
     # A token read before stays when the file is not of the form now: the portal
     # judges it. None yet — no header, the portal refuses (401) and the next retry
     # reads the file again.
-    dist_auth "$work/.auth" || true
-    if [[ -s "$work/.auth" ]]; then
-        DIST_FLAGS+=(-H "@$work/.auth")
+    dist_auth || true
+    if [[ -n "$DIST_HEADER" ]]; then
+        DIST_FLAGS+=(-H @-)
     fi
     if [[ -s "$AGENT_ROOTS" ]]; then
         rm -r -f -- "$capath"
@@ -1891,7 +1907,7 @@ PROXY_ENV=(http_proxy HTTP_PROXY https_proxy HTTPS_PROXY all_proxy ALL_PROXY no_
 fetch_tarball(){
     local version="$1" arch="$2" sha="$3" mirror="$4" tarball="$5" parent="$6" dist="${7:-}" tag="${8:-}"
     local work file src url sha_url from_cdn=0 retry proto=()
-    DIST_WORK=""
+    DIST_WORK="" DIST_HEADER=""
     install -d -m 0755 "$parent" || die "не создать $parent"
     work="$(mktemp -d "$parent/teleport-install.XXXXXX")" || die "не создать каталог в $parent"
     # shellcheck disable=SC2064  # the path is fixed now, on purpose

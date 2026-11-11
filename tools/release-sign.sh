@@ -34,7 +34,9 @@
 #
 # sign takes the key from the environment: COSIGN_PRIVATE_KEY (the encrypted
 # PEM of `cosign generate-key-pair`) and COSIGN_PASSWORD. Either missing is a
-# failure, never an unsigned release. COSIGN — the cosign binary (default
+# failure, never an unsigned release. cosign reads the key straight from the
+# environment (--key env://COSIGN_PRIVATE_KEY): it is never written to a file,
+# not even encrypted and for a moment. COSIGN — the cosign binary (default
 # `cosign` from PATH).
 #
 # Exit: 0 — done; 1 — check failed (no secret, bad signature, wrong set);
@@ -124,19 +126,16 @@ cmd_buildinfo() {
 
 cmd_sign() {
     (( $# == 1 )) || usage
-    local dist="$1" k
+    local dist="$1"
     [[ -n "${COSIGN_PRIVATE_KEY:-}" ]] || fail "нет секрета COSIGN_PRIVATE_KEY (environment release) — релиз без подписи не выпускается"
     [[ -n "${COSIGN_PASSWORD:-}" ]] || fail "нет секрета COSIGN_PASSWORD (environment release) — релиз без подписи не выпускается"
     [[ -f "$dist/SHA256SUMS" ]] || fail "нет $dist/SHA256SUMS"
-    k="$(mktemp)"
-    # shellcheck disable=SC2064  # the path is fixed now
-    trap "rm -f -- '$k'" EXIT
-    (umask 077; printf '%s\n' "$COSIGN_PRIVATE_KEY" > "$k")
+    export COSIGN_PRIVATE_KEY COSIGN_PASSWORD
     rm -f -- "$dist/SHA256SUMS.sig" "$dist/SHA256SUMS.bundle.json"
-    "$COSIGN" sign-blob --yes --key "$k" \
+    "$COSIGN" sign-blob --yes --key env://COSIGN_PRIVATE_KEY \
         --use-signing-config=false --tlog-upload=false --new-bundle-format=false \
         --output-signature "$dist/SHA256SUMS.sig" "$dist/SHA256SUMS"
-    "$COSIGN" sign-blob --yes --key "$k" \
+    "$COSIGN" sign-blob --yes --key env://COSIGN_PRIVATE_KEY \
         --use-signing-config=false --tlog-upload=false \
         --bundle "$dist/SHA256SUMS.bundle.json" "$dist/SHA256SUMS"
     echo "подписано: $dist/SHA256SUMS.sig, $dist/SHA256SUMS.bundle.json"

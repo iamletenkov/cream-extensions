@@ -25,7 +25,8 @@
 #       means the catalog pin files/pin.env
 #   STVOR_AGENT_MIRROR   base URL, the file lies flat: <base>/<tar.gz name>
 #   STVOR_AGENT_AUTH_FILE  absolute path of a file with the bearer of the mirror (sbk_
-#       of the portal /dist): a header file (curl -H @file), https only, never in argv
+#       of the portal /dist): on the stdin of curl (curl -H @-), https only, never in
+#       argv, never in a file of this machine (the flash keeps a deleted file)
 #   STVOR_AGENT_TARBALL  absolute path of a local tar.gz (offline)
 #   default source — the GitHub release of the version
 # The labels token is never an input here: `stvor-agent enable` takes it on
@@ -185,6 +186,18 @@ sa_write_pin(){
     return 1
 }
 
+# sa_with_bearer <command…>: the command with `Authorization: Bearer` of
+# SA_BEARER on its stdin (for curl -H @-), none — the command as is. A pipe from
+# the printf builtin: no file (no here-string either), no argv of another
+# process. curl reads the header while it parses its options, before any network.
+sa_with_bearer(){
+    if [[ -n "${SA_BEARER:-}" ]]; then
+        printf 'Authorization: Bearer %s\n' "$SA_BEARER" | "$@"
+    else
+        "$@"
+    fi
+}
+
 # sa_fetch <work dir> <arch>: the checked tar.gz, its path on stdout.
 sa_fetch(){
     local work="$1" arch="$2" file url
@@ -199,11 +212,8 @@ sa_fetch(){
         # (curl 8 of OpenWrt 25.12) retries a stream cut mid-way — HTTP/2 error
         # 92 on LTE — too, and 429 waits for its Retry-After.
         local auth=()
-        if [[ -n "${SA_BEARER:-}" ]]; then
-            ( umask 077; printf 'Authorization: Bearer %s\n' "$SA_BEARER" > "$work/.auth" ) || return 1
-            auth=(--proto "=https" --proto-redir "=https" -H "@$work/.auth")
-        fi
-        sa_run curl -fL --retry 5 --retry-all-errors --retry-delay 5 "${auth[@]}" \
+        [[ -z "${SA_BEARER:-}" ]] || auth=(--proto "=https" --proto-redir "=https" -H @-)
+        sa_with_bearer sa_run curl -fL --retry 5 --retry-all-errors --retry-delay 5 "${auth[@]}" \
             --connect-timeout 30 --speed-limit 10240 --speed-time 60 \
             -o "$file" "$url" || { sa_log "ОШИБКА: tar.gz агента не скачался"; return 1; }
     fi

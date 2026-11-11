@@ -22,6 +22,10 @@
 #   [secret-argv]     a secret key (config `secret:`, action param
 #                     `secret: true`) is not given to cream as `KEY=value` in
 #                     argv — `KEY=-` and stdin (visible in `ps` otherwise);
+#   [header-file]     a header of curl is never read from a file (`-H @file`,
+#                     `--header @file`): a bearer written to the disk of the
+#                     machine outlives its rm in the free blocks and in an image
+#                     built from it — `-H @-` and the header on stdin;
 #   [cream-env]       `CREAM_*` is the environment cream gives the hook: never
 #                     assigned, and only the names cream defines;
 #   [stage-cream]     `hooks.configure.stage: cloud-user` needs
@@ -171,6 +175,8 @@ check_header() {
 BLOCKING='(^|[^[:alnum:]_-])systemctl([[:space:]].*)?[[:space:]](start|restart|try-restart|reload-or-restart|try-reload-or-restart|condrestart|isolate)([[:space:]]|$)'
 CREAM_SET='(^|[^[:alnum:]_-])cream([[:space:]]+-[^[:space:]]+)*[[:space:]]+(config[[:space:]]+)?set([[:space:]]|$)'
 CREAM_CALL='(^|[^[:alnum:]_-])cream[[:space:]]'
+# curl -H/--header @<file>: anything after @ but a lone "-" (stdin).
+HEADER_FILE='(^|[[:space:]"'"'"'(])(-H|--header)[[:space:]]+["'"'"']?@([^-[:space:]"'"'"']|-[^[:space:]"'"'"')])'
 SOURCE_LIB='(^|[[:space:];&|(])(source|\.)[[:space:]]+[^;&|]*(^|[/"'"'"'[:space:]])lib/'
 CREAM_ASSIGN='(^|[[:space:];&|(])((export|local|readonly|declare|typeset)([[:space:]]+-[A-Za-z]+)*[[:space:]]+)?CREAM_[A-Z0-9_]+(\+)?='
 
@@ -279,6 +285,9 @@ for d in "${dirs[@]}"; do
             if [[ "$kind" == action ]] && (( ${#locknone[@]} )) && in_list "$name" "${locknone[@]}" \
                 && [[ "$line" =~ $CREAM_SET ]]; then
                 report "$rel:$n" lock-none-set "cream set в действии с lock: none — только чтение домена"
+            fi
+            if [[ "$line" =~ $HEADER_FILE ]]; then
+                report "$rel:$n" header-file "заголовок curl из файла — секрет на диске; -H @- и заголовок на stdin"
             fi
             if [[ "$line" =~ $SOURCE_LIB ]]; then
                 report "$rel:$n" source-lib "source из lib/ — общий код теперь библиотека (kind: library)"

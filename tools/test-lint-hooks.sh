@@ -77,6 +77,17 @@ expect source-lib-word source-lib "hooks/remove:5"
 v="$(variant secret-argv)"; sed -i 's/OK_TOKEN=-$/OK_TOKEN="$(cat)"/' "$v/actions/rotate"
 expect secret-argv secret-argv "actions/rotate:4"
 
+# A header of curl from a file (-H @file): a bearer in a file on the disk of the
+# machine outlives its rm in the free blocks and in the image; -H @- (stdin) is fine.
+v="$(variant header-file)"; printf 'ok_get(){ curl -fL -H "@$1/.auth" -o "$1/x" https://example.org/x; }\n' >> "$v/files/helper.sh"
+expect header-file header-file "files/helper.sh:4"
+v="$(variant header-file-array)"; printf 'auth=(--proto =https --header @/var/tmp/h)\n' >> "$v/hooks/install"
+expect header-file-array header-file "hooks/install:"
+v="$(variant header-stdin)"; printf 'ok_get(){ printf "%%s\\n" "$1" | curl -fL -H @- -o /dev/null https://example.org/x; }\n' >> "$v/files/helper.sh"
+out="$("$LINT" "$v" 2>&1)"; rc=$?
+eq "header-stdin — код 0" 0 "$rc"
+[[ "$rc" == 0 ]] || echo "$out" >&2
+
 # CREAM_* is the hook's environment: not assigned, no unknown names.
 v="$(variant cream-assign)"; printf 'export CREAM_ROOT=/tmp/x\n' >> "$v/hooks/remove"
 expect cream-assign cream-env "hooks/remove:5"

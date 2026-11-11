@@ -5,7 +5,10 @@
 # file goes away on `cream remove stvor-agent`).
 schema: cream/v1
 name: stvor-agent
-version: 4.5.4
+version: 4.5.5
+# 4.5.5: ключ /dist (STVOR_AGENT_AUTH_FILE) — заголовок Authorization на stdin curl (-H @-),
+#        не файлом: прежний файл заголовка в рабочем каталоге (/var/tmp) оставался после
+#        удаления в свободных блоках диска и попадал в собранный образ.
 # 4.5.4: пин пакета stvor-agent 5.6.1.
 # 4.5.3: пин пакета stvor-agent 5.6.0.
 # 4.5.2: пин пакета stvor-agent 5.5.1.
@@ -99,7 +102,7 @@ config:
       default: ""
       empty: true
       scope: install
-      description: "файл с ключом зеркала (sbk_ сборщика для закрытого /dist портала, секрет сборки): Authorization: Bearer только к STVOR_AGENT_MIRROR, не в argv"
+      description: "файл с ключом зеркала (sbk_ сборщика для закрытого /dist портала, секрет сборки): Authorization: Bearer только к STVOR_AGENT_MIRROR, на stdin curl — не в argv и не на диске"
     STVOR_AGENT_INTERVAL:
       type: "re:^([6-9][0-9]|[1-5][0-9]{2}|600)$"
       default: "60"

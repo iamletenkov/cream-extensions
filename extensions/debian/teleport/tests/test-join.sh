@@ -82,6 +82,10 @@ if [[ "${1:-}" == --version ]]; then
     echo "curl $(cat "$FAKE/curl.version" 2>/dev/null || echo 8.5.0) (x86_64-pc-linux-gnu) libcurl"; exit 0
 fi
 echo "$*" >> "$FAKE/curl.log"
+# $FAKE/needle: a secret; the files under the root holding it while curl runs.
+if [[ -f "$FAKE/needle" ]]; then
+    { grep -rlF --exclude-dir=fake -f "$FAKE/needle" -- "$(dirname "$FAKE")" || true; } >> "$FAKE/curl.secret-files"
+fi
 prev=""; for a in "$@"; do [[ "$prev" == -H && "$a" == @* ]] && cat "${a#@}" >> "$FAKE/curl.headers"; prev="$a"; done
 env | grep -iE '^(https?|all|no)_proxy=' >> "$FAKE/curl.env"
 out=""; prev=""
@@ -998,18 +1002,24 @@ msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DI
 check "dist, кривой proxy=: отказ" test "$rc" -ne 0
 has "dist, кривой proxy=: причина" "— не адрес" "$msg"
 check_not "dist, кривой proxy=: без скачивания" grep -qs -- ' -o ' "$FAKE/curl.log"
-# The access token of the agent (/run/stvor-agent/access-token): the bearer of the
-# download, as a header file — never in the argv of curl.
+# The access token of the agent (/run/stvor-agent/access-token, tmpfs): the bearer of
+# the download, on the stdin of curl (-H @-) — never in a file of the disk (/var/tmp:
+# a deleted file stays in the free blocks), nor in the argv of curl.
 TOK=AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_abcde
 new_root
 rm -f "$ROOT/usr/local/bin/teleport"
 make_tarball 18.10.0 stvor.5
 agent_files; mkdir -p "$ROOT/run/stvor-agent"; printf '%s\n' "$TOK" > "$ROOT/run/stvor-agent/access-token"
+printf '%s' "$TOK" > "$FAKE/needle"
 msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST/" TELEPORT_TAG="$TAG" 2>&1)"; rc=$?
 eq "dist, токен агента: код 0" 0 "$rc"
 dl="$(grep -- ' -o ' "$FAKE/curl.log")"
-check "dist, токен агента: заголовок файлом" grep -qE -- "-H @[^ ]+" <<< "$dl"
+check "dist, токен агента: заголовок со stdin (-H @-)" grep -qE -- "-H @- " <<< "$dl"
+check "dist, токен агента: файлы под корнем проверены во время curl" test -s "$FAKE/curl.secret-files"
+eq "dist, токен агента: во время curl токен только в файле агента" \
+    "$ROOT/run/stvor-agent/access-token" "$(sort -u "$FAKE/curl.secret-files" 2>/dev/null)"
 check_not "dist, токен агента: токена нет в argv" grep -qF -- "$TOK" "$FAKE/curl.log"
+check_not "dist, токен агента: токена нет в журнале" grep -qF -- "$TOK" <<< "$msg"
 check "dist, токен агента: Authorization: Bearer" grep -qx "Authorization: Bearer $TOK" "$FAKE/curl.headers"
 # A token file not of the form: no header (the portal answers 401 itself), no leak.
 new_root
@@ -1035,6 +1045,8 @@ eq "dist, токен обновлён между попытками: две по
 eq "dist, токен обновлён между попытками: заголовки попыток" \
     "Authorization: Bearer $TOK|Authorization: Bearer $TOK2" "$(paste -sd'|' "$FAKE/curl.headers")"
 check_not "dist, токен обновлён между попытками: токенов нет в argv" grep -qE -- "$TOK|$TOK2" "$FAKE/curl.log"
+check_not "dist, токен обновлён между попытками: ни одного файла заголовка" \
+    grep -qE -- "-H @[^-]" "$FAKE/curl.log"
 # No token yet when the download starts (the hook came right after the agent asked for
 # it, before the file was written): the token written during the cut attempt goes with
 # the next one.

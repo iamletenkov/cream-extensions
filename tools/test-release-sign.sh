@@ -97,9 +97,24 @@ else
     check "ключ создан" test -s "$K/cosign.key"
     new_dist 1.2.3
     "$S" buildinfo "$D" v1.2.3 >/dev/null
-    run env COSIGN="$COSIGN_BIN" COSIGN_PRIVATE_KEY="$(cat "$K/cosign.key")" COSIGN_PASSWORD=test-only "$S" sign "$D"
+    # Подпись — через шпиона: argv cosign и файлы TMPDIR с закрытым ключом во время
+    # подписи. Ключ не пишется на диск (даже зашифрованным) — cosign берёт его из
+    # окружения (--key env://COSIGN_PRIVATE_KEY).
+    mkdir -p "$TMP/tmpd"
+    sed -n 2p "$K/cosign.key" > "$TMP/needle"
+    cat > "$TMP/cosign-spy" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$TMP/spy.argv"
+{ grep -rlF -f "$TMP/needle" -- "$TMP/tmpd" || true; } >> "$TMP/spy.files"
+exec "$COSIGN_BIN" "\$@"
+EOF
+    chmod +x "$TMP/cosign-spy"
+    run env TMPDIR="$TMP/tmpd" COSIGN="$TMP/cosign-spy" COSIGN_PRIVATE_KEY="$(cat "$K/cosign.key")" COSIGN_PASSWORD=test-only "$S" sign "$D"
     eq "sign: код" 0 "$RC"
     [[ "$RC" == 0 ]] || echo "$ERR" >&2
+    check "sign: ключ из окружения (env://)" grep -qF -- "--key env://COSIGN_PRIVATE_KEY" "$TMP/spy.argv"
+    check "sign: TMPDIR проверен во время подписи" test -f "$TMP/spy.files"
+    eq "sign: закрытого ключа нет в файлах" "" "$(cat "$TMP/spy.files" 2>/dev/null)"
     check ".sig — base64 DER" bash -c "base64 -d '$D/SHA256SUMS.sig' | openssl asn1parse -inform DER >/dev/null"
     check "bundle — JSON" jq -e '.mediaType | startswith("application/vnd.dev.sigstore.bundle")' "$D/SHA256SUMS.bundle.json" >/dev/null
     run env COSIGN="$COSIGN_BIN" "$S" verify "$D" "$K/cosign.pub"
