@@ -25,8 +25,13 @@
 #   [header-file]     a header of curl is never read from a file (`-H @file`,
 #                     `-H@file`, `--header @file`): a bearer written to the disk
 #                     of the machine outlives its rm in the free blocks and in an
-#                     image built from it — `-H @-` and the header on stdin. This
-#                     rule alone reads the *.sh of the shared core lib/ too
+#                     image built from it — `-H @-` and the header on stdin. A
+#                     quote after @ (`-H @"$f"`) is a file too;
+#   [curl-config-file] a config of curl is never read from a file (`-K <file>`,
+#                     `--config <file>`) on a line of curl or in an array of
+#                     flags: it carries the header and the proxy password the
+#                     same way — `-K -` and the config on stdin. Only these two
+#                     rules read the *.sh of the shared core lib/ too
 #                     (LINT_LIB; by default <repo>/lib when no directory is
 #                     given, none otherwise; lib/tests/ is not read);
 #   [cream-env]       `CREAM_*` is the environment cream gives the hook: never
@@ -187,9 +192,23 @@ check_header() {
 BLOCKING='(^|[^[:alnum:]_-])systemctl([[:space:]].*)?[[:space:]](start|restart|try-restart|reload-or-restart|try-reload-or-restart|condrestart|isolate)([[:space:]]|$)'
 CREAM_SET='(^|[^[:alnum:]_-])cream([[:space:]]+-[^[:space:]]+)*[[:space:]]+(config[[:space:]]+)?set([[:space:]]|$)'
 CREAM_CALL='(^|[^[:alnum:]_-])cream[[:space:]]'
-# curl -H/--header @<file>, -H@<file> too: anything after @ but a lone "-"
-# (stdin; a line continuation may follow it).
-HEADER_FILE='(^|[[:space:]"'"'"'(])(-H|--header)[[:space:]]*["'"'"']?@([^-[:space:]"'"'"']|-[^[:space:]"'"'"')\\])'
+# curl -H/--header @<file>, -H@<file> and @"<file>" too: anything after @ but a lone
+# "-" (stdin, quoted or not; a line continuation may follow it).
+HEADER_FILE='(^|[[:space:]"'"'"'(])(-H|--header)[[:space:]]*["'"'"']?@["'"'"']?([^-[:space:]"'"'"']|-[^[:space:]"'"'"')\\])'
+# curl -K/--config <file>: anything but a lone "-" (stdin) — on a line of curl or in
+# an array of flags (--config of teleport, -K of openssl are not curl's).
+CONFIG_FILE='(^|[[:space:]"'"'"'(])(-K|--config)[[:space:]]*["'"'"']?([^-[:space:]"'"'"']|-[^[:space:]"'"'"')\\])'
+CURL_LINE='(^|[^[:alnum:]_./-])curl([[:space:]]|$)|[A-Za-z_][A-Za-z0-9_]*\+?=\('
+
+# check_curl_secrets <where> <line> — the rules header-file and curl-config-file.
+check_curl_secrets(){
+    if [[ "$2" =~ $HEADER_FILE ]]; then
+        report "$1" header-file "заголовок curl из файла — секрет на диске; -H @- и заголовок на stdin"
+    fi
+    if [[ "$2" =~ $CONFIG_FILE ]] && [[ "$2" =~ $CURL_LINE ]]; then
+        report "$1" curl-config-file "конфиг curl из файла — секрет на диске; -K - и конфиг на stdin"
+    fi
+}
 SOURCE_LIB='(^|[[:space:];&|(])(source|\.)[[:space:]]+[^;&|]*(^|[/"'"'"'[:space:]])lib/'
 CREAM_ASSIGN='(^|[[:space:];&|(])((export|local|readonly|declare|typeset)([[:space:]]+-[A-Za-z]+)*[[:space:]]+)?CREAM_[A-Z0-9_]+(\+)?='
 
@@ -299,9 +318,7 @@ for d in "${dirs[@]}"; do
                 && [[ "$line" =~ $CREAM_SET ]]; then
                 report "$rel:$n" lock-none-set "cream set в действии с lock: none — только чтение домена"
             fi
-            if [[ "$line" =~ $HEADER_FILE ]]; then
-                report "$rel:$n" header-file "заголовок curl из файла — секрет на диске; -H @- и заголовок на stdin"
-            fi
+            check_curl_secrets "$rel:$n" "$line"
             if [[ "$line" =~ $SOURCE_LIB ]]; then
                 report "$rel:$n" source-lib "source из lib/ — общий код теперь библиотека (kind: library)"
             fi
@@ -332,9 +349,7 @@ if [[ -n "$LIB_DIR" && -d "$LIB_DIR" ]]; then
         while IFS= read -r line || [[ -n "$line" ]]; do
             n=$((n + 1))
             [[ "$line" =~ ^[[:space:]]*# ]] && continue
-            if [[ "$line" =~ $HEADER_FILE ]]; then
-                report "lib/${f#"$LIB_DIR"/}:$n" header-file "заголовок curl из файла — секрет на диске; -H @- и заголовок на stdin"
-            fi
+            check_curl_secrets "lib/${f#"$LIB_DIR"/}:$n" "$line"
         done < "$f"
     done < <(find "$LIB_DIR" -path "$LIB_DIR/tests" -prune -o -type f -name '*.sh' -print0 | sort -z)
 fi

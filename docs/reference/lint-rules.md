@@ -32,7 +32,8 @@
 | `lock-none-set` | `cream set` / `cream config set` в действии с `lock: none` |
 | `source-lib` | `source`/`.` пути `lib/` — общий код только библиотеками `kind: library` |
 | `secret-argv` | секретный ключ (`config.keys.*.secret`, `params.*.secret: true`) в argv cream не как `KEY=-` |
-| `header-file` | заголовок curl из файла (`-H @файл`, слитно `-H@файл`, `--header @файл`) в любом shell-файле расширения, включая `files/*.sh`, и в `*.sh` общего ядра `lib/` (кроме `lib/tests/`; при запуске без каталогов или с `LINT_LIB=<каталог>`): секрет в файле на диске машины переживает `rm` в свободных блоках и в собранном образе — `-H @-` и заголовок на stdin |
+| `header-file` | заголовок curl из файла (`-H @файл`, слитно `-H@файл`, с кавычкой `-H @"$f"`, `--header @файл`) в любом shell-файле расширения, включая `files/*.sh`, и в `*.sh` общего ядра `lib/` (кроме `lib/tests/`; при запуске без каталогов или с `LINT_LIB=<каталог>`): секрет в файле на диске машины переживает `rm` в свободных блоках и в собранном образе — `-H @-` и заголовок на stdin |
+| `curl-config-file` | конфиг curl из файла (`-K файл`, `--config файл`) на строке с `curl` или в массиве флагов (`flags+=(…)`), там же, где `header-file`, включая `lib/`: в конфиге — заголовок с токеном и пароль прокси, файл на диске переживает `rm` — `-K -` и конфиг на stdin; `--config` чужих команд (`teleport start --config`) не трогается |
 | `cream-env` | присваивание `CREAM_*` или имя `CREAM_*`, которого cream не задаёт (опечатка) |
 | `stage-cream` | `hooks.configure.stage: cloud-user` при `cream:` ниже `">=1.1.1"` |
 | `every-boot` | хук `configure` (и файл расширения, которому он передаёт работу через `"${CREAM_EXT_DIR…}/путь"`) с текстовым признаком А1–А4 — `ip link`, `iptables`, `nft`, `modprobe`, запись в `/run/`; `getent passwd`, `/home/`, UID 1000; `get_cloud_user`; `cream-configure@` — без `hooks.configure.every_boot: true` и без строки `# cream-lint: every-boot-not-needed <причина>` в хуке |
