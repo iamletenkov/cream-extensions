@@ -74,6 +74,19 @@ new_root(){
     fake_teleport 18.10.0 "$ROOT/usr/local/bin/teleport"
     echo 7 > "$FAKE/net"
     echo join > "$FAKE/agent"
+    cat > "$FAKE/curlcfg" <<'EOF'
+#!/usr/bin/env bash
+# curl -K -: the config on stdin into $FAKE/curl.config; its header and proxy
+# values, unquoted (\c -> c), into $FAKE/curl.headers and $FAKE/curl.proxy.
+unq(){ local s="$1" o="" i c; for (( i = 0; i < ${#s}; i++ )); do c="${s:i:1}"; if [[ "$c" == '\' ]]; then i=$((i + 1)); c="${s:i:1}"; fi; o+="$c"; done; printf '%s\n' "$o"; }
+while IFS= read -r l || [[ -n "$l" ]]; do
+    printf '%s\n' "$l" >> "$FAKE/curl.config"
+    case "$l" in
+        'header = "'*'"') v="${l#'header = "'}"; unq "${v%'"'}" >> "$FAKE/curl.headers" ;;
+        'proxy = "'*'"') v="${l#'proxy = "'}"; unq "${v%'"'}" >> "$FAKE/curl.proxy" ;;
+    esac
+done
+EOF
     cat > "$ROOT/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" == --version ]]; then
@@ -86,7 +99,11 @@ echo "$*" >> "$FAKE/curl.log"
 if [[ -f "$FAKE/needle" ]]; then
     { grep -rlF --exclude-dir=fake -f "$FAKE/needle" -- "$(dirname "$FAKE")" || true; } >> "$FAKE/curl.secret-files"
 fi
-prev=""; for a in "$@"; do [[ "$prev" == -H && "$a" == @* ]] && cat "${a#@}" >> "$FAKE/curl.headers"; prev="$a"; done
+prev=""; for a in "$@"; do
+    [[ "$prev" == -H && "$a" == @* ]] && cat "${a#@}" >> "$FAKE/curl.headers"
+    [[ "$prev" == -K && "$a" == - ]] && FAKE="$FAKE" bash "$FAKE/curlcfg"
+    prev="$a"
+done
 env | grep -iE '^(https?|all|no)_proxy=' >> "$FAKE/curl.env"
 out=""; prev=""
 for a in "$@"; do [[ "$prev" == -o ]] && out="$a"; prev="$a"; done
@@ -969,7 +986,7 @@ check "dist: без proxy= — прокси явно нет" grep -qF -- "--nopr
 check_not "dist: прокси окружения curl не видит" test -s "$FAKE/curl.env"
 check "dist: URL <база>/teleport/<тег>/<тарбол>" \
     grep -qE " https://stvor\.example\.org/dist/teleport/v18\.10\.0-stvor\.5/teleport-v18\.10\.0-linux-amd64-bin\.tar\.gz$" "$FAKE/curl.log"
-check "dist: идёт по редиректу" grep -qE -- '^-fL ' "$FAKE/curl.log"
+check "dist: curl -q первым (без ~/.curlrc), идёт по редиректу" grep -qE -- '^-q -fL ' "$FAKE/curl.log"
 check "dist: только https, и в редиректе" grep -q -- '--proto =https --proto-redir =https' "$FAKE/curl.log"
 check "dist: бинарь сборки форка" grep -qx '# build stvor.5' "$ROOT/usr/local/bin/teleport"
 check_not "dist: .sha256 с CDN не запрашивался" grep -q '\.sha256' "$FAKE/curl.log"
@@ -990,9 +1007,27 @@ msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DI
     HTTPS_PROXY=http://env-proxy:3128 NO_PROXY='*' 2>&1)"; rc=$?
 eq "dist, proxy=: код 0" 0 "$rc"
 dl="$(grep -- ' -o ' "$FAKE/curl.log")"
-check "dist, proxy=: --proxy из token" grep -qF -- "--proxy http://proxy.lan:3128 " <<< "$dl"
+eq "dist, proxy=: прокси из token — в конфиге stdin" "http://proxy.lan:3128" "$(cat "$FAKE/curl.proxy" 2>/dev/null)"
+check "dist, proxy=: конфиг со stdin (-K -)" grep -qF -- " -K - " <<< "$dl"
+check_not "dist, proxy=: прокси не в argv" grep -qF -- "proxy.lan" <<< "$dl"
 check_not "dist, proxy=: без --noproxy" grep -qF -- "--noproxy" <<< "$dl"
 check_not "dist, proxy=: прокси окружения curl не видит" test -s "$FAKE/curl.env"
+# The user and password of the proxy are a secret too: the proxy goes on the stdin of
+# curl in its config (-K -), never in the argv (/proc/*/cmdline is world-readable)
+# nor in a file of the disk; a quote and a backslash in it are escaped.
+new_root
+rm -f "$ROOT/usr/local/bin/teleport"
+make_tarball 18.10.0 stvor.5
+PX='http://us"er:pa\ss@proxy.lan:3128'
+agent_files "$PX"
+printf '%s' 'pa\ss' > "$FAKE/needle"
+msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST/" TELEPORT_TAG="$TAG" 2>&1)"; rc=$?
+eq "dist, прокси с паролем: код 0" 0 "$rc"
+eq "dist, прокси с паролем: адрес целиком в конфиге stdin" "$PX" "$(cat "$FAKE/curl.proxy" 2>/dev/null)"
+check_not "dist, прокси с паролем: пароля нет в argv" grep -qF -- 'pa\ss' "$FAKE/curl.log"
+check_not "dist, прокси с паролем: пароля нет в журнале" grep -qF -- 'pa\ss' <<< "$msg"
+eq "dist, прокси с паролем: во время curl пароль только в конфиге агента" \
+    "$ROOT/etc/stvor-agent/token" "$(sort -u "$FAKE/curl.secret-files" 2>/dev/null)"
 # proxy= that is not an address: a refusal, not a download without the proxy.
 new_root
 rm -f "$ROOT/usr/local/bin/teleport"
@@ -1014,7 +1049,8 @@ printf '%s' "$TOK" > "$FAKE/needle"
 msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DIST="$DIST/" TELEPORT_TAG="$TAG" 2>&1)"; rc=$?
 eq "dist, токен агента: код 0" 0 "$rc"
 dl="$(grep -- ' -o ' "$FAKE/curl.log")"
-check "dist, токен агента: заголовок со stdin (-H @-)" grep -qE -- "-H @- " <<< "$dl"
+check "dist, токен агента: заголовок в конфиге со stdin (-K -)" grep -qF -- " -K - " <<< "$dl"
+check_not "dist, токен агента: заголовок не из файла" grep -qF -- "-H @" <<< "$dl"
 check "dist, токен агента: файлы под корнем проверены во время curl" test -s "$FAKE/curl.secret-files"
 eq "dist, токен агента: во время curl токен только в файле агента" \
     "$ROOT/run/stvor-agent/access-token" "$(sort -u "$FAKE/curl.secret-files" 2>/dev/null)"
@@ -1059,7 +1095,7 @@ msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DI
 eq "dist, токен появился между попытками: код 0" 0 "$rc"
 eq "dist, токен появился между попытками: две попытки" 2 "$(grep -c -- ' -o ' "$FAKE/curl.log")"
 check_not "dist, токен появился между попытками: первая без заголовка" \
-    grep -qF -- "-H @" <<< "$(grep -m1 -- ' -o ' "$FAKE/curl.log")"
+    grep -qF -- "-K -" <<< "$(grep -m1 -- ' -o ' "$FAKE/curl.log")"
 eq "dist, токен появился между попытками: вторая с Bearer" \
     "Authorization: Bearer $TOK" "$(paste -sd'|' "$FAKE/curl.headers")"
 # The same for the pinned roots of the agent (a stand with its own CA): written during
@@ -1112,7 +1148,8 @@ msg="$(hk install TELEPORT_VERSION=18.10.0 TELEPORT_SHA256="$TB_SHA" TELEPORT_DI
 eq "dist без roots.pem: код 0" 0 "$rc"
 dl="$(grep -- ' -o ' "$FAKE/curl.log")"
 check_not "dist без roots.pem: без --cacert" grep -qF -- "--cacert" <<< "$dl"
-check "dist без roots.pem: --proxy из token" grep -qF -- "--proxy http://proxy.lan:3128 " <<< "$dl"
+eq "dist без roots.pem: прокси из token в конфиге stdin" "http://proxy.lan:3128" "$(cat "$FAKE/curl.proxy" 2>/dev/null)"
+check_not "dist без roots.pem: прокси не в argv" grep -qF -- "proxy.lan" <<< "$dl"
 # The sum still guards the tarball on the system roots.
 new_root
 rm -f "$ROOT/usr/local/bin/teleport"

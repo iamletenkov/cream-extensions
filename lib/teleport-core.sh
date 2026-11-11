@@ -1783,7 +1783,8 @@ download(){
             dist_flags "$DIST_WORK"
             flags=("${DIST_FLAGS[@]}")
         fi
-        with_dist_header curl -fL "${retry[@]}" --retry-delay 5 "${flags[@]}" \
+        # -q first: no ~/.curlrc (a trace or -v there would write the secrets to a file).
+        with_dist_config curl -q -fL "${retry[@]}" --retry-delay 5 "${flags[@]}" \
             --connect-timeout 30 --speed-limit 10240 --speed-time 60 \
             -C - -o "$file" "$url" && return 0
         rc=$?
@@ -1848,16 +1849,32 @@ dist_auth(){
 DIST_WORK=""
 # DIST_HEADER — the bearer header of the portal download (dist_auth), "" — none.
 DIST_HEADER=""
+# DIST_PROXY — the proxy of the portal download (proxy= of the agent config, its
+# user:password@ too), "" — none.
+DIST_PROXY=""
 
-# with_dist_header <command…> — the command with DIST_HEADER on its stdin (for curl
-# -H @-), none — the command as is. The token never touches a file of the machine
+# curl_config_quote <value> — the value as a double-quoted string of a curl config:
+# a backslash and a quote escaped (proxy= may hold either).
+curl_config_quote(){
+    local s="${1//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    printf '"%s"' "$s"
+}
+
+# with_dist_config <command…> — the command with a curl config on its stdin (for curl
+# -K -): DIST_HEADER as `header`, DIST_PROXY as `proxy`; neither — the command as is.
+# The token and the password of the proxy never touch a file of the machine
 # (/var/tmp on Debian, /opt/teleport on the flash of OpenWrt keep a deleted file in
-# their free blocks and in an image built from them) nor the argv of a process: a
-# pipe from the printf builtin, not a here-string (bash < 5.1 writes that to
-# TMPDIR). curl reads the header while it parses its options, before any network.
-with_dist_header(){
-    if [[ -n "$DIST_HEADER" ]]; then
-        printf '%s\n' "$DIST_HEADER" | "$@"
+# their free blocks and in an image built from them) nor the argv of a process
+# (/proc/*/cmdline is readable by everyone): a pipe from the printf builtin, not a
+# here-string (bash < 5.1 writes that to TMPDIR). curl reads the config while it
+# parses its options, before any network; its own --retry reuses it.
+with_dist_config(){
+    local config=""
+    [[ -z "$DIST_HEADER" ]] || config+="header = $(curl_config_quote "$DIST_HEADER")"$'\n'
+    [[ -z "$DIST_PROXY" ]] || config+="proxy = $(curl_config_quote "$DIST_PROXY")"$'\n'
+    if [[ -n "$config" ]]; then
+        printf '%s' "$config" | "$@"
     else
         "$@"
     fi
@@ -1866,8 +1883,9 @@ with_dist_header(){
 # dist_flags <work dir> — DIST_FLAGS: the curl flags of the portal distribution:
 # https only (the redirect too) and the proxy of the agent config, or explicitly none.
 # The access token of the agent, when there is one, goes as `Authorization: Bearer`
-# on the stdin of curl (-H @-, with_dist_header): never in a file, never in the argv
-# of curl. Called again before every retry (download): a token or roots written
+# and the proxy (it may carry user:password@) as `proxy`, both in a curl config on
+# the stdin of curl (-K -, with_dist_config): never in a file, never in the argv of
+# curl. Called again before every retry (download): a token or roots written
 # meanwhile are taken.
 # The pinned roots of the agent, when it laid them, are the only CA — --capath points
 # at a directory holding just a copy of them, so the default CA directory curl was
@@ -1881,9 +1899,6 @@ dist_flags(){
     # judges it. None yet — no header, the portal refuses (401) and the next retry
     # reads the file again.
     dist_auth || true
-    if [[ -n "$DIST_HEADER" ]]; then
-        DIST_FLAGS+=(-H @-)
-    fi
     if [[ -s "$AGENT_ROOTS" ]]; then
         rm -r -f -- "$capath"
         mkdir -m 0700 -- "$capath" && cp -- "$AGENT_ROOTS" "$capath/roots.pem" \
@@ -1895,9 +1910,12 @@ dist_flags(){
     proxy="$(agent_proxy)"
     if [[ -n "$proxy" ]]; then
         [[ "$proxy" =~ ^[^[:space:][:cntrl:]]+$ ]] || die "proxy= в ${AGENT_CONFIG#"$ROOT"} — не адрес"
-        DIST_FLAGS+=(--proxy "$proxy")
     else
         DIST_FLAGS+=(--noproxy '*')
+    fi
+    DIST_PROXY="$proxy"
+    if [[ -n "$DIST_HEADER" || -n "$DIST_PROXY" ]]; then
+        DIST_FLAGS+=(-K -)
     fi
 }
 DIST_FLAGS=()
@@ -1907,7 +1925,7 @@ PROXY_ENV=(http_proxy HTTP_PROXY https_proxy HTTPS_PROXY all_proxy ALL_PROXY no_
 fetch_tarball(){
     local version="$1" arch="$2" sha="$3" mirror="$4" tarball="$5" parent="$6" dist="${7:-}" tag="${8:-}"
     local work file src url sha_url from_cdn=0 retry proto=()
-    DIST_WORK="" DIST_HEADER=""
+    DIST_WORK="" DIST_HEADER="" DIST_PROXY=""
     install -d -m 0755 "$parent" || die "не создать $parent"
     work="$(mktemp -d "$parent/teleport-install.XXXXXX")" || die "не создать каталог в $parent"
     # shellcheck disable=SC2064  # the path is fixed now, on purpose
