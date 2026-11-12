@@ -96,7 +96,8 @@ check_values(){
     [[ -z "${CODE_SERVER_USER:=}" || "$CODE_SERVER_USER" =~ $RE_USER ]] || die "CODE_SERVER_USER: недопустимое имя"
 }
 
-is_loopback(){ case "$1" in 127.*|::1|localhost) return 0 ;; esac; return 1; }
+RE_LOOPBACK='^(127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|::1|\[::1\]|localhost)$'
+is_loopback(){ [[ "$1" =~ $RE_LOOPBACK ]]; }
 
 # read_password: PW — the value of CODE_SERVER_PASSWORD in the secrets file
 # (cream's grammar: bare, or "…" with \" and \\ escaped), empty when unset.
@@ -125,7 +126,8 @@ read_password(){
 }
 
 # decide_auth: AUTH=password|none and 0 — the service may run; 1 — refused
-# (no password, not allowed); 2 — the password does not fit its type.
+# (no password, not allowed); 2 — the password does not fit its type; 3 — no
+# password beyond the loopback (exit 78).
 AUTH=""
 decide_auth(){
     read_password || return 2
@@ -139,8 +141,14 @@ decide_auth(){
         return 0
     fi
     if [[ "$CODE_SERVER_ALLOW_NO_AUTH" == 1 ]]; then
+        # Owner's ruling 2026-11-12: without a password only on the loopback.
+        if ! is_loopback "$CODE_SERVER_BIND"; then
+            warn "CODE_SERVER_ALLOW_NO_AUTH=1 допустим только на петле (127.0.0.1, ::1, localhost), а CODE_SERVER_BIND=$CODE_SERVER_BIND — code-server остановлен"
+            warn "  задайте пароль: echo <пароль> | sudo cream set code-server CODE_SERVER_PASSWORD=-"
+            warn "  или верните петлю: sudo cream set code-server CODE_SERVER_BIND=127.0.0.1"
+            return 3
+        fi
         warn "БЕЗ АУТЕНТИФИКАЦИИ (CODE_SERVER_ALLOW_NO_AUTH=1): шелл пользователя — любому, кто достаёт до ${CODE_SERVER_BIND}:${CODE_SERVER_PORT}"
-        is_loopback "$CODE_SERVER_BIND" || warn "адрес $CODE_SERVER_BIND — не петля: шелл открыт сети"
         AUTH=none
         return 0
     fi
@@ -365,6 +373,7 @@ run(){
         stop_instances
         scrub_user_config
         (( rc == 2 )) && exit 1
+        (( rc == 3 )) && exit 78
         return 0
     fi
     if [[ ! -x "$CS_BIN" ]]; then
@@ -450,7 +459,7 @@ auth: $auth"
 # config without authentication unless CODE_SERVER_ALLOW_NO_AUTH=1 (from the
 # EnvironmentFile); code-server gets a clean environment and only --config.
 cmd_start(){
-    local conf auth
+    local conf auth bind host
     if (( EUID == 0 )); then log "ОШИБКА: от root code-server не запускается"; exit 78; fi
     conf="${HOME:?нет HOME}/.config/code-server/config.yaml"
     if [[ ! -f "$conf" || -L "$conf" ]]; then
@@ -467,6 +476,22 @@ cmd_start(){
         none)
             if [[ "${CODE_SERVER_ALLOW_NO_AUTH:-0}" != 1 ]]; then
                 log "ОШИБКА: auth: none, а CODE_SERVER_ALLOW_NO_AUTH не 1 — без аутентификации не запускаю"
+                log "  пароль: echo <пароль> | sudo cream set code-server CODE_SERVER_PASSWORD=-"
+                exit 78
+            fi
+            # Owner's ruling 2026-11-12: without a password only on the
+            # loopback. No bind-addr — code-server's own 127.0.0.1:8080; a
+            # value without host:port is not trusted.
+            bind="$(sed -n 's/^bind-addr:[[:space:]]*//p' -- "$conf" | tail -n 1)"
+            bind="${bind%"${bind##*[![:space:]]}"}"
+            host=""
+            if [[ -z "$bind" ]]; then
+                host=127.0.0.1
+            elif [[ "$bind" == *:* ]]; then
+                host="${bind%:*}"
+            fi
+            if [[ -z "$host" ]] || ! is_loopback "$host"; then
+                log "ОШИБКА: без пароля code-server допустим только на петле (127.0.0.1, ::1, localhost), а bind-addr: '${bind//[^A-Za-z0-9.:\[\]-]/}' — не запускаю"
                 log "  пароль: echo <пароль> | sudo cream set code-server CODE_SERVER_PASSWORD=-"
                 exit 78
             fi

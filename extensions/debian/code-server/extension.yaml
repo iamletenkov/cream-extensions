@@ -27,7 +27,11 @@
 #        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: code-server
-version: 5.2.2
+version: 5.2.3
+# 5.2.3: CODE_SERVER_ALLOW_NO_AUTH=1 without a password only on the loopback
+#        (owner's ruling 2026-11-12): CODE_SERVER_BIND beyond it — configure/apply
+#        stop the instance and exit 78; the wrapper (start) refuses `auth: none`
+#        with a bind-addr beyond the loopback with 78.
 # 5.2.2: fetch_verified from files/fetch.sh (one copy in git — lib/fetch.sh, laid by
 #        the snapshot) instead of depends on the library fetch: a VMFILE or a
 #        live machine needs no `cream install fetch` (5.4.2 failed deps.missing).
@@ -86,4 +90,4 @@ config:
     CODE_SERVER_ALLOW_NO_AUTH:
       type: bool
       default: "0"
-      description: "1 — запускать без пароля (шелл пользователя любому, кто достаёт до адреса; предупреждение при каждом старте)"
+      description: "1 — запускать без пароля, только на петле (шелл пользователя любому, кто достаёт до адреса; предупреждение при каждом старте; CODE_SERVER_BIND не петля — отказ, код 78)"

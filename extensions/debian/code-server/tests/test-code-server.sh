@@ -99,7 +99,7 @@ teleport_render() {
 echo "== манифест и раскладка =="
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
 eq "name" code-server "$(mf 'm["name"]')"
-eq "версия 5.2.2 (fetch_verified из files/fetch.sh)" 5.2.2 "$(mf 'm["version"]')"
+eq "версия 5.2.3 (без пароля — только петля)" 5.2.3 "$(mf 'm["version"]')"
 eq "cream >=1.2.0 (every_boot, спека cream §10.9)" ">=1.2.0" "$(mf 'm["cream"]')"
 eq "configure на каждой загрузке (аудит 2026-10-21)" True "$(mf 'm["hooks"]["configure"].get("every_boot")')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
@@ -398,8 +398,24 @@ check "стартует" started alice
 check "auth: none" grep -qx 'auth: none' "$CONF"
 check_not "строки пароля нет" grep -q '^password' "$CONF"
 check "предупреждение при каждом configure" grep -q 'CODE_SERVER_ALLOW_NO_AUTH=1' "$ROOT/out"
-ht_hook configure CREAM_REASON=boot CODE_SERVER_ALLOW_NO_AUTH=1 CODE_SERVER_BIND=0.0.0.0
-check "адрес не петли без пароля — громче: открыт сети" grep -q 'сети' "$ROOT/out"
+for a in ::1 localhost 127.0.0.1; do
+    ht_hook configure CREAM_REASON=boot CODE_SERVER_ALLOW_NO_AUTH=1 "CODE_SERVER_BIND=$a"; eq "без пароля на петле $a — 0" 0 "$?"
+done
+
+echo "== configure: без пароля — только на петле (решение владельца 2026-11-12) =="
+for a in 0.0.0.0 192.0.2.10 ::; do
+    cs_root
+    echo 'code-server@alice.service loaded active running code-server' > "$FAKE/units"
+    mkdir -p "$APPS"; echo 'NAME=code-server' > "$DECL"
+    ht_hook configure CREAM_REASON=boot CODE_SERVER_ALLOW_NO_AUTH=1 "CODE_SERVER_BIND=$a"; eq "без пароля на $a — 78" 78 "$?"
+    check_not "$a: не стартует" started alice
+    check "$a: запущенный экземпляр гасится" ht_called '^systemctl stop --no-block code-server@alice\.service'
+    check_not "$a: объявление снято" test -e "$DECL"
+    check "$a: сказано, что без пароля — только петля" grep -q 'только на петле' "$ROOT/out"
+    : > "$FAKE/calls"
+    ht_hook apply CREAM_CHANGED_KEYS=CODE_SERVER_BIND CODE_SERVER_ALLOW_NO_AUTH=1 "CODE_SERVER_BIND=$a"; eq "$a: apply — 78" 78 "$?"
+    check_not "$a: apply не перезапускает" started alice
+done
 cs_root; ht_secret CODE_SERVER_PASSWORD "$PW"
 ht_hook configure CREAM_REASON=boot CODE_SERVER_ALLOW_NO_AUTH=1; eq "пароль и ключ — 0" 0 "$?"
 check "пароль сильнее ключа: auth: password" grep -qx 'auth: password' "$CONF"
@@ -570,6 +586,19 @@ cs_root; write_conf 'bind-addr: 127.0.0.1:9001' 'auth: none' 'cert: true'
 run_start CODE_SERVER_ALLOW_NO_AUTH=1; eq "auth: none с ключом — 0" 0 "$?"
 check "code-server запущен" test -e "$FAKE/code-server.env"
 check "предупреждение при старте" grep -q 'CODE_SERVER_ALLOW_NO_AUTH=1' "$ROOT/out"
+# Without a password only on the loopback (owner's ruling 2026-11-12).
+for b in 0.0.0.0:9001 192.0.2.10:9001 '[::]:9001' '[2001:db8::1]:9001' 9001; do
+    cs_root; write_conf "bind-addr: $b" 'auth: none' 'cert: true'
+    run_start CODE_SERVER_ALLOW_NO_AUTH=1; eq "auth: none и bind-addr $b — 78" 78 "$?"
+    check_not "bind-addr $b — code-server не запущен" test -e "$FAKE/code-server.env"
+    check "bind-addr $b — сказано про петлю" grep -q 'только на петле' "$ROOT/out"
+done
+for b in '[::1]:9001' localhost:9001 127.0.0.1:9001; do
+    cs_root; write_conf "bind-addr: $b" 'auth: none' 'cert: true'
+    run_start CODE_SERVER_ALLOW_NO_AUTH=1; eq "auth: none и bind-addr $b — 0" 0 "$?"
+done
+cs_root; write_conf 'bind-addr: 0.0.0.0:9001' 'auth: password' "password: \"$PW\"" 'cert: true'
+run_start CODE_SERVER_ALLOW_NO_AUTH=1; eq "с паролем на 0.0.0.0 — 0" 0 "$?"
 
 echo "== write-config: только не от root, по форме =="
 cs_root
