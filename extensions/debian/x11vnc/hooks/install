@@ -5,10 +5,20 @@
 # under $CREAM_ROOT (hooktest).
 #
 # xauth and x11-utils are explicit: the wrapper needs xdpyinfo to test an
-# authority candidate, and x11vnc has them only in Recommends. openssl builds
+# authority candidate, and x11vnc has them only in Recommends; x11-xserver-utils
+# (xhost) — the access control of a display lib/x-session.sh finds without
+# logind (ruling П15: without it no fallback display is taken). openssl builds
 # the password file from stdin (x11vnc -storepasswd takes it in argv only).
 # What this install put on is recorded in $CREAM_STATE_DIR/installed — remove
 # takes away only x11vnc itself, and only when it was ours.
+#
+# THE MACHINE (spec 2026-11-12-existing-desktop §4.4, ruling Р2). The graph of
+# cream may let x11vnc in without a real desktop (a failed record of a provider
+# still provides, §9), so on a live machine install checks itself before
+# anything is installed: an X server (/usr/lib/xorg/Xorg or /usr/bin/Xorg) and
+# an enabled display manager (the display-manager.service link, pointing to a
+# unit that is there). Either missing — exit 20 (cream 68). At image build no
+# check: the desktop may come with the same build.
 set -euo pipefail
 
 log_info(){ >&2 echo "[INFO] x11vnc: $*"; }
@@ -29,6 +39,28 @@ apt_retry(){
 }
 pkg_installed(){ dpkg-query -W -f='${db:Status-Status}\n' "$1" 2>/dev/null | grep -qx installed; }
 
+# dm_enabled: 0 — display-manager.service is a link to a unit file that is
+# there; masked (a link to /dev/null) or dangling — not enabled.
+dm_enabled(){
+    local link="$R/etc/systemd/system/display-manager.service" t
+    [[ -L "$link" ]] || return 1
+    t="$(readlink "$link")" || return 1
+    [[ "$t" != /dev/null ]] || return 1
+    if [[ "$t" == /* ]]; then t="$R$t"; else t="${link%/*}/$t"; fi
+    [[ -f "$t" ]]
+}
+
+if [[ "${CREAM_PHASE:-live}" == live ]]; then
+    missing=()
+    [[ -e "$R/usr/lib/xorg/Xorg" || -e "$R/usr/bin/Xorg" ]] || missing+=("X-сервера (Xorg)")
+    dm_enabled || missing+=("включённого менеджера входа (display-manager.service)")
+    if (( ${#missing[@]} )); then
+        log_error "нет X-сервера / менеджера входа: поставьте стол или \`existing-desktop\`"
+        log_error "на машине нет: ${missing[*]} — x11vnc не ставлю"
+        exit 20
+    fi
+fi
+
 if [[ ! -s "$STATE/installed" ]] && ! pkg_installed x11vnc; then
     install -d -m 0755 "$STATE"
     echo x11vnc > "$STATE/installed"
@@ -36,8 +68,8 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt_retry apt-get -q update || { log_error "apt-get update не прошёл"; exit 1; }
-apt_retry apt-get -q -y install x11vnc xauth x11-utils openssl \
-    || { log_error "x11vnc, xauth, x11-utils, openssl не установились"; exit 1; }
+apt_retry apt-get -q -y install x11vnc xauth x11-utils x11-xserver-utils openssl \
+    || { log_error "x11vnc, xauth, x11-utils, x11-xserver-utils, openssl не установились"; exit 1; }
 
 # Before 2.0.0 the settings lived in /etc/default/bisquite-x11vnc; never read
 # since — one source of truth.

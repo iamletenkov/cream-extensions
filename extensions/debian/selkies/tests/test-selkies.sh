@@ -35,8 +35,10 @@ VER=2.0.0
 # fake loginctl answers from files, none yet).
 sk_root() {
     ht_root "$EXT"
-    mkdir -p "$ROOT/home/alice" "$ROOT/home/root" "$ROOT/usr/lib/xorg" "$ROOT/etc/systemd/system"
+    mkdir -p "$ROOT/home/alice" "$ROOT/home/root" "$ROOT/usr/lib/xorg" "$ROOT/etc/systemd/system" \
+        "$ROOT/lib/systemd/system"
     printf '#!/bin/sh\n' > "$ROOT/usr/lib/xorg/Xorg"; chmod 0755 "$ROOT/usr/lib/xorg/Xorg"
+    : > "$ROOT/lib/systemd/system/lightdm.service"
     ln -s /lib/systemd/system/lightdm.service "$ROOT/etc/systemd/system/display-manager.service"
     printf '%s\n' 'root:x:0:0::/root:/bin/bash' 'alice:x:1000:1000::/home/alice:/bin/bash' \
         'bob:x:1001:1001::/home/bob:/bin/bash' 'carol:x:1002:1002::/home/carol:/bin/bash' \
@@ -101,6 +103,26 @@ mf() { python3 -c 'import sys,yaml; m=yaml.safe_load(open(sys.argv[1])); print(e
 started() { ht_called "^systemctl (start|restart) --no-block selkies@$1\\.service"; }
 leaked() { grep -rqF -e "$PW" -e "$VO" -e "$TOKEN" "$@" 2>/dev/null; }
 blocking_systemctl() { grep -E '^systemctl (start|restart|stop|reload|enable --now|disable --now)' "$FAKE/calls" | grep -qv -- '--no-block'; }
+
+# mask_dm: display-manager.service masked — a link to /dev/null (systemctl mask).
+mask_dm() {
+    mkdir -p "$ROOT/dev"; : > "$ROOT/dev/null"
+    ln -sfn /dev/null "$ROOT/etc/systemd/system/display-manager.service"
+}
+# x0srv: an X server really on :0 for lib/x-session.sh fallback 2 — the lock
+# with its pid, a live Xorg (/proc/<pid>/comm), the socket /tmp/.X11-unix/X0,
+# and both listeners of X0 (file, abstract) among its fds in /proc/net/unix.
+x0srv() {
+    mkdir -p "$ROOT/tmp/.X11-unix" "$ROOT/proc/4300/fd" "$ROOT/proc/net"
+    printf '%10d\n' 4300 > "$ROOT/tmp/.X0-lock"; chmod 0444 "$ROOT/tmp/.X0-lock"
+    echo Xorg > "$ROOT/proc/4300/comm"
+    python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$ROOT/tmp/.X11-unix/X0"
+    ln -sfn 'socket:[61000]' "$ROOT/proc/4300/fd/3"; ln -sfn 'socket:[61001]' "$ROOT/proc/4300/fd/4"
+    { echo "Num       RefCount Protocol Flags    Type St Inode Path"
+      echo "0000000000000000: 00000002 00000000 00010000 0001 01 61000 /tmp/.X11-unix/X0"
+      echo "0000000000000000: 00000002 00000000 00010000 0001 01 61001 @/tmp/.X11-unix/X0"
+    } > "$ROOT/proc/net/unix"
+}
 
 echo "== манифест и раскладка =="
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
@@ -175,6 +197,9 @@ eq "юнит: действующие значения → config → secrets" \
 check "юнит: от имени пользователя" grep -qx 'User=%i' "$UNIT"
 check "юнит: обёртка из дерева расширения" grep -qx 'ExecStart=/bin/bash /opt/cream/ext/selkies/files/run-selkies.sh %i' "$UNIT"
 check "юнит: отказ по аутентификации не перезапускается" grep -qx 'RestartPreventExitStatus=78' "$UNIT"
+check "юнит: комментарий к 78 — uid-правило" grep -qE '^#.*uid outside 1000\.\.65533' "$UNIT"
+check "юнит: комментарий к 78 — SELKIES_DISPLAY" grep -qE '^#.*SELKIES_DISPLAY that is neither auto nor :N' "$UNIT"
+check "манифест: 78 у configure — только за SELKIES_USER" grep -qE '^#.*SELKIES_USER not in passwd or with a uid' "$EXT/extension.yaml"
 check_not "юнит: не включается сам (стартует configure)" grep -q '^WantedBy=' "$UNIT"
 
 echo "== install: AppImage уже распакован =="
@@ -215,6 +240,20 @@ ht_hook install; eq "нет display-manager.service — 20" 20 "$?"
 check "текст про менеджер входа" grep -q 'менеджера входа' "$ROOT/out"
 rm -f "$ROOT/usr/lib/xorg/Xorg"
 HT_PHASE=build ht_hook install; eq "сборка образа: без Xorg и DM — 0 (стол ставит та же сборка)" 0 "$?"
+sk_root; fake_appimage
+ht_fake dpkg 'echo amd64'
+ht_fake apt-get
+rm -f "$ROOT/lib/systemd/system/lightdm.service"
+ht_hook install; eq "display-manager.service висит (цели нет) — 20" 20 "$?"
+check_not "висячая ссылка: ничего не качается" ht_called '^(curl|apt-get)'
+rm -f "$ROOT/usr/lib/xorg/Xorg"
+HT_PHASE=build ht_hook install; eq "сборка образа: висячая ссылка, без Xorg — 0" 0 "$?"
+sk_root; fake_appimage
+ht_fake dpkg 'echo amd64'
+ht_fake apt-get
+mask_dm
+ht_hook install; eq "display-manager.service замаскирован — 20" 20 "$?"
+check_not "замаскирован: ничего не качается" ht_called '^(curl|apt-get)'
 
 echo "== install: sha256 не совпал — отказ, ничего не распаковано =="
 sk_root
@@ -538,6 +577,21 @@ sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
 rm -f "$ROOT/etc/systemd/system/display-manager.service"
 ht_hook configure CREAM_REASON=boot; eq "нет display-manager.service: configure — 1" 1 "$?"
 check_not "не стартует" started alice
+sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+rm -f "$ROOT/lib/systemd/system/lightdm.service"
+ht_hook configure CREAM_REASON=boot; eq "display-manager.service висит: configure — 1" 1 "$?"
+check "висячая ссылка: текст existing-desktop" grep -qF 'поставьте стол или `existing-desktop`' "$ROOT/out"
+check_not "висячая ссылка: не стартует" started alice
+ht_hook apply CREAM_CHANGED_KEYS=SELKIES_PORT; eq "display-manager.service висит: apply — 1" 1 "$?"
+sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+mask_dm
+ht_hook configure CREAM_REASON=boot; eq "display-manager.service замаскирован: configure — 1" 1 "$?"
+check_not "замаскирован: не стартует" started alice
+ht_hook apply CREAM_CHANGED_KEYS=SELKIES_PORT; eq "display-manager.service замаскирован: apply — 1" 1 "$?"
+sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+rm -f "$ROOT/usr/lib/xorg/Xorg" "$ROOT/etc/systemd/system/display-manager.service"
+HT_PHASE=build ht_hook configure CREAM_REASON=install; eq "сборка образа: configure без Xorg и DM — 0" 0 "$?"
+check_not "сборка: текста про existing-desktop нет" grep -q 'existing-desktop' "$ROOT/out"
 
 echo "== configure: SELKIES_DISPLAY проверяется =="
 sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
@@ -545,6 +599,10 @@ ht_hook configure CREAM_REASON=boot SELKIES_DISPLAY=:1; eq "SELKIES_DISPLAY=:1 �
 check "SELKIES_DISPLAY=:1 в действующих значениях" grep -qx 'SELKIES_DISPLAY=:1' "$ROOT/var/lib/cream/ext/selkies/env"
 ht_hook configure CREAM_REASON=boot 'SELKIES_DISPLAY=:0;x'; eq "SELKIES_DISPLAY с мусором — 1" 1 "$?"
 ht_hook configure CREAM_REASON=boot 'SELKIES_USER=-x'; eq "SELKIES_USER не имя — 78" 78 "$?"
+ESC="$(printf '\033')"
+ht_hook configure CREAM_REASON=boot "SELKIES_USER=Bad${ESC}[2J"; eq "SELKIES_USER с управляющим символом — 78" 78 "$?"
+check_not "управляющий символ не попадает в журнал как есть" grep -qF "$ESC" "$ROOT/out"
+check "имя в журнале экранировано (%q)" grep -qF "SELKIES_USER=\$'Bad\E[2J'" "$ROOT/out"
 
 echo "== configure: диагноз seat0 одной строкой (xs_seat0_active) =="
 sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
@@ -830,6 +888,9 @@ for u in gdm root nobody ghost -x; do
     check_not "$u: selkies не запущен" test -e "$FAKE/selkies.env"
     check_not "$u: дисплей не искали" ht_called '^(loginctl|xdpyinfo)'
 done
+wr_root
+WR_USER='Bad\x41\e[2J' run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"; eq "негодное имя — 78" 78 "$?"
+check_not "негодное имя не попадает в журнал (echo -e)" grep -qE 'Bad|BadA' "$ROOT/out"
 wr_root; seat0 2 carol x11 :0; mkdir -p "$ROOT/home/carol"; : > "$ROOT/home/carol/.Xauthority"
 WR_USER=carol run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"
 check "selkies@carol (uid 1002) запущен" test -e "$FAKE/selkies.env"
@@ -865,6 +926,7 @@ wr_root
 rm -f "$FAKE"/user.* "$FAKE"/session.* "$FAKE/seat.seat0"
 ht_fake stat 'echo "1000 600"'
 ht_fake xhost 'echo "access control enabled, only authorized clients can connect"'
+x0srv
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"
 check "selkies запущен" test -e "$FAKE/selkies.env"
 check "дисплей :0 (как 6.x)" grep -qx 'DISPLAY=:0' "$FAKE/selkies.env"
@@ -887,6 +949,19 @@ check "selkies запущен, когда alice вошла" test -e "$FAKE/selki
 eq "строка ожидания — на 0, 5 и 10 минуте" 3 "$(grep -c 'жду X-сессию' "$ROOT/out")"
 check "диагноз: на seat0 bob" grep -q 'на seat0 сеанс bob (x11)' "$ROOT/out"
 check "подсказка: SELKIES_USER=bob" grep -q 'SELKIES_USER=bob' "$ROOT/out"
+
+echo "== run-selkies.sh: xdpyinfo — только unix:N, без отката на TCP 6000+N =="
+# With no unix listener libxcb goes to 127.0.0.1:6000+N, where anyone may
+# listen, and hands it the cookie — the search and the watcher of the session
+# connect to unix:N. Selkies lives until the watcher has asked once.
+wr_root
+ht_fake xdpyinfo 'printf "%s\n" "$*" >> "$FAKE/xdpyinfo.args"; [[ -e "$FAKE/selkies.env" ]] && : > "$FAKE/stop"; exit 0'
+printf '#!/usr/bin/env bash\n[[ "${1-}" == --help ]] && exit 0\nenv > %q\nfor _ in $(seq 200); do [[ -e %q ]] && exit 0; /usr/bin/sleep 0.05; done\nexit 0\n' \
+    "$FAKE/selkies.env" "$FAKE/stop" > "$ROOT/opt/selkies/$VER/usr/conda/bin/selkies"
+run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"
+check "сторож сеанса спросил xdpyinfo при живом Selkies" test -e "$FAKE/stop"
+check "xdpyinfo — unix:0" grep -qx -- '-display unix:0' "$FAKE/xdpyinfo.args"
+check_not "xdpyinfo без :N (TCP-откат)" grep -qE -- '-display :' "$FAKE/xdpyinfo.args"
 
 echo "== имена layout 2 =="
 # check-names: off

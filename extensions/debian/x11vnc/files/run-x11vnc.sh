@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
-# Start x11vnc for a session, resolving the X authority at runtime.
+# Start x11vnc for a session, resolving the display and the X authority at
+# runtime.
+#
+# 6.0.0: the display (X11VNC_DISPLAY auto: logind Display of the user's X11
+# session on seat0, else his Xorg, else :0 confirmed by his own authority) and
+# the authority candidates below live in lib/x-session.sh (files/x-session.sh,
+# xs_find_display / xs_find_authority), shared with selkies. The measurements
+# that follow are why the candidates are what they are.
 #
 # WHY A WRAPPER AND NOT A PATH IN THE UNIT. The unit used to hardcode
 #
@@ -62,16 +69,20 @@ log_info(){ >&2 echo -e "${GREEN}[INFO]${NC} x11vnc: $*"; }
 log_warn(){ >&2 echo -e "${YELLOW}[WARN]${NC} x11vnc: $*"; }
 log_error(){ >&2 echo -e "${RED}[ERROR]${NC} x11vnc: $*"; }
 
+# Paths of the machine go under $CREAM_ROOT (hooktest); empty on a machine.
+R="${CREAM_ROOT:-}"; R="${R%/}"
+
 # The password decision, built by configure (files/x11vnc.sh): the rfbauth file
 # (0600, owned by this user), or -nopw — only with the marker nopw (derived by
 # configure) AND X11VNC_ALLOW_NO_PASSWORD=1 in the root-owned config, with a
 # warning on every start. Anything else, or a file this user cannot read: a
 # refusal, never -nopw.
-PASSFILE=/etc/x11vnc/passwd
-NOPW=/etc/x11vnc/nopw
+PASSFILE="$R/etc/x11vnc/passwd"
+NOPW="$R/etc/x11vnc/nopw"
 
-# decide_auth: prints the -rfbauth/-nopw argument, or "refuse" with status 1
-# (78 — no password beyond the loopback).
+# decide_auth: prints the -rfbauth/-nopw argument, or "refuse" with status 78:
+# every refusal is a state configure fixes (it builds the file or the marker and
+# restarts the instance), so the unit does not loop (RestartPreventExitStatus=78).
 decide_auth(){
     if [[ -e "$PASSFILE" || -L "$PASSFILE" ]]; then
         if [[ -f "$PASSFILE" && -r "$PASSFILE" ]]; then
@@ -80,7 +91,7 @@ decide_auth(){
         log_error "файл пароля $PASSFILE не читается пользователем $(id -un)"
         log_error "сервер без пароля не поднимаю: пароль задан X11VNC_PASSWORD"
         log_error "починить: sudo cream configure x11vnc"
-        echo refuse; return 1
+        echo refuse; return 78
     fi
     if [[ -f "$NOPW" && "${X11VNC_ALLOW_NO_PASSWORD:-0}" == 1 ]]; then
         # Owner's ruling 2026-11-12: without a password only on the loopback;
@@ -95,101 +106,119 @@ decide_auth(){
     fi
     if [[ -f "$NOPW" ]]; then
         log_error "есть $NOPW, но X11VNC_ALLOW_NO_PASSWORD не 1 — без пароля не поднимаю"
-        echo refuse; return 1
+        echo refuse; return 78
     fi
     log_error "нет ни $PASSFILE, ни решения «без пароля» ($NOPW) — configure x11vnc не отработал"
-    echo refuse; return 1
+    echo refuse; return 78
 }
 
-# Test entry (tests/test-x11vnc.sh): the decision for the given paths.
+# Test entry: the password decision alone, on given paths.
 if [[ "${1:-}" == --decide-auth ]]; then
     PASSFILE="${2:?}"; NOPW="${3:?}"
     decide_auth
     exit
 fi
 
+# X11VNC_USER is the key of configure (whose instance to start), not x11vnc's.
+unset X11VNC_USER
+
 USERNAME="${1:?usage: run-x11vnc.sh <user>}"
-UID_OF_USER="$(id -u "$USERNAME")"
-
-# Параметры приходят из EnvironmentFile /etc/cream/x11vnc/config (домен x11vnc,
-# config.keys манифеста; секретов там нет — пароль только в файле выше).
-# Умолчания здесь — последний рубеж на случай отсутствующего файла.
-PORT="${X11VNC_PORT:-5900}"
-DISPLAY_NUM="${X11VNC_DISPLAY:-:0}"
-LISTEN="${X11VNC_LISTEN:-localhost}"
-
-# Wayland: x11vnc обслуживает X11 и на Wayland-сессии бесполезен.
-#
-# Собственная защита x11vnc здесь НЕ сработает: она смотрит на
-# $WAYLAND_DISPLAY, а в окружении системного юнита этой переменной нет.
-# И проверять наличие сокета /tmp/.X11-unix/X0 тоже нельзя — под Wayland
-# его создаёт mutter для Xwayland, он там есть. Спрашиваем тип сессии.
-session_type() {
-    local sid
-    sid="$(loginctl list-sessions --no-legend 2>/dev/null \
-        | awk -v u="$USERNAME" '$3 == u {print $1; exit}')" || true
-    [[ -n "$sid" ]] || return 1
-    loginctl show-session "$sid" -p Type --value 2>/dev/null || true
-}
-
-stype="$(session_type || true)"
-if [[ "$stype" == "wayland" ]]; then
-    log_error "сессия пользователя '$USERNAME' работает на Wayland, а x11vnc обслуживает X11"
-    log_error "включите Xorg у дисплей-менеджера (расширение gnome пишет WaylandEnable=false), войдите заново"
-    log_error "и запустите: sudo systemctl restart x11vnc@$USERNAME"
-    # 78 (EX_CONFIG): the session type is a setting of the display manager, a
-    # restart every 5 s would not change it (RestartPreventExitStatus=78).
+# The uid rule (spec 2026-11-12-existing-desktop, ruling Р3) — before logind
+# or X are asked anything, and the name is checked before it is logged: 78, a
+# unit of a system account is a setting to fix, not a restart loop.
+[[ "$USERNAME" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] \
+    || { log_error "x11vnc@<имя>: имя пользователя не подходит — не запускаюсь"; exit 78; }
+PW_LINE="$(getent passwd "$USERNAME" 2>/dev/null)" \
+    || { log_error "нет пользователя $USERNAME в passwd — не запускаюсь"; exit 78; }
+UID_OF_USER="$(cut -d: -f3 <<< "$PW_LINE")"
+if [[ ! "$UID_OF_USER" =~ ^[0-9]+$ ]] || (( UID_OF_USER < 1000 || UID_OF_USER >= 65534 )); then
+    log_error "x11vnc@$USERNAME: uid $UID_OF_USER вне 1000..65533 — системная учётка (root, менеджер входа), её экран не показываю"
+    log_error "пользователь сеанса: sudo cream set x11vnc X11VNC_USER=<имя>"
     exit 78
 fi
 
-# Кандидаты в порядке убывания надёжности. У каждого — источник, откуда
-# известен путь, чтобы следующий читатель не гадал.
-candidates=()
-[[ -n "${XAUTHORITY:-}" ]] && candidates+=("$XAUTHORITY")
-candidates+=(
-    "$(getent passwd "$USERNAME" | cut -d: -f6)/.Xauthority"  # LightDM, session.c
-    "/run/user/${UID_OF_USER}/gdm/Xauthority"                 # GDM >= 42, gdm-x-session.c
-    "/run/lightdm/${USERNAME}/xauthority"                     # LightDM, user-authority-in-system-dir=true
-)
-# Xorg получает -auth от того, кто его запустил; если файл читается нашим
-# пользователем, он подойдёт.
-xorg_pid="$(pgrep -x Xorg | head -1 || true)"
-if [[ -n "$xorg_pid" && -r "/proc/$xorg_pid/cmdline" ]]; then
-    xorg_auth="$(tr '\0' '\n' < "/proc/$xorg_pid/cmdline" \
-        | awk '/^-auth$/{getline; print; exit}' || true)"
-    [[ -n "$xorg_auth" ]] && candidates+=("$xorg_auth")
-fi
-# Legacy-раскладка GDM — последней: на современных сборках её нет.
-for legacy in /run/gdm3/auth-for-"$USERNAME"-*/database; do
-    [[ -e "$legacy" ]] && candidates+=("$legacy")
-done
+# Параметры приходят из EnvironmentFile /etc/cream/x11vnc/config (домен x11vnc,
+# config.keys манифеста; секретов там нет — пароль только в файле выше).
+# Умолчания здесь — последний рубеж на случай отсутствующего файла; они равны
+# умолчаниям манифеста (рулинг Р4): cream пишет в config только заданные ключи.
+PORT="${X11VNC_PORT:-5900}"
+WANT_DISPLAY="${X11VNC_DISPLAY:-auto}"
+LISTEN="${X11VNC_LISTEN:-localhost}"
+[[ "$WANT_DISPLAY" =~ ^(auto|:[0-9]+(\.[0-9]+)?)$ ]] \
+    || { log_error "X11VNC_DISPLAY=$(printf '%q' "$WANT_DISPLAY"): нужно auto или :N — не запускаюсь"; exit 78; }
 
-AUTH=""
-for candidate in "${candidates[@]}"; do
-    [[ -r "$candidate" ]] || continue
-    if env XAUTHORITY="$candidate" xdpyinfo -display "$DISPLAY_NUM" >/dev/null 2>&1; then
-        AUTH="$candidate"
-        break
+# The password first: without it there is nothing to wait for.
+auth="$(decide_auth)" || exit "$?"
+
+XS_LIB="$R/opt/cream/ext/x11vnc/files/x-session.sh"
+[[ -f "$XS_LIB" ]] || { log_error "нет $XS_LIB — дерево расширения неполное (снимок каталога кладёт lib/x-session.sh)"; exit 1; }
+# shellcheck source=../../../../lib/x-session.sh
+source "$XS_LIB"
+
+# wayland_exit: 78 (EX_CONFIG) — the session type is a setting of the display
+# manager, a restart every 5 s would not change it (RestartPreventExitStatus=78).
+# x11vnc's own guard looks at $WAYLAND_DISPLAY, absent from a system unit, and
+# the socket X0 is there under Wayland too (mutter's Xwayland): logind's
+# session Type is asked instead (lib/x-session.sh).
+wayland_exit(){
+    log_error "сессия '$USERNAME' на Wayland — x11vnc обслуживает только X.Org, служба остановлена"
+    log_error "включите Xorg у менеджера входа (расширение gdm-xorg — Xorg у GDM; gnome пишет WaylandEnable=false), войдите заново"
+    log_error "и запустите: sudo systemctl restart x11vnc@$USERNAME"
+    exit 78
+}
+
+# seat0_note: one line on who is on seat0 while we wait.
+seat0_note(){
+    local a name type class
+    if ! a="$(xs_seat0_active)"; then
+        log_info "на seat0 нет активного сеанса (или нет logind) — жду вход '$USERNAME'"
+        return 0
     fi
+    read -r name type class <<< "$a"
+    if [[ "$class" != user ]]; then
+        log_info "на seat0 экран входа ($class) — жду вход '$USERNAME' (или DESKTOP_AUTOLOGIN=1 расширения desktop)"
+    elif [[ "$name" != "$USERNAME" ]]; then
+        log_info "на seat0 сеанс $name ($type), x11vnc ждёт $USERNAME: sudo cream set x11vnc X11VNC_USER=$name"
+    else
+        log_info "на seat0 сеанс $name ($type) — его дисплей пока не открывается"
+    fi
+}
+
+# find_session: sets DISPLAY_NUM and AUTH; 1 — not (yet); exits 78 on Wayland.
+find_session(){
+    local s rc=0
+    if [[ "$WANT_DISPLAY" == auto ]]; then
+        DISPLAY_NUM="$(xs_find_display "$USERNAME")" || rc=$?
+        (( rc != 2 )) || wayland_exit
+        (( rc == 0 )) || return 1
+    else
+        if s="$(xs_seat0_session "$USERNAME")" && [[ "$(cut -d' ' -f2 <<< "$s")" == wayland ]]; then
+            wayland_exit
+        fi
+        DISPLAY_NUM="$WANT_DISPLAY"
+    fi
+    AUTH="$(xs_find_authority "$USERNAME" "$DISPLAY_NUM")"
+}
+
+# Until the user's X session is there — waiting, a line in the journal every
+# 5 minutes (not a restart loop of the unit).
+DISPLAY_NUM=""; AUTH=""; waited=0
+until find_session; do
+    if (( waited % 300 == 0 )); then
+        log_info "жду X-сессию '$USERNAME' (дисплей $WANT_DISPLAY; без DESKTOP_AUTOLOGIN=1 она появится после входа человека)"
+        seat0_note
+    fi
+    sleep 5; waited=$((waited + 5))
 done
+log_info "дисплей $DISPLAY_NUM, authority $AUTH"
 
-if [[ -z "$AUTH" ]]; then
-    # Громкий отказ вместо немого цикла рестарта. Перечисляем ВСЁ, что
-    # проверили: без этого следующий читатель journal видит только
-    # «XOpenDisplay failed» и не знает, где искать.
-    log_error "не нашёл X authority для '$USERNAME' на дисплее $DISPLAY_NUM"
-    log_error "проверены пути:"
-    for candidate in "${candidates[@]}"; do
-        log_error "  $candidate $( [[ -r "$candidate" ]] && echo '(есть, но xdpyinfo не прошёл)' || echo '(нет)' )"
-    done
-    exit 1
-fi
-log_info "authority: $AUTH"
-
+# No -loop: x11vnc ends with its X session, the unit restarts the wrapper
+# (Restart=always), and the wrapper finds the new session — after a logout and
+# login it may be on another display, which -loop would never look for.
 args=(
     -display "$DISPLAY_NUM"
     -auth "$AUTH"
-    -forever -loop -noxdamage -repeat -shared
+    -forever -noxdamage -repeat -shared
     -rfbport "$PORT"
 )
 
@@ -199,7 +228,6 @@ args=(
 # ставят `firewall: false`. Позиция проекта на этот счёт записана в
 # examples/build/ubuntu1804/README.md: только loopback, доступ через
 # SSH-туннель. Расширение с ней расходилось.
-auth="$(decide_auth)" || exit "$?"
 if [[ "$LISTEN" == "localhost" ]]; then
     args+=(-localhost)
 else
@@ -212,4 +240,4 @@ else
     log_info "пароль из $PASSFILE"
 fi
 
-exec /usr/bin/x11vnc "${args[@]}"
+exec "$R/usr/bin/x11vnc" "${args[@]}"

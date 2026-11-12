@@ -163,10 +163,15 @@ platform: {family: deb, arch: [amd64, arm64], os: [{id: debian}, {id: ubuntu}]}
 targets: {build: exec, live: "yes"}
 provides: [x11-server, display-manager, desktop-session]
 conflicts: {capabilities: [desktop-session]}
-hooks: {install: {timeout: 2m}, remove: {}, check: {}}
+hooks: {install: {timeout: 10m}, remove: {}}
 actions:
+  check: {summary: "Xorg и менеджер входа на месте — 0, нет — 1 (только файлы)", lock: none, phases: [build, live]}
   status: {summary: "DM, Wayland, автологин, сеанс seat0", lock: none, phases: [live]}
 ```
+
+`check` — **действие**, а не хук: cream 1.4.0 отвергает `hooks.check` как зарезервированный
+(`manifest.reserved`, 65), смысл тот же (рулинг плана П18). `install` — 10 минут, не 2: `apt` ждёт
+блокировку dpkg (П19).
 
 - **`install`** проверяет **файлы**, одинаково в build и live, по образцу `l4t-vendor-desktop`,
   но без условия R32:
@@ -181,7 +186,13 @@ actions:
   отдаёт 79 `hook.failed`). Кодов 10 и 20 нет: расширение ничего не меняет, а «неприменимо»
   ничего не дало бы. Пропущенная запись тоже остаётся в графе (§9). Поэтому потребители не
   полагаются на граф и проверяют машину сами (§4.4, Р2).
-- **`check`:** 0 — Xorg на месте и DM включён; 1 — нет. Для `cream check` и `cream status`.
+- **`check`** (действие): 0 — Xorg на месте и DM включён; 1 — нет. Для `cream check` и
+  `cream status`. «DM включён» здесь — то же, что у `install`: ссылка `display-manager.service`
+  **или** `/etc/X11/default-display-manager` с существующим бинарём. Потребители (`selkies`,
+  `x11vnc`, §4.4) строже: им нужна ссылка `display-manager.service` на существующий юнит —
+  их юниты несут `Requires=display-manager.service`. Машина только с
+  `/etc/X11/default-display-manager` проходит `existing-desktop`, а `install` потребителя на
+  ней отказывает (20) — текстом «нет включённого менеджера входа».
 - **`status`:** только чтение. Выводит:
   - DM: имя юнита и `is-active`;
   - GDM: `WaylandEnable` — `false`, `true`, нет ключа или закомментирован;

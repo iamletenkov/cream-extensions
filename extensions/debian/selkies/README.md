@@ -30,8 +30,12 @@ X-сессия, которая на мониторе, — в браузере, �
 пользователь cloud-init (как раньше); только учётка с uid **1000..65533**: root,
 `gdm`, `lightdm` и другие системные — отказ, код 78 (у `gdm` authority — экрана
 входа). Дисплей — `SELKIES_DISPLAY=auto` (умолчание): X11-сеанс пользователя на
-seat0 по logind, иначе его Xorg, иначе `:0`, подтверждённый его собственной
-authority ([`lib/x-session.sh`](../../../lib/x-session.sh)); `:N` — жёстко. Стол,
+seat0 по logind, иначе его Xorg, иначе `:0`. Найденный без logind дисплей `:N` —
+только X-сервера, который доказан: доверенный lock-файл `/tmp/.X<N>-lock` хранит pid
+Xorg, оба слушателя `X<N>` (файл и абстрактный — xcb идёт к нему первым) — fd этого
+Xorg, у `:0` ещё процесс и сокет — root или пользователя; fd Xorg root обёртке не
+видны — такой дисплей только через logind (см. «Известные ограничения»). Дисплей ещё подтверждает собственная
+authority пользователя — по `unix:N`, без отката на TCP ([`lib/x-session.sh`](../../../lib/x-session.sh)); `:N` — жёстко. Стол,
 поставленный не через cream (готовая Ubuntu, GDM/LightDM/SDDM), —
 [`existing-desktop`](../existing-desktop/README.md); сеанс на Wayland не
 транслируется — [`gdm-xorg`](../gdm-xorg/README.md).
@@ -40,7 +44,7 @@ authority ([`lib/x-session.sh`](../../../lib/x-session.sh)); `:N` — жёстк
 
 - **`install`** — на живой машине сначала проверка: нет Xorg (`/usr/lib/xorg/Xorg`,
   `/usr/bin/Xorg`) или включённого менеджера входа (ссылка
-  `display-manager.service`) — код 20 (cream — 68) и «нет X-сервера / менеджера
+  `display-manager.service` на существующий юнит; замаскированный — не включён) — код 20 (cream — 68) и «нет X-сервера / менеджера
   входа: поставьте стол или `existing-desktop`», ничего не скачано; при сборке
   образа проверки нет. Затем AppImage Selkies по закреплённой версии и sha256 на
   архитектуру, распаковка в `/opt/selkies/2.0.0` (**+1,7 ГБ**, без FUSE), ссылка
@@ -55,7 +59,8 @@ authority ([`lib/x-session.sh`](../../../lib/x-session.sh)); `:N` — жёстк
   1. проверка значений (адрес, порт, `SELKIES_ENABLE_HTTPS`, `SELKIES_ALLOW_NO_AUTH`,
      `SELKIES_DISPLAY`; иначе сбой, код 1); действующие значения — в
      `/var/lib/cream/ext/selkies/env` (раздел «Параметры»);
-  2. машина: нет Xorg или включённого менеджера входа — объявление снимается,
+  2. машина (только на живой машине, при сборке образа — нет): нет Xorg или
+     включённого менеджера входа (висячая ссылка — тоже) — объявление снимается,
      `selkies@*` гасятся, код 1 (как у `install`, текст про `existing-desktop`);
   3. `SELKIES_USER` задан, но не учётка с uid 1000..65533 — объявление снимается,
      `selkies@*` гасятся, код 78;
@@ -255,6 +260,16 @@ sudo cream set selkies SELKIES_USER=<кто входит на экран>  # е�
 
 ## Известные ограничения
 
+- **Xorg от root при пустом `Display` в logind — обёртка ждёт** (GDM через
+  `Xorg.wrap`: нет KMS, NVIDIA без `nvidia-drm.modeset=1`; `startx` от root): fd такого
+  Xorg обёртке, работающей от пользователя, не видны, дисплей не доказать. Обход —
+  сознательно `sudo cream set selkies SELKIES_DISPLAY=:N`.
+- **Жёсткий `SELKIES_DISPLAY=:N` и `Display` из logind — без привязки к Xorg** (как в
+  5.x; authority проверяется по `unix:N`): на `:N` без X-сервера wild-cookie GDM получит тот, кто
+  займёт `@/tmp/.X11-unix/X<N>`. Жёсткий `:N` — только там, где на нём гарантированно
+  X-сервер пользователя. Оба пункта —
+  [#139](https://github.com/iamletenkov/cream-extensions/issues/139),
+  [known-issues](../../../docs/known-issues.md).
 - Без пароля или явного `SELKIES_ALLOW_NO_AUTH=1` служба не стартует.
 - Формат cream/v1 не проверен на железе и с настоящим менеджером входа (P): старт
   службы, basic auth из `secrets`, объявление в Teleport. Не проверены amd64 AppImage
@@ -331,7 +346,8 @@ ss -ltnp | grep 8080
   одним паролем просмотра, `SELKIES_ALLOW_NO_AUTH=1` с предупреждением, адреса не
   петли, проверка значений, объявление не по ссылкам, без менеджера входа и без
   пользователя — 0, root не запускается, чужие экземпляры гасятся, только
-  `--no-block`; `SELKIES_USER` и uid-правило — 78, нет Xorg/DM — 1, диагноз seat0),
+  `--no-block`; `SELKIES_USER` и uid-правило — 78, нет Xorg/DM — 1, висячая ссылка
+  DM — 1, при сборке — без проверки, диагноз seat0),
   `install` на живой машине без Xorg/DM — 20, `apply`, `remove`, обёртка (отказ 78,
   basic auth принудительно, секреты только у Selkies, каталог TLS 0700, uid-правило
   до logind, Wayland — 78, `SELKIES_DISPLAY` auto/`:N`, запасной путь `:0`,

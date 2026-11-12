@@ -12,7 +12,12 @@ lib/                        общий код нескольких расшир�
                             teleport-core.sh (ядро teleport и teleport-openwrt),
                             teleport-core.consumers (кому его класть),
                             fetch.sh (fetch_verified для selkies, code-server,
-                            rustdesk), fetch.consumers, tests/
+                            rustdesk), fetch.consumers,
+                            x-session.sh (X-сеанс пользователя на seat0, дисплей
+                            и authority — existing-desktop, selkies, x11vnc),
+                            x-session.consumers,
+                            gdm-wayland.sh (WaylandEnable в конфиге gdm3 — gnome,
+                            gdm-xorg), gdm-wayland.consumers, tests/
 tools/                      проверки, генераторы, раннеры тестов, пин cream (tools/cream-pin.env)
 docs/                       документация: guides/, reference/, runbooks/, history/, adr/, specs/, plans/, research/
 .github/workflows/          ci-release.yml (проверки и выпуск), live.yml (живые прогоны),
@@ -25,14 +30,17 @@ Makefile                    публичные команды: make help
 из них — иначе его не увидят ни `cream validate --catalog .`, ни снимок
 (`tools/catalog-snapshot.sh` отказывает на непокрытом расширении).
 
-Общие библиотеки `lib/<библиотека>.sh` — ядро Teleport (`teleport-core.sh`) и
-загрузчик `fetch_verified` (`fetch.sh`) — в git лежат одной копией; в
+Общие библиотеки `lib/<библиотека>.sh` — ядро Teleport (`teleport-core.sh`), загрузчик
+`fetch_verified` (`fetch.sh`), X-сеанс пользователя (`x-session.sh`: `xs_seat0_session`,
+`xs_seat0_active`, `xs_find_display`, `xs_find_authority`) и правка `WaylandEnable` gdm3
+(`gdm-wayland.sh`) — в git лежат одной копией; в
 `files/<библиотека>.sh` каждого потребителя из `lib/<библиотека>.consumers` их кладут
 снимок (из коммита) и `tools/stage-catalog.sh` (из рабочего дерева — для `cream validate`,
 `cream check`, H- и живых тестов и path-источника). Потребитель ядра объявляет
 `files/teleport-core.sh` в `files` (строка `# rule: files` в списке), поэтому дерево без
-ядра `cream validate` не примет; потребитель `fetch.sh` подключает его хуком из
-`${CREAM_EXT_DIR}/files/fetch.sh` — без `depends` и без установки чего-либо до себя.
+ядра `cream validate` не примет; потребители `fetch.sh`, `x-session.sh` и `gdm-wayland.sh`
+подключают их хуком или обёрткой из `${CREAM_EXT_DIR}/files/<библиотека>.sh` (юнит — из
+`/opt/cream/ext/<имя>/files/`) — без `depends` и без установки чего-либо до себя.
 Копию в `extensions/` и потребителя не из списка отвергает `tools/check-shared-libs.sh`.
 
 Каталог называется `debian/`, а семейство в манифесте — `platform.family: deb`; это

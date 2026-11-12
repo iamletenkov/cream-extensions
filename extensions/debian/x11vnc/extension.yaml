@@ -1,22 +1,48 @@
-# x11vnc — VNC access to the X11 desktop of the cloud-init user: the system
-# template unit x11vnc@<user>.service, loopback only by default.
+# x11vnc — VNC access to the X11 desktop of the session user (X11VNC_USER, or
+# the cloud-init user): the system template unit x11vnc@<user>.service, loopback
+# only by default.
 #
-# install   — x11vnc, xauth, x11-utils, openssl; the unit is laid by cream
-#             (files); the legacy /etc/default/bisquite-x11vnc goes.
+# install   — on a live machine first the machine check: no Xorg or no enabled
+#             display manager (display-manager.service, a link to a unit that
+#             is there) — exit 20 (cream 68), "put a desktop or
+#             existing-desktop"; at image build no check. Then x11vnc, xauth,
+#             x11-utils, x11-xserver-utils (xhost), openssl; the unit is laid by
+#             cream (files); the legacy /etc/default/bisquite-x11vnc goes.
 # configure — every boot, stage graphical after the display manager: the
 #             password file /etc/x11vnc/passwd (0600, owned by the session user)
 #             from the secret X11VNC_PASSWORD; empty — the server stays off,
 #             unless X11VNC_ALLOW_NO_PASSWORD=1 (then the marker nopw);
-#             x11vnc@<user> on, stale instances off. A password that
-#             cannot be built is a failure, never -nopw (plan ruling R4).
+#             x11vnc@<user> on, stale instances off. The user — X11VNC_USER (not
+#             in passwd or a uid outside 1000..65533 — exit 78, instances off),
+#             empty — the cloud-init user (none or unfit — a warning, exit 0,
+#             instances off). On a live machine no Xorg or no enabled display
+#             manager — exit 1, instances off; enabled but not running — the
+#             instance is enabled, not restarted (a warning, exit 0). A password
+#             that cannot be built is a failure, never -nopw (plan ruling R4).
+#             One line of diagnosis: who is on seat0.
 # apply     — the same without waiting for the user, instance restarted.
 # remove    — instances off, password file gone, x11vnc only when ours.
+# files     — x11vnc@.service: User=%i, the wrapper files/run-x11vnc.sh (finds
+#             the display and authority of the user by lib/x-session.sh —
+#             files/x-session.sh; exit 78, not restarted — Wayland, a user
+#             outside uid 1000..65533, an X11VNC_DISPLAY that is neither auto
+#             nor :N, no password beyond the loopback).
 #
 # 5.1.0: hooks.configure.every_boot — configure runs every boot (cream 1.2.0
 #        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: x11vnc
-version: 5.1.2
+version: 6.0.0
+# 6.0.0: X11VNC_USER (empty — the cloud-init user as before) and X11VNC_DISPLAY=auto by
+#        default (lib/x-session.sh: the logind Display of the user's X11 session on seat0,
+#        else his Xorg, else :0 confirmed by his own authority; a saved :N stays as it is;
+#        the unit no longer sets DISPLAY=:0 nor waits for the socket X0); the authority —
+#        xs_find_authority. The user only with 1000 <= uid < 65534 — exit 78 in the wrapper
+#        and for X11VNC_USER in configure/apply; install on a live machine without Xorg or
+#        an enabled display manager — 20, configure — 1; a diagnosis of seat0 in
+#        configure and every 5 minutes of waiting; x11-xserver-utils (xhost). x11vnc runs
+#        without -loop and the unit restarts it always (78 excepted): a lost X session
+#        ends x11vnc, and the wrapper finds the new one — maybe on another display.
 # 5.1.2: a Wayland session — the wrapper exits 78 (EX_CONFIG) and the unit does
 #        not restart it (RestartPreventExitStatus=78), not a loop every 5 s
 #        (audit 2026-11-12). X11VNC_ALLOW_NO_PASSWORD=1 without a password only
@@ -26,7 +52,7 @@ version: 5.1.2
 # 5.1.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 # 5.0.2: только README (выпуск 5.1.1 изменил дерево без подъёма версии —
 #        cream отвергал обновление с 5.0.1: version.same_digest).
-summary: VNC к рабочему столу X11 пользователя cloud-init — x11vnc@<пользователь>, по умолчанию только петля
+summary: VNC к рабочему столу X11 пользователя сеанса — x11vnc@<пользователь>, по умолчанию только петля
 cream: ">=1.2.0"
 platform:
   family: deb
@@ -57,10 +83,16 @@ config:
       type: port
       default: "5900"
       description: "порт RFB"
+    X11VNC_USER:
+      type: 're:^[a-z_][a-z0-9_-]{0,31}$'
+      default: ""
+      empty: true
+      description: "чей X-сеанс показывать; пусто — пользователь cloud-init; uid только 1000..65533, иначе отказ (код 78)"
     X11VNC_DISPLAY:
-      type: "re:^:[0-9]+(\\.[0-9]+)?$"
-      default: ":0"
-      description: "X-дисплей"
+      type: 're:^(auto|:[0-9]+(\.[0-9]+)?)$'
+      default: "auto"
+      empty: true
+      description: "auto (и пусто) — дисплей X-сеанса пользователя на seat0 (logind, его Xorg, :0); :N — жёстко"
     X11VNC_LISTEN:
       type: "enum:localhost,all"
       default: localhost

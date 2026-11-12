@@ -67,8 +67,9 @@ USERNAME="${1:?usage: run-selkies.sh <user>}"
 (( EUID != 0 )) || { log_error "не от root: юнит запускает обёртку от имени пользователя (User=%i)"; exit 78; }
 # The uid rule (ruling Р3) — before logind or X are asked anything: 78, a unit
 # of a system account is a setting to fix, not a restart loop.
+# The name is checked before it is logged: log_* interpret escapes (echo -e).
 [[ "$USERNAME" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] \
-    || { log_error "selkies@$USERNAME: имя пользователя не подходит — не запускаюсь"; exit 78; }
+    || { log_error "selkies@<имя>: имя пользователя не подходит — не запускаюсь"; exit 78; }
 PW_LINE="$(getent passwd "$USERNAME" 2>/dev/null)" \
     || { log_error "нет пользователя $USERNAME в passwd — не запускаюсь"; exit 78; }
 UID_OF_USER="$(cut -d: -f3 <<< "$PW_LINE")"
@@ -348,7 +349,9 @@ trap 'kill -TERM "$child" 2>/dev/null; wait "$child"; exit 0' TERM INT
 misses=0
 while kill -0 "$child" 2>/dev/null; do
     sleep 10 & wait $!
-    if [[ -r "$AUTH" ]] && xdpyinfo -display "$DISPLAY_NUM" >/dev/null 2>&1; then
+    # unix:N: with the session gone libxcb would fall back to TCP 6000+N, where
+    # anyone may listen, and hand it the cookie (lib/x-session.sh).
+    if [[ -r "$AUTH" ]] && xdpyinfo -display "unix$DISPLAY_NUM" >/dev/null 2>&1; then
         misses=0
     else
         misses=$((misses + 1))
