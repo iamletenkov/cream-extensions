@@ -49,7 +49,8 @@
 | [STATUS.md](STATUS.md) | состояние работ: что сделано, что дальше, что сломано |
 | [adr/README.md](adr/README.md) | индекс архитектурных решений; шаблон — [adr/0000-template.md](adr/0000-template.md) |
 | [history/README.md](history/README.md) | история каталога: переход с формата bisquite на `cream/v1` |
-| [specs/](specs/) | спеки (что и почему строим) — пока пусто |
+| [specs/2026-11-12-existing-desktop.md](specs/2026-11-12-existing-desktop.md) | спека: удалённый стол (selkies, x11vnc, vino-vnc, kiosk, wallpaper) на готовом столе и DM не из cream — `existing-desktop`, `desktop` 2.0.0, `gdm-xorg` |
+| [plans/2026-11-12-existing-desktop.md](plans/2026-11-12-existing-desktop.md) | план по спеке existing-desktop: 21 задача в 5 волнах, рулинги П1–П11, приёмка P1–P7 на ВМ |
 | [plans/2026-10-19-cream-v1-migration.md](plans/2026-10-19-cream-v1-migration.md) | план перевода каталога на cream/v1: 29 задач в 10 волнах, выпуск 5.0.0 (закрыт) |
 | [research/2026-10-21-configure-audit.md](research/2026-10-21-configure-audit.md) | аудит 14 хуков configure по признакам А1–А6: кому нужен `every_boot` |
 | [../CHANGELOG.md](../CHANGELOG.md) | изменения по версиям (ведёт release-please) |
