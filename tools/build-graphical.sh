@@ -128,9 +128,9 @@ if [[ ! -e /etc/resolv.conf && ! -L /etc/resolv.conf ]] || cp -P /etc/resolv.con
     rm -f /etc/resolv.conf
     printf 'nameserver 1.1.1.1\\nnameserver 8.8.8.8\\noptions timeout:2 attempts:3\\n' > /etc/resolv.conf
 fi
-# On a slow runner dhcpcd of the appliance gives up on DHCP and takes an IPv4LL
-# address with an on-link default route: slirp answers no ARP for the world, so
-# "No route to host". The gateway of the libguestfs user network comes back —
+# Insurance: with DHCP silent (seen under passt on the resolute runner) dhcpcd of
+# the appliance takes an IPv4LL address with an on-link default route — "No
+# route to host". The gateway of the libguestfs user network (slirp) comes back,
 # in the appliance's kernel only, nothing of it reaches the image.
 GW=as-is
 if ! ip route show default | grep -q ' via '; then
@@ -278,6 +278,17 @@ build(){
         echo "+ $0 --guest-script $sc $snap <sha256> > $work/steps.sh"
     else
         guest_script "$sc" "$snap" "$sha" > "$work/steps.sh"
+    fi
+    # libguestfs >= 1.54 takes passt for the appliance network when `passt --help`
+    # runs; on the resolute runner the guest gets no DHCP under it (IPv4LL, No
+    # route to host). A shim answering 127, as a missing command does, brings
+    # slirp back; a host without passt does not notice it.
+    echo "+ PATH=$work/no-passt:\$PATH   # passt скрыт от libguestfs, сеть appliance — slirp (passt на хосте: $(command -v passt || echo нет))"
+    if (( ! DRY )); then
+        mkdir -p "$work/no-passt"
+        printf '#!/bin/sh\nexit 127\n' > "$work/no-passt/passt"
+        chmod 0755 "$work/no-passt/passt"
+        export PATH="$work/no-passt:$PATH"
     fi
     run qemu-img create -q -f qcow2 "$disk" "${DISK_SIZE:-20G}"
     # The root is the first partition; the rest of the image stays as it is.

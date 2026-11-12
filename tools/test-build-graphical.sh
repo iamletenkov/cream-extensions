@@ -124,6 +124,12 @@ has "--dry-run: virt-customize" "virt-customize" "$d"
 has "--dry-run: сценарий гостя" "--run" "$d"
 has "--dry-run: журналы — наружу" "virt-copy-out" "$d"
 has "--dry-run: разбор" "--verify cream-gnome" "$d"
+# libguestfs >= 1.54 takes passt for the appliance when `passt --help` runs; on
+# the resolute runner the guest gets no DHCP under it. A shim that answers 127
+# ("not found") brings slirp back (measured in ubuntu:26.04 with passt).
+has "--dry-run: passt скрыт от libguestfs" "no-passt" "$d"
+before "--dry-run: passt скрыт до virt-resize" "no-passt" "virt-resize" "$d"
+has "шим passt отвечает 127 — libguestfs берёт slirp" 'exit 127' "$(cat "$B")"
 if [[ -e "$TMP/w" ]]; then wc=1; else wc=0; fi
 eq "--dry-run: рабочий каталог не создан" 0 "$wc"
 
