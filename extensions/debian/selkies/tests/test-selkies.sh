@@ -950,6 +950,19 @@ eq "строка ожидания — на 0, 5 и 10 минуте" 3 "$(grep -c
 check "диагноз: на seat0 bob" grep -q 'на seat0 сеанс bob (x11)' "$ROOT/out"
 check "подсказка: SELKIES_USER=bob" grep -q 'SELKIES_USER=bob' "$ROOT/out"
 
+echo "== run-selkies.sh: xdpyinfo — только unix:N, без отката на TCP 6000+N =="
+# With no unix listener libxcb goes to 127.0.0.1:6000+N, where anyone may
+# listen, and hands it the cookie — the search and the watcher of the session
+# connect to unix:N. Selkies lives until the watcher has asked once.
+wr_root
+ht_fake xdpyinfo 'printf "%s\n" "$*" >> "$FAKE/xdpyinfo.args"; [[ -e "$FAKE/selkies.env" ]] && : > "$FAKE/stop"; exit 0'
+printf '#!/usr/bin/env bash\n[[ "${1-}" == --help ]] && exit 0\nenv > %q\nfor _ in $(seq 200); do [[ -e %q ]] && exit 0; /usr/bin/sleep 0.05; done\nexit 0\n' \
+    "$FAKE/selkies.env" "$FAKE/stop" > "$ROOT/opt/selkies/$VER/usr/conda/bin/selkies"
+run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"
+check "сторож сеанса спросил xdpyinfo при живом Selkies" test -e "$FAKE/stop"
+check "xdpyinfo — unix:0" grep -qx -- '-display unix:0' "$FAKE/xdpyinfo.args"
+check_not "xdpyinfo без :N (TCP-откат)" grep -qE -- '-display :' "$FAKE/xdpyinfo.args"
+
 echo "== имена layout 2 =="
 # check-names: off
 check_not "нет /opt/bisquite, bisquite-conf, BISQUITE_ в коде" \

@@ -24,6 +24,23 @@
   [`gdm-xorg`](../extensions/debian/gdm-xorg/README.md) (стол не через cream) или `gnome`;
   у SDDM своего переключателя в каталоге нет (Plasma 6, по сведениям, по умолчанию на
   Wayland — не замерено, P4 спеки).
+- **Xorg от root при пустом `Display` в logind — обёртка ждёт.** Это GDM с Xorg через
+  `Xorg.wrap` от root (нет KMS, NVIDIA без `nvidia-drm.modeset=1`) и `startx` с
+  root-Xorg. Обёртки `selkies` и `x11vnc` работают от пользователя и fd такого Xorg не
+  видят. Без них дисплей не доказать (запасные пути `lib/x-session.sh`): cookie уходит
+  только Xorg, чей доверенный lock-файл хранит его pid и чьи оба слушателя `X<N>` —
+  его fd. Поэтому обёртка ждёт, строка в журнале раз в 5 минут. LightDM и SDDM пишут
+  `Display`, rootless GDM — Xorg пользователя: их это не задевает. Обход — сознательно
+  задать дисплей: `sudo cream set selkies SELKIES_DISPLAY=:N` /
+  `sudo cream set x11vnc X11VNC_DISPLAY=:N`. Пуст ли `Display` на реальных машинах —
+  замер P1–P3 спеки, [#139](https://github.com/iamletenkov/cream-extensions/issues/139).
+- **Жёсткий `:N` и `Display` из logind — без привязки к Xorg.** Authority предлагается
+  дисплею как есть (как в 5.x); проверка authority — по `unix:N`, без отката на TCP. Но GDM
+  пишет wild-cookie, и на `:N` без X-сервера (например, сохранённый с 5.x `:0`, а сеанс
+  на `:1`) cookie получит тот, кто займёт абстрактное имя `@/tmp/.X11-unix/X<N>`.
+  Задавайте жёсткий `:N` только там, где на нём гарантированно X-сервер пользователя.
+  Проверка слушателей для этих путей —
+  [#139](https://github.com/iamletenkov/cream-extensions/issues/139).
 - **Автологин SDDM — отказ.** `desktop` с `DESKTOP_AUTOLOGIN=0/1` на машине с SDDM
   выходит с 1 после остальных ручек: `Session=` у SDDM обязателен, а имя X11-сессии Plasma
   5.27 и 6 различается и не замерено (P4 спеки). Автологин SDDM — вручную.

@@ -30,11 +30,12 @@ X-сессия, которая на мониторе, — в браузере, �
 пользователь cloud-init (как раньше); только учётка с uid **1000..65533**: root,
 `gdm`, `lightdm` и другие системные — отказ, код 78 (у `gdm` authority — экрана
 входа). Дисплей — `SELKIES_DISPLAY=auto` (умолчание): X11-сеанс пользователя на
-seat0 по logind, иначе его Xorg, иначе `:0`. У найденного без logind дисплея оба
-слушателя `X<N>` (файл и абстрактный — xcb идёт к нему первым) — fd этого Xorg; у `:0`
-ещё lock-файл, процесс `Xorg` и сокет принадлежат пользователю (fd Xorg root обёртке не
-видны — такой `:0` только через logind). Такой дисплей
-ещё подтверждает собственная authority пользователя ([`lib/x-session.sh`](../../../lib/x-session.sh)); `:N` — жёстко. Стол,
+seat0 по logind, иначе его Xorg, иначе `:0`. Найденный без logind дисплей `:N` —
+только X-сервера, который доказан: доверенный lock-файл `/tmp/.X<N>-lock` хранит pid
+Xorg, оба слушателя `X<N>` (файл и абстрактный — xcb идёт к нему первым) — fd этого
+Xorg, у `:0` ещё процесс и сокет — root или пользователя; fd Xorg root обёртке не
+видны — такой дисплей только через logind (см. «Известные ограничения»). Дисплей ещё подтверждает собственная
+authority пользователя — по `unix:N`, без отката на TCP ([`lib/x-session.sh`](../../../lib/x-session.sh)); `:N` — жёстко. Стол,
 поставленный не через cream (готовая Ubuntu, GDM/LightDM/SDDM), —
 [`existing-desktop`](../existing-desktop/README.md); сеанс на Wayland не
 транслируется — [`gdm-xorg`](../gdm-xorg/README.md).
@@ -259,6 +260,16 @@ sudo cream set selkies SELKIES_USER=<кто входит на экран>  # е�
 
 ## Известные ограничения
 
+- **Xorg от root при пустом `Display` в logind — обёртка ждёт** (GDM через
+  `Xorg.wrap`: нет KMS, NVIDIA без `nvidia-drm.modeset=1`; `startx` от root): fd такого
+  Xorg обёртке, работающей от пользователя, не видны, дисплей не доказать. Обход —
+  сознательно `sudo cream set selkies SELKIES_DISPLAY=:N`.
+- **Жёсткий `SELKIES_DISPLAY=:N` и `Display` из logind — без привязки к Xorg** (как в
+  5.x; authority проверяется по `unix:N`): на `:N` без X-сервера wild-cookie GDM получит тот, кто
+  займёт `@/tmp/.X11-unix/X<N>`. Жёсткий `:N` — только там, где на нём гарантированно
+  X-сервер пользователя. Оба пункта —
+  [#139](https://github.com/iamletenkov/cream-extensions/issues/139),
+  [known-issues](../../../docs/known-issues.md).
 - Без пароля или явного `SELKIES_ALLOW_NO_AUTH=1` служба не стартует.
 - Формат cream/v1 не проверен на железе и с настоящим менеджером входа (P): старт
   службы, basic auth из `secrets`, объявление в Teleport. Не проверены amd64 AppImage

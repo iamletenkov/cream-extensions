@@ -349,7 +349,9 @@ trap 'kill -TERM "$child" 2>/dev/null; wait "$child"; exit 0' TERM INT
 misses=0
 while kill -0 "$child" 2>/dev/null; do
     sleep 10 & wait $!
-    if [[ -r "$AUTH" ]] && xdpyinfo -display "$DISPLAY_NUM" >/dev/null 2>&1; then
+    # unix:N: with the session gone libxcb would fall back to TCP 6000+N, where
+    # anyone may listen, and hand it the cookie (lib/x-session.sh).
+    if [[ -r "$AUTH" ]] && xdpyinfo -display "unix$DISPLAY_NUM" >/dev/null 2>&1; then
         misses=0
     else
         misses=$((misses + 1))
