@@ -8,7 +8,8 @@ After=sys-kernel-debug.mount
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-EnvironmentFile=/etc/cream/sensing-gmsl2-camera/config
+# Only the keys set explicitly, no file until one is (the action has the defaults).
+EnvironmentFile=-/etc/cream/sensing-gmsl2-camera/config
 ExecStart=/opt/cream/ext/sensing-gmsl2-camera/actions/boost-clock
 
 [Install]

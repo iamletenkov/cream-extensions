@@ -11,5 +11,7 @@ After=dev-%i.device
 Type=oneshot
 RemainAfterExit=yes
 # The keys of the extension as cream wrote them; the action checks them again.
-EnvironmentFile=/etc/cream/sensing-gmsl2-camera/config
+# Only the keys set explicitly, and no file until one is: the defaults of the
+# manifest are the fallbacks of the action, the dash keeps the unit starting.
+EnvironmentFile=-/etc/cream/sensing-gmsl2-camera/config
 ExecStart=/opt/cream/ext/sensing-gmsl2-camera/actions/camera-profile %i

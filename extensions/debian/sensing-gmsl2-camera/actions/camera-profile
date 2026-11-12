@@ -8,8 +8,10 @@
 #
 # The second form is how sensing-gmsl2-camera@videoN.service calls it (the udev
 # rule wants the unit when the node appears), with the keys from
-# EnvironmentFile=/etc/cream/sensing-gmsl2-camera/config. The node name and the
+# EnvironmentFile=-/etc/cream/sensing-gmsl2-camera/config. The node name and the
 # controls are checked here, whoever wrote them, before they reach v4l2-ctl.
+# That file holds only the keys set explicitly (cream gives the defaults to
+# `cream run`, not to a unit), so the default of the manifest is repeated here.
 #
 # Exit: 0 — profile set, or not a Sensing node (skipped); 1 — bad controls or
 # v4l2-ctl refused; 2 — usage.
@@ -20,9 +22,9 @@ if [[ ! "$node" =~ ^video[0-9]{1,4}$ ]]; then
     echo "использование: camera-profile videoN" >&2
     exit 2
 fi
-controls="${SENSING_CAMERA_CONTROLS:-}"
+controls="${SENSING_CAMERA_CONTROLS:-sensor_mode=1,trig_mode=0,trig_pin=0x00020007}"
 if [[ ! "$controls" =~ ^[a-z_]+=[0-9a-fx]+(,[a-z_]+=[0-9a-fx]+)*$ ]]; then
-    echo "SENSING_CAMERA_CONTROLS не задан или не вида имя=число,…: профиль не ставлю" >&2
+    echo "SENSING_CAMERA_CONTROLS не вида имя=число,…: профиль не ставлю" >&2
     exit 1
 fi
 dev="/dev/$node"

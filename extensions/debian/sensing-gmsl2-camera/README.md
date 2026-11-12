@@ -69,9 +69,13 @@ p3701-0000, носитель p3737-0000) с адаптером **SG8A-AGON-G2Y-A
 
 **Действия** `camera-profile` и `boost-clock` (`lock: none` — их зовут юниты по
 абсолютному пути `/opt/cream/ext/sensing-gmsl2-camera/actions/…` с
-`EnvironmentFile=/etc/cream/sensing-gmsl2-camera/config`) заново проверяют имя узла и
+`EnvironmentFile=-/etc/cream/sensing-gmsl2-camera/config`) заново проверяют имя узла и
 значения, прежде чем они дойдут до `v4l2-ctl`. Действие `adapter-check` (его
 зовёт `sensing-gmsl2-adapter.service`) только читает sysfs и дерево устройств.
+В `config` cream пишет только явно заданные ключи, а сам файл появляется с первым
+из них; поэтому `EnvironmentFile` юнитов необязателен (`-`), а умолчание каждого
+ключа повторено в действии. До 5.1.1 на установке без настроек юниты не
+стартовали, а `camera-profile` из юнита пропускал профиль камеры.
 
 ## Параметры
 

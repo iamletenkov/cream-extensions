@@ -20,7 +20,11 @@
 # and the udev rule are `files` and call them by absolute path (ruling R7).
 schema: cream/v1
 name: sensing-gmsl2-camera
-version: 5.1.0
+version: 5.1.1
+# 5.1.1: the units start without /etc/cream/sensing-gmsl2-camera/config
+#        (EnvironmentFile=-: cream writes the file only when a key is set), and
+#        camera-profile from the unit takes the default SENSING_CAMERA_CONTROLS of
+#        the manifest — it used to skip the profile (audit of defaults 2026-11-12).
 # 5.1.0: проверка адаптера SG8A на загрузке — sensing-gmsl2-adapter.service, действие
 #        adapter-check, ключ SENSING_ADAPTER_WAIT (инцидент Orin 2026-11-12).
 summary: Камеры Sensing GMSL2 на Jetson AGX Orin (SG8A-AGON-G2Y-A1, L4T 36.4.3) — ядро, модули, оверлей, запуск на загрузке
