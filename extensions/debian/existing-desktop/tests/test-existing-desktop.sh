@@ -284,8 +284,8 @@ exit 0'
 ht_hook install; eq "блокировка: install — 0" 0 "$?"
 eq "блокировка: install повторён" 2 "$(grep -c '^apt-get install' "$FAKE/calls")"
 check "блокировка: пауза перед повтором" ht_called '^sleep '
-check "update ждёт блокировку dpkg" ht_called '^apt-get update .*-o DPkg::Lock::Timeout=300'
-check "install ждёт блокировку dpkg" ht_called '^apt-get install .*-o DPkg::Lock::Timeout=300'
+check "update ждёт блокировку dpkg" ht_called '^apt-get update .*-o DPkg::Lock::Timeout=120'
+check "install ждёт блокировку dpkg" ht_called '^apt-get install .*-o DPkg::Lock::Timeout=120'
 
 echo "== отказы: части стола нет — 1, с причиной и подсказкой =="
 ed_root none

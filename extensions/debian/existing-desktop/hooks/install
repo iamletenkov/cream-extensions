@@ -23,7 +23,7 @@ log_info(){ >&2 echo "[INFO] existing-desktop: $*"; }
 log_warn(){ >&2 echo "[WARN] existing-desktop: $*"; }
 log_error(){ >&2 echo "[ERROR] existing-desktop: $*"; }
 
-APT_LOCK=(-o DPkg::Lock::Timeout=300)
+APT_LOCK=(-o DPkg::Lock::Timeout=120)
 
 apt_retry(){
     local i
