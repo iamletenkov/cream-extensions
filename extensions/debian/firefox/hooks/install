@@ -15,7 +15,9 @@
 # origin packages.mozilla.org plus --allow-downgrades replaces it.
 #
 # The packages this hook installed (not there before) are added to
-# $CREAM_STATE_DIR/packages: `remove` purges only those.
+# $CREAM_STATE_DIR/packages, and whether the Mozilla source, its pin and the key
+# were there before it goes to $CREAM_STATE_DIR/apt-source: `remove` takes away
+# only ours.
 set -euo pipefail
 
 log_info(){ >&2 echo "[INFO] firefox: $*"; }
@@ -53,6 +55,26 @@ done
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends ca-certificates curl gnupg
+
+# --- whose source, pin and key ------------------------------------------------
+# Before the first write: were the source, the pin or the key there before cream
+# (Mozilla's own instructions use the same paths)? `remove` takes away only what
+# the record calls ours. Written once — a repeat finds our own files and would
+# call them foreign. An upgrade from 2.0.x (CREAM_PREV_VERSION, no record) writes
+# none: the files are 2.0.x's own, and remove without a record does what 2.0.x did.
+SRC_REC="${CREAM_STATE_DIR:?run by cream}/apt-source"
+if [[ ! -e "$SRC_REC" && -z "${CREAM_PREV_VERSION:-}" ]]; then
+    install -d -m 0755 "$(dirname "$SRC_REC")"
+    for f in /etc/apt/sources.list.d/mozilla.list /etc/apt/preferences.d/mozilla "$KEYRING"; do
+        if [[ -e "$R$f" || -L "$R$f" ]]; then
+            printf 'kept %s\n' "$f"
+            log_info "$f был до cream — remove его не снимет"
+        else
+            printf 'ours %s\n' "$f"
+        fi
+    done > "$SRC_REC.new"
+    mv -f "$SRC_REC.new" "$SRC_REC"
+fi
 
 install -d -m 0755 "$R/etc/apt/keyrings" "$R/etc/apt/sources.list.d" "$R/etc/apt/preferences.d"
 tmp_key="$(mktemp)"

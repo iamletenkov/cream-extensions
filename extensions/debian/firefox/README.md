@@ -32,12 +32,16 @@ Firefox из APT-репозитория Mozilla (`packages.mozilla.org`) — н�
 | `/etc/apt/preferences.d/mozilla` | `Pin-Priority: 1000` для `firefox*` с этого источника |
 | `/usr/lib/firefox/` | сам браузер; `x-www-browser` указывает на него |
 | `/var/lib/cream/ext/firefox/packages` | пакеты, которые поставил `install` (не стоявшие до него) |
+| `/var/lib/cream/ext/firefox/apt-source` | были ли источник, пин и ключ до первой установки: `ours <путь>` — завёл `install`, `kept <путь>` — лежал до cream (2.1.0) |
 
   Пин нужен, чтобы заменить транзитный пакет: у него эпоха `1:`, и без пина
   apt считает его новее. Пин ограничен пакетами `firefox*`, чтобы репозиторий
   Mozilla не перехватывал ничего другого.
 - **`remove`** — `apt-get purge` пакетов из `/var/lib/cream/ext/firefox/packages`,
-  затем ключ, источник и пин Mozilla и `apt-get update`.
+  затем ключ, источник и пин Mozilla — только те, что запись `apt-source` называет
+  своими (лежавшие до cream, например по инструкции Mozilla, остаются), — и
+  `apt-get update`, если снят источник. Записи нет (поставлено 2.0.x или обновлено
+  с него) — снимаются все три, как раньше.
 
 ## Параметры
 
@@ -73,7 +77,7 @@ RUN_COMMAND cream install --with-deps firefox FIREFOX_LANGPACK=ru
 | сборка образа / `cream install` | репозиторий, ключ и пин Mozilla, пакет `firefox` и языковой пакет |
 | загрузка | ничего: хука `configure` нет |
 | `cream set FIREFOX_LANGPACK=…` | ключ `scope: install` — `install` перезапускается |
-| `cream remove` | снимает свои пакеты, ключ, источник и пин |
+| `cream remove` | снимает свои пакеты и свои ключ, источник и пин |
 
 ## Известные ограничения
 
@@ -107,6 +111,8 @@ AGX Orin, L4T 36.4.3 (Ubuntu 22.04, arm64), 2026-09-14: транзитный п�
 - **V** — `make cream-validate`, `tools/check-names.sh`.
 - **H** — `tests/test-firefox.sh`: ключ (отпечаток, ровно один основной), источник
   и пин, языковой пакет, отказ при оставшемся snap-пакете, повтор без изменений
-  файлов, `remove` только своего.
+  файлов, `remove` только своего; источник, пин и ключ, лежавшие до cream, переживают
+  `remove`, свои — сняты, без записи (2.0.x, обновление с него) — как 2.0.x; путь вне
+  трёх в записи игнорируется.
 - **L** — `make test-live EXT=firefox` на `debian-12` и `ubuntu-24.04`
   (`tests/live.env`; сеть до `packages.mozilla.org`).

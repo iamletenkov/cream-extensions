@@ -3,7 +3,9 @@
 # not a desktop: the X server and the session come from gnome/xfce4/lxde.
 schema: cream/v1
 name: firefox
-version: 2.0.3
+version: 2.1.0
+# 2.1.0: remove takes away the Mozilla source, its pin and the key only when install created
+#        them ($CREAM_STATE_DIR/apt-source); installed by 2.0.x, no record — all three, as before.
 # 2.0.3: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: Firefox из APT-репозитория Mozilla — настоящий .deb, а не снап
 cream: ">=1.0.0"

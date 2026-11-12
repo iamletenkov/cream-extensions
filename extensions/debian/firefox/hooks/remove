@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # cream hook `remove` of firefox: purges the packages `install` put on (the
 # record in $CREAM_STATE_DIR/packages; a Firefox that was there before cream
-# stays), then takes away the Mozilla source, its pin and the key, and
-# refreshes the apt lists. apt is asked first in simulation (library apt-guard):
+# stays), then takes away the Mozilla source, its pin and the key — only those
+# the record $CREAM_STATE_DIR/apt-source calls ours; no record — all three, as
+# 2.0.x — and refreshes the apt lists. apt is asked first in simulation (library apt-guard):
 # when it would take anything besides our packages the hook refuses and changes
 # nothing. A repeat finds nothing and exits 0.
 set -euo pipefail
@@ -12,6 +13,7 @@ log_error(){ >&2 echo "[ERROR] firefox: $*"; }
 
 R="${CREAM_ROOT:-}"; R="${R%/}"
 STATE="${CREAM_STATE_DIR:?run by cream}/packages"
+SRC_REC="${CREAM_STATE_DIR}/apt-source"
 
 export DEBIAN_FRONTEND=noninteractive
 ours=()
@@ -29,12 +31,32 @@ else
     log_info "своих пакетов нет — Firefox не трогаю"
 fi
 
+# The source, the pin and the key: only those the record (install 2.1.0+) calls
+# ours; no record (installed by 2.0.x) — all three, as 2.0.x did. A record line
+# naming anything but the three paths is ignored.
+MOZILLA_FILES=(/etc/apt/sources.list.d/mozilla.list /etc/apt/preferences.d/mozilla
+    /etc/apt/keyrings/packages.mozilla.org.asc)
+drop=()
+if [[ -f "$SRC_REC" ]]; then
+    while read -r owner path _; do
+        [[ " ${MOZILLA_FILES[*]} " == *" $path "* ]] || continue
+        if [[ "$owner" == ours ]]; then
+            drop+=("$path")
+        else
+            log_info "$path был до cream — не снимаю"
+        fi
+    done < "$SRC_REC"
+else
+    drop=("${MOZILLA_FILES[@]}")
+fi
+
 had_source=""
-[[ -e "$R/etc/apt/sources.list.d/mozilla.list" ]] && had_source=1
-rm -f -- "$R/etc/apt/sources.list.d/mozilla.list" "$R/etc/apt/preferences.d/mozilla" \
-    "$R/etc/apt/keyrings/packages.mozilla.org.asc"
+for f in "${drop[@]}"; do
+    [[ "$f" == */sources.list.d/* && -e "$R$f" ]] && had_source=1
+    rm -f -- "$R$f"
+done
 # Lists of the removed source stay until the next update; refresh now.
 if [[ -n "$had_source" ]]; then
     apt-get update -q || log_error "apt-get update после снятия источника не прошёл (не критично)"
 fi
-rm -f -- "$STATE"
+rm -f -- "$STATE" "$SRC_REC"
