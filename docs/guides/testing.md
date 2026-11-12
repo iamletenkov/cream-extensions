@@ -119,4 +119,11 @@ L-расширение — то, у которого есть `tests/live.env`: 
   L-расширения (и те, чьи `LIVE_DEPS` изменились; смена пина cream — все), ночью —
   все; матрицу считает `tools/live-matrix.sh`. Вручную:
   `gh workflow run live.yml -f ext=<имя>`.
+- **Сборка графического стека в образе** — `.github/workflows/build-graphical.yml`:
+  настоящий cream ставит `gnome`, `desktop`, `selkies`, `x11vnc`, а на образе с готовым
+  gdm3 — `existing-desktop` в облачный образ ubuntu-24.04 amd64 под `virt-customize`
+  (фаза build, как в bisquite). Идёт в PR, которые меняют эти расширения, их зависимости
+  или `lib/`, и вручную: `gh workflow run build-graphical.yml -f scenario=<сценарий|all>`;
+  не ночью. Локально — `tools/build-graphical.sh <сценарий>` (нужны `libguestfs-tools`
+  и KVM), список сценариев — `--list`, команды без запуска — `--dry-run`.
 - **pre-push** lefthook — `make ci`.

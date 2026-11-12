@@ -12,7 +12,8 @@
 # cloud-user) и его тест; тест каркаса new-extension.sh (скелеты проходят линт,
 # гейт имён, свой H-тест и cream validate); тест H-раннера (tools/hooktest.sh —
 # хуки на подменённом корне, как их зовёт cream), тест матрицы живых прогонов CI
-# (live-matrix.sh). Сверка файлов-образцов контракта stvor-agent
+# (live-matrix.sh), тест сборки графического стека в образе (build-graphical.sh:
+# сценарии гостя, сухой прогон, разбор журналов — без сети и libguestfs). Сверка файлов-образцов контракта stvor-agent
 # (check-contract-fixtures.sh: пин набора — всегда, без сети; соседняя копия
 # stvor-agent — если есть, в CI её даёт checkout по ref). Тест
 # tools/agent-bump.sh (пин обёртки stvor-agent по SHA256SUMS релиза) и
@@ -38,7 +39,7 @@
 # 2026-10-19: исполнители расширений этот файл не трогают; прочие файлы tests/ —
 # помощники и данные, live.env — умолчания живого прогона tools/live-test.sh).
 # Живые прогоны (контейнер с systemd, сеть) сюда не входят: make test-live,
-# make test-live-self, workflow live.yml. Все проверки доводятся до конца, даже
+# make test-live-self, workflow live.yml; сборка в образе — workflow build-graphical.yml. Все проверки доводятся до конца, даже
 # если первая упала.
 
 set -uo pipefail
@@ -79,6 +80,9 @@ echo "== test-hooktest =="
 
 echo "== test-live-matrix =="
 "$HERE/test-live-matrix.sh" || rc=1
+
+echo "== test-build-graphical =="
+"$HERE/test-build-graphical.sh" || rc=1
 
 echo "== test-agent-bump =="
 "$HERE/test-agent-bump.sh" || rc=1
