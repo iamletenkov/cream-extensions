@@ -135,8 +135,14 @@ auth_ok(){
         return 2
     fi
     if secret_set SELKIES_BASIC_AUTH_PASSWORD; then
-        if ! is_loopback && [[ "$SELKIES_ENABLE_HTTPS" != true ]]; then
-            warn "SELKIES_ADDR=$SELKIES_ADDR без SELKIES_ENABLE_HTTPS=true — пароль basic auth пойдёт по сети открытым текстом"
+        if [[ "$SELKIES_ENABLE_HTTPS" != true ]]; then
+            # SELKIES_PUBLIC with a password: all interfaces — the wrapper drops
+            # SELKIES_ADDR of the env file (Selkies refuses --public with --addr).
+            if ! bool_off "${SELKIES_PUBLIC:-}"; then
+                warn "SELKIES_PUBLIC=$SELKIES_PUBLIC без SELKIES_ENABLE_HTTPS=true — пароль basic auth пойдёт по сети открытым текстом"
+            elif ! is_loopback; then
+                warn "SELKIES_ADDR=$SELKIES_ADDR без SELKIES_ENABLE_HTTPS=true — пароль basic auth пойдёт по сети открытым текстом"
+            fi
         fi
         return 0
     fi

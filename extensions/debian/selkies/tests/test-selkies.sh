@@ -338,6 +338,10 @@ check "сказано про петлю" grep -q 'только на петле' 
 sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
 ht_hook configure CREAM_REASON=boot SELKIES_MODE=webrtc SELKIES_ADDR=0.0.0.0 SELKIES_COMPUTER_USE_BIND=9500
 eq "с паролем: webrtc, 0.0.0.0, Computer-Use на петле — 0" 0 "$?"
+sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+ht_hook configure CREAM_REASON=boot SELKIES_PUBLIC=true; eq "с паролем, PUBLIC=true — 0" 0 "$?"
+check "с паролем, PUBLIC=true — стартует" started alice
+check "с паролем, PUBLIC=true без HTTPS — предупреждение про открытый текст" grep -q 'открытым текстом' "$ROOT/out"
 sk_root
 ht_hook configure CREAM_REASON=boot SELKIES_ALLOW_NO_AUTH=1 SELKIES_PUBLIC=false \
     SELKIES_COMPUTER_USE_BIND=9500,127.0.0.1:9501,localhost:9502
@@ -536,6 +540,26 @@ wr_root
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_COMPUTER_USE_BIND=0.0.0.0:9500
 eq "с паролем, Computer-Use на 0.0.0.0 — 78" 78 "$?"
 check_not "с паролем, Computer-Use на 0.0.0.0 — selkies не запущен" test -e "$FAKE/selkies.env"
+# Selkies refuses --public together with --addr: with a password and
+# SELKIES_PUBLIC on the wrapper passes no SELKIES_ADDR (the env file has one).
+for pub in true 1; do
+    for addr in absent SELKIES_ADDR=127.0.0.1; do
+        wr_root
+        if [[ "$addr" == absent ]]; then
+            run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" "SELKIES_PUBLIC=$pub"
+        else
+            run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" "SELKIES_PUBLIC=$pub" "$addr"
+        fi
+        check "с паролем, PUBLIC=$pub, адрес $addr — запущен" test -e "$FAKE/selkies.env"
+        check "с паролем, PUBLIC=$pub — Selkies получил SELKIES_PUBLIC=$pub" grep -qx "SELKIES_PUBLIC=$pub" "$FAKE/selkies.env"
+        check_not "с паролем, PUBLIC=$pub, адрес $addr — без SELKIES_ADDR" grep -q '^SELKIES_ADDR=' "$FAKE/selkies.env"
+        eq "с паролем, PUBLIC=$pub — argv пуст (без --addr)" "" "$(cat "$FAKE/selkies.args" 2>/dev/null)"
+        check "с паролем, PUBLIC=$pub без HTTPS — предупреждение про открытый текст" grep -q 'открытым текстом' "$ROOT/out"
+    done
+done
+wr_root
+run_wrapper SELKIES_ALLOW_NO_AUTH=1 SELKIES_PUBLIC=true SELKIES_ADDR=127.0.0.1; eq "без пароля, PUBLIC=true из env — 78" 78 "$?"
+check_not "без пароля, PUBLIC=true — selkies не запущен" test -e "$FAKE/selkies.env"
 
 wr_root
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_ENABLE_HTTPS=true

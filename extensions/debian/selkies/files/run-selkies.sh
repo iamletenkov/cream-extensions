@@ -120,6 +120,13 @@ fi
 
 if [[ -n "${SELKIES_BASIC_AUTH_PASSWORD:-}" ]]; then
     export SELKIES_ENABLE_BASIC_AUTH=true
+    # SELKIES_PUBLIC with a password: Selkies refuses --public together with
+    # --addr, and the env file always carries SELKIES_ADDR — not passed on.
+    if ! bool_off "${SELKIES_PUBLIC:-}"; then
+        unset SELKIES_ADDR
+        addr="0.0.0.0,::"; loopback=0
+        log_warn "SELKIES_PUBLIC=$SELKIES_PUBLIC: слушаю все интерфейсы (0.0.0.0, ::), SELKIES_ADDR не передаю"
+    fi
     if (( ! loopback )) && [[ "${SELKIES_ENABLE_HTTPS:-false}" != true ]]; then
         log_warn "SELKIES_ADDR=$addr без SELKIES_ENABLE_HTTPS=true — пароль basic auth идёт по сети открытым текстом"
     fi
