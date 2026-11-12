@@ -21,7 +21,7 @@
 | [`chromium-kiosk`](../../extensions/debian/chromium-kiosk/README.md) | ≥ 1.0.0 | `kiosk-browser` | — | [`apt-guard`](../../extensions/debian/apt-guard/README.md) | [`kiosk`](../../extensions/debian/kiosk/README.md) | стадия `system`, по отметке выполнения | с `--accept-risk` |
 | [`cloud-growroot`](../../extensions/debian/cloud-growroot/README.md) | ≥ 1.0.0 | `cloud-growroot` | — | — | — | — | нет, только образ |
 | [`cloud-user`](../../extensions/debian/cloud-user/README.md) | ≥ 1.0.0 | — | — | — | — | — | да |
-| [`cloud-user-desktop`](../../extensions/debian/cloud-user-desktop/README.md) | ≥ 1.0.0 | `cloud-user-desktop` | — | [`desktop`](../../extensions/debian/desktop/README.md), [`cloud-user`](../../extensions/debian/cloud-user/README.md) | — | — | да |
+| [`cloud-user-desktop`](../../extensions/debian/cloud-user-desktop/README.md) | ≥ 1.0.0 | `cloud-user-desktop` | — | [`desktop`](../../extensions/debian/desktop/README.md), [`cloud-user`](../../extensions/debian/cloud-user/README.md) | — | — | с `--accept-risk` |
 | [`code-server`](../../extensions/debian/code-server/README.md) | ≥ 1.2.0 | `web-ide` | — | [`cloud-user`](../../extensions/debian/cloud-user/README.md), [`apt-guard`](../../extensions/debian/apt-guard/README.md) | — | стадия `cloud-user`, на каждой загрузке (`every_boot`) | да |
 | [`cuda-toolkit`](../../extensions/debian/cuda-toolkit/README.md) | ≥ 1.0.0 | `cuda` | — | [`apt-guard`](../../extensions/debian/apt-guard/README.md) | — | — | да |
 | [`desktop`](../../extensions/debian/desktop/README.md) | ≥ 1.2.0 | — | — | [`cloud-user`](../../extensions/debian/cloud-user/README.md) | — | стадия `system`, на каждой загрузке (`every_boot`) | да |

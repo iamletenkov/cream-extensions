@@ -13,8 +13,17 @@
 # on the device — only root with the vendor password. The root password is left
 # alone on purpose: taking it away would turn a failed boot into a brick.
 #
-# The vendor autologin pointing at the removed account is turned off by the
-# configure of desktop (depends) on its first run, before the display manager.
+# THE AUTOLOGIN OF THE REMOVED ACCOUNT (6.0.0, spec 2026-11-12-existing-desktop
+# §4.6). desktop 1.x turned every autologin off by default (DESKTOP_AUTOLOGIN=0)
+# and so the vendor's too; desktop 2.x leaves an autologin it was not asked about
+# alone. So install takes it away itself, once the account is gone (removed now
+# or before): in gdm3 (daemon.conf, custom.conf) AutomaticLogin=<user> with
+# AutomaticLoginEnable, TimedLogin=<user> with TimedLoginEnable/TimedLoginDelay;
+# in LightDM (lightdm.conf, lightdm.conf.d/*.conf) autologin-user=<user> with
+# autologin-user-timeout — the keys of that section only. Another account's
+# autologin, a commented key, a link or a non-regular file are left alone (a
+# link — a warning: an autologin of an account that is no more opens nothing).
+# In place: the mode and owner of the package's file stay.
 #
 # Refuses (exit 1) a name of the wrong form, root and system accounts
 # (uid < 1000), and an account that survives userdel: an image must not carry
@@ -36,9 +45,72 @@ if [[ ! "$user" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
     exit 1
 fi
 
+R="${CREAM_ROOT:-}"; R="${R%/}"
+
+# drop_keys <file> <main> <related ERE> <user>: in every section of <file>
+# where the active key <main> equals <user>, drop the active keys matching
+# <related> (<main> among them). 0 — changed; 1 — nothing to change; 2 — failed.
+drop_keys(){
+    local f="$1" main="$2" rel="$3" u="$4" tmp rc=0
+    tmp="$(mktemp "${f%/*}/.cloud-user-desktop.XXXXXX")" || return 2
+    awk -v main="$main" -v rel="$rel" -v user="$u" '
+        function parse(line,   i) {
+            key = ""; val = ""
+            if (line ~ /^[[:space:]]*[#;]/) return
+            i = index(line, "="); if (i == 0) return
+            key = substr(line, 1, i - 1); val = substr(line, i + 1)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", key); gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
+        }
+        function section(line) {
+            if (line !~ /^[[:space:]]*\[/) return 0
+            sec = line; sub(/^[[:space:]]*\[/, "", sec); sub(/\].*$/, "", sec); return 1
+        }
+        FNR == 1 { sec = "" }
+        NR == FNR { if (!section($0)) { parse($0); if (key == main && val == user) hit[sec] = 1 }; next }
+        { if (!section($0)) { parse($0); if ((sec in hit) && key ~ rel) { changed = 1; next } } print }
+        END { exit changed ? 0 : 1 }
+    ' "$f" "$f" > "$tmp" || rc=$?
+    if (( rc == 0 )); then
+        cat -- "$tmp" > "$f" || rc=2
+    elif (( rc != 1 )); then
+        rc=2
+    fi
+    rm -f -- "$tmp"
+    return "$rc"
+}
+
+# clear_autologin <user>: the autologin of gdm3 and LightDM naming <user> off.
+clear_autologin(){
+    local u="$1" f rel rc changed
+    for f in "$R/etc/gdm3/daemon.conf" "$R/etc/gdm3/custom.conf" \
+             "$R/etc/lightdm/lightdm.conf" "$R"/etc/lightdm/lightdm.conf.d/*.conf; do
+        if [[ -L "$f" ]]; then
+            log_warn "${f#"$R"} — символическая ссылка: автологин в ней не трогаю (учётки '$u' уже нет)"
+            continue
+        fi
+        [[ -f "$f" ]] || continue
+        changed=0
+        case "${f#"$R"}" in
+            /etc/gdm3/*)
+                for rel in 'AutomaticLogin AutomaticLogin(Enable)?' 'TimedLogin TimedLogin(Enable|Delay)?'; do
+                    rc=0; drop_keys "$f" "${rel%% *}" "^(${rel#* })\$" "$u" || rc=$?
+                    (( rc != 2 )) || { log_error "${f#"$R"}: автологин '$u' не снят"; exit 1; }
+                    (( rc != 0 )) || changed=1
+                done ;;
+            *)
+                rc=0; drop_keys "$f" autologin-user '^autologin-user(-timeout)?$' "$u" || rc=$?
+                (( rc != 2 )) || { log_error "${f#"$R"}: автологин '$u' не снят"; exit 1; }
+                (( rc != 0 )) || changed=1 ;;
+        esac
+        (( changed )) && log_info "${f#"$R"}: автологин удалённой учётки '$u' снят"
+    done
+    return 0
+}
+
 entry="$(getent passwd "$user" || true)"
 if [[ -z "$entry" ]]; then
     log_info "учётки '$user' нет — удалять нечего"
+    clear_autologin "$user"
     exit 0
 fi
 uid="$(cut -d: -f3 <<< "$entry")"
@@ -57,3 +129,4 @@ if id -- "$user" >/dev/null 2>&1; then
     exit 1
 fi
 log_info "'$user' удалена"
+clear_autologin "$user"

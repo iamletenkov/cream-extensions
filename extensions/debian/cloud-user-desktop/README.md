@@ -17,7 +17,9 @@ Raspberry Pi OS): убирает вендорскую учётку и приво
 | Конфликтует с | — |
 | Хуки | `install`, `remove` |
 | Настройка на загрузке | — |
-| Живая машина | да |
+| Живая машина | с `--accept-risk` |
+
+> **Живая машина — с `--accept-risk`.** Удаляет вендорскую учётку CLOUD_USER_DESKTOP_REMOVE вместе с домашним каталогом (userdel -r — необратимо: учётка и её файлы не восстанавливаются) и снимает автологин gdm3 и LightDM, указывающий на неё; автологин другой учётки не трогается
 <!-- /catalog:facts -->
 
 С расширением `gnome`/`xfce4`/`lxde` это расширение не нужно: они тянут `desktop` сами.
@@ -30,12 +32,19 @@ Raspberry Pi OS): убирает вендорскую учётку и приво
   root и системные учётки (uid < 1000) — отказ; имя проверяется по форме;
   `userdel -r` отказал — повтор без домашнего каталога; учётка осталась (занята
   процессом или сессией) — отказ.
-- **Вендорский автологин** на удалённую учётку гасит `configure` расширения
-  [`desktop`](../desktop/README.md) первым же запуском (по умолчанию
-  `DESKTOP_AUTOLOGIN=0`), до менеджера входа. Своей службы у расширения нет:
-  ручки рабочего стола — `desktop` (`depends`), его `configure` на каждой
-  загрузке до менеджера входа вносит пользователя cloud-init (библиотека
-  [`cloud-user`](../cloud-user/README.md)) в группы сеанса и пишет автологин.
+- **Вендорский автологин** на удалённую учётку `install` снимает сам (6.0.0), когда
+  учётки уже нет: в gdm3 (`/etc/gdm3/daemon.conf`, `custom.conf`) —
+  `AutomaticLogin=<учётка>` с `AutomaticLoginEnable` и `TimedLogin=<учётка>` с
+  `TimedLoginEnable`/`TimedLoginDelay`; в LightDM (`lightdm.conf`,
+  `lightdm.conf.d/*.conf`) — `autologin-user=<учётка>` с `autologin-user-timeout`, только
+  в той секции, где она названа. Автологин **другой** учётки, закомментированный
+  ключ и файл-ссылку (предупреждение) не трогает; права и владелец файла остаются.
+  Раньше это делало умолчание `DESKTOP_AUTOLOGIN=0` расширения `desktop` 1.x;
+  `desktop` 2.x чужой автологин не трогает. Своей службы у расширения нет:
+  ручки рабочего стола — [`desktop`](../desktop/README.md) (`depends`), его
+  `configure` на каждой загрузке до менеджера входа вносит пользователя cloud-init
+  (библиотека [`cloud-user`](../cloud-user/README.md)) в группы сеанса и пишет
+  автологин, если задан `DESKTOP_AUTOLOGIN=1`.
 - **`remove`** — ничего не возвращает: удалённая учётка не восстанавливается (смысл
   был в её пароле), ручки принадлежат `desktop`.
 
@@ -55,10 +64,22 @@ Raspberry Pi OS): убирает вендорскую учётку и приво
 На машине с подключённым каталогом ([как подключить](../../../docs/getting-started.md)):
 
 ```bash
-sudo cream install --with-deps cloud-user-desktop CLOUD_USER_DESKTOP_REMOVE=jetson
+sudo cream install --with-deps --accept-risk cloud-user-desktop CLOUD_USER_DESKTOP_REMOVE=jetson
 sudo cream set desktop DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_LOCK=1 DESKTOP_DISABLE_SCREEN_BLANK=1
 cream show desktop
 ```
+
+**Обновление — тоже с `--accept-risk`** (`targets.live: confirm` с 6.0.0, `userdel -r`
+необратим): `cream upgrade --all` оставит расширение `blocked:risk` (код 68), пока не
+сказано явно —
+
+```bash
+sudo cream upgrade --all --accept-risk cloud-user-desktop   # обновить осознанно
+sudo cream hold cloud-user-desktop                          # или закрепить: --all его пропускает (код 0)
+```
+
+Скрипты, которые зовут `cream upgrade --all` без вопроса (cron, агент), выбирают
+одно из двух заранее.
 
 В образе bisquite (VMFILE):
 
@@ -70,7 +91,7 @@ RUN_COMMAND cream install --with-deps cloud-user-desktop CLOUD_USER_DESKTOP_REMO
 
 | Когда | Что происходит |
 |---|---|
-| сборка образа / `cream install` | удаление вендорской учётки |
+| сборка образа / `cream install` | удаление вендорской учётки, снятие её автологина в gdm3 и LightDM |
 | загрузка | своего хука нет; `configure` расширения `desktop` вносит пользователя cloud-init в группы и пишет автологин до менеджера входа |
 | `cream remove` | ничего не возвращает |
 
@@ -112,7 +133,12 @@ device!`, `gdm3: GdmDisplay: Session never registered, failing`. Группы,
 
 - **V** — `make cream-validate`, `tools/lint-hooks.sh`, `tools/check-names.sh`.
 - **H** — `tests/test-cloud-user-desktop.sh`: удаление по имени, повтор, запасной
-  `userdel` без `-r`, отказ на занятой, системной учётке и на имени чужой формы.
+  `userdel` без `-r`, отказ на занятой, системной учётке и на имени чужой формы;
+  `live: confirm`; автологин удалённой учётки снят в gdm3 (`AutomaticLogin`,
+  `TimedLogin`) и LightDM (`lightdm.conf`, `lightdm.conf.d`, только её секция), повтор
+  без изменений; автологин другой учётки и закомментированный ключ не тронуты; ссылка
+  не разыменовывается; нет конфигов менеджера входа — 0; пустой ключ и занятая
+  учётка конфиги не трогают.
 - **L** — `make test-live EXT=cloud-user-desktop` поверх `xfce4` (`tests/live.env`):
   вендорской учётки в контейнере нет, проверяются установка, повтор, загрузка и `remove`.
 - **P** — на Jetson Nano с вендорским образом не собиралось: платы на стенде нет.
