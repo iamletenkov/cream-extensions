@@ -136,7 +136,7 @@ eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
 eq "даёт способности стола" "desktop-session display-manager x11-server" "$(mf '" ".join(sorted(m["provides"]))')"
 eq "исключает другой стол" desktop-session "$(mf '" ".join(m["conflicts"]["capabilities"])')"
 eq "хуки (hooks.check cream 1.4.0 отвергает — рулинг П18)" "install remove" "$(mf '" ".join(sorted(m["hooks"]))')"
-eq "install — 2m" 2m "$(mf 'm["hooks"]["install"]["timeout"]')"
+eq "install — 10m (apt с ожиданием блокировки dpkg, П19)" 10m "$(mf 'm["hooks"]["install"]["timeout"]')"
 eq "действия check и status" "check status" "$(mf '" ".join(sorted(m["actions"]))')"
 eq "check — lock none" none "$(mf 'm["actions"]["check"]["lock"]')"
 eq "check — при сборке и на живой (только файлы)" "build live" "$(mf '" ".join(m["actions"]["check"]["phases"])')"
@@ -265,8 +265,27 @@ check "apt-get install x11-xserver-utils" ht_called '^apt-get install .*--no-ins
 ed_root lightdm
 rm -f "$ROOT/usr/bin/xhost"
 ht_fake apt-get 'exit 100'
+ht_fake sleep
 ht_hook install; eq "apt отказал — 1" 1 "$?"
 check "причина: x11-xserver-utils" grep -q 'x11-xserver-utils' <<< "$(ht_out)"
+eq "apt отказал: три попытки update" 3 "$(grep -c '^apt-get update' "$FAKE/calls")"
+
+echo "== блокировка dpkg занята (unattended-upgrades, packagekit) — ждёт и повторяет (П19) =="
+ed_root lightdm
+rm -f "$ROOT/usr/bin/xhost"
+ht_fake sleep
+# Первый install — «Could not get lock», как при чужом apt; второй — успех.
+ht_fake apt-get '
+if [[ "$*" == *" install "* || "$1" == install ]]; then
+    n=$(( $(cat "$FAKE/apt-n" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/apt-n"
+    if (( n == 1 )); then echo "E: Could not get lock /var/lib/dpkg/lock-frontend" >&2; exit 100; fi
+fi
+exit 0'
+ht_hook install; eq "блокировка: install — 0" 0 "$?"
+eq "блокировка: install повторён" 2 "$(grep -c '^apt-get install' "$FAKE/calls")"
+check "блокировка: пауза перед повтором" ht_called '^sleep '
+check "update ждёт блокировку dpkg" ht_called '^apt-get update .*-o DPkg::Lock::Timeout=300'
+check "install ждёт блокировку dpkg" ht_called '^apt-get install .*-o DPkg::Lock::Timeout=300'
 
 echo "== отказы: части стола нет — 1, с причиной и подсказкой =="
 ed_root none

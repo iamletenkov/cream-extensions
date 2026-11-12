@@ -12,10 +12,29 @@
 # The only thing installed: x11-xserver-utils (xhost) when /usr/bin/xhost is
 # absent — lib/x-session.sh confirms a display found without logind only with
 # it (plan ruling П15). On a live machine the diagnosis of `status` ends the log.
+#
+# apt waits for the dpkg lock up to 5 minutes and is retried 3 times (plan
+# ruling П19): a ready Ubuntu Desktop often has unattended-upgrades or
+# packagekit holding it, and an immediate "Could not get lock" would fail the
+# record, which keeps the desktop-session conflict.
 set -euo pipefail
 
 log_info(){ >&2 echo "[INFO] existing-desktop: $*"; }
+log_warn(){ >&2 echo "[WARN] existing-desktop: $*"; }
 log_error(){ >&2 echo "[ERROR] existing-desktop: $*"; }
+
+APT_LOCK=(-o DPkg::Lock::Timeout=300)
+
+apt_retry(){
+    local i
+    for i in 1 2 3; do
+        "$@" && return 0
+        (( i < 3 )) || break
+        log_warn "попытка $i: $* — не удалась, повтор через 10 с"
+        sleep 10
+    done
+    return 1
+}
 
 R="${CREAM_ROOT:-}"; R="${R%/}"
 ED="${CREAM_EXT_DIR:?run by cream}/files/existing-desktop.sh"
@@ -24,8 +43,9 @@ ED="${CREAM_EXT_DIR:?run by cream}/files/existing-desktop.sh"
 
 if [[ ! -x "$R/usr/bin/xhost" ]]; then
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -q || { log_error "apt-get update не прошёл — x11-xserver-utils (xhost) не поставить"; exit 1; }
-    apt-get install -y -q --no-install-recommends x11-xserver-utils \
+    apt_retry apt-get update -q "${APT_LOCK[@]}" \
+        || { log_error "apt-get update не прошёл — x11-xserver-utils (xhost) не поставить"; exit 1; }
+    apt_retry apt-get install "${APT_LOCK[@]}" -y -q --no-install-recommends x11-xserver-utils \
         || { log_error "x11-xserver-utils (xhost) не установился"; exit 1; }
     log_info "поставлен x11-xserver-utils (xhost) — remove его не снимает"
 fi

@@ -34,7 +34,8 @@ provides: [x11-server, display-manager, desktop-session]
 conflicts:
   capabilities: [desktop-session]
 hooks:
-  install: {timeout: 2m}
+  # 10m, not 2m of the spec (plan ruling П19): apt waits for the dpkg lock.
+  install: {timeout: 10m}
   remove: {}
 actions:
   check:
