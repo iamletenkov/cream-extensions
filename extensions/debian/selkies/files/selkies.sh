@@ -427,7 +427,12 @@ run(){
     if [[ -n "${SELKIES_USER:-}" ]]; then
         user="$SELKIES_USER"
     else
-        user="$(resolve_user "$wait_s")" || return 0
+        # No usable cloud-init user: an instance started earlier for a
+        # SELKIES_USER now unset keeps a valid uid — the wrapper would not stop it.
+        if ! user="$(resolve_user "$wait_s")"; then
+            stop_instances
+            return 0
+        fi
     fi
     diagnose "$user"
     # Another user's instance would fight for the same port.

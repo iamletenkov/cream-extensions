@@ -501,6 +501,16 @@ check "стартует selkies@carol" started carol
 check_not "selkies@alice не стартует" started alice
 check_not "cloud-user не ждали" ht_called '^sleep'
 
+echo "== apply: SELKIES_USER снят, пользователь cloud-init не годится — прежний экземпляр гасится =="
+for cu in none root 'bad;name' gdm; do
+    sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+    if [[ "$cu" == none ]]; then rm -f "$FAKE/user"; else echo "$cu" > "$FAKE/user"; fi
+    printf '%s\n' 'selkies@carol.service loaded active running Selkies' > "$FAKE/units"
+    ht_hook apply CREAM_CHANGED_KEYS=SELKIES_USER SELKIES_USER=; eq "cloud-init «$cu»: apply — 0" 0 "$?"
+    check "cloud-init «$cu»: selkies@carol гасится" ht_called '^systemctl stop --no-block selkies@carol\.service'
+    check_not "cloud-init «$cu»: ничего не стартует" ht_called '^systemctl (start|restart) --no-block selkies@'
+done
+
 echo "== configure/apply: SELKIES_USER — системная учётка, root, nobody, нет в passwd — 78 (Р3) =="
 for u in gdm root nobody ghost; do
     sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
