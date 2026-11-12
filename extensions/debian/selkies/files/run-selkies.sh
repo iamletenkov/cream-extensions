@@ -100,6 +100,11 @@ loopback_host(){ [[ "$1" =~ $RE_LOOPBACK ]]; }
 # Computer-Use server for any non-empty value; off by default).
 cu_enabled(){ local v="${SELKIES_COMPUTER_USE_BIND:-}"; [[ -n "${v//[[:space:],]/}" ]]; }
 
+# A list of commas and blanks only names no address: Computer-Use is off, as if
+# the key were unset — not passed on (Selkies starts its server for any
+# non-empty value).
+cu_enabled || unset SELKIES_COMPUTER_USE_BIND
+
 # cu_beyond_loopback: prints SELKIES_COMPUTER_USE_BIND, 0 — an entry is beyond
 # the loopback (a bare port is the loopback, host:port — the host).
 cu_beyond_loopback(){

@@ -194,6 +194,8 @@ effective_content(){
         [[ "$k" =~ ^SELKIES_[A-Z0-9_]+$ && ! "$k" =~ $RE_SECRET_KEY ]] || continue
         v="${!k}"
         [[ -n "$v" ]] || continue
+        # Commas only: no address, Computer-Use is off — the key is not written.
+        [[ "$k" != SELKIES_COMPUTER_USE_BIND ]] || cu_enabled || continue
         if [[ ! "$v" =~ $RE_ENV_VALUE ]]; then
             warn "$k: значение не годится для EnvironmentFile — Selkies его не получит"
             continue
