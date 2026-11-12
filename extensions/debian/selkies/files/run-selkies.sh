@@ -21,7 +21,9 @@
 # Пароль есть — SELKIES_ENABLE_BASIC_AUTH=true ставится здесь, поверх того,
 # что пришло из настроек (шаблон SELKIES_* выключить его не может). Без пароля
 # снимает отказ только явный SELKIES_ALLOW_NO_AUTH=1 — с предупреждением при
-# каждом старте. Отказ — код 78: юнит (RestartPreventExitStatus=78) не крутит
+# каждом старте и только на петле (решение владельца 2026-11-12): SELKIES_ADDR
+# не петля, SELKIES_PUBLIC включён или SELKIES_COMPUTER_USE_BIND не на петле —
+# отказ. Отказ — код 78: юнит (RestartPreventExitStatus=78) не крутит
 # перезапуски.
 #
 # СЕКРЕТЫ. Пароли и токен приходят окружением из /etc/cream/selkies/secrets
@@ -52,19 +54,113 @@ HOME_OF_USER="$R$(getent passwd "$USERNAME" | cut -d: -f6)"
 PREFIX="$R/opt/selkies/current"
 DISPLAY_NUM="${SELKIES_DISPLAY:-:0}"
 
-addr="${SELKIES_ADDR:-127.0.0.1}"
+# The monitor is the robot's, not the browser's. The settings come with the
+# defaults of the manifest from /var/lib/cream/ext/selkies/env (written by
+# configure); should that file be missing, Selkies' own default would be
+# «sized by the client» — it resizes the X screen, and on a NVIDIA driver that
+# refuses the mode it leaves a logical monitor bigger than the screen, so the
+# clicks miss (Orin 2026-11-12). Empty means Selkies' default too.
+export SELKIES_ENABLE_RESIZE="${SELKIES_ENABLE_RESIZE:-false}"
+
+# bool_on <value>: 0 — on, the way Selkies reads a bool (settings.parse_bool:
+# the part before "|", trimmed, lowercase, is true or 1); yes/on are off for it.
+bool_on(){
+    local v="${1%%|*}"
+    v="${v//[[:space:]]/}"
+    [[ "${v,,}" == true || "$v" == 1 ]]
+}
+bool_off(){ ! bool_on "$1"; }
+
+# What is checked below is what Selkies gets: the address (absent or empty —
+# the manifest's 127.0.0.1), the mode (the manifest's websockets), WebRTC
+# through the UI only when asked for (the manifest's false; Selkies' own default
+# is true), SELKIES_PUBLIC as Selkies reads it — true or false.
+export SELKIES_ADDR="${SELKIES_ADDR:-127.0.0.1}"
+export SELKIES_MODE="${SELKIES_MODE:-websockets}"
+export SELKIES_ENABLE_DUAL_MODE="${SELKIES_ENABLE_DUAL_MODE:-false}"
+if [[ -n "${SELKIES_PUBLIC+x}" ]]; then
+    if bool_on "$SELKIES_PUBLIC"; then export SELKIES_PUBLIC=true; else export SELKIES_PUBLIC=false; fi
+fi
+addr="$SELKIES_ADDR"
+
+# pixelflux starts its Computer-Use server from PIXELFLUX_CU at import, bypassing
+# the check of SELKIES_COMPUTER_USE_BIND below: never passed on.
+if [[ -n "${PIXELFLUX_CU+x}" ]]; then
+    log_warn "PIXELFLUX_CU в окружении юнита не передаю: сервер Computer-Use — только через SELKIES_COMPUTER_USE_BIND"
+    unset PIXELFLUX_CU
+fi
+
+RE_LOOPBACK='^(127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|::1|\[::1\]|localhost)$'
+loopback_host(){ [[ "$1" =~ $RE_LOOPBACK ]]; }
+
+# The listeners of Selkies 2.0.0 and pixelflux 2.1.0 — see beyond_loopback in
+# selkies.sh (configure), the same rule; read from their sources 2026-11-12.
+
+# cu_enabled: 0 — SELKIES_COMPUTER_USE_BIND names something (Selkies starts the
+# Computer-Use server for any non-empty value; off by default).
+cu_enabled(){ local v="${SELKIES_COMPUTER_USE_BIND:-}"; [[ -n "${v//[[:space:],]/}" ]]; }
+
+# cu_beyond_loopback: prints SELKIES_COMPUTER_USE_BIND, 0 — an entry is beyond
+# the loopback (a bare port is the loopback, host:port — the host).
+cu_beyond_loopback(){
+    local e entries=()
+    IFS=, read -ra entries <<< "${SELKIES_COMPUTER_USE_BIND:-}"
+    for e in "${entries[@]}"; do
+        e="${e//[[:space:]]/}"
+        [[ -z "$e" || "$e" =~ ^[0-9]+$ ]] && continue
+        loopback_host "${e%:*}" || { echo "SELKIES_COMPUTER_USE_BIND=$SELKIES_COMPUTER_USE_BIND"; return 0; }
+    done
+    return 1
+}
+
+# beyond_loopback: prints what listens beyond the loopback, 0 — something does.
+beyond_loopback(){
+    loopback_host "$addr" || { echo "SELKIES_ADDR=$addr"; return 0; }
+    bool_off "${SELKIES_PUBLIC:-}" || { echo "SELKIES_PUBLIC=$SELKIES_PUBLIC"; return 0; }
+    [[ "$SELKIES_MODE" == websockets ]] \
+        || { echo "SELKIES_MODE=$SELKIES_MODE (сокеты ICE WebRTC на всех адресах)"; return 0; }
+    bool_off "$SELKIES_ENABLE_DUAL_MODE" \
+        || { echo "SELKIES_ENABLE_DUAL_MODE=$SELKIES_ENABLE_DUAL_MODE (переход на WebRTC, сокеты ICE на всех адресах)"; return 0; }
+    return 1
+}
+
 loopback=0
-case "$addr" in 127.*|::1|localhost) loopback=1 ;; esac
+loopback_host "$addr" && loopback=1
+
+# The Computer-Use server is without a password whatever Selkies' is.
+if what="$(cu_beyond_loopback)"; then
+    log_error "сервер Computer-Use pixelflux (ввод без аутентификации) допустим только на петле, а $what слушает сеть — не запускаюсь"
+    exit 78
+fi
 
 if [[ -n "${SELKIES_BASIC_AUTH_PASSWORD:-}" ]]; then
     export SELKIES_ENABLE_BASIC_AUTH=true
+    # SELKIES_PUBLIC with a password: Selkies refuses --public together with
+    # --addr, and the env file always carries SELKIES_ADDR — not passed on.
+    if ! bool_off "${SELKIES_PUBLIC:-}"; then
+        unset SELKIES_ADDR
+        addr="0.0.0.0,::"; loopback=0
+        log_warn "SELKIES_PUBLIC=$SELKIES_PUBLIC: слушаю все интерфейсы (0.0.0.0, ::), SELKIES_ADDR не передаю"
+    fi
     if (( ! loopback )) && [[ "${SELKIES_ENABLE_HTTPS:-false}" != true ]]; then
         log_warn "SELKIES_ADDR=$addr без SELKIES_ENABLE_HTTPS=true — пароль basic auth идёт по сети открытым текстом"
     fi
 elif [[ "${SELKIES_ALLOW_NO_AUTH:-0}" == 1 ]]; then
+    # Owner's ruling 2026-11-12: Computer-Use only with a password, on any
+    # address; without a password only on the loopback.
+    if cu_enabled; then
+        log_error "SELKIES_COMPUTER_USE_BIND=$SELKIES_COMPUTER_USE_BIND: сервер Computer-Use pixelflux (ввод без аутентификации) включается только с паролем Selkies — не запускаюсь"
+        log_error "задайте пароль: echo <пароль> | sudo cream set selkies SELKIES_BASIC_AUTH_PASSWORD=- или уберите ключ из /etc/cream/selkies/config"
+        exit 78
+    fi
+    if what="$(beyond_loopback)"; then
+        log_error "SELKIES_ALLOW_NO_AUTH=1 допустим только на петле (127.0.0.1, ::1, localhost), а $what слушает сеть — не запускаюсь"
+        log_error "задайте пароль: echo <пароль> | sudo cream set selkies SELKIES_BASIC_AUTH_PASSWORD=-"
+        log_error "или верните петлю: sudo cream set selkies SELKIES_ADDR=127.0.0.1"
+        exit 78
+    fi
     export SELKIES_ENABLE_BASIC_AUTH=false
     log_warn "БЕЗ АУТЕНТИФИКАЦИИ (SELKIES_ALLOW_NO_AUTH=1): рабочий стол, буфер обмена и файлы '$USERNAME' — любому, кто достаёт до ${addr}:${SELKIES_PORT:-8080}"
-    (( loopback )) || log_warn "адрес $addr — не петля: стол открыт сети"
 else
     log_error "нет SELKIES_BASIC_AUTH_PASSWORD — без аутентификации не запускаюсь"
     log_error "задайте пароль: echo <пароль> | sudo cream set selkies SELKIES_BASIC_AUTH_PASSWORD=-"
@@ -109,9 +205,13 @@ until AUTH="$(find_authority)"; do
     if (( waited == 0 )); then
         log_info "жду X-сессию '$USERNAME' на $DISPLAY_NUM (без DESKTOP_AUTOLOGIN=1 она появится после входа человека)"
     fi
+    # 78 (EX_CONFIG): the session type is a setting of the display manager, a
+    # restart every 5 s would not change it (RestartPreventExitStatus=78).
     if [[ "$(session_type)" == wayland ]]; then
-        log_error "сессия '$USERNAME' на Wayland — Selkies подключается только к X.Org"
-        exit 1
+        log_error "сессия '$USERNAME' на Wayland — Selkies подключается только к X.Org, служба остановлена"
+        log_error "включите Xorg у менеджера входа (расширение gnome пишет WaylandEnable=false), войдите заново"
+        log_error "и запустите: sudo systemctl restart selkies@$USERNAME"
+        exit 78
     fi
     sleep 5; waited=$((waited + 5))
 done

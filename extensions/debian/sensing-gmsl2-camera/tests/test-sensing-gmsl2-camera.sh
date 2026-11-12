@@ -171,8 +171,17 @@ check "юнит частот зовёт действие по абсолютно
     grep -qx 'ExecStart=/opt/cream/ext/sensing-gmsl2-camera/actions/boost-clock' "$X/files/sensing-gmsl2-clock.service"
 check "юнит адаптера зовёт действие по абсолютному пути" \
     grep -qx 'ExecStart=/opt/cream/ext/sensing-gmsl2-camera/actions/adapter-check' "$X/files/sensing-gmsl2-adapter.service"
+# config holds only the keys set explicitly and does not exist until one is
+# set: without the dash the units would not start on a default install.
 for u in sensing-gmsl2-camera@ sensing-gmsl2-clock sensing-gmsl2-adapter; do
-    check "$u: читает настройки cream" grep -qx 'EnvironmentFile=/etc/cream/sensing-gmsl2-camera/config' "$X/files/$u.service"
+    check "$u: читает настройки cream, файла может не быть" \
+        grep -qx 'EnvironmentFile=-/etc/cream/sensing-gmsl2-camera/config' "$X/files/$u.service"
+done
+# The units give the actions only the explicit keys: the fallback of every
+# action is the default of the manifest (selkies, Orin 2026-11-12).
+for kv in SENSING_CAMERA_CONTROLS:camera-profile SENSING_BOOST_CLOCK:boost-clock SENSING_ADAPTER_WAIT:adapter-check; do
+    k="${kv%%:*}"; d="$(mf "m['config']['keys']['$k']['default']")"
+    check "${kv#*:}: умолчание $k = манифест ($d)" grep -qF "\${$k:-$d}" "$X/actions/${kv#*:}"
 done
 # Type=exec: the boot target does not wait for the wait of the check; exit 1
 # still leaves the unit failed, exit 0 — active (RemainAfterExit).
@@ -198,6 +207,15 @@ esac'
 act_root
 ht_action camera-profile -- video3; eq "профиль на узел Sensing — 0" 0 "$?"
 check "v4l2-ctl -c с умолчанием" ht_called '^v4l2-ctl -d /dev/video3 -c sensor_mode=1,trig_mode=0,trig_pin=0x00020007$'
+act_root
+# As sensing-gmsl2-camera@video3.service runs it with no config: no key at all.
+(
+    cd / || exit 125
+    exec env -i "PATH=$ROOT/bin:$HT_PATH_TAIL" LANG=C.UTF-8 "$HT_EXT/actions/camera-profile" video3 < /dev/null
+) > "$ROOT/out" 2>&1
+eq "из юнита без config — 0" 0 "$?"
+check "из юнита без config — умолчание манифеста" \
+    ht_called '^v4l2-ctl -d /dev/video3 -c sensor_mode=1,trig_mode=0,trig_pin=0x00020007$'
 act_root
 echo 'Card type : UVC Camera' > "$FAKE/v4l2-info"
 ht_action camera-profile -- video0; eq "не Sensing — 0, мимо" 0 "$?"

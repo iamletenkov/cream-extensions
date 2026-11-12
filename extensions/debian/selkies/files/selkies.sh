@@ -13,7 +13,10 @@
 # SELKIES_ALLOW_NO_AUTH=1 the service is not started — and a running instance
 # is stopped; a warning, exit 0 (a failing configure at boot helps nobody).
 # SELKIES_ALLOW_NO_AUTH=1 without a password starts it with a warning every
-# time. The wrapper (run-selkies.sh) checks the same once more at its start.
+# time — but only on the loopback (owner's ruling 2026-11-12): SELKIES_ADDR
+# beyond it, SELKIES_PUBLIC on or SELKIES_COMPUTER_USE_BIND beyond it stop the
+# instance, remove the declaration and exit 78. The wrapper (run-selkies.sh)
+# checks the same once more at its start.
 #
 # Teleport declaration /etc/cream/teleport/apps.d/selkies.conf (the contract of
 # the teleport extension, files/teleport.sh: NAME, URI on the loopback, ICON;
@@ -26,11 +29,27 @@
 # inside a systemd job, apply inside `cream set`). The instance is not enabled:
 # configure starts it on every boot after checking the authentication.
 #
+# EFFECTIVE SETTINGS (Orin 2026-11-12). The domain config holds only the keys
+# set explicitly, while cream gives a hook every non-secret key with its
+# default. The unit reads $CREAM_STATE_DIR/env before config, so configure and
+# apply write there the SELKIES_* of their environment with a non-empty value
+# (an empty one means Selkies' own default) — what `cream show selkies`
+# reports. Otherwise a default of the manifest such as SELKIES_ENABLE_RESIZE=false
+# never reaches Selkies, and Selkies resizes the monitor to the browser window.
+# Root's, 0644, no secrets; atomically through a temporary file and rename,
+# never through a symlink.
+#
 # Never writes into a home directory: that is the wrapper's, as the user.
 set -euo pipefail
 
 R="${CREAM_ROOT:-}"; R="${R%/}"
 SECRETS="${CREAM_SECRETS_FILE:-$R/etc/cream/selkies/secrets}"
+STATE="${CREAM_STATE_DIR:-$R/var/lib/cream/ext/selkies}"
+EFFECTIVE="$STATE/env"
+RE_SECRET_KEY='^SELKIES_(BASIC_AUTH_PASSWORD|BASIC_AUTH_VIEWONLY_PASSWORD|MASTER_TOKEN)$'
+# The union of the value types of the manifest: no quote, space, $, backquote
+# or backslash — a plain KEY=VALUE line of an EnvironmentFile.
+RE_ENV_VALUE='^[A-Za-z0-9_.,:/@%+=-]+$'
 CLOUD_USER_LIB="$R/opt/cream/ext/cloud-user/get_cloud_user.sh"
 TP_DIR="$R/etc/cream/teleport"
 APPS_DIR="$TP_DIR/apps.d"
@@ -61,19 +80,99 @@ secret_set(){
     grep -qE "^[[:space:]]*$1=([^\"'[:space:]]|\"[^\"]|'[^'])" "$SECRETS" 2>/dev/null
 }
 
-is_loopback(){ case "$SELKIES_ADDR" in 127.*|::1|localhost) return 0 ;; esac; return 1; }
+RE_LOOPBACK='^(127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|::1|\[::1\]|localhost)$'
+loopback_host(){ [[ "$1" =~ $RE_LOOPBACK ]]; }
+is_loopback(){ loopback_host "$SELKIES_ADDR"; }
 
-# auth_ok: 0 — the service may run; the warnings of the decision to stderr.
+# The listeners of Selkies 2.0.0 and pixelflux 2.1.0 (their sources, checked
+# 2026-11-12): the aiohttp server on SELKIES_ADDR (SELKIES_PUBLIC turns it into
+# 0.0.0.0,::) — /api/metrics is a route of it, websockets mode opens no other
+# port; WebRTC (SELKIES_MODE=webrtc, or switched to from the UI with
+# SELKIES_ENABLE_DUAL_MODE) binds its ICE sockets — UDP, the mux ports, mDNS —
+# on every host address, no setting confines them to the loopback; pixelflux's
+# Computer-Use HTTP server (input injection, no authentication of its own) on
+# SELKIES_COMPUTER_USE_BIND — a bare port is the loopback, host:port the host;
+# owner's ruling 2026-11-12: off by default, only explicitly and only with a
+# password of Selkies (beyond the loopback — refused even then).
+
+# bool_on <value>: 0 — on, the way Selkies reads a bool (settings.parse_bool:
+# the part before "|", trimmed, lowercase, is true or 1); yes/on are off for it.
+# Empty DUAL_MODE is off: the wrapper exports its default false (the manifest's).
+bool_on(){
+    local v="${1%%|*}"
+    v="${v//[[:space:]]/}"
+    [[ "${v,,}" == true || "$v" == 1 ]]
+}
+bool_off(){ ! bool_on "$1"; }
+
+# cu_enabled: 0 — SELKIES_COMPUTER_USE_BIND names something (Selkies starts the
+# Computer-Use server for any non-empty value). Off by default: not a key of the
+# manifest, Selkies' default is empty; PIXELFLUX_CU the wrapper never passes on.
+cu_enabled(){ local v="${SELKIES_COMPUTER_USE_BIND:-}"; [[ -n "${v//[[:space:],]/}" ]]; }
+
+# cu_beyond_loopback: prints SELKIES_COMPUTER_USE_BIND, 0 — an entry is beyond
+# the loopback.
+cu_beyond_loopback(){
+    local e entries=()
+    IFS=, read -ra entries <<< "${SELKIES_COMPUTER_USE_BIND:-}"
+    for e in "${entries[@]}"; do
+        e="${e//[[:space:]]/}"
+        [[ -z "$e"|| "$e" =~ ^[0-9]+$ ]] && continue
+        loopback_host "${e%:*}" || { echo "SELKIES_COMPUTER_USE_BIND=$SELKIES_COMPUTER_USE_BIND"; return 0; }
+    done
+    return 1
+}
+
+# beyond_loopback: prints what listens beyond the loopback, 0 — something does.
+beyond_loopback(){
+    if ! is_loopback; then echo "SELKIES_ADDR=$SELKIES_ADDR"; return 0; fi
+    bool_off "${SELKIES_PUBLIC:-}" || { echo "SELKIES_PUBLIC=$SELKIES_PUBLIC"; return 0; }
+    case "${SELKIES_MODE:-}" in
+        ''|websockets) ;;
+        *) echo "SELKIES_MODE=$SELKIES_MODE (сокеты ICE WebRTC на всех адресах)"; return 0 ;;
+    esac
+    bool_off "${SELKIES_ENABLE_DUAL_MODE:-}" \
+        || { echo "SELKIES_ENABLE_DUAL_MODE=$SELKIES_ENABLE_DUAL_MODE (переход на WebRTC, сокеты ICE на всех адресах)"; return 0; }
+    return 1
+}
+
+# auth_ok: 0 — the service may run; 1 — no authentication (stopped, exit 0);
+# 2 — no password beyond the loopback (stopped, exit 78). Warnings to stderr.
 auth_ok(){
+    local what
+    # The Computer-Use server is without a password whatever Selkies' is.
+    if what="$(cu_beyond_loopback)"; then
+        warn "сервер Computer-Use pixelflux (ввод без аутентификации) допустим только на петле, а $what слушает сеть — Selkies остановлен"
+        warn "  оставьте в SELKIES_COMPUTER_USE_BIND голый порт (это петля) или уберите ключ из /etc/cream/selkies/config"
+        return 2
+    fi
     if secret_set SELKIES_BASIC_AUTH_PASSWORD; then
-        if ! is_loopback && [[ "$SELKIES_ENABLE_HTTPS" != true ]]; then
-            warn "SELKIES_ADDR=$SELKIES_ADDR без SELKIES_ENABLE_HTTPS=true — пароль basic auth пойдёт по сети открытым текстом"
+        if [[ "$SELKIES_ENABLE_HTTPS" != true ]]; then
+            # SELKIES_PUBLIC with a password: all interfaces — the wrapper drops
+            # SELKIES_ADDR of the env file (Selkies refuses --public with --addr).
+            if ! bool_off "${SELKIES_PUBLIC:-}"; then
+                warn "SELKIES_PUBLIC=$SELKIES_PUBLIC без SELKIES_ENABLE_HTTPS=true — пароль basic auth пойдёт по сети открытым текстом"
+            elif ! is_loopback; then
+                warn "SELKIES_ADDR=$SELKIES_ADDR без SELKIES_ENABLE_HTTPS=true — пароль basic auth пойдёт по сети открытым текстом"
+            fi
         fi
         return 0
     fi
     if [[ "$SELKIES_ALLOW_NO_AUTH" == 1 ]]; then
+        # Owner's ruling 2026-11-12: Computer-Use only with a password, on any
+        # address; without a password only on the loopback.
+        if cu_enabled; then
+            warn "SELKIES_COMPUTER_USE_BIND=$SELKIES_COMPUTER_USE_BIND: сервер Computer-Use pixelflux (ввод без аутентификации) включается только с паролем Selkies; без пароля Selkies допустим только на петле и без него — Selkies остановлен"
+            warn "  задайте пароль: echo <пароль> | sudo cream set selkies SELKIES_BASIC_AUTH_PASSWORD=- или уберите ключ из /etc/cream/selkies/config"
+            return 2
+        fi
+        if what="$(beyond_loopback)"; then
+            warn "SELKIES_ALLOW_NO_AUTH=1 допустим только на петле (127.0.0.1, ::1, localhost), а $what слушает сеть — Selkies остановлен"
+            warn "  задайте пароль: echo <пароль> | sudo cream set selkies SELKIES_BASIC_AUTH_PASSWORD=-"
+            warn "  или верните петлю: sudo cream set selkies SELKIES_ADDR=127.0.0.1"
+            return 2
+        fi
         warn "БЕЗ АУТЕНТИФИКАЦИИ (SELKIES_ALLOW_NO_AUTH=1): рабочий стол, буфер обмена и файлы — любому, кто достаёт до ${SELKIES_ADDR}:${SELKIES_PORT}"
-        is_loopback || warn "адрес $SELKIES_ADDR — не петля: стол открыт сети"
         return 0
     fi
     if secret_set SELKIES_BASIC_AUTH_VIEWONLY_PASSWORD; then
@@ -83,6 +182,49 @@ auth_ok(){
     warn "  пароль: echo <пароль> | sudo cream set selkies SELKIES_BASIC_AUTH_PASSWORD=-"
     warn "  или осознанно без пароля: sudo cream set selkies SELKIES_ALLOW_NO_AUTH=1"
     return 1
+}
+
+# ---------------------------------------------------------------------------
+# The effective settings for the unit
+# ---------------------------------------------------------------------------
+# effective_content: KEY=VALUE lines of the effective non-secret settings, sorted.
+effective_content(){
+    local k v
+    while IFS= read -r k; do
+        [[ "$k" =~ ^SELKIES_[A-Z0-9_]+$ && ! "$k" =~ $RE_SECRET_KEY ]] || continue
+        v="${!k}"
+        [[ -n "$v" ]] || continue
+        if [[ ! "$v" =~ $RE_ENV_VALUE ]]; then
+            warn "$k: значение не годится для EnvironmentFile — Selkies его не получит"
+            continue
+        fi
+        printf '%s=%s\n' "$k" "$v"
+    done < <(compgen -e | LC_ALL=C sort)
+}
+
+effective_write(){
+    local content tmp
+    content="$(effective_content)"
+    if [[ -L "$STATE" ]]; then
+        warn "${STATE#"$R"} — символическая ссылка, действующие значения не пишу"
+        return 0
+    fi
+    # cream runs hooks with umask 022: the directory is 0755.
+    [[ -d "$STATE" ]] || mkdir -p -- "$STATE" || { warn "не создать ${STATE#"$R"}"; return 0; }
+    if [[ -f "$EFFECTIVE" && ! -L "$EFFECTIVE" ]] && [[ "$(cat -- "$EFFECTIVE")" == "$content" ]]; then
+        return 0
+    fi
+    # mktemp: O_EXCL, 0600, never follows; rename replaces a symlink, not its target.
+    tmp="$(mktemp "$STATE/.env.XXXXXX")" || { warn "не создать временный файл в ${STATE#"$R"}"; return 0; }
+    { [[ -z "$content" ]] || printf '%s\n' "$content"; } > "$tmp" && chmod 0644 "$tmp" \
+        && mv -f -T -- "$tmp" "$EFFECTIVE" \
+        || { rm -f -- "$tmp"; warn "действующие значения не записаны"; return 0; }
+    log "действующие значения для юнита: ${EFFECTIVE#"$R"}"
+}
+
+effective_remove(){
+    [[ -L "$STATE" ]] && return 0
+    rm -f -- "$EFFECTIVE"
 }
 
 # ---------------------------------------------------------------------------
@@ -177,11 +319,14 @@ resolve_user(){
 
 # run <boot|now>: the whole decision; boot — start, wait for the user; now — restart.
 run(){
-    local mode="$1" user wait_s=0 verb=restart
+    local mode="$1" user wait_s=0 verb=restart rc=0
     check_values
-    if ! auth_ok; then
+    effective_write
+    auth_ok || rc=$?
+    if (( rc != 0 )); then
         decl_remove
         stop_instances
+        (( rc == 2 )) && exit 78
         return 0
     fi
     decl_write
@@ -204,6 +349,7 @@ cmd_remove(){
         systemctl stop "$u" || warn "не остановить $u"
     done < <(instances)
     decl_remove
+    effective_remove
     if [[ -L "$OPT" ]]; then
         warn "${OPT#"$R"} — символическая ссылка, AppImage не удаляю"
     elif [[ -d "$OPT" ]]; then

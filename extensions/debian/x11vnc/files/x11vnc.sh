@@ -29,7 +29,10 @@
 # X11VNC_ALLOW_NO_PASSWORD=1 (rule R8 of the plan): configure then derives the
 # marker nopw (and removes it in every other case — a marker made by hand does
 # not survive), and the wrapper wants the marker AND the key, warning on every
-# start. A password file this configure did not build ($CREAM_STATE_DIR/
+# start. Without a password only on the loopback (owner's ruling 2026-11-12):
+# X11VNC_LISTEN=all with X11VNC_ALLOW_NO_PASSWORD=1 and no password disables
+# and stops the instances, leaves no marker and exits 78.
+# A password file this configure did not build ($CREAM_STATE_DIR/
 # passfile.sha256 — e.g. left by layout 2) with no secret in cream is neither
 # removed nor used: the server stays off with a hint how to set the password.
 #
@@ -128,6 +131,12 @@ build_passfile(){
             log "сервер без пароля — только явно: cream set x11vnc X11VNC_ALLOW_NO_PASSWORD=1)"
             return 2
         fi
+        # Owner's ruling 2026-11-12: without a password only on the loopback.
+        if [[ "${X11VNC_LISTEN:-localhost}" != localhost ]]; then
+            log "X11VNC_ALLOW_NO_PASSWORD=1 допустим только на петле, а X11VNC_LISTEN=${X11VNC_LISTEN} — все интерфейсы: x11vnc выключен"
+            log "задайте пароль (echo 'пароль' | sudo cream set x11vnc X11VNC_PASSWORD=-) или верните sudo cream set x11vnc X11VNC_LISTEN=localhost"
+            return 3
+        fi
         (umask 022; : > "$NOPW")
         log "ВНИМАНИЕ: X11VNC_ALLOW_NO_PASSWORD=1 — сервер поднимется БЕЗ ПАРОЛЯ (-nopw)"
         return 0
@@ -170,12 +179,14 @@ configure(){
     [[ -n "$user" ]] || log "пользователь cloud-init не найден — сервер не включаю (файл пароля без владельца)"
     local auth_rc=0
     build_passfile "$user" || auth_rc=$?
-    if [[ "$auth_rc" == 2 ]]; then
+    if [[ "$auth_rc" == 2 || "$auth_rc" == 3 ]]; then
         while read -r u; do
             [[ -n "$u" ]] || continue
             systemctl disable "x11vnc@$u.service" || log "x11vnc@$u.service не выключился"
             systemctl --no-block stop "x11vnc@$u.service" || true
         done < <(instances)
+        # 3 — no password beyond the loopback: a configuration error (78).
+        [[ "$auth_rc" == 3 ]] && exit 78
         return 0
     fi
     [[ -n "$user" ]] || return 0
@@ -193,9 +204,6 @@ configure(){
     systemctl --no-block restart "x11vnc@$user.service" \
         || die "x11vnc@$user.service не поставлен в очередь перезапуска"
     log "x11vnc@$user.service: перезапуск поставлен в очередь (journalctl -u x11vnc@$user)"
-    if [[ "${X11VNC_LISTEN:-localhost}" != localhost && -f "$NOPW" ]]; then
-        log "X11VNC_LISTEN=${X11VNC_LISTEN} без пароля: рабочий стол открыт всей сети"
-    fi
 }
 
 remove(){

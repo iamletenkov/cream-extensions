@@ -9,9 +9,17 @@ Requires=display-manager.service
 [Service]
 Type=simple
 User=%i
-# systemd (root) reads both files; the secrets (0600 root) reach the wrapper's
-# environment only, the wrapper passes them to Selkies alone.
-EnvironmentFile=/etc/cream/selkies/config
+# systemd (root) reads the files in order, a later one overrides:
+#   env     — the effective non-secret settings, defaults of the manifest
+#             included, written by configure/apply (files/selkies.sh); the
+#             domain config holds only the keys set explicitly, and a default
+#             missing here is Selkies' own default, not the manifest's;
+#   config  — the domain (an explicit key wins over a stale env); absent until
+#             a non-secret key is set;
+#   secrets — 0600 root; they reach the wrapper's environment only, the
+#             wrapper passes them to Selkies alone.
+EnvironmentFile=-/var/lib/cream/ext/selkies/env
+EnvironmentFile=-/etc/cream/selkies/config
 EnvironmentFile=-/etc/cream/selkies/secrets
 UMask=0077
 NoNewPrivileges=yes
@@ -19,5 +27,6 @@ NoNewPrivileges=yes
 ExecStart=/bin/bash /opt/cream/ext/selkies/files/run-selkies.sh %i
 Restart=always
 RestartSec=5
-# 78 (EX_CONFIG) — refused to start without authentication: no restart loop.
+# 78 (EX_CONFIG) — refused to start without authentication or on a Wayland
+# session: no restart loop.
 RestartPreventExitStatus=78

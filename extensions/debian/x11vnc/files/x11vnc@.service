@@ -20,6 +20,8 @@ ExecStartPre=/bin/bash -c 'for i in {1..30}; do [ -S /tmp/.X11-unix/X0 ] && brea
 ExecStart=/bin/bash /opt/cream/ext/x11vnc/files/run-x11vnc.sh %i
 Restart=on-failure
 RestartSec=5
+# 78 (EX_CONFIG) — the session is on Wayland: a restart would not change it.
+RestartPreventExitStatus=78
 
 [Install]
 WantedBy=graphical.target

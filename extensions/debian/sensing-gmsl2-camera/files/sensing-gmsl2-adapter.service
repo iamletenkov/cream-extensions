@@ -11,7 +11,8 @@ Description=Sensing GMSL2 camera: SG8A adapter answers on I2C (camera mux bound,
 # exit 1 still leaves the unit failed, exit 0 — active (RemainAfterExit).
 Type=exec
 RemainAfterExit=yes
-EnvironmentFile=/etc/cream/sensing-gmsl2-camera/config
+# Only the keys set explicitly, no file until one is (the action has the defaults).
+EnvironmentFile=-/etc/cream/sensing-gmsl2-camera/config
 ExecStart=/opt/cream/ext/sensing-gmsl2-camera/actions/adapter-check
 
 [Install]
