@@ -12,7 +12,7 @@
 Классификация — **архитектурная** (новое расширение, две общие библиотеки, четыре мажора).
 
 ## Progress Tracker
-- [ ] Task 1: `lib/x-session.sh` — поиск X-сеанса пользователя на seat0 (H)
+- [x] Task 1: `lib/x-session.sh` — поиск X-сеанса пользователя на seat0 (H)
 - [ ] Task 2: `lib/gdm-wayland.sh` — чтение, запись и точный возврат `WaylandEnable` (H)
 - [ ] Task 3: диапазон `desktop <3` у `gnome`, `xfce4`, `lxde`, `cloud-user-desktop`; ночной ubuntu-24.04 у `xfce4`, `lxde`, `wallpaper`
 - [ ] Task 4: L-раннер — `LIVE_PREINSTALL`, `LIVE_PRESEED`, `LIVE_EXPECT_RESTORED`, принудительное снятие, варианты `live.<v>.env`
