@@ -180,6 +180,51 @@ CREAM_PHASE=live cream set stvor-agent-openwrt STVOR_AGENT_INTERVAL=120 STVOR_AG
 grep -qx 'STVOR_AGENT_INTERVAL=120' /etc/cream/stvor-agent-openwrt/config ||
 	fail "config: $(cat /etc/cream/stvor-agent-openwrt/config)"
 
+step "ключ /dist на musl: STVOR_AGENT_AUTH_FILE длиной 16..512 принят, прочее — отказ"
+# The regex engine of musl rejects a bound over RE_DUP_MAX (255): {16,512} made
+# every key "not a key" on OpenWrt. curl is swapped for a fake that takes the
+# header from stdin (-H @-) and puts the local delivery to -o; the keys are fakes.
+CURL=$(command -v curl || true)
+[ -z "$CURL" ] || mv "$CURL" /opt/curl.real
+cat >/usr/bin/curl <<'EOF'
+#!/bin/sh
+out=""
+hdr=0
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-o) out="$2"; shift ;;
+	-H) [ "$2" = @- ] && hdr=1; shift ;;
+	esac
+	shift
+done
+if [ "$hdr" = 1 ]; then IFS= read -r line; printf '%s\n' "$line" >/opt/curl-header; fi
+cp /opt/agent.tar.gz "$out"
+EOF
+chmod 0755 /usr/bin/curl
+key_of() { head -c "$1" /dev/zero | tr '\0' "$2"; }
+dist_install() {
+	printf '%s\n' "$1" >/opt/key
+	chmod 0600 /opt/key
+	# Without the record of the installed pair the hook downloads again (no "already installed").
+	rm -f /opt/curl-header /opt/cream/var/ext/stvor-agent-openwrt/installed
+	cream install --reinstall stvor-agent-openwrt STVOR_AGENT_VERSION=$V STVOR_AGENT_SHA256="$sha" \
+		STVOR_AGENT_TARBALL= STVOR_AGENT_DIST=https://stvor.example.org/dist STVOR_AGENT_AUTH_FILE=/opt/key 2>&1
+}
+for n in 16 48 512; do
+	k=$(key_of "$n" k)
+	out=$(dist_install "$k") || fail "ключ длиной $n отвергнут: $out"
+	eq "ключ $n: заголовок curl" "Authorization: Bearer $k" "$(cat /opt/curl-header)"
+done
+for bad in "$(key_of 15 k)" "$(key_of 513 k)" "$(key_of 20 k) $(key_of 20 k)" "$(key_of 20 k)!"; do
+	if out=$(dist_install "$bad"); then fail "принят ключ длиной ${#bad}: $out"; fi
+	echo "$out" | grep -q 'STVOR_AGENT_AUTH_FILE: в файле не ключ' || fail "отказ ключа длиной ${#bad} — не тот: $out"
+	if echo "$out" | grep -q 'invalid regular expression'; then fail "регулярное выражение не для musl: $out"; fi
+	if echo "$out" | grep -qF -- "$bad"; then fail "значение ключа в выводе"; fi
+	hasnt /opt/curl-header
+done
+rm -f /usr/bin/curl /opt/key /opt/curl-header
+[ -z "$CURL" ] || mv /opt/curl.real "$CURL"
+
 step "remove: службы, бинарь, токены, состояние, пользователь, метка"
 mkdir -p /etc/stvor-agent /opt/stvor-agent/telemetry
 echo 'url=https://stvor.example.org/robot-api/v1/labels' >/etc/stvor-agent/token
