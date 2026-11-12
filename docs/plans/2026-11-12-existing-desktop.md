@@ -14,7 +14,7 @@
 ## Progress Tracker
 - [x] Task 1: `lib/x-session.sh` — поиск X-сеанса пользователя на seat0 (H)
 - [x] Task 2: `lib/gdm-wayland.sh` — чтение, запись и точный возврат `WaylandEnable` (H)
-- [ ] Task 3: диапазон `desktop <3` у `gnome`, `xfce4`, `lxde`, `cloud-user-desktop`; ночной ubuntu-24.04 у `xfce4`, `lxde`, `wallpaper`
+- [x] Task 3: диапазон `desktop <3` у `gnome`, `xfce4`, `lxde`, `cloud-user-desktop`; ночной ubuntu-24.04 у `xfce4`, `lxde`, `wallpaper`
 - [ ] Task 4: L-раннер — `LIVE_PREINSTALL`, `LIVE_PRESEED`, `LIVE_EXPECT_RESTORED`, принудительное снятие, варианты `live.<v>.env`
 - [ ] Task 5: L-матрица — варианты и `LIVE_NIGHTLY_DISTROS`
 - [ ] Task 6: `existing-desktop` 1.0.0
