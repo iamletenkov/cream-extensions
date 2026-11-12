@@ -28,7 +28,8 @@
 # extension of the scenario.
 #
 # Needs on the host: virt-customize, virt-resize, virt-copy-out, qemu-img
-# (libguestfs-tools, KVM for speed), docker (the snapshot), curl, python3.
+# (libguestfs-tools, KVM for speed), docker (the snapshot), curl, python3;
+# on Ubuntu noble also isc-dhcp-client, else the appliance has no network.
 # Environment:
 #   WORK          working directory (default .scratchpad/build-graphical/<scenario>)
 #   SNAPSHOT      a ready snapshot .tar.gz (default: tools/catalog-snapshot.sh from HEAD)
@@ -103,8 +104,8 @@ set -u
 L=$GUEST_DIR/logs
 mkdir -p "\$L"
 export DEBIAN_FRONTEND=noninteractive
-# DNS of a hosted runner, reached through slirp, answers now and then: apt
-# retries a fetch, and the build asks public resolvers. Both live for the build
+# Insurance against a flaky resolver of the runner behind slirp: apt retries a
+# fetch, and the build asks public resolvers. Both live for the build
 # only: the guest's own resolv.conf (a link or the libguestfs copy) is saved
 # first and comes back on exit, nothing of it reaches the image.
 R=/etc/apt/apt.conf.d/99build-graphical-retries

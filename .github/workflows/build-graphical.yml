@@ -74,11 +74,13 @@ jobs:
           ls -l /dev/kvm
 
       # libguestfs собирает appliance из ядра хоста, а ядро Ubuntu читает только root.
+      # Сеть appliance поднимает dhclient хоста: с одним dhcpcd-base eth0 гостя
+      # остаётся без адреса и маршрута (замер в ubuntu:24.04 с /dev/kvm).
       - name: libguestfs
         run: |
           set -euo pipefail
           sudo apt-get update -q
-          sudo apt-get install -y -q libguestfs-tools qemu-utils
+          sudo apt-get install -y -q libguestfs-tools qemu-utils isc-dhcp-client
           sudo chmod 0644 /boot/vmlinuz-*
 
       # DNS appliance идёт через resolv.conf хоста, а на раннере там заглушка

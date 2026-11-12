@@ -125,5 +125,5 @@ L-расширение — то, у которого есть `tests/live.env`: 
   (фаза build, как в bisquite). Идёт в PR, которые меняют эти расширения, их зависимости
   или `lib/`, и вручную: `gh workflow run build-graphical.yml -f scenario=<сценарий|all>`;
   не ночью. Локально — `tools/build-graphical.sh <сценарий>` (нужны `libguestfs-tools`
-  и KVM), список сценариев — `--list`, команды без запуска — `--dry-run`.
+  и KVM, на Ubuntu noble ещё `isc-dhcp-client` — без него у appliance нет сети), список сценариев — `--list`, команды без запуска — `--dry-run`.
 - **pre-push** lefthook — `make ci`.
