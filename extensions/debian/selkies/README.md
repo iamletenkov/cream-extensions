@@ -30,8 +30,8 @@ X-сессия, которая на мониторе, — в браузере, �
 пользователь cloud-init (как раньше); только учётка с uid **1000..65533**: root,
 `gdm`, `lightdm` и другие системные — отказ, код 78 (у `gdm` authority — экрана
 входа). Дисплей — `SELKIES_DISPLAY=auto` (умолчание): X11-сеанс пользователя на
-seat0 по logind, иначе его Xorg, иначе `:0`, подтверждённый его собственной
-authority ([`lib/x-session.sh`](../../../lib/x-session.sh)); `:N` — жёстко. Стол,
+seat0 по logind, иначе его Xorg, иначе `:0` — если его lock-файл, процесс `Xorg` и сокет принадлежат root или ему — и
+подтверждённый его собственной authority ([`lib/x-session.sh`](../../../lib/x-session.sh)); `:N` — жёстко. Стол,
 поставленный не через cream (готовая Ubuntu, GDM/LightDM/SDDM), —
 [`existing-desktop`](../existing-desktop/README.md); сеанс на Wayland не
 транслируется — [`gdm-xorg`](../gdm-xorg/README.md).
@@ -40,7 +40,7 @@ authority ([`lib/x-session.sh`](../../../lib/x-session.sh)); `:N` — жёстк
 
 - **`install`** — на живой машине сначала проверка: нет Xorg (`/usr/lib/xorg/Xorg`,
   `/usr/bin/Xorg`) или включённого менеджера входа (ссылка
-  `display-manager.service` на существующий юнит) — код 20 (cream — 68) и «нет X-сервера / менеджера
+  `display-manager.service` на существующий юнит; замаскированный — не включён) — код 20 (cream — 68) и «нет X-сервера / менеджера
   входа: поставьте стол или `existing-desktop`», ничего не скачано; при сборке
   образа проверки нет. Затем AppImage Selkies по закреплённой версии и sha256 на
   архитектуру, распаковка в `/opt/selkies/2.0.0` (**+1,7 ГБ**, без FUSE), ссылка

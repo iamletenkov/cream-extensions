@@ -39,13 +39,15 @@ apt_retry(){
 }
 pkg_installed(){ dpkg-query -W -f='${db:Status-Status}\n' "$1" 2>/dev/null | grep -qx installed; }
 
-# dm_enabled: 0 — display-manager.service is a link to a unit that is there.
+# dm_enabled: 0 — display-manager.service is a link to a unit file that is
+# there; masked (a link to /dev/null) or dangling — not enabled.
 dm_enabled(){
     local link="$R/etc/systemd/system/display-manager.service" t
     [[ -L "$link" ]] || return 1
     t="$(readlink "$link")" || return 1
+    [[ "$t" != /dev/null ]] || return 1
     if [[ "$t" == /* ]]; then t="$R$t"; else t="${link%/*}/$t"; fi
-    [[ -e "$t" ]]
+    [[ -f "$t" ]]
 }
 
 if [[ "${CREAM_PHASE:-live}" == live ]]; then

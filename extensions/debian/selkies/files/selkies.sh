@@ -98,13 +98,15 @@ check_values(){
         || die "SELKIES_DISPLAY: auto или :N"
 }
 
-# dm_enabled: 0 — display-manager.service is a link to a unit that is there.
+# dm_enabled: 0 — display-manager.service is a link to a unit file that is
+# there; masked (a link to /dev/null) or dangling — not enabled.
 dm_enabled(){
     local t
     [[ -L "$DM_LINK" ]] || return 1
     t="$(readlink "$DM_LINK")" || return 1
+    [[ "$t" != /dev/null ]] || return 1
     if [[ "$t" == /* ]]; then t="$R$t"; else t="${DM_LINK%/*}/$t"; fi
-    [[ -e "$t" ]]
+    [[ -f "$t" ]]
 }
 
 # machine_ok: prints what is missing; 0 — Xorg and an enabled display manager
@@ -418,7 +420,7 @@ run(){
         refuse 1
     fi
     if [[ -n "${SELKIES_USER:-}" ]] && ! why="$(user_ok "$SELKIES_USER")"; then
-        warn "SELKIES_USER=$SELKIES_USER: $why — Selkies остановлен"
+        warn "SELKIES_USER=$(printf '%q' "$SELKIES_USER"): $why — Selkies остановлен"
         warn "  нужен пользователь сеанса с uid 1000..65533: sudo cream set selkies SELKIES_USER=<имя>"
         refuse 78
     fi

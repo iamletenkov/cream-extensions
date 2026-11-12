@@ -29,7 +29,9 @@
 #       against /proc/net/unix), else /tmp/.X<N>-lock holding its pid, owned
 #       by root or USER and writable by nobody else — rootless GDM runs
 #       `Xorg vtN -displayfd 3` without :N (ruling П13); nothing — fallback 2,
-#       :0. A display of either fallback counts only when USER's own
+#       :0, only when a real X server of root or USER serves it (_xs_served:
+#       lock, live Xorg, socket — no cookie for a fake server on a free :0).
+#       A display of either fallback counts only when USER's own
 #       authority opens it and it has access control (_xs_confirm). The path
 #       taken goes to stderr. 0 — printed; 1 — none (yet); 2 — USER's seat0
 #       session is Wayland (no display is looked for: it cannot be captured).
@@ -191,6 +193,32 @@ xs_seat0_active(){
     printf '%s %s %s\n' "$name" "$type" "$class"
 }
 
+# _xs_served DISPLAY UID: DISPLAY is served by a real X server of root or UID —
+# /tmp/.X<N>-lock trusted (_xs_trusted root|UID) holds the pid of a live Xorg
+# (comm Xorg or X) whose /proc entry is root's or UID's, and /tmp/.X11-unix/X<N>
+# is a socket (not a link) of root or UID. Anyone may create files in /tmp:
+# without this, a fake server on a free :0 answering "access control enabled"
+# would get USER's MIT cookie from _xs_confirm. 0 — served.
+_xs_served(){
+    local display="$1" uid="$2" r n lock pid comm sock owner
+    r="$(_xs_root)"
+    [[ "$uid" =~ ^[0-9]+$ ]] || return 1
+    [[ "$display" =~ ^:([0-9]+)(\.[0-9]+)?$ ]] || return 1
+    n="${BASH_REMATCH[1]}"
+    lock="$r/tmp/.X$n-lock"
+    _xs_trusted "$lock" 0 "$uid" || return 1
+    pid="$(head -c 32 -- "$lock" 2>/dev/null | tr -d ' \n')" || return 1
+    [[ "$pid" =~ ^[0-9]+$ && -d "$r/proc/$pid" ]] || return 1
+    comm="$(head -c 32 -- "$r/proc/$pid/comm" 2>/dev/null)" || return 1
+    [[ "$comm" == Xorg || "$comm" == X ]] || return 1
+    read -r owner _ < <(stat -c '%u %a' -- "$r/proc/$pid" 2>/dev/null) || return 1
+    [[ "$owner" == 0 || "$owner" == "$uid" ]] || return 1
+    sock="$r/tmp/.X11-unix/X$n"
+    [[ -S "$sock" && ! -L "$sock" ]] || return 1
+    read -r owner _ < <(stat -c '%u %a' -- "$sock" 2>/dev/null) || return 1
+    [[ "$owner" == 0 || "$owner" == "$uid" ]]
+}
+
 # _xs_confirm USER DISPLAY: a display found without logind is USER's only when
 # an authority of USER himself opens it — $XAUTHORITY, ~/.Xauthority, the files
 # of his runtime dir (/run/user/<uid>/gdm/Xauthority, xauth_* of SDDM),
@@ -260,7 +288,11 @@ xs_find_display(){
             return 0
         fi
     done
-    # Fallback 2: what the wrappers did before — :0, when it opens.
+    # Fallback 2: what the wrappers did before — :0, when it opens; the cookie
+    # is offered only to a real server of root or the user (_xs_served).
+    if ! _xs_served :0 "$uid"; then
+        return 1
+    fi
     if _xs_confirm "$user" :0; then
         _xs_info "дисплей :0: запасной путь — authority пользователя $user открывает :0 (logind и Xorg не дали дисплея)"
         printf ':0\n'

@@ -84,13 +84,15 @@ check_values(){
     [[ -z "${X11VNC_DISPLAY:-}" || "$X11VNC_DISPLAY" =~ $RE_DISPLAY ]] || die "X11VNC_DISPLAY: auto или :N"
 }
 
-# dm_enabled: 0 — display-manager.service is a link to a unit that is there.
+# dm_enabled: 0 — display-manager.service is a link to a unit file that is
+# there; masked (a link to /dev/null) or dangling — not enabled.
 dm_enabled(){
     local t
     [[ -L "$DM_LINK" ]] || return 1
     t="$(readlink "$DM_LINK")" || return 1
+    [[ "$t" != /dev/null ]] || return 1
     if [[ "$t" == /* ]]; then t="$R$t"; else t="${DM_LINK%/*}/$t"; fi
-    [[ -e "$t" ]]
+    [[ -f "$t" ]]
 }
 
 # machine_ok: prints what is missing; 0 — Xorg and an enabled display manager
@@ -189,10 +191,19 @@ resolve_user(){
 
 # safe_dir: /etc/x11vnc is a real directory of root (created 0755 when absent):
 # the server user walks through it to the file; the secret is closed by the
-# file's mode, not the directory's.
+# file's mode, not the directory's. An existing one must belong to the user
+# configure runs as (root): whoever owns it could swap the file between its
+# build and the rename.
 safe_dir(){
+    local owner
     if [[ -L "$DIR" ]]; then
         die "${DIR#"$R"} — символическая ссылка; файл пароля не пишу"
+    fi
+    if [[ -e "$DIR" ]]; then
+        [[ -d "$DIR" ]] || die "${DIR#"$R"} — не каталог; файл пароля не пишу"
+        read -r owner _ < <(stat -c '%u %a' -- "$DIR") || die "${DIR#"$R"}: stat не прошёл"
+        [[ "$owner" == "$EUID" ]] \
+            || die "${DIR#"$R"}: владелец не root (uid $owner); файл пароля не пишу"
     fi
     install -d -m 0755 "$DIR"
 }
@@ -238,7 +249,11 @@ build_passfile(){
             log "задайте пароль (echo 'пароль' | sudo cream set x11vnc X11VNC_PASSWORD=-) или верните sudo cream set x11vnc X11VNC_LISTEN=localhost"
             return 3
         fi
-        (umask 022; : > "$NOPW")
+        # Fresh, not followed: rm drops whatever is there (a link included),
+        # noclobber opens with O_EXCL — a link planted in between fails the
+        # write instead of creating its target.
+        rm -f -- "$NOPW"
+        (umask 022; set -C; : > "$NOPW") || die "маркер ${NOPW#"$R"} не создан"
         log "ВНИМАНИЕ: X11VNC_ALLOW_NO_PASSWORD=1 — сервер поднимется БЕЗ ПАРОЛЯ (-nopw)"
         return 0
     fi

@@ -80,8 +80,9 @@ R="${CREAM_ROOT:-}"; R="${R%/}"
 PASSFILE="$R/etc/x11vnc/passwd"
 NOPW="$R/etc/x11vnc/nopw"
 
-# decide_auth: prints the -rfbauth/-nopw argument, or "refuse" with status 1
-# (78 — no password beyond the loopback).
+# decide_auth: prints the -rfbauth/-nopw argument, or "refuse" with status 78:
+# every refusal is a state configure fixes (it builds the file or the marker and
+# restarts the instance), so the unit does not loop (RestartPreventExitStatus=78).
 decide_auth(){
     if [[ -e "$PASSFILE" || -L "$PASSFILE" ]]; then
         if [[ -f "$PASSFILE" && -r "$PASSFILE" ]]; then
@@ -90,7 +91,7 @@ decide_auth(){
         log_error "файл пароля $PASSFILE не читается пользователем $(id -un)"
         log_error "сервер без пароля не поднимаю: пароль задан X11VNC_PASSWORD"
         log_error "починить: sudo cream configure x11vnc"
-        echo refuse; return 1
+        echo refuse; return 78
     fi
     if [[ -f "$NOPW" && "${X11VNC_ALLOW_NO_PASSWORD:-0}" == 1 ]]; then
         # Owner's ruling 2026-11-12: without a password only on the loopback;
@@ -105,10 +106,10 @@ decide_auth(){
     fi
     if [[ -f "$NOPW" ]]; then
         log_error "есть $NOPW, но X11VNC_ALLOW_NO_PASSWORD не 1 — без пароля не поднимаю"
-        echo refuse; return 1
+        echo refuse; return 78
     fi
     log_error "нет ни $PASSFILE, ни решения «без пароля» ($NOPW) — configure x11vnc не отработал"
-    echo refuse; return 1
+    echo refuse; return 78
 }
 
 # Test entry: the password decision alone, on given paths.

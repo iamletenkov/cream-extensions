@@ -11,6 +11,10 @@ User=%i
 # NOT read: the password never enters the server's environment — the wrapper
 # takes the derived /etc/x11vnc/passwd built by configure.
 EnvironmentFile=-/etc/cream/x11vnc/config
+# As selkies@: files of the server are the user's alone, no privilege gained
+# through exec (setuid binaries, file capabilities).
+UMask=0077
+NoNewPrivileges=yes
 # The display and the X authority are found at runtime by the wrapper
 # (X11VNC_DISPLAY auto: lib/x-session.sh, files/x-session.sh); until the
 # user's X session is there it waits, a line in the journal every 5 minutes.
@@ -21,7 +25,9 @@ Restart=always
 RestartSec=5
 # 78 (EX_CONFIG) — a setting to fix, a restart would not change it: the session
 # is on Wayland; a uid outside 1000..65533 (root, a system account) or an
-# X11VNC_DISPLAY that is neither auto nor :N; no password beyond the loopback.
+# X11VNC_DISPLAY that is neither auto nor :N; no password beyond the loopback;
+# no password decision (no readable password file, no nopw marker with the key)
+# — configure builds it and restarts the instance itself.
 RestartPreventExitStatus=78
 
 [Install]

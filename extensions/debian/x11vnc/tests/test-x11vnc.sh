@@ -95,6 +95,20 @@ seat0() {
     [[ "${6:-yes}" == yes ]] && printf 'ActiveSession=%s\n' "$1" > "$FAKE/seat.seat0"
     return 0
 }
+# mask_dm: display-manager.service masked — a link to /dev/null (there is a
+# /dev/null in the root too: the name decides, not the existence).
+mask_dm() {
+    mkdir -p "$ROOT/dev"; : > "$ROOT/dev/null"
+    ln -sfn /dev/null "$SYSD/display-manager.service"
+}
+# x0srv: an X server really on :0 for lib/x-session.sh fallback 2 — the lock
+# with its pid, a live Xorg (/proc/<pid>/comm), the socket /tmp/.X11-unix/X0.
+x0srv() {
+    mkdir -p "$ROOT/tmp/.X11-unix" "$ROOT/proc/4300"
+    printf '%10d\n' 4300 > "$ROOT/tmp/.X0-lock"; chmod 0444 "$ROOT/tmp/.X0-lock"
+    echo Xorg > "$ROOT/proc/4300/comm"
+    python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$ROOT/tmp/.X11-unix/X0"
+}
 # enabled <user>: x11vnc@<user> is enabled (graphical.target.wants).
 enabled() { test -L "$WANTS/x11vnc@$1.service"; }
 # restarted <user>: configure put x11vnc@<user> to a restart.
@@ -141,6 +155,9 @@ check "юнит: 78 (Wayland) не перезапускается" grep -qx 'Res
 check "юнит: перезапуск всегда (x11vnc выходит с X — обёртка найдёт новый сеанс)" grep -qx 'Restart=always' "$unit"
 check_not "юнит: DISPLAY не зашит" grep -q 'DISPLAY=' "$unit"
 check_not "юнит: не ждёт сокет X0 (дисплей ищет обёртка)" grep -q 'X11-unix/X0' "$unit"
+check "юнит: NoNewPrivileges (как selkies@)" grep -qx 'NoNewPrivileges=yes' "$unit"
+check "юнит: UMask 0077 (как selkies@)" grep -qx 'UMask=0077' "$unit"
+check "юнит: комментарий к 78 — нет решения о пароле" grep -qE '^#.*no password decision' "$unit"
 check "юнит: комментарий к 78 — uid-правило" grep -qE '^#.*uid outside 1000\.\.65533' "$unit"
 check "юнит: комментарий к 78 — X11VNC_DISPLAY" grep -qE '^#.*X11VNC_DISPLAY that is neither auto nor :N' "$unit"
 # config holds only the keys set explicitly (cream show — with the defaults):
@@ -178,6 +195,8 @@ ht_hook install; eq "нет display-manager.service — 20" 20 "$?"
 check "сказано, чего нет" grep -q 'менеджера входа' <(ht_out)
 fresh; rm -f "$ROOT/lib/systemd/system/lightdm.service"
 ht_hook install; eq "display-manager.service висит (цели нет) — 20" 20 "$?"
+fresh; mask_dm
+ht_hook install; eq "менеджер входа замаскирован (/dev/null) — 20" 20 "$?"
 fresh; rm -f "$ROOT/usr/lib/xorg/Xorg" "$SYSD/display-manager.service"
 HT_PHASE=build ht_hook install; eq "сборка образа: без проверки — 0" 0 "$?"
 check "сборка: пакеты ставятся" ht_called '^apt-get .*install'
@@ -300,6 +319,22 @@ ht_hook configure CREAM_REASON=boot; rc=$?
 check "/etc/x11vnc — ссылка: сбой configure" test "$rc" -ne 0
 check_not "в цель ссылки ничего не записано" compgen -G "$ROOT/outside/*"
 
+fresh
+printf '%s' "$PASS" > "$FAKE/secret"
+mkdir -p "$ROOT/etc/x11vnc"
+ht_fake stat '[[ "${!#}" == '"$ROOT"'/etc/x11vnc ]] && { echo "4242 755"; exit 0; }; exec /usr/bin/stat "$@"'
+ht_hook configure CREAM_REASON=boot; rc=$?
+check "/etc/x11vnc не root (чужой владелец): сбой configure" test "$rc" -ne 0
+check_not "чужой /etc/x11vnc: файл пароля не записан" test -e "$PF"
+check "чужой /etc/x11vnc: сказано про владельца" grep -q 'владелец не root' <(ht_out)
+fresh
+mkdir -p "$ROOT/etc/x11vnc" "$ROOT/outside"
+ln -s "$ROOT/outside/target" "$NOPW"
+ht_hook configure CREAM_REASON=boot X11VNC_ALLOW_NO_PASSWORD=1; eq "маркер nopw — ссылка: configure 0" 0 "$?"
+check_not "маркер по ссылке не пишется" test -e "$ROOT/outside/target"
+check "маркер — обычный файл" test -f "$NOPW"
+check_not "маркер — не ссылка" test -L "$NOPW"
+
 echo "== openssl отказал — сбой, а не сервер без пароля =="
 fresh
 printf '%s' "$PASS" > "$FAKE/secret"
@@ -328,12 +363,13 @@ check_not "прежний x11vnc@carol выключен" enabled carol
 check "прежний x11vnc@carol гасится" ht_called '^systemctl --no-block stop x11vnc@carol\.service'
 
 echo "== configure/apply: нет Xorg или менеджера входа — 1 (Р2), на сборке — без проверки =="
-for what in xorg dm dangling; do
+for what in xorg dm dangling masked; do
     fresh
     case "$what" in
         xorg) rm -f "$ROOT/usr/lib/xorg/Xorg" ;;
         dm) rm -f "$SYSD/display-manager.service" ;;
         dangling) rm -f "$ROOT/lib/systemd/system/lightdm.service" ;;
+        masked) mask_dm ;;
     esac
     ln -s /etc/systemd/system/x11vnc@.service "$WANTS/x11vnc@alice.service"
     ht_hook configure CREAM_REASON=boot X11VNC_ALLOW_NO_PASSWORD=1; eq "$what: configure — 1" 1 "$?"
@@ -435,8 +471,10 @@ wrap() { # wrap <passfile> <nopw> [allow]: the -rfbauth/-nopw decision of the wr
 fresh
 mkdir -p "$ROOT/etc/x11vnc"
 eq "нет ни файла, ни маркера — отказ" "refuse" "$(wrap "$PF" "$NOPW" | tail -n1)"
+wrap "$PF" "$NOPW" > /dev/null; eq "нет ни файла, ни маркера — 78" 78 "$?"
 : > "$NOPW"
 eq "маркер без ключа — отказ" "refuse" "$(wrap "$PF" "$NOPW" 0 | tail -n1)"
+wrap "$PF" "$NOPW" 0 > /dev/null; eq "маркер без ключа — 78" 78 "$?"
 eq "маркер и X11VNC_ALLOW_NO_PASSWORD=1 — -nopw" "-nopw" "$(wrap "$PF" "$NOPW" 1 | tail -n1)"
 check "-nopw — предупреждение в журнал при каждом старте" grep -q 'БЕЗ ПАРОЛЯ' <(wrap "$PF" "$NOPW" 1)
 eq "ключ без маркера — отказ" "refuse" "$(rm -f "$NOPW"; wrap "$PF" "$NOPW" 1 | tail -n1; : > "$NOPW")"
@@ -452,6 +490,7 @@ eq "файл есть — -rfbauth" "-rfbauth $PF" "$(wrap "$PF" "$NOPW" | tail 
 chmod 0000 "$PF"
 if [[ "$(id -u)" != 0 ]]; then
     eq "файл не читается — отказ" "refuse" "$(wrap "$PF" "$NOPW" | tail -n1)"
+    wrap "$PF" "$NOPW" > /dev/null; eq "файл не читается — 78" 78 "$?"
 fi
 
 # run_wrapper <env pairs…>: the wrapper as systemd starts it for x11vnc@<WR_USER>
@@ -508,6 +547,7 @@ wr_root
 rm -f "$FAKE"/user.* "$FAKE"/session.* "$FAKE/seat.seat0"
 ht_fake stat 'echo "1000 600"'
 ht_fake xhost 'echo "access control enabled, only authorized clients can connect"'
+x0srv
 run_wrapper; eq "запасной путь — 0" 0 "$?"
 eq "дисплей :0 (как 5.x)" :0 "$(arg_after -display)"
 check "путь назван: запасной" grep -q 'запасной путь' "$ROOT/out"
@@ -541,7 +581,7 @@ eq "x11vnc@carol: authority carol" "$ROOT/home/carol/.Xauthority" "$(arg_after -
 
 echo "== обёртка: решение о пароле — до ожидания сеанса =="
 wr_root; rm -f "$PF"
-run_wrapper; eq "нет ни файла, ни маркера — 1" 1 "$?"
+run_wrapper; eq "нет ни файла, ни маркера — 78 (без цикла перезапусков)" 78 "$?"
 check_not "сеанс не искали" ht_called '^(loginctl|xdpyinfo)'
 check_not "x11vnc не запущен" test -e "$FAKE/x11vnc.args"
 

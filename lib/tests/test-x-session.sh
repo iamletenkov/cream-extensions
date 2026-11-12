@@ -78,6 +78,17 @@ else
     echo "SI:localuser:alice"
 fi
 EOF
+    # stat with owner overrides: fake/owner<path, / as _> holds the uid a file
+    # of another user (or root) would have — the tests cannot chown.
+    cat > "$ROOT/bin/stat" <<'EOF'
+#!/usr/bin/env bash
+out="$(/usr/bin/stat "$@")" || exit
+f="${!#}"; o="$FAKE/owner${f//\//_}"
+if [[ -f "$o" ]]; then
+    if [[ "$out" == *" "* ]]; then out="$(cat "$o") ${out#* }"; else out="$(cat "$o")"; fi
+fi
+printf '%s\n' "$out"
+EOF
     # alice is the uid running the tests (files she owns are the files it
     # creates), bob — the next uid (a file the tests create is not his).
     cat > "$ROOT/bin/getent" <<EOF
@@ -152,6 +163,17 @@ eq "дисплей :1 — код 0" 0 "$RC"
 gdm_auth(){ mkdir -p "$ROOT/run/user/$ME/gdm"; : > "$ROOT/run/user/$ME/gdm/Xauthority"; echo "$ROOT/run/user/$ME/gdm/Xauthority" > "$FAKE/x.$1"; }
 # xlock <N> <content>: /tmp/.X<N>-lock as Xorg writes it (printf "%10d\n").
 xlock(){ mkdir -p "$ROOT/tmp"; printf '%s' "$2" > "$ROOT/tmp/.X$1-lock"; chmod 444 "$ROOT/tmp/.X$1-lock"; }
+# owner <path under ROOT> <uid>: stat reports <uid> as the owner of the file.
+owner(){ echo "$2" > "$FAKE/owner${ROOT//\//_}${1//\//_}"; }
+# x0srv [pid]: an X server really on :0 — /tmp/.X0-lock with its pid, a live
+# Xorg (/proc/<pid>/comm) and the socket /tmp/.X11-unix/X0; all alice's (rootless).
+x0srv(){
+    local pid="${1:-4300}"
+    xlock 0 "$(printf '%10d' "$pid")"$'\n'
+    mkdir -p "$ROOT/proc/$pid" "$ROOT/tmp/.X11-unix"
+    echo Xorg > "$ROOT/proc/$pid/comm"
+    python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$ROOT/tmp/.X11-unix/X0"
+}
 # xsock <pid> <inode> <path>: a listening unix socket of <pid> at <path>.
 xsock(){
     mkdir -p "$ROOT/proc/$1/fd" "$ROOT/proc/net"
@@ -325,6 +347,7 @@ eq "без контроля доступа — код 1" 1 "$RC"
 has "без контроля доступа — сказано" "контроль доступа" "$ERR"
 new_root
 gdm_auth :0; : > "$FAKE/noac.:0"
+x0srv
 xs xs_find_display alice
 eq "запасной путь 2 без контроля доступа — код 1" 1 "$RC"
 # SDDM: the user's authority in the runtime dir.
@@ -343,6 +366,7 @@ session c2 seat0 user x11 "" active no
 echo 4242 > "$FAKE/pgrep.u$ME"
 xorg 4242 vt2 -displayfd 3 -auth "/run/user/$ME/gdm/Xauthority"
 gdm_auth :0
+x0srv 4300
 xs xs_find_display alice
 eq "ничего у Xorg — :0 с authority" ":0" "$OUT"
 
@@ -350,6 +374,7 @@ echo "== нет ни сеанса, ни Xorg — :0, если authority прох
 new_root
 : > "$ROOT/home/alice/.Xauthority"
 echo "$ROOT/home/alice/.Xauthority" > "$FAKE/x.:0"
+x0srv
 xs xs_find_display alice
 eq "запасной путь 2 — код 0" 0 "$RC"
 eq "запасной путь 2 — :0" ":0" "$OUT"
@@ -358,6 +383,40 @@ rm -f "$FAKE/x.:0"
 xs xs_find_display alice
 eq "authority не проходит — код 1" 1 "$RC"
 eq "authority не проходит — пусто" "" "$OUT"
+
+echo "== запасной путь 2: cookie — только настоящему серверу :0 (lock, Xorg, сокет — root или пользователя) =="
+# fake_x0 <case>: alice's authority would open :0 — a fake X server on a free
+# :0 answers anything. Each case breaks one proof; the cookie must not be sent.
+for c in nolock nosock locklink lockbob lockwritable procbob notxorg deadpid sockbob socklink sockfile; do
+    new_root
+    : > "$ROOT/home/alice/.Xauthority"
+    echo "$ROOT/home/alice/.Xauthority" > "$FAKE/x.:0"
+    x0srv 4300
+    case "$c" in
+        nolock) rm -f "$ROOT/tmp/.X0-lock" ;;
+        nosock) rm -f "$ROOT/tmp/.X11-unix/X0" ;;
+        locklink) mv "$ROOT/tmp/.X0-lock" "$ROOT/tmp/lock.real"; ln -s lock.real "$ROOT/tmp/.X0-lock" ;;
+        lockbob) owner /tmp/.X0-lock "$BOB" ;;
+        lockwritable) chmod 0666 "$ROOT/tmp/.X0-lock" ;;
+        procbob) owner /proc/4300 "$BOB" ;;
+        notxorg) echo evil > "$ROOT/proc/4300/comm" ;;
+        deadpid) rm -r -f "$ROOT/proc/4300" ;;
+        sockbob) owner /tmp/.X11-unix/X0 "$BOB" ;;
+        socklink) rm -f "$ROOT/tmp/.X11-unix/X0"; ln -s /run/evil "$ROOT/tmp/.X11-unix/X0" ;;
+        sockfile) rm -f "$ROOT/tmp/.X11-unix/X0"; : > "$ROOT/tmp/.X11-unix/X0" ;;
+    esac
+    xs xs_find_display alice
+    eq "подделка :0 ($c) — код 1" 1 "$RC"
+    eq "подделка :0 ($c) — cookie не отдана (xdpyinfo не звался на :0)" "" "$(grep -- '-display :0' "$FAKE/xdpyinfo.log" 2>/dev/null)"
+done
+# LightDM: Xorg of root — lock, process and socket are root's.
+new_root
+: > "$ROOT/home/alice/.Xauthority"
+echo "$ROOT/home/alice/.Xauthority" > "$FAKE/x.:0"
+x0srv 4300
+owner /tmp/.X0-lock 0; owner /proc/4300 0; owner /tmp/.X11-unix/X0 0
+xs xs_find_display alice
+eq "Xorg root на :0 (LightDM) — :0" ":0" "$OUT"
 
 echo "== Wayland: тип отдаётся, дисплей не ищется =="
 new_root
@@ -438,6 +497,7 @@ eq "нет logind: активный — код 1" 1 "$RC"
 eq "нет logind: активный — пусто" "" "$OUT"
 : > "$ROOT/home/alice/.Xauthority"
 echo "$ROOT/home/alice/.Xauthority" > "$FAKE/x.:0"
+x0srv
 xs xs_find_display alice
 eq "нет logind: запасной путь 2 — :0" ":0" "$OUT"
 new_root

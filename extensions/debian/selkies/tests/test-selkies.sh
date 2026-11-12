@@ -104,6 +104,20 @@ started() { ht_called "^systemctl (start|restart) --no-block selkies@$1\\.servic
 leaked() { grep -rqF -e "$PW" -e "$VO" -e "$TOKEN" "$@" 2>/dev/null; }
 blocking_systemctl() { grep -E '^systemctl (start|restart|stop|reload|enable --now|disable --now)' "$FAKE/calls" | grep -qv -- '--no-block'; }
 
+# mask_dm: display-manager.service masked — a link to /dev/null (systemctl mask).
+mask_dm() {
+    mkdir -p "$ROOT/dev"; : > "$ROOT/dev/null"
+    ln -sfn /dev/null "$ROOT/etc/systemd/system/display-manager.service"
+}
+# x0srv: an X server really on :0 for lib/x-session.sh fallback 2 — the lock
+# with its pid, a live Xorg (/proc/<pid>/comm), the socket /tmp/.X11-unix/X0.
+x0srv() {
+    mkdir -p "$ROOT/tmp/.X11-unix" "$ROOT/proc/4300"
+    printf '%10d\n' 4300 > "$ROOT/tmp/.X0-lock"; chmod 0444 "$ROOT/tmp/.X0-lock"
+    echo Xorg > "$ROOT/proc/4300/comm"
+    python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$ROOT/tmp/.X11-unix/X0"
+}
+
 echo "== манифест и раскладка =="
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
 eq "name" selkies "$(mf 'm["name"]')"
@@ -228,6 +242,12 @@ ht_hook install; eq "display-manager.service висит (цели нет) — 20
 check_not "висячая ссылка: ничего не качается" ht_called '^(curl|apt-get)'
 rm -f "$ROOT/usr/lib/xorg/Xorg"
 HT_PHASE=build ht_hook install; eq "сборка образа: висячая ссылка, без Xorg — 0" 0 "$?"
+sk_root; fake_appimage
+ht_fake dpkg 'echo amd64'
+ht_fake apt-get
+mask_dm
+ht_hook install; eq "display-manager.service замаскирован — 20" 20 "$?"
+check_not "замаскирован: ничего не качается" ht_called '^(curl|apt-get)'
 
 echo "== install: sha256 не совпал — отказ, ничего не распаковано =="
 sk_root
@@ -558,6 +578,11 @@ check "висячая ссылка: текст existing-desktop" grep -qF 'по�
 check_not "висячая ссылка: не стартует" started alice
 ht_hook apply CREAM_CHANGED_KEYS=SELKIES_PORT; eq "display-manager.service висит: apply — 1" 1 "$?"
 sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+mask_dm
+ht_hook configure CREAM_REASON=boot; eq "display-manager.service замаскирован: configure — 1" 1 "$?"
+check_not "замаскирован: не стартует" started alice
+ht_hook apply CREAM_CHANGED_KEYS=SELKIES_PORT; eq "display-manager.service замаскирован: apply — 1" 1 "$?"
+sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
 rm -f "$ROOT/usr/lib/xorg/Xorg" "$ROOT/etc/systemd/system/display-manager.service"
 HT_PHASE=build ht_hook configure CREAM_REASON=install; eq "сборка образа: configure без Xorg и DM — 0" 0 "$?"
 check_not "сборка: текста про existing-desktop нет" grep -q 'existing-desktop' "$ROOT/out"
@@ -568,6 +593,10 @@ ht_hook configure CREAM_REASON=boot SELKIES_DISPLAY=:1; eq "SELKIES_DISPLAY=:1 �
 check "SELKIES_DISPLAY=:1 в действующих значениях" grep -qx 'SELKIES_DISPLAY=:1' "$ROOT/var/lib/cream/ext/selkies/env"
 ht_hook configure CREAM_REASON=boot 'SELKIES_DISPLAY=:0;x'; eq "SELKIES_DISPLAY с мусором — 1" 1 "$?"
 ht_hook configure CREAM_REASON=boot 'SELKIES_USER=-x'; eq "SELKIES_USER не имя — 78" 78 "$?"
+ESC="$(printf '\033')"
+ht_hook configure CREAM_REASON=boot "SELKIES_USER=Bad${ESC}[2J"; eq "SELKIES_USER с управляющим символом — 78" 78 "$?"
+check_not "управляющий символ не попадает в журнал как есть" grep -qF "$ESC" "$ROOT/out"
+check "имя в журнале экранировано (%q)" grep -qF "SELKIES_USER=\$'Bad\E[2J'" "$ROOT/out"
 
 echo "== configure: диагноз seat0 одной строкой (xs_seat0_active) =="
 sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
@@ -891,6 +920,7 @@ wr_root
 rm -f "$FAKE"/user.* "$FAKE"/session.* "$FAKE/seat.seat0"
 ht_fake stat 'echo "1000 600"'
 ht_fake xhost 'echo "access control enabled, only authorized clients can connect"'
+x0srv
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"
 check "selkies запущен" test -e "$FAKE/selkies.env"
 check "дисплей :0 (как 6.x)" grep -qx 'DISPLAY=:0' "$FAKE/selkies.env"
