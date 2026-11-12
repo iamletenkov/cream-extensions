@@ -17,7 +17,7 @@ ht_init
 
 NAME=gnome
 
-# fresh: a root with fakes. $FAKE/default — what get-default answers
+# fresh: a root with fakes; WB — the record of lib/gdm-wayland.sh. $FAKE/default — what get-default answers
 # (multi-user.target unless a test says otherwise); $FAKE/apt-fail — the main
 # apt-get install fails; $FAKE/no-browser — chromium does not install.
 fresh() {
@@ -25,7 +25,9 @@ fresh() {
     SYSD="$ROOT/etc/systemd/system"
     STATE="$ROOT/var/lib/cream/ext/$NAME"
     GDM="$ROOT/etc/gdm3"
-    mkdir -p "$SYSD" "$GDM"
+    WB="$STATE/wayland.before"
+    ORIG="$ROOT/tmp/orig"
+    mkdir -p "$SYSD" "$GDM" "$ORIG"
     echo multi-user.target > "$FAKE/default"
     ht_fake apt-get '
 if [[ " $* " == *" install "* ]]; then
@@ -60,27 +62,81 @@ debian_conf() {
         '# Enabling automatic login' '#  AutomaticLoginEnable = true' '#  AutomaticLogin = user1' '' \
         '[security]' '' '[xdmcp]' '' '[chooser]' '' '[debug]' '#Enable=true' > "$1"
 }
-# wayland_in <file>: the WaylandEnable lines of the [daemon] section.
+# wayland_in <file>: the WaylandEnable line that counts — the last uncommented
+# one of the [daemon] section.
 wayland_in() {
-    awk '/^[[:space:]]*\[/{s=$0} s=="[daemon]" && /WaylandEnable/' "$1"
+    awk '/^[[:space:]]*\[/{s=$0} s=="[daemon]" && /^[[:space:]]*WaylandEnable/{v=$0} END{print v}' "$1"
 }
+# package_conf <file> [absent|commented|true|false]: the 554 bytes of gdm3 as
+# the packages ship them (custom.conf of Ubuntu 24.04, daemon.conf of Debian 12
+# — the same text, lib/tests/test-gdm-wayland.sh), the WaylandEnable line in
+# the given state (commented — as shipped).
+package_conf() {
+    mkdir -p "$(dirname "$1")"
+    cat > "$1" <<'EOF'
+# GDM configuration storage
+#
+# See /usr/share/gdm/gdm.schemas for a list of available options.
+
+[daemon]
+# Uncomment the line below to force the login screen to use Xorg
+#WaylandEnable=false
+
+# Enabling automatic login
+#  AutomaticLoginEnable = true
+#  AutomaticLogin = user1
+
+# Enabling timed login
+#  TimedLoginEnable = true
+#  TimedLogin = user1
+#  TimedLoginDelay = 10
+
+[security]
+
+[xdmcp]
+
+[chooser]
+
+[debug]
+# Uncomment the line below to turn on debugging
+# More verbose logs
+# Additionally lets the X server dump core if it crashes
+#Enable=true
+
+EOF
+    case "${2:-commented}" in
+        absent) sed -i '/^#WaylandEnable=false$/d' "$1" ;;
+        true) sed -i 's/^#WaylandEnable=false$/WaylandEnable=true/' "$1" ;;
+        false) sed -i 's/^#WaylandEnable=false$/WaylandEnable=false/' "$1" ;;
+    esac
+}
+# same <a> <b>: byte for byte and the same mode.
+same() { cmp -s -- "$1" "$2" && [[ "$(stat -c %a "$1")" == "$(stat -c %a "$2")" ]]; }
 
 echo "== манифест =="
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "мажор 5" 5.0.2 "$(mf 'm["version"]')"
+eq "версия 5.1.0" 5.1.0 "$(mf 'm["version"]')"
 eq "desktop <3 (desktop 2.0.0)" ">=1.0.0 <3" "$(mf 'next(d["version"] for d in m["depends"] if d["name"] == "desktop")')"
 eq "cream >= 1.0.0" '>=1.0.0' "$(mf 'm["cream"]')"
 eq "build: exec" exec "$(mf 'm["targets"]["build"]')"
 eq "live: confirm" confirm "$(mf 'm["targets"]["live"]')"
 check "live_note про менеджер входа" grep -q 'менеджер входа' <<< "$(mf 'm["targets"]["live_note"]')"
 eq "depends desktop" "desktop" "$(mf '",".join(d["name"] for d in m["depends"])')"
-eq "conflicts по способности desktop-session" "{'capabilities': ['desktop-session']}" "$(mf 'm["conflicts"]')"
+eq "conflicts: способность desktop-session и gdm-xorg" \
+    "{'capabilities': ['desktop-session'], 'extensions': ['gdm-xorg']}" "$(mf 'm["conflicts"]')"
 eq "provides без изменений" "['x11-server', 'display-manager', 'desktop-session']" "$(mf 'm["provides"]')"
 eq "хуки install и remove, без configure" "['install', 'remove']" "$(mf 'sorted(m["hooks"])')"
 eq "платформа: debian и ubuntu" "['debian', 'ubuntu']" "$(mf 'sorted(o["id"] for o in m["platform"]["os"])')"
 eq "files нет: конфиги gdm3 — conffile пакета" None "$(mf 'm.get("files")')"
 for old in install.sh daemon.conf; do check_not "layout 2: $old убран" test -e "$EXT/$old"; done
+
+echo "== библиотека gdm-wayland разложена =="
+fresh
+check "files/gdm-wayland.sh на месте" test -f "$HT_EXT/files/gdm-wayland.sh"
+check "install берёт files/gdm-wayland.sh" grep -q 'files/gdm-wayland.sh' "$EXT/hooks/install"
+check "remove берёт files/gdm-wayland.sh" grep -q 'files/gdm-wayland.sh' "$EXT/hooks/remove"
+check "gnome в lib/gdm-wayland.consumers" grep -qx 'debian/gnome' "$EXT/../../../lib/gdm-wayland.consumers"
 
 echo "== install: Debian, daemon.conf пакета =="
 fresh
@@ -93,7 +149,8 @@ for p in task-gnome-desktop gdm3 gnome-shell gnome-session xorg xinput x11-xserv
 done
 check "chromium пробуется" grep -qE '^apt-get .*install chromium$' "$FAKE/calls"
 check_not "chromium-browser (переходник на snap) не пробуется" ht_called 'chromium-browser'
-eq "Wayland выключен в [daemon], одной строкой" "WaylandEnable=false" "$(wayland_in "$GDM/daemon.conf")"
+eq "Wayland выключен в [daemon]" "WaylandEnable=false" "$(wayland_in "$GDM/daemon.conf")"
+check "запись прежнего: закомментирован" grep -qx 'state commented' "$WB"
 check "прочие строки пакета на месте" grep -qxF '#  AutomaticLogin = user1' "$GDM/daemon.conf"
 check "секция [debug] на месте" grep -qx '\[debug\]' "$GDM/daemon.conf"
 eq "режим 0644 сохранён" 644 "$(stat -c %a "$GDM/daemon.conf")"
@@ -141,32 +198,47 @@ ht_hook install; rc=$?
 check "без конфига gdm3 — отказ (не 0, не 10)" test "$rc" -ne 0 -a "$rc" -ne 10
 check "сообщение про Wayland" grep -q 'Wayland' <(ht_out)
 
-echo "== install: конфиг — ссылка, по ней не пишем =="
+echo "== install: конфиг — ссылка: отказ до любой записи (lib/gdm-wayland.sh) =="
 fresh
 mkdir -p "$ROOT/outside"
 debian_conf "$ROOT/outside/daemon.conf"
 before="$(sha256sum "$ROOT/outside/daemon.conf")"
 ln -s "$ROOT/outside/daemon.conf" "$GDM/daemon.conf"
 debian_conf "$GDM/custom.conf"
-ht_hook install; eq "install — 10 (custom.conf правится)" 10 "$?"
+cp -p "$GDM/custom.conf" "$ORIG/custom.conf"
+ht_hook install; eq "ссылка рядом с обычным файлом — 1" 1 "$?"
 eq "цель ссылки не тронута" "$before" "$(sha256sum "$ROOT/outside/daemon.conf")"
 check "ссылка осталась ссылкой" test -L "$GDM/daemon.conf"
-check "предупреждение про ссылку" grep -q 'ссылка' <(ht_out)
-eq "custom.conf правлен" "WaylandEnable=false" "$(wayland_in "$GDM/custom.conf")"
+check "сказано про ссылку" grep -q 'ссылка' <(ht_out)
+check "custom.conf не тронут" same "$GDM/custom.conf" "$ORIG/custom.conf"
+check_not "записи прежнего нет" test -s "$WB"
+check_not "gdm не включали" ht_called '^systemctl enable'
+eq "default не тронут" multi-user.target "$(cat "$FAKE/default")"
 fresh
 mkdir -p "$ROOT/outside"; debian_conf "$ROOT/outside/daemon.conf"
 ln -s "$ROOT/outside/daemon.conf" "$GDM/daemon.conf"
 ht_hook install; rc=$?
 check "только ссылка — отказ: Wayland не выключен" test "$rc" -ne 0 -a "$rc" -ne 10
 
-echo "== install: уже graphical и gdm включён до нас =="
+echo "== install: уже graphical и gdm включён до нас, WaylandEnable меняется — 10 =="
 fresh
 debian_conf "$GDM/daemon.conf"
 echo graphical.target > "$FAKE/default"
 ln -s /lib/systemd/system/gdm.service "$SYSD/display-manager.service"
-ht_hook install; eq "install — 0 (перезагрузка не нужна)" 0 "$?"
+ht_hook install; eq "install — 10 (WaylandEnable изменился, gdm читает его на старте)" 10 "$?"
 check_not "set-default не звали" ht_called '^systemctl set-default'
 check "состояние: gdm был" grep -qx 'dm=gdm.service' "$STATE/before"
+check "сказано о перезагрузке" grep -q 'перезагруз' <(ht_out)
+
+echo "== install: уже graphical, gdm и false до нас — 0 =="
+fresh
+package_conf "$GDM/custom.conf" false
+cp -p "$GDM/custom.conf" "$ORIG/custom.conf"
+echo graphical.target > "$FAKE/default"
+ln -s /lib/systemd/system/gdm.service "$SYSD/display-manager.service"
+ht_hook install; eq "install — 0 (перезагрузка не нужна)" 0 "$?"
+check "custom.conf не тронут" same "$GDM/custom.conf" "$ORIG/custom.conf"
+check "запись: было false, ничего не меняли" grep -qx 'op none' "$WB"
 
 echo "== install: другой менеджер входа занят =="
 fresh
@@ -192,9 +264,12 @@ check_not "после отказа apt default не тронут" grep -qx graph
 echo "== remove: возвращает как было =="
 fresh
 debian_conf "$GDM/daemon.conf"
+cp -p "$GDM/daemon.conf" "$ORIG/daemon.conf"
 ht_hook install >/dev/null
 : > "$FAKE/calls"
 ht_hook remove; eq "remove — 10 (default меняется)" 10 "$?"
+check "daemon.conf побайтно как до install" same "$GDM/daemon.conf" "$ORIG/daemon.conf"
+check_not "запись WaylandEnable снята" test -e "$WB"
 eq "default снова multi-user" multi-user.target "$(cat "$FAKE/default")"
 check "gdm выключен" ht_called '^systemctl disable gdm'
 check_not "display-manager снят" test -L "$SYSD/display-manager.service"
@@ -204,16 +279,98 @@ check_not "apt-get remove не зовётся: пакеты остаются" ht
 ht_hook remove; eq "повтор remove — 0" 0 "$?"
 check_not "повтор remove: systemctl не звали" ht_called '^systemctl (set-default|disable)'
 
-echo "== remove: было graphical и gdm до нас — не трогает =="
+echo "== remove: было graphical и gdm до нас — цель и gdm не трогает, WaylandEnable — 10 =="
 fresh
 debian_conf "$GDM/daemon.conf"
+cp -p "$GDM/daemon.conf" "$ORIG/daemon.conf"
 echo graphical.target > "$FAKE/default"
 ln -s /lib/systemd/system/gdm.service "$SYSD/display-manager.service"
 ht_hook install >/dev/null
 : > "$FAKE/calls"
-ht_hook remove; eq "remove — 0" 0 "$?"
+ht_hook remove; eq "remove — 10 (WaylandEnable вернулся)" 10 "$?"
 check_not "set-default не звали" ht_called '^systemctl set-default'
 check_not "gdm не выключен" ht_called '^systemctl disable'
+check "daemon.conf побайтно" same "$GDM/daemon.conf" "$ORIG/daemon.conf"
+HT_PHASE=build ht_hook install >/dev/null
+HT_PHASE=build ht_hook remove; eq "то же в build — 0" 0 "$?"
+check "build: daemon.conf побайтно" same "$GDM/daemon.conf" "$ORIG/daemon.conf"
+
+echo "== remove: было graphical, gdm и false до нас — 0, файл тот же =="
+fresh
+package_conf "$GDM/daemon.conf" false
+cp -p "$GDM/daemon.conf" "$ORIG/daemon.conf"
+echo graphical.target > "$FAKE/default"
+ln -s /lib/systemd/system/gdm.service "$SYSD/display-manager.service"
+ht_hook install >/dev/null
+ht_hook remove; eq "remove — 0" 0 "$?"
+check "daemon.conf тот же" same "$GDM/daemon.conf" "$ORIG/daemon.conf"
+
+for file in custom.conf daemon.conf; do
+    for st in absent commented true; do
+        echo "== $file: $st — install, remove побайтно =="
+        fresh
+        package_conf "$GDM/$file" "$st"
+        chmod 0640 "$GDM/$file"
+        cp -p "$GDM/$file" "$ORIG/$file"
+        echo graphical.target > "$FAKE/default"
+        ln -s /lib/systemd/system/gdm.service "$SYSD/display-manager.service"
+        ht_hook install; eq "$file $st: install в live — 10 (только WaylandEnable)" 10 "$?"
+        eq "$file $st: WaylandEnable=false" WaylandEnable=false "$(wayland_in "$GDM/$file")"
+        check "$file $st: запись помнит $st" grep -qx "state $st" "$WB"
+        eq "$file $st: режим сохранён" 640 "$(stat -c %a "$GDM/$file")"
+        cp -p "$WB" "$ORIG/wb"
+        ht_hook install; eq "$file $st: повтор install — 0" 0 "$?"
+        check "$file $st: повтор не переписал запись" same "$WB" "$ORIG/wb"
+        ht_hook remove; eq "$file $st: remove — 10" 10 "$?"
+        check "$file $st: возврат побайтно" same "$GDM/$file" "$ORIG/$file"
+        check_not "$file $st: запись снята" test -e "$WB"
+    done
+    echo "== $file: false — install 0, remove 0, файл тот же =="
+    fresh
+    package_conf "$GDM/$file" false
+    cp -p "$GDM/$file" "$ORIG/$file"
+    echo graphical.target > "$FAKE/default"
+    ln -s /lib/systemd/system/gdm.service "$SYSD/display-manager.service"
+    ht_hook install; eq "$file false: install — 0" 0 "$?"
+    check "$file false: запись помнит false" grep -qx "state false" "$WB"
+    ht_hook remove; eq "$file false: remove — 0" 0 "$?"
+    check "$file false: файл тот же" same "$GDM/$file" "$ORIG/$file"
+done
+
+echo "== remove: установка 5.0.x (записи WaylandEnable нет) — строка остаётся =="
+fresh
+package_conf "$GDM/custom.conf" commented
+ht_hook install >/dev/null
+rm -f -- "$WB"
+cp -p "$GDM/custom.conf" "$ORIG/custom.conf"
+ht_hook remove; eq "remove — 10 (default меняется)" 10 "$?"
+check "custom.conf тот же: WaylandEnable=false остаётся" same "$GDM/custom.conf" "$ORIG/custom.conf"
+eq "строка false на месте" WaylandEnable=false "$(wayland_in "$GDM/custom.conf")"
+
+echo "== обновление 5.0.x → 5.1.0: install при false от 5.0.x — remove оставляет false =="
+fresh
+package_conf "$GDM/custom.conf" false
+echo graphical.target > "$FAKE/default"
+ln -s /lib/systemd/system/gdm.service "$SYSD/display-manager.service"
+printf 'default=multi-user.target\ndm=\n' > "$STATE/before"
+ht_hook install; eq "install при обновлении — 0 (ничего не меняется)" 0 "$?"
+check "запись: было false" grep -qx 'state false' "$WB"
+cp -p "$GDM/custom.conf" "$ORIG/custom.conf"
+ht_hook remove >/dev/null
+check "после remove false остаётся" same "$GDM/custom.conf" "$ORIG/custom.conf"
+
+echo "== remove: запись WaylandEnable не своя — отказ, ничего не тронуто =="
+fresh
+package_conf "$GDM/custom.conf" false
+ht_hook install >/dev/null
+printf 'garbage\n' > "$WB"
+cp -p "$GDM/custom.conf" "$ORIG/custom.conf"
+: > "$FAKE/calls"
+ht_hook remove; eq "чужая запись — 1" 1 "$?"
+check "custom.conf не тронут" same "$GDM/custom.conf" "$ORIG/custom.conf"
+check "запись оставлена" test -e "$WB"
+check "состояние before оставлено" test -e "$STATE/before"
+check_not "systemctl не звали" ht_called '^systemctl (set-default|disable)'
 
 echo "== remove: испорченное состояние не исполняется =="
 fresh

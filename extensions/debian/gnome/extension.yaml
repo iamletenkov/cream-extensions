@@ -4,18 +4,23 @@
 #
 # install — GNOME, gdm3, Xorg (a browser is optional, native chromium only);
 #           WaylandEnable=false in the gdm3 config the package ships
-#           (daemon.conf on Debian, custom.conf on Ubuntu) — edited in place,
-#           not cream `files`: both are dpkg conffiles of gdm3; enables gdm and
-#           graphical.target — on a live machine exit 10 (reboot required).
-# remove  — the default target and the display manager back as they were; the
-#           packages stay.
+#           (daemon.conf on Debian, custom.conf on Ubuntu) — edited in place by
+#           lib/gdm-wayland.sh with a record of the line as it was, not cream
+#           `files`: both are dpkg conffiles of gdm3; enables gdm and
+#           graphical.target — on a live machine any change (WaylandEnable too)
+#           is exit 10 (reboot required).
+# remove  — WaylandEnable, the default target and the display manager back as
+#           they were (no record of WaylandEnable — installed by 5.0.x — the
+#           line stays); the packages stay.
+# The conflict with gdm-xorg is declared by both sides: the line has one owner.
 # The autologin, the screen lock and the blanking are the desktop extension
 # (depends): `cream set desktop DESKTOP_AUTOLOGIN=1 …`. The three desktops are
 # mutually exclusive by capability, not by a list of names.
 schema: cream/v1
 name: gnome
-version: 5.0.2
-# 5.0.2: диапазон desktop <3 (desktop 2.0.0).
+version: 5.1.0
+# 5.1.0: WaylandEnable через lib/gdm-wayland.sh — запись прежней строки, возврат при снятии, код 10
+#        при изменении; конфликт с gdm-xorg; диапазон desktop <3 (desktop 2.0.0).
 # 5.0.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: GNOME на Xorg и менеджер входа gdm3 — X-сервер и сессия для x11vnc, kiosk, selkies
 cream: ">=1.0.0"
@@ -30,12 +35,13 @@ targets:
     ставит рабочий стол GNOME (гигабайты пакетов), выключает Wayland в gdm3 и включает
     менеджер входа gdm и graphical.target: после перезагрузки экран машины занимает экран
     входа; другой уже включённый менеджер входа не перехватывается (предупреждение);
-    remove возвращает цель загрузки и менеджер входа, пакеты остаются
+    remove возвращает WaylandEnable, цель загрузки и менеджер входа, пакеты остаются
 provides: [x11-server, display-manager, desktop-session]
 depends:
   - {name: desktop, version: ">=1.0.0 <3"}
 conflicts:
   capabilities: [desktop-session]
+  extensions: [gdm-xorg]
 hooks:
   install: {timeout: 60m}
   remove: {timeout: 2m}

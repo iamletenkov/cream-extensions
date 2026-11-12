@@ -6,15 +6,20 @@
 # - WaylandEnable=false in [daemon] of the gdm3 config: x11vnc, xset and screen
 #   capture (ximagesrc) work only in X11. Which file gdm reads is decided when
 #   the PACKAGE is built (measured 2026-09-03): Debian — daemon.conf, Ubuntu —
-#   custom.conf; a key in the other file is silently ignored. The hook edits the
-#   key in every one the package put there and nothing else in them. Not cream
-#   `files`: both are dpkg conffiles of gdm3 — laying them would make cream
-#   refuse (conflict.file_unowned) on any machine that has gdm3 already, and gdm
-#   has no drop-in directory;
+#   custom.conf; a key in the other file is silently ignored. The edit is
+#   lib/gdm-wayland.sh (files/gdm-wayland.sh, one copy with gdm-xorg): the line
+#   as it was goes to $CREAM_STATE_DIR/wayland.before first (a repeat keeps the
+#   first record), `remove` puts it back byte for byte. A link instead of a gdm3
+#   file is refused before any write. Not cream `files`: both are dpkg
+#   conffiles of gdm3 — laying them would make cream refuse
+#   (conflict.file_unowned) on any machine that has gdm3 already, and gdm has
+#   no drop-in directory;
 # - the autologin, the screen lock and the blanking are the desktop extension
 #   (depends), which edits the same gdm3 configs;
-# - enables gdm and graphical.target. On a live machine either change takes
-#   effect at the next boot: exit 10 (reboot required). The build phase exits 0.
+# - enables gdm and graphical.target. On a live machine any of the three
+#   changes (WaylandEnable too, even when the target is graphical already: gdm
+#   reads it at its start) takes effect at the next boot: exit 10 (reboot
+#   required). The build phase exits 0.
 #
 # What was there before is kept in $CREAM_STATE_DIR (first record wins), so that
 # `remove` puts back the default target and the display manager as they were.
@@ -29,6 +34,8 @@ log_error(){ >&2 echo "[ERROR] $NAME: $*"; }
 R="${CREAM_ROOT:-}"; R="${R%/}"
 STATE="${CREAM_STATE_DIR:?run by cream}"
 SYSD="$R/etc/systemd/system"
+# shellcheck source=../../../../lib/gdm-wayland.sh
+source "${CREAM_EXT_DIR:?run by cream}/files/gdm-wayland.sh"
 
 apt_retry(){
     local i
@@ -49,33 +56,6 @@ dm_current(){
 is_gdm(){ [[ "$1" == gdm.service || "$1" == gdm3.service ]]; }
 
 default_current(){ systemctl get-default 2>/dev/null || true; }
-
-# wayland_off <file>: WaylandEnable=false right after the [daemon] header; every
-# other WaylandEnable line of that section (commented or not) goes, a missing
-# section is appended. The rest of the file stays as the package wrote it; an
-# unchanged file is not rewritten (a repeat finds the line in place).
-wayland_off(){
-    local file="$1" tmp
-    tmp="$(mktemp "${file%/*}/.gdm.XXXXXX")" || return 1
-    awk '
-        function emit() { print "WaylandEnable=false"; done = 1 }
-        /^[[:space:]]*\[/ {
-            line = $0; sub(/^[[:space:]]*\[/, "", line); sub(/\].*$/, "", line)
-            cur = line; print
-            if (cur == "daemon" && !done) emit()
-            next
-        }
-        cur == "daemon" && /^[[:space:]]*#*[[:space:]]*WaylandEnable[[:space:]]*=/ { next }
-        { print }
-        END { if (!done) { print ""; print "[daemon]"; emit() } }
-    ' "$file" > "$tmp" || { rm -f -- "$tmp"; return 1; }
-    if cmp -s "$tmp" "$file"; then
-        rm -f -- "$tmp"
-        return 0
-    fi
-    chmod --reference="$file" -- "$tmp" && mv -f -T -- "$tmp" "$file" \
-        || { rm -f -- "$tmp"; return 1; }
-}
 
 # --- what was there before (first install only) --------------------------------
 if [[ ! -s "$STATE/before" ]]; then
@@ -113,28 +93,23 @@ fi
 install -d -m 0755 "$R/etc/X11/xorg.conf.d"
 
 # --- gdm: X11, not Wayland -----------------------------------------------------
-edited=0
-for conf in "$R/etc/gdm3/daemon.conf" "$R/etc/gdm3/custom.conf"; do
-    if [[ -L "$conf" ]]; then
-        log_warn "${conf#"$R"} — ссылка; по ней не пишу"
-        continue
-    fi
-    [[ -f "$conf" ]] || continue
-    wayland_off "$conf" || { log_error "не записался WaylandEnable=false в ${conf#"$R"}"; exit 1; }
-    grep -qx 'WaylandEnable=false' "$conf" \
-        || { log_error "WaylandEnable=false не нашёлся в ${conf#"$R"} после записи"; exit 1; }
-    log_info "gdm: ${conf#"$R"} — Wayland выключен"
-    edited=1
-done
-if [[ "$edited" != 1 ]]; then
-    log_error "нет /etc/gdm3/daemon.conf и /etc/gdm3/custom.conf (обычными файлами) — Wayland останется включённым, x11vnc не заработает"
+reboot=0
+if ! gw_read "$R" >/dev/null; then
+    log_error "нет /etc/gdm3/daemon.conf и /etc/gdm3/custom.conf — Wayland останется включённым, x11vnc не заработает"
     exit 1
+fi
+wayland="$(gw_set_false "$R" "$STATE/wayland.before")" \
+    || { log_error "WaylandEnable=false не записан — Wayland останется включённым"; exit 1; }
+if [[ "$wayland" == changed ]]; then
+    log_info "gdm: Wayland выключен (прежняя строка — в записи, её вернёт remove)"
+    reboot=1
+else
+    log_info "gdm: Wayland уже выключен"
 fi
 
 # --- display manager and default target ----------------------------------------
 # Debian 12+: gdm.service with the alias gdm3.service; enabling by an alias
 # name is refused by newer systemd, hence gdm.service first.
-reboot=0
 current="$(dm_current)"
 if [[ -n "$current" ]] && ! is_gdm "$current"; then
     log_warn "менеджер входа на машине — $current, не gdm; не перехватываю (systemctl enable --force gdm.service вручную)"
