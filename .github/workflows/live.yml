@@ -5,7 +5,9 @@ name: Live tests
 # PID 1 (tools/live-test.sh: install, повтор, --reinstall без изменений файлов,
 # перезагрузка — configure, systemctl --failed пуст, нет ordering cycle,
 # секреты не утекают, remove). L-расширение — то, у которого есть
-# tests/live.env (умолчания прогона и дистрибутивы LIVE_DISTROS).
+# tests/live.env (умолчания прогона и дистрибутивы LIVE_DISTROS). Вариант
+# tests/live.<v>.env — своя строка матрицы (matrix.variant → --variant);
+# LIVE_NIGHTLY_DISTROS — только ночью и вручную.
 #
 # Когда:
 # - pull_request — только изменённые L-расширения и те, чьи LIVE_DEPS
@@ -109,7 +111,7 @@ jobs:
         run: tail -n 60 .scratchpad/live/selftest-debian-12/*.out || true
 
   live:
-    name: ${{ matrix.ext }} (${{ matrix.distro }})
+    name: ${{ matrix.ext }}${{ matrix.variant && format('.{0}', matrix.variant) || '' }} (${{ matrix.distro }})
     needs: plan
     if: needs.plan.outputs.matrix != '' && needs.plan.outputs.matrix != '{"include":[]}'
     runs-on: ubuntu-latest
@@ -151,8 +153,10 @@ jobs:
         env:
           EXT: ${{ matrix.ext }}
           DISTRO: ${{ matrix.distro }}
+          VARIANT: ${{ matrix.variant }}
         run: |
           args=()
+          [[ -z "$VARIANT" ]] || args+=(--variant "$VARIANT")
           [[ -z "${LIVE_MIRROR:-}" ]] || args+=(--param "STVOR_AGENT_MIRROR=$LIVE_MIRROR")
           tools/live-test.sh --distro "$DISTRO" "${args[@]}" "$EXT"
 
@@ -161,7 +165,8 @@ jobs:
         env:
           EXT: ${{ matrix.ext }}
           DISTRO: ${{ matrix.distro }}
+          VARIANT: ${{ matrix.variant }}
         run: |
-          d=".scratchpad/live/$EXT-$DISTRO"
+          d=".scratchpad/live/$EXT${VARIANT:+.$VARIANT}-$DISTRO"
           tail -n 40 "$d"/*.err || true
           tail -n 150 "$d/journal.log" || true

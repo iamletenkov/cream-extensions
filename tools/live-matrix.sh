@@ -11,11 +11,19 @@
 # или одно из его LIVE_DEPS; изменение пина cream (tools/cream-pin.env) —
 # все L-расширения. LIVE_NIGHTLY_ONLY=1 в live.env (тяжёлые: gnome, lxde) —
 # только в --all (ночь, ручной запуск), в --changed (PR) — никогда, даже при
-# смене пина. Изменение самого раннера проверяет самопроверка
+# смене пина. LIVE_NIGHTLY_DISTROS — дистрибутивы, добавляемые к LIVE_DISTROS
+# только в --all. Изменение самого раннера проверяет самопроверка
 # (tools/test-live-test.sh), не матрица.
 #
-# stdout — одна строка JSON: {"include":[{"ext":"…","distro":"…"},…]}; пустая
-# матрица — {"include":[]}. Код 2 — ошибка вызова.
+# Вариант — tests/live.<v>.env рядом с live.env (<v> — [a-z0-9][a-z0-9-]*,
+# иначе предупреждение в stderr и не строка): своя строка матрицы с "variant",
+# ключи — из файла варианта, нет там — из live.env (так же читает
+# tools/live-test.sh --variant). Варианты изменённого расширения попадают в
+# --changed вместе с ним, по тем же правилам LIVE_DEPS и LIVE_NIGHTLY_ONLY.
+#
+# stdout — одна строка JSON: {"include":[{"ext":"…","distro":"…"},…]}, у строки
+# варианта ещё "variant":"<v>"; пустая матрица — {"include":[]}. Без вариантов и
+# LIVE_NIGHTLY_DISTROS вывод тот же, что до них. Код 2 — ошибка вызова.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="${LIVE_MATRIX_REPO:-$(dirname "$HERE")}"
@@ -54,25 +62,58 @@ is_changed() {
     return 1
 }
 
-items=()
-while IFS= read -r envf; do
-    dir="$(dirname "$(dirname "$envf")")"
-    name="$(basename "$dir")"
-    if [[ "$mode" == --changed && "$(envval "$envf" LIVE_NIGHTLY_ONLY)" == 1 ]]; then
-        continue
+# keyval KEY FILE…: the value from the last FILE that sets KEY (a variant over
+# live.env); no FILE sets it — empty.
+keyval() {
+    local key="$1" f v=""
+    shift
+    for f in "$@"; do
+        grep -Eq "^$key=" "$f" && v="$(envval "$f" "$key")"
+    done
+    printf '%s' "$v"
+}
+
+# rows NAME VARIANT FILE…: the matrix rows of one live.env (VARIANT empty) or
+# one variant (FILE… — live.env, then the variant file).
+rows() {
+    local name="$1" variant="$2" pick d distros distro extra seen=" "
+    shift 2
+    if [[ "$mode" == --changed && "$(keyval LIVE_NIGHTLY_ONLY "$@")" == 1 ]]; then
+        return 0
     fi
     pick="$all"
     if [[ -z "$pick" ]]; then
         is_changed "$name" && pick=1
-        for d in $(envval "$envf" LIVE_DEPS); do
+        for d in $(keyval LIVE_DEPS "$@"); do
             is_changed "$d" && pick=1
         done
     fi
-    [[ -n "$pick" ]] || continue
-    distros="$(envval "$envf" LIVE_DISTROS)"
-    for distro in ${distros:-debian-12 ubuntu-24.04}; do
-        items+=("{\"ext\":\"$name\",\"distro\":\"$distro\"}")
+    [[ -n "$pick" ]] || return 0
+    distros="$(keyval LIVE_DISTROS "$@")"
+    distros="${distros:-debian-12 ubuntu-24.04}"
+    [[ "$mode" == --all ]] && distros="$distros $(keyval LIVE_NIGHTLY_DISTROS "$@")"
+    extra=""
+    [[ -n "$variant" ]] && extra=",\"variant\":\"$variant\""
+    for distro in $distros; do
+        [[ "$seen" == *" $distro "* ]] && continue
+        seen+="$distro "
+        items+=("{\"ext\":\"$name\",\"distro\":\"$distro\"$extra}")
     done
+}
+
+items=()
+while IFS= read -r envf; do
+    tests="$(dirname "$envf")"
+    name="$(basename "$(dirname "$tests")")"
+    rows "$name" "" "$envf"
+    while IFS= read -r vf; do
+        v="${vf##*/live.}"; v="${v%.env}"
+        if [[ ! "$v" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+            echo "live-matrix: $name: ${vf##*/} — имя варианта не [a-z0-9][a-z0-9-]*, пропущен" >&2
+            continue
+        fi
+        rows "$name" "$v" "$envf" "$vf"
+    done < <(find "$tests" -mindepth 1 -maxdepth 1 -type f -name 'live.?*.env' | LC_ALL=C sort)
 done < <(find "$REPO/extensions" -mindepth 4 -maxdepth 4 -path '*/tests/live.env' | sort)
 
 printf '{"include":['
