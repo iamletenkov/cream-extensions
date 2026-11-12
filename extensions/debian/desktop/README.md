@@ -16,7 +16,7 @@ xfconf, lxsession) и группы пользователя сеанса. Оди
 | Требует | — |
 | Зависит от | [`cloud-user`](../cloud-user/README.md) |
 | Конфликтует с | — |
-| Хуки | `install`, `configure`, `remove` |
+| Хуки | `install`, `configure`, `upgrade`, `remove` |
 | Настройка на загрузке | стадия `system`, на каждой загрузке (`every_boot`) |
 | Действия | `cream run desktop apply`, `cream run desktop status`, `cream run desktop defaults` |
 | Живая машина | да |
@@ -24,14 +24,19 @@ xfconf, lxsession) и группы пользователя сеанса. Оди
 
 ## Что делает
 
-- **`install`** — ставит `dconf-cli`, `x11-xserver-utils` и применяет ручки (как
-  `apply`, без ожидания пользователя).
+- **`install`** — ставит `dconf-cli`, `x11-xserver-utils`; ручки применяет следующий
+  за ним `configure` (`CREAM_REASON=install`), он же до первой записи снимает
+  прежний автологин (см. «Автологин: запись и возврат»).
+- **`upgrade`** — вызывается cream вместо `install` при `cream upgrade`: та же работа
+  `install`; с 1.x (`CREAM_PREV_VERSION` < 2.0.0) сначала пишет маркер `legacy` —
+  «прежний автологин неизвестен».
 - **`configure`** — на каждой загрузке, стадия `system`: после
   `cloud-init.service` и `guestfs-firstboot.service`, до `display-manager.service`,
   `gdm.service`, `gdm3.service`, `lightdm.service`; пишет файлы ручек и вносит
   пользователя в группы (см. «Кто применяет и когда»).
-- **`remove`** — снимает файлы dconf, X и xfconf и выключает автологин в
-  конфигах gdm3/lightdm (сами конфиги — пакетов), снимает `screensaver=disabled` из
+- **`remove`** — снимает файлы dconf, X и xfconf; автологин в конфигах gdm3/lightdm
+  возвращает, как был при установке (маркер `legacy` или записи нет — выключает, как
+  1.x; сами конфиги — пакетов и владельца), снимает `screensaver=disabled` из
   системного `desktop.conf` lxsession; группы пользователя и правка его собственного
   `desktop.conf` остаются. Пакеты `dconf-cli`, `x11-xserver-utils` не снимаются.
 
@@ -63,7 +68,7 @@ xfconf, lxsession) и группы пользователя сеанса. Оди
 <!-- catalog:params -->
 | Ключ | Тип | Умолчание | Что задаёт |
 |---|---|---|---|
-| `DESKTOP_AUTOLOGIN` | `bool` | `0` | 1 — вход без пароля (gdm3, lightdm) |
+| `DESKTOP_AUTOLOGIN` | `bool` | пусто | пусто — автологином не управляю; 0 — выключить; 1 — вход без пароля (gdm3, lightdm; SDDM — отказ) |
 | `DESKTOP_AUTOLOGIN_USER` | строка `^[a-z_][a-z0-9_-]{0,31}$` | пусто | пользователь автологина и групп сеанса; пусто — пользователь cloud-init (библиотека cloud-user) |
 | `DESKTOP_DISABLE_SCREEN_LOCK` | `bool` | `0` | 1 — без автоблокировки экрана (заблокировать вручную можно) |
 | `DESKTOP_DISABLE_SCREEN_BLANK` | `bool` | `0` | 1 — без затемнения, гашения, DPMS и сна |
@@ -73,12 +78,39 @@ xfconf, lxsession) и группы пользователя сеанса. Оди
 
 | Ключ | Что делает |
 |---|---|
-| `DESKTOP_AUTOLOGIN` | `1` — вход без пароля |
+| `DESKTOP_AUTOLOGIN` | пусто (умолчание с 2.0.0) — автологином не управляю; `0` — выключить; `1` — вход без пароля. Смысл значений — таблица ниже |
 | `DESKTOP_AUTOLOGIN_USER` | пользователь автологина и групп; пусто — пользователь cloud-init (библиотека [`cloud-user`](../cloud-user/README.md)) |
 | `DESKTOP_DISABLE_SCREEN_LOCK` | `1` — без автоблокировки (вручную заблокировать можно) |
 | `DESKTOP_DISABLE_SCREEN_BLANK` | `1` — без затемнения, гашения, DPMS и сна |
 
 Выключенная ручка — это «нашего файла нет»: действует поведение ОС, а не наше «выключено».
+
+### Автологин: запись и возврат
+
+Конфиги менеджера входа принадлежат пакетам и владельцу машины, поэтому с 2.0.0
+автологин меняется только по явному ключу (спека
+[2026-11-12-existing-desktop](../../../docs/specs/2026-11-12-existing-desktop.md), §4.3):
+
+| `DESKTOP_AUTOLOGIN` | gdm3, LightDM | SDDM |
+|---|---|---|
+| пусто | не трогает; если раньше писали `0`/`1` — возвращает строки из записи (нет записи или `legacy` — выключает, как 1.x) | 0 |
+| `0` | `AutomaticLoginEnable=false` в `[daemon]`; у LightDM `autologin-user*` сняты | прочие ручки применены, затем 1: «автологин SDDM не поддержан: `/etc/sddm.conf.d/`, вручную» |
+| `1` | `AutomaticLoginEnable=true`, `AutomaticLogin=<пользователь>`; `autologin-user=<пользователь>`, `autologin-user-timeout=0` | как `0` |
+
+- **Запись прежнего** — только при `CREAM_REASON=install`, до первой записи, в
+  `/var/lib/cream/ext/desktop/autologin.before`: по каждому конфигу gdm3 и LightDM — сырые
+  строки ключей `AutomaticLoginEnable`, `AutomaticLogin` (gdm3), `autologin-user`,
+  `autologin-user-timeout` (LightDM), закомментированные тоже, и их место в секции; дописанная
+  секция и перевод строки в конце. Повтор запись не перезаписывает. На загрузке, при
+  `apply` и `upgrade` записи нет: в файлах может стоять то, что записала 1.x.
+- **Возврат** — пустой ключ или `remove` после записи `0`/`1`: строки встают на свои места,
+  файл пакета — побайтно. Ключ пуст с установки (или с прошлого возврата) — `remove` конфиги
+  не трогает: что владелец поменял сам, остаётся. Запись живёт до `remove` (рулинг П17).
+- **`legacy` или записи нет** — пустой ключ и `remove` выключают автологин, как 1.x: машина
+  без пароля не остаётся. После выключения по пустому ключу маркер снимается, и дальше пусто
+  значит «не управляю».
+- Чужой файл на месте записи — `remove` отказывает (1) и ничего не снимает; пустой ключ
+  после записи `0`/`1` — тоже 1.
 
 ## Установка
 
@@ -87,6 +119,7 @@ xfconf, lxsession) и группы пользователя сеанса. Оди
 ```bash
 sudo cream install --with-deps desktop
 sudo cream set desktop DESKTOP_AUTOLOGIN=1    # cream перезапускает cream-configure@desktop
+sudo cream set desktop DESKTOP_AUTOLOGIN=     # вернуть автологин, как был при установке
 cream show desktop
 cream run desktop status
 ```
@@ -104,17 +137,18 @@ configure стоит после guestfs-firstboot и применит до ме�
 
 | Когда | Что происходит |
 |---|---|
-| сборка образа / `cream install` | пакеты `dconf-cli`, `x11-xserver-utils`; ручки применяются без ожидания |
+| сборка образа / `cream install` | пакеты `dconf-cli`, `x11-xserver-utils`; запись прежнего автологина и ручки — первым `configure` (`install` на живой машине, `boot` после сборки) |
+| `cream upgrade` | хук `upgrade`: пакеты; с 1.x — маркер `legacy`; затем `configure` (`CREAM_REASON=upgrade`) |
 | загрузка (`cream-configure@desktop`) | `CREAM_REASON=boot`: ждёт пользователя до 30 с, пишет файлы, группы, ничего не перезапускает |
 | `cream set` (перезапуск `cream-configure@desktop`) | то же без ожидания; при смене автологина — перезапуск менеджера входа, если нет графической сессии |
-| `cream remove` | файлы ручек сняты, автологин выключен; группы и пакеты остаются |
+| `cream remove` | файлы ручек сняты, автологин возвращён по записи (`legacy` или нет записи — выключен); группы и пакеты остаются |
 
 Действия:
 
 | Действие | Что делает |
 |---|---|
 | `cream run desktop apply [--now\|--boot]` | применить сейчас (`--now`, умолчание) или как на загрузке |
-| `cream run desktop status` | ручки и что применено (dconf, X DPMS); только читает |
+| `cream run desktop status` | ручки и что применено (dconf, X DPMS), работающий менеджер входа (`sddm` — с пометкой «вручную»), запись прежнего автологина; только читает |
 | `cream run desktop defaults KEY=VALUE…` | записать без применения — `cream set --no-apply desktop …` (сборка, скрипты) |
 
 ## Известные ограничения
@@ -125,6 +159,24 @@ configure стоит после guestfs-firstboot и применит до ме�
   включается (экран входа лучше чёрного экрана).
 - Автологин на настоящем рабочем столе проверяется только через L `xfce4` и
   сборку через bisquite.
+- Автологин SDDM не поддержан (нужен `Session=`, имя X11-сессии Plasma 5.27 и 6 разное, не
+  замерено): ключ `0`/`1` — код 1 после прочих ручек, пусто — 0.
+- В образе, собранном без живой машины, первый `configure` идёт с `CREAM_REASON=boot` —
+  записи нет, и `remove` выключает автологин, как 1.x.
+
+## Миграция с 1.x
+
+Спека, §5:
+
+- Явно заданный `DESKTOP_AUTOLOGIN` сохраняет смысл: cream хранит в домене только явные
+  значения.
+- Где ключ не задавался, умолчание становится пустым: `desktop` перестаёт писать
+  `AutomaticLoginEnable=false` на загрузке, но в файле остаётся последнее записанное значение —
+  видимого изменения нет, менеджер входа не перезапускается.
+- Хук `upgrade` пишет маркер `legacy`: записанное самой 1.x «прежним» не считается, `remove` и
+  пустой ключ выключают автологин, как 1.x.
+- Где вендорский автологин гасило умолчание `0` (`cloud-user-desktop`), теперь его гасит
+  `cloud-user-desktop` 6.0.0 — только запись, указывающую на удалённую учётку.
 
 ## Подробности
 
@@ -151,7 +203,7 @@ initialize the NVIDIA graphics device», AGX Orin 2026-09-14), а `systemd --use
 
 ### Для расширений рабочего стола
 
-- `depends: [{name: desktop, version: ">=1.0.0 <2"}]`; ставить свою службу и ссылку
+- `depends: [{name: desktop, version: ">=1.0.0 <3"}]`; ставить свою службу и ссылку
   на CLI не нужно — configure расширения `desktop` включает cream.
 - Умолчания образа — параметрами `desktop` (`RUN_COMMAND cream install --with-deps
   desktop DESKTOP_AUTOLOGIN=1`), а не параметрами `gnome`/`xfce4`/`lxde`: ключи
@@ -166,9 +218,15 @@ initialize the NVIDIA graphics device», AGX Orin 2026-09-14), а `systemd --use
 
 - **H** — `tests/test-desktop.sh`: gdm3 (Debian `daemon.conf`, Ubuntu `custom.conf`), lightdm
   (`Seat:*`, `SeatDefaults`), xfconf, lxsession, загрузка/живая машина, перезапуск менеджера
-  входа, действия, `remove`, повтор без изменений.
+  входа, действия, `remove`, повтор без изменений. С 2.0.0: матрица пусто/`0`/`1` × gdm3/LightDM/SDDM;
+  запись только при `install`; возврат побайтно конфигов пакетов gdm3 Ubuntu 24.04 и Debian 12
+  (П6), вендорского автологина, дописанной секции, файла без перевода строки в конце; Р1 —
+  1.x → `upgrade` (`legacy`) → загрузка → `remove` или пустой ключ: автологин выключен; с 1.x
+  при пустом ключе менеджер входа не перезапускается; чужая запись — `remove` 1.
 - **L** — `make test-live EXT=desktop` — контейнер без менеджера входа и пользователя: configure 0,
-  файлы dconf на месте, повтор и `--reinstall` без изменений, `remove`.
+  файлы dconf на месте, повтор и `--reinstall` без изменений, `remove`. Вариант
+  `ARGS='--variant gdm3'` (ubuntu-24.04): `custom.conf` пакета с включённым автологином
+  (preseed), install с `DESKTOP_AUTOLOGIN=0`, после `remove` файл тот же побайтно.
 - Порядок загрузки с gdm3 и cloud-init (стадия `system` до менеджера входа, без `ordering
   cycle`) — интеграция cream `test/integration/desktop`. Автологин на настоящем рабочем
   столе — L `xfce4` и сборка через bisquite.

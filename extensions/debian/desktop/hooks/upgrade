@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# cream hook `upgrade` of desktop (spec 2026-11-12-existing-desktop §4.3, ruling
+# Р1). cream calls it INSTEAD of install on `cream upgrade`, so it does the work
+# of install (the packages). Coming from 1.x (CREAM_PREV_VERSION below 2.0.0)
+# it first writes the marker legacy into the record of the autologin: the
+# configs of the display manager hold what 1.x wrote, so no record is taken of
+# them — an empty DESKTOP_AUTOLOGIN and remove turn the autologin off, as 1.x.
+# A record that is already there is never replaced.
+set -euo pipefail
+
+"${CREAM_EXT_DIR:?run by cream}/files/desktop.sh" mark-legacy "${CREAM_PREV_VERSION:-}"
+exec "${CREAM_EXT_DIR}/hooks/install"
