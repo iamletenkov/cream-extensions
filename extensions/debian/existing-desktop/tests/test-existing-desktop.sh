@@ -127,7 +127,7 @@ echo "== манифест =="
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
 eq "name" existing-desktop "$(mf 'm["name"]')"
-eq "версия" 1.0.0 "$(mf 'm["version"]')"
+eq "версия 1.0.1 (lib/x-session.sh П27б)" 1.0.1 "$(mf 'm["version"]')"
 eq "cream" ">=1.2.0" "$(mf 'm["cream"]')"
 eq "Debian и Ubuntu" "debian ubuntu" "$(mf '" ".join(o["id"] for o in m["platform"]["os"])')"
 eq "amd64 и arm64" "amd64 arm64" "$(mf '" ".join(m["platform"]["arch"])')"

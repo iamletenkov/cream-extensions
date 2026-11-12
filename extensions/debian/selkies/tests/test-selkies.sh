@@ -127,7 +127,7 @@ x0srv() {
 echo "== манифест и раскладка =="
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
 eq "name" selkies "$(mf 'm["name"]')"
-eq "версия 7.0.0 (SELKIES_USER, SELKIES_DISPLAY=auto, проверка машины)" 7.0.0 "$(mf 'm["version"]')"
+eq "версия 7.0.1 (сеанс GDM без lock-файла, authority SDDM — П27б)" 7.0.1 "$(mf 'm["version"]')"
 eq "SELKIES_USER: имя, пусто — cloud-user" "re:^[a-z_][a-z0-9_-]{0,31}\$||True" \
     "$(mf '(lambda k: k["type"] + "|" + k["default"] + "|" + str(k.get("empty")))(m["config"]["keys"]["SELKIES_USER"])')"
 eq "SELKIES_DISPLAY: auto или :N, умолчание auto" "re:^(auto|:[0-9]+(\.[0-9]+)?)\$|auto|True" \

@@ -130,7 +130,7 @@ mode_of() { stat -c %a "$1"; }
 echo "== манифест =="
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "версия 6.0.0 (X11VNC_USER, X11VNC_DISPLAY=auto)" 6.0.0 "$(mf 'm["version"]')"
+eq "версия 6.0.1 (сеанс GDM без lock-файла, authority SDDM — П27б)" 6.0.1 "$(mf 'm["version"]')"
 eq "X11VNC_USER: имя, пусто — cloud-user" "re:^[a-z_][a-z0-9_-]{0,31}\$||True" \
     "$(mf 'm["config"]["keys"]["X11VNC_USER"]["type"] + "|" + m["config"]["keys"]["X11VNC_USER"]["default"] + "|" + str(m["config"]["keys"]["X11VNC_USER"].get("empty"))')"
 eq "X11VNC_DISPLAY: auto или :N, умолчание auto" "re:^(auto|:[0-9]+(\\.[0-9]+)?)\$|auto" \

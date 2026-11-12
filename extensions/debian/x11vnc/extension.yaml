@@ -32,7 +32,12 @@
 #        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: x11vnc
-version: 6.0.0
+version: 6.0.1
+# 6.0.1: lib/x-session.sh (plan ruling П27б): a GDM session without a lock file —
+#        :N from the listening sockets of the user's own Xorg (exactly one N, else
+#        a refusal); the SDDM authority /tmp/xauth_* — a regular file of the
+#        session uid, mode not wider than 0600; the wrapper names a failed
+#        authority and logs the waiting once in 5 minutes, not every try.
 # 6.0.0: X11VNC_USER (empty — the cloud-init user as before) and X11VNC_DISPLAY=auto by
 #        default (lib/x-session.sh: the logind Display of the user's X11 session on seat0,
 #        else his Xorg, else :0 confirmed by his own authority; a saved :N stays as it is;
