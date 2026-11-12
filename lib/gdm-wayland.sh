@@ -24,8 +24,10 @@
 #       config.
 #   gw_set_false ROOT STATE-FILE
 #       Records first, writes after: the record of every file (its state and
-#       the exact line it replaces, or that the line is new) goes to STATE-FILE
-#       unless STATE-FILE is already there — a repeat never overwrites it. Then
+#       the exact line it replaces, or that the line is new) goes to STATE-FILE;
+#       a repeat never overwrites what is there, it only appends (atomically,
+#       before the edit) a file the record lacks — custom.conf that appeared
+#       after the first run; a STATE-FILE that is not a record — refused. Then
 #       WaylandEnable=false: a true line is replaced in place (the last, the one
 #       that counts), absent or commented — a new line right after [daemon], no
 #       [daemon] — the group is appended. Prints "changed" or "unchanged".
@@ -35,7 +37,10 @@
 #       Puts back what STATE-FILE recorded: the replaced line byte for byte at
 #       its place, the added line (and the appended group) removed; lines others
 #       wrote meanwhile stay. A line we wrote and someone changed since is left
-#       as it is, with a warning. A recorded file that is gone is not created.
+#       as it is, with a warning; a file already back (a repeat after a return
+#       that stopped half-way) is skipped silently. A recorded file that is gone
+#       is not created. A replaced entry without its raw WaylandEnable line —
+#       refused before any write.
 #       STATE-FILE is removed. Prints "changed" or "unchanged". 0 — done (no
 #       STATE-FILE — nothing to do); 1 — refused, STATE-FILE kept (a link, a path
 #       that is not a gdm3 config, an unknown record) or a write failed.
@@ -180,8 +185,8 @@ gw_read(){
 }
 
 gw_set_false(){
-    local root="${1%/}" sf="${2:-}" rel st k sep tmp rc changed=0
-    local -a files=() record=()
+    local root="${1%/}" sf="${2:-}" rel st k sep tmp rc line changed=0
+    local -a files=() record=() known=() add=()
     local -a _gw_l=() _gw_act=()
     local _gw_eol=1 _gw_com=0 _gw_hdr=-1 _gw_lasthdr=-1
     if [[ -z "$sf" ]]; then
@@ -197,10 +202,29 @@ gw_set_false(){
         return 1
     fi
 
-    # The record first: nothing is written before what it replaces is kept.
-    if [[ ! -s "$sf" ]]; then
+    # The record first: nothing is written before what it replaces is kept. A
+    # repeat keeps the record as it is and only appends the files it lacks (a
+    # custom.conf that appeared after the first run) — before they are edited.
+    if [[ -s "$sf" ]]; then
+        if [[ -L "$sf" || ! -f "$sf" ]] || ! mapfile -t record < "$sf"; then
+            _gw_error "запись $sf не читается — файлы gdm3 не трогаю"
+            return 1
+        fi
+        if [[ "${record[0]:-}" != "$_GW_RECORD_HEAD" ]]; then
+            _gw_error "$sf — не запись gdm-wayland; файлы gdm3 не трогаю"
+            return 1
+        fi
+        for line in "${record[@]}"; do
+            [[ "$line" == "file "* ]] && known+=("${line#file }")
+        done
+    else
         record=("$_GW_RECORD_HEAD")
-        for rel in "${files[@]}"; do
+    fi
+    for rel in "${files[@]}"; do
+        [[ " ${known[*]} " == *" $rel "* ]] || add+=("$rel")
+    done
+    if (( ${#add[@]} )); then
+        for rel in "${add[@]}"; do
             _gw_load "$root$rel" || { _gw_error "$rel не читается"; return 1; }
             _gw_scan
             st="$(_gw_state)"
@@ -298,7 +322,11 @@ gw_restore(){
         fi
         case "${rop[i]}" in
             none | inserted) ;;
-            replaced) [[ "${rarg[i]}" =~ ^[1-9][0-9]*$ ]] || { _gw_error "$sf: replaced без номера"; return 1; } ;;
+            replaced)
+                [[ "${rarg[i]}" =~ ^[1-9][0-9]*$ ]] || { _gw_error "$sf: replaced без номера"; return 1; }
+                [[ "${rraw[i]}" =~ ^[[:space:]]*WaylandEnable[[:space:]]*= ]] \
+                    || { _gw_error "$sf: replaced без строки raw WaylandEnable=…; не трогаю"; return 1; }
+                ;;
             appended) [[ "${rarg[i]}" == 0 || "${rarg[i]}" == 1 ]] || { _gw_error "$sf: appended без признака"; return 1; } ;;
             *) _gw_error "$sf: неизвестная операция «${rop[i]}»"; return 1 ;;
         esac
@@ -343,6 +371,15 @@ gw_restore(){
                 ;;
         esac
         if (( ! done_one )); then
+            # Already back (a repeat after a return that stopped half-way): no
+            # warning, nothing to write.
+            case "${rop[i]}" in
+                replaced)
+                    k=$(( rarg[i] - 1 ))
+                    if (( k < ${#_gw_act[@]} )) && [[ "${_gw_l[${_gw_act[k]}]}" == "${rraw[i]}" ]]; then continue; fi
+                    ;;
+                *) (( ${#_gw_act[@]} )) || continue ;;
+            esac
             _gw_warn "${rfile[i]}: строки $_GW_LINE, записанной при установке, нет — WaylandEnable поменяли после; оставляю как есть"
             continue
         fi

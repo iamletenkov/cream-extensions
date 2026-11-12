@@ -107,5 +107,6 @@ if [[ "${LIVE_REAL:-}" == 1 ]]; then
     else bad "stvor-agent: код $rc ($LOGS/stvor-agent.out)"; tail -n 20 <<< "$out" >&2; fi
 fi
 
+[[ -z "${LIVE_SELF_CASES:-}" ]] || echo "прогнаны только: $LIVE_SELF_CASES (LIVE_SELF_CASES) — это не полная самопроверка"
 echo "проверок: $((pass + fail)), не прошло: $fail"
 (( fail == 0 ))

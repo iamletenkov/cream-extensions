@@ -313,6 +313,61 @@ gw gw_restore "$ROOT" "$STATE"
 eq "чужой путь — код 1" 1 "$RC"
 check "чужой путь — файл не тронут" cmp -s "$TMP/passwd" "$ROOT/etc/passwd"
 
+echo "== запись есть, файл появился позже: повтор дописывает его в запись, возврат — обоих =="
+new_root
+conf_in true "$GDM/daemon.conf"; cp "$GDM/daemon.conf" "$TMP/d"
+gw gw_set_false "$ROOT" "$STATE"
+conf_in true "$GDM/custom.conf"; cp "$GDM/custom.conf" "$TMP/c"
+cp "$STATE" "$TMP/state1"
+gw gw_set_false "$ROOT" "$STATE"
+eq "появился — код 0" 0 "$RC"
+eq "появился — изменил" changed "$OUT"
+gw gw_read "$ROOT"
+eq "появился — false в обоих" "$(printf 'false /etc/gdm3/daemon.conf\nfalse /etc/gdm3/custom.conf')" "$OUT"
+check "появился — прежние строки записи не тронуты" cmp -s "$TMP/state1" <(head -n "$(wc -l < "$TMP/state1")" "$STATE")
+has "появился — custom.conf в записи" "file /etc/gdm3/custom.conf" "$(cat "$STATE")"
+gw gw_set_false "$ROOT" "$STATE"
+eq "появился — третий повтор не меняет" unchanged "$OUT"
+eq "появился — запись без дублей" 1 "$(grep -c '^file /etc/gdm3/custom.conf$' "$STATE")"
+gw gw_restore "$ROOT" "$STATE"
+eq "появился — возврат код 0" 0 "$RC"
+check "появился — daemon.conf побайтно" cmp "$TMP/d" "$GDM/daemon.conf"
+check "появился — custom.conf побайтно" cmp "$TMP/c" "$GDM/custom.conf"
+# A record that is not ours is not appended to and nothing is written.
+new_root
+conf_in true "$GDM/custom.conf"; cp "$GDM/custom.conf" "$TMP/c"
+mkdir -p "${STATE%/*}"; printf 'something else\n' > "$STATE"
+gw gw_set_false "$ROOT" "$STATE"
+eq "чужая запись — код 1" 1 "$RC"
+check "чужая запись — файл не тронут" cmp -s "$TMP/c" "$GDM/custom.conf"
+eq "чужая запись — не дописана" "something else" "$(cat "$STATE")"
+
+echo "== порченая запись replaced: без raw или raw не WaylandEnable — отказ до правки =="
+for bogus in drop "raw [daemon]"; do
+    new_root
+    conf_in true "$GDM/custom.conf"
+    gw gw_set_false "$ROOT" "$STATE"
+    cp "$GDM/custom.conf" "$TMP/now"
+    if [[ "$bogus" == drop ]]; then sed -i '/^raw /d' "$STATE"; else sed -i "s/^raw .*/$bogus/" "$STATE"; fi
+    gw gw_restore "$ROOT" "$STATE"
+    eq "raw «$bogus» — код 1" 1 "$RC"
+    check "raw «$bogus» — файл не тронут" cmp -s "$TMP/now" "$GDM/custom.conf"
+    check "raw «$bogus» — запись осталась" test -s "$STATE"
+done
+
+echo "== повтор возврата после частичного: уже возвращённый файл — без предупреждения =="
+new_root
+conf_in true "$GDM/daemon.conf"; conf_in true "$GDM/custom.conf"
+cp "$GDM/daemon.conf" "$TMP/d"; cp "$GDM/custom.conf" "$TMP/c"
+gw gw_set_false "$ROOT" "$STATE"
+# daemon.conf came back, custom.conf did not (its mv failed): the record is kept.
+cp "$TMP/d" "$GDM/daemon.conf"
+gw gw_restore "$ROOT" "$STATE"
+eq "частичный — код 0" 0 "$RC"
+check "частичный — daemon.conf побайтно" cmp "$TMP/d" "$GDM/daemon.conf"
+check "частичный — custom.conf побайтно" cmp "$TMP/c" "$GDM/custom.conf"
+eq "частичный — нет предупреждения о чужой правке" "" "$ERR"
+
 echo "== systemctl не зовётся =="
 check_not "systemctl не звался ни разу" test -e "$ROOT/systemctl.log"
 for r in "$TMP"/root.*; do

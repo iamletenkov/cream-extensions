@@ -48,7 +48,9 @@ gh workflow run live.yml -f ext=<имя>                     # то же в CI (
      (снимки `restored-before.snap`/`restored-after.snap`);
    - `FAIL после install не installed` / `cream check` после `LIVE_DEPS_FORCE_REMOVE` —
      граф без снятого поставщика не держится: расширение не даёт его capability
-     (`provides`), или зависимый требует то, чего больше нет; журнал — `graph.err`;
+     (`provides`), или зависимый требует то, чего больше нет; журнал — `graph.err`.
+     Это офлайн-проверка модели графа (база из `cream list` и `provides` манифестов), а не
+     фактического `Installed()` cream;
    - `FAIL cream remove: код 67` при установленных зависимых — нужен `LIVE_REMOVE_FORCE=1`,
      если снятие с зависимыми — и есть сценарий.
 5. Повторить прогон того же дистрибутива; затем остальные из `LIVE_DISTROS`.
