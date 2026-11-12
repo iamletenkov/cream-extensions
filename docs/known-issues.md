@@ -52,6 +52,11 @@
   [cream#56](https://github.com/iamletenkov/cream/issues/56). Поэтому `selkies` и `x11vnc`
   на живой машине проверяют Xorg и ссылку `display-manager.service` сами (`install` — 20,
   `configure`/`apply` — 1); после неудачи — сначала `cream remove existing-desktop`.
+- **Машина без стола: снимать сначала потребителей.** После неудачной `existing-desktop`
+  `install --with-deps selkies` оставляет запись `selkies` `skipped` (68), и
+  `cream remove existing-desktop` отвечает 67 `deps.dependents`. Порядок —
+  `cream remove selkies` (и `x11vnc`), затем `existing-desktop` (приёмка P5,
+  [runbook 05](runbooks/05_existing-desktop-acceptance.md)).
 - **`gnome` 5.0.x → 5.1.0 не возвращает `WaylandEnable`.** 5.0.x писала
   `WaylandEnable=false` без записи прежней строки; после обновления `install` записывает
   «было false», и `remove` строку оставляет.
