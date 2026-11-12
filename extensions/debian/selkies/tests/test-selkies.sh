@@ -296,8 +296,40 @@ sk_root
 ht_hook configure CREAM_REASON=boot SELKIES_ALLOW_NO_AUTH=1; eq "configure — 0" 0 "$?"
 check "стартует" started alice
 check "предупреждение при каждом configure" grep -q 'SELKIES_ALLOW_NO_AUTH=1' "$ROOT/out"
-ht_hook configure CREAM_REASON=boot SELKIES_ALLOW_NO_AUTH=1 SELKIES_ADDR=0.0.0.0
-check "адрес не петли без пароля — громче: открыт сети" grep -q 'сети' "$ROOT/out"
+for a in ::1 localhost 127.0.0.1; do
+    ht_hook configure CREAM_REASON=boot SELKIES_ALLOW_NO_AUTH=1 "SELKIES_ADDR=$a"; eq "без пароля на петле $a — 0" 0 "$?"
+done
+
+echo "== configure: без пароля — только на петле (решение владельца 2026-11-12) =="
+# no_auth_refused <what> <pairs…>: no password, SELKIES_ALLOW_NO_AUTH=1 and a
+# listener beyond the loopback: 78, the instance stopped, no declaration.
+no_auth_refused() {
+    local what="$1"; shift
+    sk_root
+    printf '%s\n' 'selkies@alice.service loaded active running Selkies' > "$FAKE/units"
+    mkdir -p "$APPS"; echo 'NAME=selkies' > "$DECL"
+    ht_hook configure CREAM_REASON=boot SELKIES_ALLOW_NO_AUTH=1 "$@"; eq "$what: configure — 78" 78 "$?"
+    check_not "$what: не стартует" started alice
+    check "$what: запущенный экземпляр гасится" ht_called '^systemctl stop --no-block selkies@alice\.service'
+    check_not "$what: объявление снято" test -e "$DECL"
+    check "$what: сказано, что без пароля — только петля" grep -q 'только на петле' "$ROOT/out"
+    : > "$FAKE/calls"
+    ht_hook apply CREAM_CHANGED_KEYS=SELKIES_ADDR SELKIES_ALLOW_NO_AUTH=1 "$@"; eq "$what: apply — 78" 78 "$?"
+    check_not "$what: apply не перезапускает" started alice
+}
+no_auth_refused "0.0.0.0" SELKIES_ADDR=0.0.0.0
+no_auth_refused "192.0.2.10" SELKIES_ADDR=192.0.2.10
+no_auth_refused "SELKIES_PUBLIC=true" SELKIES_PUBLIC=true
+no_auth_refused "SELKIES_PUBLIC=1" SELKIES_PUBLIC=1
+no_auth_refused "Computer-Use на 0.0.0.0" SELKIES_COMPUTER_USE_BIND=9500,0.0.0.0:9501
+sk_root
+ht_hook configure CREAM_REASON=boot SELKIES_ALLOW_NO_AUTH=1 SELKIES_PUBLIC=false \
+    SELKIES_COMPUTER_USE_BIND=9500,127.0.0.1:9501,localhost:9502
+eq "PUBLIC=false, Computer-Use на петле — 0" 0 "$?"
+check "стартует" started alice
+sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+ht_hook configure CREAM_REASON=boot SELKIES_ALLOW_NO_AUTH=1 SELKIES_ADDR=0.0.0.0; eq "с паролем не на петле — 0" 0 "$?"
+check "с паролем не на петле — стартует" started alice
 
 echo "== configure: адрес не петли =="
 sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
@@ -449,6 +481,19 @@ run_wrapper SELKIES_ALLOW_NO_AUTH=1
 check "SELKIES_ALLOW_NO_AUTH=1 — запущен" test -e "$FAKE/selkies.env"
 check "basic auth выключен явно" grep -qx 'SELKIES_ENABLE_BASIC_AUTH=false' "$FAKE/selkies.env"
 check "предупреждение при старте" grep -q 'SELKIES_ALLOW_NO_AUTH=1' "$ROOT/out"
+# Without a password only the loopback (owner's ruling 2026-11-12).
+for pair in SELKIES_ADDR=0.0.0.0 SELKIES_ADDR=192.0.2.10 SELKIES_PUBLIC=true SELKIES_COMPUTER_USE_BIND=0.0.0.0:9500; do
+    wr_root
+    run_wrapper SELKIES_ALLOW_NO_AUTH=1 "$pair"; eq "без пароля, $pair — 78" 78 "$?"
+    check_not "без пароля, $pair — selkies не запущен" test -e "$FAKE/selkies.env"
+    check "без пароля, $pair — сказано про петлю" grep -q 'только на петле' "$ROOT/out"
+done
+wr_root
+run_wrapper SELKIES_ALLOW_NO_AUTH=1 SELKIES_ADDR=::1 SELKIES_COMPUTER_USE_BIND=9500
+check "без пароля на ::1, Computer-Use на петле — запущен" test -e "$FAKE/selkies.env"
+wr_root
+run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_ADDR=0.0.0.0
+check "с паролем на 0.0.0.0 — запущен" test -e "$FAKE/selkies.env"
 
 wr_root
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_ENABLE_HTTPS=true

@@ -34,7 +34,10 @@ version: 6.2.2
 #        SELKIES_ENABLE_RESIZE=false never reached Selkies and it resized the
 #        monitor — Orin 2026-11-12); config is optional; SELKIES_ENCODER empty by
 #        default (one value locks the encoder in Selkies); a Wayland session —
-#        exit 78, not a restart every 5 s.
+#        exit 78, not a restart every 5 s. SELKIES_ALLOW_NO_AUTH=1 without a
+#        password only on the loopback (owner's ruling 2026-11-12): SELKIES_ADDR
+#        beyond it, SELKIES_PUBLIC on or SELKIES_COMPUTER_USE_BIND beyond it —
+#        configure/apply stop the instance and exit 78, the wrapper exits 78.
 # 6.2.1: fetch_verified from files/fetch.sh (one copy in git — lib/fetch.sh, laid by
 #        the snapshot) instead of depends on the library fetch: a VMFILE or a
 #        live machine needs no `cream install fetch` (5.4.2 failed deps.missing).
@@ -112,7 +115,7 @@ config:
     SELKIES_ALLOW_NO_AUTH:
       type: bool
       default: "0"
-      description: "ручка расширения, не Selkies: 1 — запускать без пароля (предупреждение при каждом старте)"
+      description: "ручка расширения, не Selkies: 1 — запускать без пароля, только на петле (предупреждение при каждом старте; адрес не петли, SELKIES_PUBLIC или Computer-Use наружу — отказ, код 78)"
     SELKIES_ENABLE_RESIZE:
       type: "enum:true,false"
       default: "false"

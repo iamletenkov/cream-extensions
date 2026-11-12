@@ -13,7 +13,10 @@
 # SELKIES_ALLOW_NO_AUTH=1 the service is not started — and a running instance
 # is stopped; a warning, exit 0 (a failing configure at boot helps nobody).
 # SELKIES_ALLOW_NO_AUTH=1 without a password starts it with a warning every
-# time. The wrapper (run-selkies.sh) checks the same once more at its start.
+# time — but only on the loopback (owner's ruling 2026-11-12): SELKIES_ADDR
+# beyond it, SELKIES_PUBLIC on or SELKIES_COMPUTER_USE_BIND beyond it stop the
+# instance, remove the declaration and exit 78. The wrapper (run-selkies.sh)
+# checks the same once more at its start.
 #
 # Teleport declaration /etc/cream/teleport/apps.d/selkies.conf (the contract of
 # the teleport extension, files/teleport.sh: NAME, URI on the loopback, ICON;
@@ -77,10 +80,35 @@ secret_set(){
     grep -qE "^[[:space:]]*$1=([^\"'[:space:]]|\"[^\"]|'[^'])" "$SECRETS" 2>/dev/null
 }
 
-is_loopback(){ case "$SELKIES_ADDR" in 127.*|::1|localhost) return 0 ;; esac; return 1; }
+RE_LOOPBACK='^(127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|::1|\[::1\]|localhost)$'
+loopback_host(){ [[ "$1" =~ $RE_LOOPBACK ]]; }
+is_loopback(){ loopback_host "$SELKIES_ADDR"; }
 
-# auth_ok: 0 — the service may run; the warnings of the decision to stderr.
+# beyond_loopback: prints what listens beyond the loopback, 0 — something does.
+# SELKIES_PUBLIC is off only when empty or false/0/no/off: anything else might be
+# on for Selkies. SELKIES_COMPUTER_USE_BIND (pixelflux's input server): a bare
+# port is the loopback, host:port — the host.
+beyond_loopback(){
+    local e host entries=()
+    if ! is_loopback; then echo "SELKIES_ADDR=$SELKIES_ADDR"; return 0; fi
+    case "${SELKIES_PUBLIC:-}" in
+        ''|[Ff][Aa][Ll][Ss][Ee]|0|[Nn][Oo]|[Oo][Ff][Ff]) ;;
+        *) echo "SELKIES_PUBLIC=$SELKIES_PUBLIC"; return 0 ;;
+    esac
+    IFS=, read -ra entries <<< "${SELKIES_COMPUTER_USE_BIND:-}"
+    for e in "${entries[@]}"; do
+        e="${e//[[:space:]]/}"
+        [[ -z "$e"|| "$e" =~ ^[0-9]+$ ]] && continue
+        host="${e%:*}"
+        loopback_host "$host" || { echo "SELKIES_COMPUTER_USE_BIND=$SELKIES_COMPUTER_USE_BIND"; return 0; }
+    done
+    return 1
+}
+
+# auth_ok: 0 — the service may run; 1 — no authentication (stopped, exit 0);
+# 2 — no password beyond the loopback (stopped, exit 78). Warnings to stderr.
 auth_ok(){
+    local what
     if secret_set SELKIES_BASIC_AUTH_PASSWORD; then
         if ! is_loopback && [[ "$SELKIES_ENABLE_HTTPS" != true ]]; then
             warn "SELKIES_ADDR=$SELKIES_ADDR без SELKIES_ENABLE_HTTPS=true — пароль basic auth пойдёт по сети открытым текстом"
@@ -88,8 +116,14 @@ auth_ok(){
         return 0
     fi
     if [[ "$SELKIES_ALLOW_NO_AUTH" == 1 ]]; then
+        # Owner's ruling 2026-11-12: without a password only on the loopback.
+        if what="$(beyond_loopback)"; then
+            warn "SELKIES_ALLOW_NO_AUTH=1 допустим только на петле (127.0.0.1, ::1, localhost), а $what слушает сеть — Selkies остановлен"
+            warn "  задайте пароль: echo <пароль> | sudo cream set selkies SELKIES_BASIC_AUTH_PASSWORD=-"
+            warn "  или верните петлю: sudo cream set selkies SELKIES_ADDR=127.0.0.1"
+            return 2
+        fi
         warn "БЕЗ АУТЕНТИФИКАЦИИ (SELKIES_ALLOW_NO_AUTH=1): рабочий стол, буфер обмена и файлы — любому, кто достаёт до ${SELKIES_ADDR}:${SELKIES_PORT}"
-        is_loopback || warn "адрес $SELKIES_ADDR — не петля: стол открыт сети"
         return 0
     fi
     if secret_set SELKIES_BASIC_AUTH_VIEWONLY_PASSWORD; then
@@ -236,12 +270,14 @@ resolve_user(){
 
 # run <boot|now>: the whole decision; boot — start, wait for the user; now — restart.
 run(){
-    local mode="$1" user wait_s=0 verb=restart
+    local mode="$1" user wait_s=0 verb=restart rc=0
     check_values
     effective_write
-    if ! auth_ok; then
+    auth_ok || rc=$?
+    if (( rc != 0 )); then
         decl_remove
         stop_instances
+        (( rc == 2 )) && exit 78
         return 0
     fi
     decl_write

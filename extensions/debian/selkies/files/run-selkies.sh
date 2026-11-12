@@ -21,7 +21,9 @@
 # Пароль есть — SELKIES_ENABLE_BASIC_AUTH=true ставится здесь, поверх того,
 # что пришло из настроек (шаблон SELKIES_* выключить его не может). Без пароля
 # снимает отказ только явный SELKIES_ALLOW_NO_AUTH=1 — с предупреждением при
-# каждом старте. Отказ — код 78: юнит (RestartPreventExitStatus=78) не крутит
+# каждом старте и только на петле (решение владельца 2026-11-12): SELKIES_ADDR
+# не петля, SELKIES_PUBLIC включён или SELKIES_COMPUTER_USE_BIND не на петле —
+# отказ. Отказ — код 78: юнит (RestartPreventExitStatus=78) не крутит
 # перезапуски.
 #
 # СЕКРЕТЫ. Пароли и токен приходят окружением из /etc/cream/selkies/secrets
@@ -60,9 +62,32 @@ DISPLAY_NUM="${SELKIES_DISPLAY:-:0}"
 # clicks miss (Orin 2026-11-12). Empty means Selkies' default too.
 export SELKIES_ENABLE_RESIZE="${SELKIES_ENABLE_RESIZE:-false}"
 
+RE_LOOPBACK='^(127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|::1|\[::1\]|localhost)$'
+loopback_host(){ [[ "$1" =~ $RE_LOOPBACK ]]; }
+
+# beyond_loopback: prints what listens beyond the loopback, 0 — something does
+# (the same rule as configure in selkies.sh). SELKIES_PUBLIC is off only when
+# empty or false/0/no/off; SELKIES_COMPUTER_USE_BIND: a bare port is the
+# loopback, host:port — the host.
+beyond_loopback(){
+    local e entries=()
+    loopback_host "$addr" || { echo "SELKIES_ADDR=$addr"; return 0; }
+    case "${SELKIES_PUBLIC:-}" in
+        ''|[Ff][Aa][Ll][Ss][Ee]|0|[Nn][Oo]|[Oo][Ff][Ff]) ;;
+        *) echo "SELKIES_PUBLIC=$SELKIES_PUBLIC"; return 0 ;;
+    esac
+    IFS=, read -ra entries <<< "${SELKIES_COMPUTER_USE_BIND:-}"
+    for e in "${entries[@]}"; do
+        e="${e//[[:space:]]/}"
+        [[ -z "$e" || "$e" =~ ^[0-9]+$ ]] && continue
+        loopback_host "${e%:*}" || { echo "SELKIES_COMPUTER_USE_BIND=$SELKIES_COMPUTER_USE_BIND"; return 0; }
+    done
+    return 1
+}
+
 addr="${SELKIES_ADDR:-127.0.0.1}"
 loopback=0
-case "$addr" in 127.*|::1|localhost) loopback=1 ;; esac
+loopback_host "$addr" && loopback=1
 
 if [[ -n "${SELKIES_BASIC_AUTH_PASSWORD:-}" ]]; then
     export SELKIES_ENABLE_BASIC_AUTH=true
@@ -70,9 +95,15 @@ if [[ -n "${SELKIES_BASIC_AUTH_PASSWORD:-}" ]]; then
         log_warn "SELKIES_ADDR=$addr без SELKIES_ENABLE_HTTPS=true — пароль basic auth идёт по сети открытым текстом"
     fi
 elif [[ "${SELKIES_ALLOW_NO_AUTH:-0}" == 1 ]]; then
+    # Owner's ruling 2026-11-12: without a password only on the loopback.
+    if what="$(beyond_loopback)"; then
+        log_error "SELKIES_ALLOW_NO_AUTH=1 допустим только на петле (127.0.0.1, ::1, localhost), а $what слушает сеть — не запускаюсь"
+        log_error "задайте пароль: echo <пароль> | sudo cream set selkies SELKIES_BASIC_AUTH_PASSWORD=-"
+        log_error "или верните петлю: sudo cream set selkies SELKIES_ADDR=127.0.0.1"
+        exit 78
+    fi
     export SELKIES_ENABLE_BASIC_AUTH=false
     log_warn "БЕЗ АУТЕНТИФИКАЦИИ (SELKIES_ALLOW_NO_AUTH=1): рабочий стол, буфер обмена и файлы '$USERNAME' — любому, кто достаёт до ${addr}:${SELKIES_PORT:-8080}"
-    (( loopback )) || log_warn "адрес $addr — не петля: стол открыт сети"
 else
     log_error "нет SELKIES_BASIC_AUTH_PASSWORD — без аутентификации не запускаюсь"
     log_error "задайте пароль: echo <пароль> | sudo cream set selkies SELKIES_BASIC_AUTH_PASSWORD=-"
