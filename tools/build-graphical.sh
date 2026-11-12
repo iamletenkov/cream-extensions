@@ -103,7 +103,11 @@ set -u
 L=$GUEST_DIR/logs
 mkdir -p "\$L"
 export DEBIAN_FRONTEND=noninteractive
-trap 'cp /etc/image-labels.d/cream.json "\$L/cream.json" 2>/dev/null || true' EXIT
+# DNS of the appliance on a hosted runner answers now and then: apt retries a
+# fetch; the setting lives for the build only and never reaches the image.
+R=/etc/apt/apt.conf.d/99build-graphical-retries
+echo 'Acquire::Retries "10";' > "\$R"
+trap 'rm -f /etc/apt/apt.conf.d/99build-graphical-retries; cp /etc/image-labels.d/cream.json "\$L/cream.json" 2>/dev/null || true' EXIT
 step(){ local n="\$1" rc=0; shift; "\$@" > "\$L/\$n.out" 2> "\$L/\$n.err" || rc=\$?; echo "\$rc" > "\$L/\$n.rc"; return "\$rc"; }
 EOF
     while IFS='|' read -r n _ cmd; do

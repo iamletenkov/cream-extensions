@@ -56,6 +56,11 @@ hasnt "cream-gnome: стол не ставится apt" "apt-get install" "$g"
 hasnt "cream-gnome: нет existing-desktop" "existing-desktop" "$g"
 hasnt "cream-gnome: пароли не в образе" "PASSWORD" "$g"
 has "cream-gnome: метки образа — в журналы" "/etc/image-labels.d/cream.json" "$g"
+# DNS из appliance на hosted-раннере отвечает через раз: apt повторяет скачивание,
+# а настройка повторов живёт только на время сборки и в образ не попадает.
+has "cream-gnome: apt повторяет скачивание" 'Acquire::Retries "10";' "$g"
+before "cream-gnome: повторы apt до первого шага" "Acquire::Retries" "step 01-cream" "$g"
+has "cream-gnome: настройка повторов снимается на выходе" "rm -f /etc/apt/apt.conf.d/99build-graphical-retries" "$g"
 
 # --- сценарий гостя: готовый gdm3 -------------------------------------------
 g="$("$B" --guest-script existing-gdm3 cream-extensions-9.9.9.tar.gz "$SHA")"
