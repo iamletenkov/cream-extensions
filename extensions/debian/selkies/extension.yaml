@@ -27,7 +27,10 @@
 #        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: selkies
-version: 6.2.2
+version: 6.2.3
+# 6.2.3: SELKIES_COMPUTER_USE_BIND of commas and blanks only ("," or ", ,") is
+#        Computer-Use off, as if unset: the wrapper does not pass the key on and
+#        configure does not write it to the effective values.
 # 6.2.2: Selkies gets the effective settings, defaults of the manifest included:
 #        configure/apply write them to /var/lib/cream/ext/selkies/env, the unit
 #        reads it before config (config holds only explicit keys, so

@@ -76,7 +76,7 @@ blocking_systemctl() { grep -E '^systemctl (start|restart|stop|reload|enable --n
 echo "== манифест и раскладка =="
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
 eq "name" selkies "$(mf 'm["name"]')"
-eq "версия 6.2.2 (действующие значения с умолчаниями манифеста)" 6.2.2 "$(mf 'm["version"]')"
+eq "версия 6.2.3 (Computer-Use из одних запятых — как выключенный)" 6.2.3 "$(mf 'm["version"]')"
 eq "cream >=1.2.0 (every_boot, спека cream §10.9)" ">=1.2.0" "$(mf 'm["cream"]')"
 eq "configure на каждой загрузке (аудит 2026-10-21)" True "$(mf 'm["hooks"]["configure"].get("every_boot")')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
@@ -330,6 +330,12 @@ no_auth_refused "SELKIES_ENABLE_DUAL_MODE=true" SELKIES_ENABLE_DUAL_MODE=true
 no_auth_refused "Computer-Use на петле без пароля" SELKIES_COMPUTER_USE_BIND=9500
 no_auth_refused "Computer-Use 127.0.0.1 без пароля" SELKIES_COMPUTER_USE_BIND=127.0.0.1:9500
 
+# Commas only: no address — not written to the effective values of the unit.
+sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+ht_hook configure CREAM_REASON=boot "SELKIES_COMPUTER_USE_BIND=,,"; eq "Computer-Use из запятых — 0" 0 "$?"
+check "действующие значения записаны" test -s "$ROOT/var/lib/cream/ext/selkies/env"
+check_not "Computer-Use из запятых не попал в действующие значения" grep -q '^SELKIES_COMPUTER_USE_BIND=' "$ROOT/var/lib/cream/ext/selkies/env"
+
 echo "== configure: Computer-Use pixelflux без пароля всегда — только на петле =="
 sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
 printf '%s\n' 'selkies@alice.service loaded active running Selkies' > "$FAKE/units"
@@ -538,6 +544,18 @@ wr_root
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_COMPUTER_USE_BIND=9500
 check "с паролем, Computer-Use 9500 — запущен" test -e "$FAKE/selkies.env"
 check "с паролем — Computer-Use дошёл до Selkies" grep -qx 'SELKIES_COMPUTER_USE_BIND=9500' "$FAKE/selkies.env"
+# A list of commas only names no address: Computer-Use is off, as if unset — the
+# variable does not reach Selkies (it starts its server for any non-empty value).
+for cu in "," ", ," " , "; do
+    wr_root
+    run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" "SELKIES_COMPUTER_USE_BIND=$cu"
+    check "с паролем, Computer-Use '$cu' — запущен" test -e "$FAKE/selkies.env"
+    check_not "с паролем, Computer-Use '$cu' — Selkies не получил ключ" grep -q '^SELKIES_COMPUTER_USE_BIND=' "$FAKE/selkies.env"
+    wr_root
+    run_wrapper SELKIES_ALLOW_NO_AUTH=1 "SELKIES_COMPUTER_USE_BIND=$cu"
+    check "без пароля, Computer-Use '$cu' — запущен, как выключенный" test -e "$FAKE/selkies.env"
+    check_not "без пароля, Computer-Use '$cu' — Selkies не получил ключ" grep -q '^SELKIES_COMPUTER_USE_BIND=' "$FAKE/selkies.env"
+done
 # SELKIES_PUBLIC as Selkies reads it (true/1 before "|"); handed on normalized.
 for pub in yes on; do
     wr_root
