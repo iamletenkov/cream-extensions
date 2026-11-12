@@ -183,6 +183,7 @@ dconf list-locks /org/gnome/desktop/remote-access/
 | отсутствие `[Install]` в юните, `Exec=` в `.desktop`, отсутствие `/etc/xdg/autostart` | распакованные пакеты 3.22.0-5ubuntu2.2 (focal) и 3.22.0-6ubuntu5 (noble) | 2026-09-03 |
 | доступность `vino` по выпускам Ubuntu | Launchpad `getPublishedSources` | 2026-09-03 |
 | рабочая конфигурация на Jetson Nano | Ubuntu 20.04, GNOME/GDM3, `0.0.0.0:5900` | 2026-09-03 |
+| vino на Ubuntu 24.04 с GNOME на Xorg | ВМ: noble + `ubuntu-desktop-minimal`, `existing-desktop` и `gdm-xorg`; vino 3.22.0-6ubuntu5, порт 5901; после перезагрузки `vino-server` слушает, снимок экрана через него получен | 2026-11-12 |
 | сборка образа с этим расширением | — | **не проверялось** |
 
 Схема и пакеты замерены 2026-09-03, до перехода на cream/v1; формат cream/v1 на
@@ -197,6 +198,6 @@ dconf list-locks /org/gnome/desktop/remote-access/
   или профиля — сбой; профиль `desktop` сохраняется; отказ `dconf compile` — сбой;
   `remove`; в домашний каталог не пишется ничего.
 - **L** — `make test-live EXT=vino-vnc` (`tests/live.env`: deps `cloud-user desktop xfce4`,
-  секрет `VINO_PASSWORD`, debian-12). Вручную 2026-10-19 на debian:12 с настоящим
+  секрет `VINO_PASSWORD`, debian-12; ночью — ещё ubuntu-24.04). Вручную 2026-10-19 на debian:12 с настоящим
   `dconf`: значения и блокировки читаются пользователем сессии, другой пользователь
   базу пароля не открывает.
