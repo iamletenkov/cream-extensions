@@ -42,9 +42,13 @@ version: 6.2.2
 #        ruling 2026-11-12): SELKIES_ADDR beyond it, SELKIES_PUBLIC on, WebRTC
 #        (SELKIES_MODE=webrtc or SELKIES_ENABLE_DUAL_MODE — ICE on every address)
 #        — configure/apply stop the instance and exit 78, the wrapper exits 78.
-#        pixelflux's Computer-Use server has no authentication: beyond the
-#        loopback it is refused with a password too, PIXELFLUX_CU never passed on.
-#        The wrapper gives Selkies the address it checked (absent — 127.0.0.1).
+#        pixelflux's Computer-Use server has no authentication (owner's ruling
+#        2026-11-12): off by default, on only by SELKIES_COMPUTER_USE_BIND and
+#        only with a password — without one exit 78 on any address, the loopback
+#        too; beyond the loopback refused with a password too; PIXELFLUX_CU never
+#        passed on. The wrapper gives Selkies what it checked: the address
+#        (absent — 127.0.0.1), SELKIES_MODE (absent — websockets), SELKIES_PUBLIC
+#        as Selkies reads it (true/1 — true, yes/on and the rest — false).
 # 6.2.1: fetch_verified from files/fetch.sh (one copy in git — lib/fetch.sh, laid by
 #        the snapshot) instead of depends on the library fetch: a VMFILE or a
 #        live machine needs no `cream install fetch` (5.4.2 failed deps.missing).
@@ -122,7 +126,7 @@ config:
     SELKIES_ALLOW_NO_AUTH:
       type: bool
       default: "0"
-      description: "ручка расширения, не Selkies: 1 — запускать без пароля, только на петле (предупреждение при каждом старте; адрес не петли, SELKIES_PUBLIC или Computer-Use наружу — отказ, код 78)"
+      description: "ручка расширения, не Selkies: 1 — запускать без пароля, только на петле (предупреждение при каждом старте; адрес не петли, SELKIES_PUBLIC или Computer-Use в любом адресе — отказ, код 78)"
     SELKIES_ENABLE_RESIZE:
       type: "enum:true,false"
       default: "false"

@@ -326,6 +326,9 @@ no_auth_refused "::" SELKIES_ADDR=::
 # WebRTC binds its ICE sockets (UDP, mux ports, mDNS) on every host address.
 no_auth_refused "SELKIES_MODE=webrtc" SELKIES_MODE=webrtc
 no_auth_refused "SELKIES_ENABLE_DUAL_MODE=true" SELKIES_ENABLE_DUAL_MODE=true
+# Owner's ruling 2026-11-12: Computer-Use only explicitly and only with a password.
+no_auth_refused "Computer-Use на петле без пароля" SELKIES_COMPUTER_USE_BIND=9500
+no_auth_refused "Computer-Use 127.0.0.1 без пароля" SELKIES_COMPUTER_USE_BIND=127.0.0.1:9500
 
 echo "== configure: Computer-Use pixelflux без пароля всегда — только на петле =="
 sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
@@ -342,11 +345,21 @@ sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
 ht_hook configure CREAM_REASON=boot SELKIES_PUBLIC=true; eq "с паролем, PUBLIC=true — 0" 0 "$?"
 check "с паролем, PUBLIC=true — стартует" started alice
 check "с паролем, PUBLIC=true без HTTPS — предупреждение про открытый текст" grep -q 'открытым текстом' "$ROOT/out"
-sk_root
-ht_hook configure CREAM_REASON=boot SELKIES_ALLOW_NO_AUTH=1 SELKIES_PUBLIC=false \
-    SELKIES_COMPUTER_USE_BIND=9500,127.0.0.1:9501,localhost:9502
-eq "PUBLIC=false, Computer-Use на петле — 0" 0 "$?"
-check "стартует" started alice
+sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+ht_hook configure CREAM_REASON=boot SELKIES_COMPUTER_USE_BIND=9500,127.0.0.1:9501,localhost:9502
+eq "с паролем, Computer-Use на петле — 0" 0 "$?"
+check "с паролем, Computer-Use на петле — стартует" started alice
+# SELKIES_PUBLIC as Selkies reads it: on only by true/1 (before "|").
+for pub in false yes on; do
+    sk_root
+    ht_hook configure CREAM_REASON=boot SELKIES_ALLOW_NO_AUTH=1 "SELKIES_PUBLIC=$pub"
+    eq "без пароля, PUBLIC=$pub (для Selkies выключен) — 0" 0 "$?"
+    check "без пароля, PUBLIC=$pub — стартует" started alice
+done
+no_auth_refused "SELKIES_PUBLIC=TRUE|locked" "SELKIES_PUBLIC=TRUE|locked"
+sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+ht_hook configure CREAM_REASON=boot SELKIES_PUBLIC=yes
+check_not "с паролем, PUBLIC=yes — не все интерфейсы, предупреждения нет" grep -q 'открытым текстом' "$ROOT/out"
 sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
 ht_hook configure CREAM_REASON=boot SELKIES_ALLOW_NO_AUTH=1 SELKIES_ADDR=0.0.0.0; eq "с паролем не на петле — 0" 0 "$?"
 check "с паролем не на петле — стартует" started alice
@@ -510,8 +523,34 @@ for pair in SELKIES_ADDR=0.0.0.0 SELKIES_ADDR=192.0.2.10 SELKIES_ADDR=:: SELKIES
     check "без пароля, $pair — сказано про петлю" grep -q 'только на петле' "$ROOT/out"
 done
 wr_root
-run_wrapper SELKIES_ALLOW_NO_AUTH=1 SELKIES_ADDR=::1 SELKIES_COMPUTER_USE_BIND=9500
-check "без пароля на ::1, Computer-Use на петле — запущен" test -e "$FAKE/selkies.env"
+run_wrapper SELKIES_ALLOW_NO_AUTH=1 SELKIES_ADDR=::1
+check "без пароля на ::1 — запущен" test -e "$FAKE/selkies.env"
+check_not "по умолчанию Computer-Use выключен" grep -q '^SELKIES_COMPUTER_USE_BIND=' "$FAKE/selkies.env"
+check "Selkies получил SELKIES_MODE=websockets" grep -qx 'SELKIES_MODE=websockets' "$FAKE/selkies.env"
+# Owner's ruling 2026-11-12: Computer-Use only explicitly and only with a password.
+for cu in 9500 127.0.0.1:9500; do
+    wr_root
+    run_wrapper SELKIES_ALLOW_NO_AUTH=1 "SELKIES_COMPUTER_USE_BIND=$cu"; eq "без пароля, Computer-Use $cu — 78" 78 "$?"
+    check_not "без пароля, Computer-Use $cu — selkies не запущен" test -e "$FAKE/selkies.env"
+    check "без пароля, Computer-Use $cu — сказано, что нужен пароль" grep -q 'только с паролем' "$ROOT/out"
+done
+wr_root
+run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_COMPUTER_USE_BIND=9500
+check "с паролем, Computer-Use 9500 — запущен" test -e "$FAKE/selkies.env"
+check "с паролем — Computer-Use дошёл до Selkies" grep -qx 'SELKIES_COMPUTER_USE_BIND=9500' "$FAKE/selkies.env"
+# SELKIES_PUBLIC as Selkies reads it (true/1 before "|"); handed on normalized.
+for pub in yes on; do
+    wr_root
+    run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" "SELKIES_PUBLIC=$pub"
+    check "с паролем, PUBLIC=$pub — Selkies получил SELKIES_PUBLIC=false" grep -qx 'SELKIES_PUBLIC=false' "$FAKE/selkies.env"
+    check "с паролем, PUBLIC=$pub — адрес остаётся" grep -qx 'SELKIES_ADDR=127.0.0.1' "$FAKE/selkies.env"
+    check_not "с паролем, PUBLIC=$pub — нет ложного «все интерфейсы»" grep -q 'все интерфейсы' "$ROOT/out"
+    wr_root
+    run_wrapper SELKIES_ALLOW_NO_AUTH=1 "SELKIES_PUBLIC=$pub"
+    check "без пароля, PUBLIC=$pub (для Selkies выключен) — запущен" test -e "$FAKE/selkies.env"
+done
+wr_root
+run_wrapper SELKIES_ALLOW_NO_AUTH=1 "SELKIES_PUBLIC=True|locked"; eq "без пароля, PUBLIC=True|locked — 78" 78 "$?"
 wr_root
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_ADDR=0.0.0.0
 check "с паролем на 0.0.0.0 — запущен" test -e "$FAKE/selkies.env"
@@ -551,7 +590,7 @@ for pub in true 1; do
             run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" "SELKIES_PUBLIC=$pub" "$addr"
         fi
         check "с паролем, PUBLIC=$pub, адрес $addr — запущен" test -e "$FAKE/selkies.env"
-        check "с паролем, PUBLIC=$pub — Selkies получил SELKIES_PUBLIC=$pub" grep -qx "SELKIES_PUBLIC=$pub" "$FAKE/selkies.env"
+        check "с паролем, PUBLIC=$pub — Selkies получил SELKIES_PUBLIC=true" grep -qx "SELKIES_PUBLIC=true" "$FAKE/selkies.env"
         check_not "с паролем, PUBLIC=$pub, адрес $addr — без SELKIES_ADDR" grep -q '^SELKIES_ADDR=' "$FAKE/selkies.env"
         eq "с паролем, PUBLIC=$pub — argv пуст (без --addr)" "" "$(cat "$FAKE/selkies.args" 2>/dev/null)"
         check "с паролем, PUBLIC=$pub без HTTPS — предупреждение про открытый текст" grep -q 'открытым текстом' "$ROOT/out"

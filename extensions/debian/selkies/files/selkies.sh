@@ -91,12 +91,24 @@ is_loopback(){ loopback_host "$SELKIES_ADDR"; }
 # SELKIES_ENABLE_DUAL_MODE) binds its ICE sockets — UDP, the mux ports, mDNS —
 # on every host address, no setting confines them to the loopback; pixelflux's
 # Computer-Use HTTP server (input injection, no authentication of its own) on
-# SELKIES_COMPUTER_USE_BIND — a bare port is the loopback, host:port the host.
+# SELKIES_COMPUTER_USE_BIND — a bare port is the loopback, host:port the host;
+# owner's ruling 2026-11-12: off by default, only explicitly and only with a
+# password of Selkies (beyond the loopback — refused even then).
 
-# bool_off <value>: 0 — off. Selkies turns a bool on only by true/1; anything
-# but empty or false/0/no/off is taken as on here. Empty DUAL_MODE is off: the
-# wrapper exports its default false (the manifest's).
-bool_off(){ case "$1" in ''|[Ff][Aa][Ll][Ss][Ee]|0|[Nn][Oo]|[Oo][Ff][Ff]) return 0 ;; esac; return 1; }
+# bool_on <value>: 0 — on, the way Selkies reads a bool (settings.parse_bool:
+# the part before "|", trimmed, lowercase, is true or 1); yes/on are off for it.
+# Empty DUAL_MODE is off: the wrapper exports its default false (the manifest's).
+bool_on(){
+    local v="${1%%|*}"
+    v="${v//[[:space:]]/}"
+    [[ "${v,,}" == true || "$v" == 1 ]]
+}
+bool_off(){ ! bool_on "$1"; }
+
+# cu_enabled: 0 — SELKIES_COMPUTER_USE_BIND names something (Selkies starts the
+# Computer-Use server for any non-empty value). Off by default: not a key of the
+# manifest, Selkies' default is empty; PIXELFLUX_CU the wrapper never passes on.
+cu_enabled(){ local v="${SELKIES_COMPUTER_USE_BIND:-}"; [[ -n "${v//[[:space:],]/}" ]]; }
 
 # cu_beyond_loopback: prints SELKIES_COMPUTER_USE_BIND, 0 — an entry is beyond
 # the loopback.
@@ -121,7 +133,7 @@ beyond_loopback(){
     esac
     bool_off "${SELKIES_ENABLE_DUAL_MODE:-}" \
         || { echo "SELKIES_ENABLE_DUAL_MODE=$SELKIES_ENABLE_DUAL_MODE (переход на WebRTC, сокеты ICE на всех адресах)"; return 0; }
-    cu_beyond_loopback
+    return 1
 }
 
 # auth_ok: 0 — the service may run; 1 — no authentication (stopped, exit 0);
@@ -147,7 +159,13 @@ auth_ok(){
         return 0
     fi
     if [[ "$SELKIES_ALLOW_NO_AUTH" == 1 ]]; then
-        # Owner's ruling 2026-11-12: without a password only on the loopback.
+        # Owner's ruling 2026-11-12: Computer-Use only with a password, on any
+        # address; without a password only on the loopback.
+        if cu_enabled; then
+            warn "SELKIES_COMPUTER_USE_BIND=$SELKIES_COMPUTER_USE_BIND: сервер Computer-Use pixelflux (ввод без аутентификации) включается только с паролем Selkies; без пароля Selkies допустим только на петле и без него — Selkies остановлен"
+            warn "  задайте пароль: echo <пароль> | sudo cream set selkies SELKIES_BASIC_AUTH_PASSWORD=- или уберите ключ из /etc/cream/selkies/config"
+            return 2
+        fi
         if what="$(beyond_loopback)"; then
             warn "SELKIES_ALLOW_NO_AUTH=1 допустим только на петле (127.0.0.1, ::1, localhost), а $what слушает сеть — Selkies остановлен"
             warn "  задайте пароль: echo <пароль> | sudo cream set selkies SELKIES_BASIC_AUTH_PASSWORD=-"
