@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # existing-desktop.sh — the desktop of the machine, read and never changed. Run
-# by hooks/install, hooks/check and the action status from the tree of the
+# by hooks/install and the actions check and status from the tree of the
 # extension (/opt/cream/ext/existing-desktop/files/existing-desktop.sh).
 #
 #   existing-desktop.sh verify   the three parts as files (Xorg, display manager,

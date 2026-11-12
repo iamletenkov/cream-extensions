@@ -13,7 +13,9 @@
 #           x11-xserver-utils (xhost) when absent — lib/x-session.sh needs it
 #           (plan ruling П15); nothing of the desktop itself is changed. Live:
 #           the diagnosis of `status` at the end.
-# check   — 0: Xorg and the display manager are there; 1: not.
+# check   — action (build, live): 0 — Xorg and the display manager are there;
+#           1 — not. Not hooks.check: cream 1.4.0 refuses it as reserved
+#           (manifest.reserved; plan ruling П18).
 # remove  — nothing: the desktop belongs to the machine (x11-xserver-utils stays).
 # status  — read only: the display manager and is-active, WaylandEnable of gdm3,
 #           the autologin (gdm3, LightDM, SDDM), the session of seat0.
@@ -34,8 +36,11 @@ conflicts:
 hooks:
   install: {timeout: 2m}
   remove: {}
-  check: {}
 actions:
+  check:
+    summary: "Xorg и менеджер входа на месте — 0, нет — 1 (только файлы)"
+    lock: none
+    phases: [build, live]
   status:
     summary: "DM, Wayland, автологин, сеанс seat0"
     lock: none

@@ -135,16 +135,19 @@ eq "build: exec" exec "$(mf 'm["targets"]["build"]')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
 eq "даёт способности стола" "desktop-session display-manager x11-server" "$(mf '" ".join(sorted(m["provides"]))')"
 eq "исключает другой стол" desktop-session "$(mf '" ".join(m["conflicts"]["capabilities"])')"
-eq "хуки" "check install remove" "$(mf '" ".join(sorted(m["hooks"]))')"
+eq "хуки (hooks.check cream 1.4.0 отвергает — рулинг П18)" "install remove" "$(mf '" ".join(sorted(m["hooks"]))')"
 eq "install — 2m" 2m "$(mf 'm["hooks"]["install"]["timeout"]')"
-eq "действие status" status "$(mf '" ".join(m["actions"])')"
+eq "действия check и status" "check status" "$(mf '" ".join(sorted(m["actions"]))')"
+eq "check — lock none" none "$(mf 'm["actions"]["check"]["lock"]')"
+eq "check — при сборке и на живой (только файлы)" "build live" "$(mf '" ".join(m["actions"]["check"]["phases"])')"
 eq "status — lock none" none "$(mf 'm["actions"]["status"]["lock"]')"
 eq "status — только live" live "$(mf '" ".join(m["actions"]["status"]["phases"])')"
 eq "ключей нет" 0 "$(mf 'len((m.get("config") or {}).get("keys", {}))')"
 eq "зависимостей нет" 0 "$(mf 'len(m.get("depends") or [])')"
-for f in hooks/install hooks/check hooks/remove actions/status; do
+for f in hooks/install hooks/remove actions/check actions/status; do
     check "$f исполняемый" test -x "$EXT/$f"
 done
+check_not "hooks/check нет (П18)" test -e "$EXT/hooks/check"
 
 echo "== библиотека x-session разложена =="
 ed_root gdm3-ubuntu
@@ -313,15 +316,15 @@ ht_hook install; eq "L4T R32 — 0 (условия R32 нет)" 0 "$?"
 
 echo "== check =="
 ed_root gdm3-ubuntu
-ht_hook check; eq "check: всё на месте — 0" 0 "$?"
+ht_action check; eq "check: всё на месте — 0" 0 "$?"
 check "check — без loginctl и systemctl" no_session_calls
 rm -f "$ROOT"/usr/share/xsessions/*.desktop
-ht_hook check; eq "check: X-сессия не проверяется — 0" 0 "$?"
+ht_action check; eq "check: X-сессия не проверяется — 0" 0 "$?"
 ed_root none
-ht_hook check; eq "check: нет DM — 1" 1 "$?"
+ht_action check; eq "check: нет DM — 1" 1 "$?"
 ed_root lightdm
 rm -f "$ROOT/usr/lib/xorg/Xorg"
-ht_hook check; eq "check: нет Xorg — 1" 1 "$?"
+ht_action check; eq "check: нет Xorg — 1" 1 "$?"
 
 echo "== журнал: имена из машины — данные =="
 ed_root lightdm

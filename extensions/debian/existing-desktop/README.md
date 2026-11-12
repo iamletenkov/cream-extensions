@@ -18,9 +18,9 @@
 | Требует | — |
 | Зависит от | — |
 | Конфликтует с | способность `desktop-session` |
-| Хуки | `install`, `remove`, `check` |
+| Хуки | `install`, `remove` |
 | Настройка на загрузке | — |
-| Действия | `cream run existing-desktop status` |
+| Действия | `cream run existing-desktop check`, `cream run existing-desktop status` |
 | Живая машина | да |
 <!-- /catalog:facts -->
 
@@ -39,8 +39,9 @@
   Единственное, что ставится, — пакет `x11-xserver-utils` (`xhost`), если его нет:
   без него [`lib/x-session.sh`](../../../lib/x-session.sh) не подтверждает дисплей,
   найденный без logind. На живой машине в конце журнала — диагноз, как у `status`.
-- **`check`** — 0: Xorg и менеджер входа на месте; 1 — нет. Только файлы, ничего не
-  вызывается. Для `cream check` и `cream status`.
+- **действие `check`** — 0: Xorg и менеджер входа на месте; 1 — нет. Только файлы, ничего не
+  вызывается; при сборке и на живой машине. Действие, а не хук: `hooks.check` cream 1.4.0
+  отвергает как зарезервированный (рулинг П18 плана).
 - **`remove`** — ничего: стол принадлежит машине. `x11-xserver-utils` остаётся.
 - **действие `status`** — только чтение, код 0:
   - менеджер входа и `systemctl is-active display-manager.service`;
@@ -97,7 +98,7 @@ RUN_COMMAND cream install --with-deps existing-desktop
 |---|---|
 | сборка образа / `cream install` | проверка файлов; `x11-xserver-utils`, если нет `xhost`; на живой машине — диагноз |
 | загрузка | ничего: хука `configure` нет |
-| `cream check` | Xorg и менеджер входа на месте — 0 |
+| `cream run existing-desktop check` | Xorg и менеджер входа на месте — 0 |
 | `cream remove` | ничего |
 | `cream run existing-desktop status` | диагноз: менеджер входа, Wayland, автологин, сеанс seat0 |
 

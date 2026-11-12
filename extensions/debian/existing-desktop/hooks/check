@@ -1,6 +1,0 @@
-#!/usr/bin/env bash
-# cream hook `check` of existing-desktop: 0 — Xorg and the display manager are
-# there (files only, nothing is called); 1 — not. For `cream check` and
-# `cream status`.
-set -euo pipefail
-exec "${CREAM_EXT_DIR:?run by cream}/files/existing-desktop.sh" check

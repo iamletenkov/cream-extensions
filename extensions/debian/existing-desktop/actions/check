@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# cream action `existing-desktop check` (lock: none, build and live): 0 — Xorg
+# and the display manager are there (files only, nothing is called); 1 — not.
+# An action, not hooks.check: cream 1.4.0 refuses that hook as reserved
+# (manifest.reserved; plan ruling П18).
+set -euo pipefail
+exec "${CREAM_EXT_DIR:?run by cream}/files/existing-desktop.sh" check
