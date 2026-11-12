@@ -16,6 +16,29 @@
 - **`arch` у `chromium-kiosk` объявлен, но не проверен.** Пакет тянется из
   стороннего репозитория `repository.salamek.cz` (suite `all`); что там есть
   под arm64, не замерялось. На сборках bisquite подтверждён только amd64.
-- **Пароль x11vnc проходит через argv `x11vnc -storepasswd`** на время
-  короткого вызова хука: у `-storepasswd` нет чтения со stdin. Из argv cream
-  секрет убран (`KEY=-`).
+
+## Готовый стол машины (`existing-desktop`, спека 2026-11-12-existing-desktop)
+
+- **Сеанс на Wayland не захватывается.** `selkies` и `x11vnc` подключаются только к
+  X.Org: на Wayland-сеансе обёртка выходит с 78, юнит её не перезапускает. Xorg у GDM —
+  [`gdm-xorg`](../extensions/debian/gdm-xorg/README.md) (стол не через cream) или `gnome`;
+  у SDDM своего переключателя в каталоге нет (Plasma 6, по сведениям, по умолчанию на
+  Wayland — не замерено, P4 спеки).
+- **Автологин SDDM — отказ.** `desktop` с `DESKTOP_AUTOLOGIN=0/1` на машине с SDDM
+  выходит с 1 после остальных ручек: `Session=` у SDDM обязателен, а имя X11-сессии Plasma
+  5.27 и 6 различается и не замерено (P4 спеки). Автологин SDDM — вручную.
+- **Обои Plasma не ставятся.** `wallpaper` знает GNOME, Xfce и LXDE; на Kubuntu
+  разрешается, но не действует (не-цель спеки).
+- **Неудачная запись поставщика держит граф cream.** Запись `failed` (и пропущенная)
+  `existing-desktop` даёт способности и конфликт `desktop-session`, как удачная —
+  [cream#56](https://github.com/iamletenkov/cream/issues/56). Поэтому `selkies` и `x11vnc`
+  на живой машине проверяют Xorg и ссылку `display-manager.service` сами (`install` — 20,
+  `configure`/`apply` — 1); после неудачи — сначала `cream remove existing-desktop`.
+- **`gnome` 5.0.x → 5.1.0 не возвращает `WaylandEnable`.** 5.0.x писала
+  `WaylandEnable=false` без записи прежней строки; после обновления `install` записывает
+  «было false», и `remove` строку оставляет.
+- **Автологин `desktop`, поставленного при сборке образа, не записан.** Прежние строки
+  автологина записываются при `CREAM_REASON=install` на живой машине, а при сборке
+  `configure` не идёт: на машине из такого образа `remove` (запись не найдена — как 1.x)
+  выключит автологин, включённый владельцем. Кандидат — брать запись в `hooks/install` при
+  `CREAM_PHASE=build`; решение — отдельной задачей.

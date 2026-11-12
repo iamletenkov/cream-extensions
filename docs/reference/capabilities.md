@@ -22,9 +22,10 @@
 предоставляться** — иначе `cream validate --catalog .` предупреждает.
 
 Заполняется по коду, а не по интуиции. Пример: `x11vnc` требует `x11-server`
-и `display-manager`, потому что `x11vnc@.service` прицепляется к `DISPLAY=:0`
-и несёт `Requires=display-manager.service`, а обёртка `run-x11vnc.sh` ищет
-X authority в каталогах, которые заводит дисплей-менеджер. Требование
+и `display-manager`, потому что `x11vnc@.service` несёт
+`Requires=display-manager.service`, а обёртка `run-x11vnc.sh` ищет дисплей X-сеанса
+пользователя и X authority в каталогах, которые заводит дисплей-менеджер
+([`lib/x-session.sh`](../../lib/x-session.sh)). Требование
 **родовое**, и это верно: конкретный путь в юните не зашит — под GDM и
 LightDM он разный, а под самим LightDM зависит от его конфига, — поэтому
 различать в манифесте «какой именно менеджер» значило бы зафиксировать ось,
@@ -53,9 +54,9 @@ LightDM он разный, а под самим LightDM зависит от ег
 
 | Способность | Кто даёт | Откуда выведено |
 |---|---|---|
-| `x11-server` | `gnome`, `xfce4`, `lxde`; `l4t-vendor-desktop` | `apt-get install ... xorg xinput` (`hooks/install` у всех трёх); `l4t-vendor-desktop` — Xorg образа вендора L4T R32, проверка без установки |
-| `display-manager` | `gnome`, `xfce4`, `lxde`; `l4t-vendor-desktop` | `systemctl enable gdm3`/`lightdm` + `set-default graphical.target` (`hooks/install`); `l4t-vendor-desktop` — менеджер входа образа вендора (проверка) |
-| `desktop-session` | `gnome`, `xfce4`, `lxde`; `l4t-vendor-desktop` | `task-gnome-desktop` / `xfce4 xfce4-goodies` / `lxde`; `l4t-vendor-desktop` — сессия в `/usr/share/xsessions` образа вендора (проверка) |
+| `x11-server` | `gnome`, `xfce4`, `lxde`; `l4t-vendor-desktop`, `existing-desktop` | `apt-get install ... xorg xinput` (`hooks/install` у всех трёх); `l4t-vendor-desktop` — Xorg образа вендора L4T R32, `existing-desktop` — Xorg стола, поставленного не через cream (`/usr/lib/xorg/Xorg` или `/usr/bin/Xorg`); оба — проверка без установки |
+| `display-manager` | `gnome`, `xfce4`, `lxde`; `l4t-vendor-desktop`, `existing-desktop` | `systemctl enable gdm3`/`lightdm` + `set-default graphical.target` (`hooks/install`); `l4t-vendor-desktop` — менеджер входа образа вендора, `existing-desktop` — включённый менеджер входа машины (ссылка `display-manager.service` или `/etc/X11/default-display-manager`); оба — проверка |
+| `desktop-session` | `gnome`, `xfce4`, `lxde`; `l4t-vendor-desktop`, `existing-desktop` | `task-gnome-desktop` / `xfce4 xfce4-goodies` / `lxde`; `l4t-vendor-desktop` и `existing-desktop` — X-сессия в `/usr/share/xsessions` (проверка) |
 | `container-runtime` | `docker` | Docker CE из apt-репозитория Docker |
 | `kiosk-browser` | `kiosk`, `chromium-kiosk` | обе реализации автостартом забирают экран |
 | `remote-desktop` | `x11vnc`, `vino-vnc` | `x11vnc@.service` на `rfbport` из `X11VNC_PORT`; у `vino-vnc` — `gsettings` `org.gnome.Vino` и автозапуск XDG (умолчание у обоих 5900) |
@@ -98,10 +99,10 @@ LightDM он разный, а под самим LightDM зависит от ег
 
 | Расширение | `requires` | Откуда выведено |
 |---|---|---|
-| `x11vnc` | `x11-server`, `display-manager` | `x11vnc@.service` — `Requires=display-manager.service` и `DISPLAY=:0`. Путь к X authority в юните НЕ зашит: он разный под LightDM и GDM, и обёртка ищет его в рантайме |
+| `x11vnc` | `x11-server`, `display-manager` | `x11vnc@.service` — `Requires=display-manager.service`. Дисплей и путь к X authority в юните НЕ зашиты: обёртка ищет их в рантайме (`X11VNC_DISPLAY=auto` — `xs_find_display`, `xs_find_authority` из `lib/x-session.sh`). Граф cream пропускает и при неудачной записи поставщика, поэтому `install` на живой машине сам проверяет Xorg и ссылку DM (20) |
 | `kiosk` | `x11-server`, `display-manager` | `install` ставит клиентские утилиты X, но **не** `xorg`; `kiosk-chromium@.service` — `DISPLAY=:0`; донастройка — стадия `graphical` (после `display-manager.service`). Путь к X authority в юните, как и у `x11vnc`, НЕ зашит — его ищет обёртка `run-kiosk.sh` |
 | `vino-vnc` | `x11-server`, `display-manager` | vino живёт ВНУТРИ пользовательской сессии: `configure` пишет `gsettings` в dconf пользователя и кладёт автозапуск в его `~/.config/autostart`, а сессию открывает дисплей-менеджер. Системного юнита и поиска X authority здесь нет вовсе — этим он и отличается от `x11vnc` |
-| `selkies` | `x11-server`, `display-manager` | `run-selkies.sh` снимает экран существующего X-дисплея и ждёт сессию пользователя; без автологина показывать нечего |
+| `selkies` | `x11-server`, `display-manager` | `run-selkies.sh` снимает экран X-сеанса пользователя (`SELKIES_DISPLAY=auto` — `xs_find_display` из `lib/x-session.sh`) и ждёт сеанс; без автологина показывать нечего. Как у `x11vnc`, `install` на живой машине сам проверяет Xorg и ссылку DM (20) |
 | `l4t-pytorch` | `cuda` | `install` отказывает без `/usr/local/cuda/bin/nvcc`: им собирается torchvision с `FORCE_CUDA=1`; сам torch грузит `libcublas`, `libcufft` и прочие библиотеки тулкита. На R32 (Nano) не проверяется: torch и CUDA 10.2 уже в образе |
 | `l4t-tensorflow` | `cuda` | `install` отказывает без `/usr/local/cuda/lib64`: TF грузит библиотеки тулкита |
 | `can-usb` | `gmsl2-camera` | `install` отказывает, если `/boot/Image` — не ядро Sensing закреплённой сборки: модули собираются под него, а кладёт его `sensing-gmsl2-camera` — ставится раньше `can-usb` |
@@ -115,7 +116,8 @@ LightDM он разный, а под самим LightDM зависит от ег
 
 | Пара | Причина |
 |---|---|
-| `gnome` ↔ `xfce4` ↔ `lxde` ↔ `l4t-vendor-desktop` (по способности `desktop-session`) | каждый ставит (или берёт из образа вендора) свой дисплей-менеджер и делает его системным `display-manager.service` |
+| `gnome` ↔ `xfce4` ↔ `lxde` ↔ `l4t-vendor-desktop` ↔ `existing-desktop` (по способности `desktop-session`) | каждый ставит (или берёт из образа вендора, или с машины) свой дисплей-менеджер и делает его системным `display-manager.service` |
+| `gnome` ↔ `gdm-xorg` (по имени, объявляют оба) | оба правят `WaylandEnable` в конфиге gdm3 (`lib/gdm-wayland.sh`): у строки один владелец |
 | `kiosk` ↔ `chromium-kiosk` | оба автостартом на `graphical.target` разворачивают полноэкранный браузер на одном месте |
 | `pixelflux-tegra` ↔ `pixelflux-v4l2m2m` | оба настраивают pixelflux внутри одного AppImage `selkies` |
 | `teleport` (по своей способности `teleport-node`) | второй поставщик узла Teleport из другого источника |
