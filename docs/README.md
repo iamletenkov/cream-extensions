@@ -41,7 +41,7 @@
 | [runbooks/02_new-extension.md](runbooks/02_new-extension.md) | новое расширение: `tools/new-extension.sh`, H-тест первым, L-прогон, PR |
 | [runbooks/03_cream-pin-bump.md](runbooks/03_cream-pin-bump.md) | подъём пина cream (`tools/cream-pin.env`) и проверки после него |
 | [runbooks/04_live-runs.md](runbooks/04_live-runs.md) | живые прогоны `make test-live` и разбор падений: расширение, стенд, окружение |
-| [runbooks/05_existing-desktop-acceptance.md](runbooks/05_existing-desktop-acceptance.md) | ручная приёмка `existing-desktop` P1–P7 на ВМ: стенд, замеры, открытые расхождения |
+| [runbooks/05_existing-desktop-acceptance.md](runbooks/05_existing-desktop-acceptance.md) | ручная приёмка `existing-desktop` P1–P7 на ВМ: стенд, замеры, расхождения и повторная приёмка после П27б |
 
 ## Решения, история, рабочие материалы
 
