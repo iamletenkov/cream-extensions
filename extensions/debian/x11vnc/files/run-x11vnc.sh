@@ -127,8 +127,11 @@ session_type() {
 stype="$(session_type || true)"
 if [[ "$stype" == "wayland" ]]; then
     log_error "сессия пользователя '$USERNAME' работает на Wayland, а x11vnc обслуживает X11"
-    log_error "включите Xorg у дисплей-менеджера (расширение gnome пишет WaylandEnable=false)"
-    exit 1
+    log_error "включите Xorg у дисплей-менеджера (расширение gnome пишет WaylandEnable=false), войдите заново"
+    log_error "и запустите: sudo systemctl restart x11vnc@$USERNAME"
+    # 78 (EX_CONFIG): the session type is a setting of the display manager, a
+    # restart every 5 s would not change it (RestartPreventExitStatus=78).
+    exit 78
 fi
 
 # Кандидаты в порядке убывания надёжности. У каждого — источник, откуда

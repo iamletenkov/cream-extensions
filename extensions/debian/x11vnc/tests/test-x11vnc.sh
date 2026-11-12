@@ -70,7 +70,7 @@ mode_of() { stat -c %a "$1"; }
 echo "== манифест =="
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "версия 5.1.1 (every_boot)" 5.1.1 "$(mf 'm["version"]')"
+eq "версия 5.1.2 (Wayland — 78)" 5.1.2 "$(mf 'm["version"]')"
 eq "cream >=1.2.0 (every_boot, спека cream §10.9)" ">=1.2.0" "$(mf 'm["cream"]')"
 eq "configure на каждой загрузке (аудит 2026-10-21)" True "$(mf 'm["hooks"]["configure"].get("every_boot")')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
@@ -87,6 +87,13 @@ unit="$EXT/files/x11vnc@.service"
 check "юнит зовёт обёртку из дерева cream" grep -q 'ExecStart=/bin/bash /opt/cream/ext/x11vnc/files/run-x11vnc.sh %i' "$unit"
 check "юнит читает config домена" grep -qx 'EnvironmentFile=-/etc/cream/x11vnc/config' "$unit"
 check_not "юнит НЕ читает secrets (пароль не в окружении сервера)" grep -qE '^EnvironmentFile=.*secrets' "$unit"
+check "юнит: 78 (Wayland) не перезапускается" grep -qx 'RestartPreventExitStatus=78' "$unit"
+# config holds only the keys set explicitly (cream show — with the defaults):
+# the wrapper's fallback of every non-secret key is its default in the manifest
+# (selkies, Orin 2026-11-12: a diverging fallback silently wins).
+while IFS=' ' read -r k d; do
+    check "обёртка: умолчание $k = манифест ($d)" grep -qF "\${$k:-$d}" "$EXT/files/run-x11vnc.sh"
+done < <(mf '"\n".join(k + " " + v["default"] for k, v in m["config"]["keys"].items() if not v.get("secret"))')
 for old in install.sh configure.sh knobs knobs.apply knobs.secret configure-x11vnc.service run-x11vnc.sh x11vnc@.service; do
     check_not "layout 2: $old убран" test -e "$EXT/$old"
 done
@@ -275,6 +282,21 @@ chmod 0000 "$PF"
 if [[ "$(id -u)" != 0 ]]; then
     eq "файл не читается — отказ" "refuse" "$(wrap "$PF" "$NOPW" | tail -n1)"
 fi
+
+echo "== обёртка: сессия на Wayland — 78, юнит не крутит перезапуски =="
+fresh
+ht_fake loginctl '
+case "$1" in
+    list-sessions) echo "2 1000 alice seat0 tty2" ;;
+    show-session) echo wayland ;;
+esac'
+(
+    cd / || exit 125
+    exec env -i "PATH=$ROOT/bin:$HT_PATH_TAIL" LANG=C.UTF-8 /bin/bash "$EXT/files/run-x11vnc.sh" alice < /dev/null
+) > "$ROOT/out" 2>&1
+eq "Wayland — 78 (EX_CONFIG)" 78 "$?"
+check "сказано про Wayland" grep -q 'Wayland' "$ROOT/out"
+check "сказано, как вернуть" grep -q 'systemctl restart x11vnc@alice' "$ROOT/out"
 
 echo "== remove: симуляция снимает чужой пакет — отказ =="
 fresh
