@@ -34,10 +34,17 @@ version: 6.2.2
 #        SELKIES_ENABLE_RESIZE=false never reached Selkies and it resized the
 #        monitor — Orin 2026-11-12); config is optional; SELKIES_ENCODER empty by
 #        default (one value locks the encoder in Selkies); a Wayland session —
-#        exit 78, not a restart every 5 s. SELKIES_ALLOW_NO_AUTH=1 without a
-#        password only on the loopback (owner's ruling 2026-11-12): SELKIES_ADDR
-#        beyond it, SELKIES_PUBLIC on or SELKIES_COMPUTER_USE_BIND beyond it —
-#        configure/apply stop the instance and exit 78, the wrapper exits 78.
+#        exit 78, not a restart every 5 s. On upgrade every default of the
+#        manifest reaches Selkies, not only resize: gamepads, webcam, microphone,
+#        sharing links, the command API, the second screen, the switch to WebRTC
+#        and the sidebar panels go off; FRAMERATE 30,8-60; 127.0.0.1 only.
+#        SELKIES_ALLOW_NO_AUTH=1 without a password only on the loopback (owner's
+#        ruling 2026-11-12): SELKIES_ADDR beyond it, SELKIES_PUBLIC on, WebRTC
+#        (SELKIES_MODE=webrtc or SELKIES_ENABLE_DUAL_MODE — ICE on every address)
+#        — configure/apply stop the instance and exit 78, the wrapper exits 78.
+#        pixelflux's Computer-Use server has no authentication: beyond the
+#        loopback it is refused with a password too, PIXELFLUX_CU never passed on.
+#        The wrapper gives Selkies the address it checked (absent — 127.0.0.1).
 # 6.2.1: fetch_verified from files/fetch.sh (one copy in git — lib/fetch.sh, laid by
 #        the snapshot) instead of depends on the library fetch: a VMFILE or a
 #        live machine needs no `cream install fetch` (5.4.2 failed deps.missing).

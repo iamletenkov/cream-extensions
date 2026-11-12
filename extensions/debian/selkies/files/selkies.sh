@@ -84,31 +84,56 @@ RE_LOOPBACK='^(127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|::1|\[::1\]|localhost)$'
 loopback_host(){ [[ "$1" =~ $RE_LOOPBACK ]]; }
 is_loopback(){ loopback_host "$SELKIES_ADDR"; }
 
-# beyond_loopback: prints what listens beyond the loopback, 0 — something does.
-# SELKIES_PUBLIC is off only when empty or false/0/no/off: anything else might be
-# on for Selkies. SELKIES_COMPUTER_USE_BIND (pixelflux's input server): a bare
-# port is the loopback, host:port — the host.
-beyond_loopback(){
-    local e host entries=()
-    if ! is_loopback; then echo "SELKIES_ADDR=$SELKIES_ADDR"; return 0; fi
-    case "${SELKIES_PUBLIC:-}" in
-        ''|[Ff][Aa][Ll][Ss][Ee]|0|[Nn][Oo]|[Oo][Ff][Ff]) ;;
-        *) echo "SELKIES_PUBLIC=$SELKIES_PUBLIC"; return 0 ;;
-    esac
+# The listeners of Selkies 2.0.0 and pixelflux 2.1.0 (their sources, checked
+# 2026-11-12): the aiohttp server on SELKIES_ADDR (SELKIES_PUBLIC turns it into
+# 0.0.0.0,::) — /api/metrics is a route of it, websockets mode opens no other
+# port; WebRTC (SELKIES_MODE=webrtc, or switched to from the UI with
+# SELKIES_ENABLE_DUAL_MODE) binds its ICE sockets — UDP, the mux ports, mDNS —
+# on every host address, no setting confines them to the loopback; pixelflux's
+# Computer-Use HTTP server (input injection, no authentication of its own) on
+# SELKIES_COMPUTER_USE_BIND — a bare port is the loopback, host:port the host.
+
+# bool_off <value>: 0 — off. Selkies turns a bool on only by true/1; anything
+# but empty or false/0/no/off is taken as on here. Empty DUAL_MODE is off: the
+# wrapper exports its default false (the manifest's).
+bool_off(){ case "$1" in ''|[Ff][Aa][Ll][Ss][Ee]|0|[Nn][Oo]|[Oo][Ff][Ff]) return 0 ;; esac; return 1; }
+
+# cu_beyond_loopback: prints SELKIES_COMPUTER_USE_BIND, 0 — an entry is beyond
+# the loopback.
+cu_beyond_loopback(){
+    local e entries=()
     IFS=, read -ra entries <<< "${SELKIES_COMPUTER_USE_BIND:-}"
     for e in "${entries[@]}"; do
         e="${e//[[:space:]]/}"
         [[ -z "$e"|| "$e" =~ ^[0-9]+$ ]] && continue
-        host="${e%:*}"
-        loopback_host "$host" || { echo "SELKIES_COMPUTER_USE_BIND=$SELKIES_COMPUTER_USE_BIND"; return 0; }
+        loopback_host "${e%:*}" || { echo "SELKIES_COMPUTER_USE_BIND=$SELKIES_COMPUTER_USE_BIND"; return 0; }
     done
     return 1
+}
+
+# beyond_loopback: prints what listens beyond the loopback, 0 — something does.
+beyond_loopback(){
+    if ! is_loopback; then echo "SELKIES_ADDR=$SELKIES_ADDR"; return 0; fi
+    bool_off "${SELKIES_PUBLIC:-}" || { echo "SELKIES_PUBLIC=$SELKIES_PUBLIC"; return 0; }
+    case "${SELKIES_MODE:-}" in
+        ''|websockets) ;;
+        *) echo "SELKIES_MODE=$SELKIES_MODE (сокеты ICE WebRTC на всех адресах)"; return 0 ;;
+    esac
+    bool_off "${SELKIES_ENABLE_DUAL_MODE:-}" \
+        || { echo "SELKIES_ENABLE_DUAL_MODE=$SELKIES_ENABLE_DUAL_MODE (переход на WebRTC, сокеты ICE на всех адресах)"; return 0; }
+    cu_beyond_loopback
 }
 
 # auth_ok: 0 — the service may run; 1 — no authentication (stopped, exit 0);
 # 2 — no password beyond the loopback (stopped, exit 78). Warnings to stderr.
 auth_ok(){
     local what
+    # The Computer-Use server is without a password whatever Selkies' is.
+    if what="$(cu_beyond_loopback)"; then
+        warn "сервер Computer-Use pixelflux (ввод без аутентификации) допустим только на петле, а $what слушает сеть — Selkies остановлен"
+        warn "  оставьте в SELKIES_COMPUTER_USE_BIND голый порт (это петля) или уберите ключ из /etc/cream/selkies/config"
+        return 2
+    fi
     if secret_set SELKIES_BASIC_AUTH_PASSWORD; then
         if ! is_loopback && [[ "$SELKIES_ENABLE_HTTPS" != true ]]; then
             warn "SELKIES_ADDR=$SELKIES_ADDR без SELKIES_ENABLE_HTTPS=true — пароль basic auth пойдёт по сети открытым текстом"

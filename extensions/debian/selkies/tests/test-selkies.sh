@@ -322,6 +322,22 @@ no_auth_refused "192.0.2.10" SELKIES_ADDR=192.0.2.10
 no_auth_refused "SELKIES_PUBLIC=true" SELKIES_PUBLIC=true
 no_auth_refused "SELKIES_PUBLIC=1" SELKIES_PUBLIC=1
 no_auth_refused "Computer-Use на 0.0.0.0" SELKIES_COMPUTER_USE_BIND=9500,0.0.0.0:9501
+no_auth_refused "::" SELKIES_ADDR=::
+# WebRTC binds its ICE sockets (UDP, mux ports, mDNS) on every host address.
+no_auth_refused "SELKIES_MODE=webrtc" SELKIES_MODE=webrtc
+no_auth_refused "SELKIES_ENABLE_DUAL_MODE=true" SELKIES_ENABLE_DUAL_MODE=true
+
+echo "== configure: Computer-Use pixelflux без пароля всегда — только на петле =="
+sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+printf '%s\n' 'selkies@alice.service loaded active running Selkies' > "$FAKE/units"
+ht_hook configure CREAM_REASON=boot SELKIES_COMPUTER_USE_BIND=0.0.0.0:9500
+eq "с паролем, Computer-Use на 0.0.0.0 — 78" 78 "$?"
+check_not "не стартует" started alice
+check "экземпляр гасится" ht_called '^systemctl stop --no-block selkies@alice\.service'
+check "сказано про петлю" grep -q 'только на петле' "$ROOT/out"
+sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+ht_hook configure CREAM_REASON=boot SELKIES_MODE=webrtc SELKIES_ADDR=0.0.0.0 SELKIES_COMPUTER_USE_BIND=9500
+eq "с паролем: webrtc, 0.0.0.0, Computer-Use на петле — 0" 0 "$?"
 sk_root
 ht_hook configure CREAM_REASON=boot SELKIES_ALLOW_NO_AUTH=1 SELKIES_PUBLIC=false \
     SELKIES_COMPUTER_USE_BIND=9500,127.0.0.1:9501,localhost:9502
@@ -482,7 +498,8 @@ check "SELKIES_ALLOW_NO_AUTH=1 — запущен" test -e "$FAKE/selkies.env"
 check "basic auth выключен явно" grep -qx 'SELKIES_ENABLE_BASIC_AUTH=false' "$FAKE/selkies.env"
 check "предупреждение при старте" grep -q 'SELKIES_ALLOW_NO_AUTH=1' "$ROOT/out"
 # Without a password only the loopback (owner's ruling 2026-11-12).
-for pair in SELKIES_ADDR=0.0.0.0 SELKIES_ADDR=192.0.2.10 SELKIES_PUBLIC=true SELKIES_COMPUTER_USE_BIND=0.0.0.0:9500; do
+for pair in SELKIES_ADDR=0.0.0.0 SELKIES_ADDR=192.0.2.10 SELKIES_ADDR=:: SELKIES_PUBLIC=true \
+    SELKIES_COMPUTER_USE_BIND=0.0.0.0:9500 SELKIES_MODE=webrtc SELKIES_ENABLE_DUAL_MODE=true; do
     wr_root
     run_wrapper SELKIES_ALLOW_NO_AUTH=1 "$pair"; eq "без пароля, $pair — 78" 78 "$?"
     check_not "без пароля, $pair — selkies не запущен" test -e "$FAKE/selkies.env"
@@ -494,6 +511,31 @@ check "без пароля на ::1, Computer-Use на петле — запущ
 wr_root
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_ADDR=0.0.0.0
 check "с паролем на 0.0.0.0 — запущен" test -e "$FAKE/selkies.env"
+# The address checked is the address Selkies gets: absent or empty — 127.0.0.1.
+for pair in SELKIES_ALLOW_NO_AUTH=1 "SELKIES_BASIC_AUTH_PASSWORD=$PW"; do
+    for addr in absent SELKIES_ADDR=; do
+        wr_root
+        if [[ "$addr" == absent ]]; then run_wrapper "$pair"; else run_wrapper "$pair" "$addr"; fi
+        check "${pair%%=*}, адрес $addr — запущен" test -e "$FAKE/selkies.env"
+        check "${pair%%=*}, адрес $addr — Selkies получил SELKIES_ADDR=127.0.0.1" \
+            grep -qx 'SELKIES_ADDR=127.0.0.1' "$FAKE/selkies.env"
+    done
+done
+wr_root
+run_wrapper SELKIES_ALLOW_NO_AUTH=1
+check "без пароля, без ключа — Selkies получил SELKIES_ENABLE_DUAL_MODE=false" \
+    grep -qx 'SELKIES_ENABLE_DUAL_MODE=false' "$FAKE/selkies.env"
+# pixelflux starts its Computer-Use server (no authentication of its own) at
+# import from PIXELFLUX_CU: only SELKIES_COMPUTER_USE_BIND, checked, may start it.
+wr_root
+run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" PIXELFLUX_CU=0.0.0.0:9500
+check "PIXELFLUX_CU — запущен" test -e "$FAKE/selkies.env"
+check_not "PIXELFLUX_CU не доходит до Selkies" grep -q '^PIXELFLUX_CU=' "$FAKE/selkies.env"
+check "PIXELFLUX_CU — предупреждение" grep -q 'PIXELFLUX_CU' "$ROOT/out"
+wr_root
+run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_COMPUTER_USE_BIND=0.0.0.0:9500
+eq "с паролем, Computer-Use на 0.0.0.0 — 78" 78 "$?"
+check_not "с паролем, Computer-Use на 0.0.0.0 — selkies не запущен" test -e "$FAKE/selkies.env"
 
 wr_root
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_ENABLE_HTTPS=true

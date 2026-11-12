@@ -62,20 +62,31 @@ DISPLAY_NUM="${SELKIES_DISPLAY:-:0}"
 # clicks miss (Orin 2026-11-12). Empty means Selkies' default too.
 export SELKIES_ENABLE_RESIZE="${SELKIES_ENABLE_RESIZE:-false}"
 
+# The address checked below is the address Selkies gets (absent or empty — the
+# manifest's 127.0.0.1); WebRTC through the UI only when asked for (the
+# manifest's false; Selkies' own default is true).
+export SELKIES_ADDR="${SELKIES_ADDR:-127.0.0.1}"
+export SELKIES_ENABLE_DUAL_MODE="${SELKIES_ENABLE_DUAL_MODE:-false}"
+addr="$SELKIES_ADDR"
+
+# pixelflux starts its Computer-Use server from PIXELFLUX_CU at import, bypassing
+# the check of SELKIES_COMPUTER_USE_BIND below: never passed on.
+if [[ -n "${PIXELFLUX_CU+x}" ]]; then
+    log_warn "PIXELFLUX_CU в окружении юнита не передаю: сервер Computer-Use — только через SELKIES_COMPUTER_USE_BIND"
+    unset PIXELFLUX_CU
+fi
+
 RE_LOOPBACK='^(127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|::1|\[::1\]|localhost)$'
 loopback_host(){ [[ "$1" =~ $RE_LOOPBACK ]]; }
 
-# beyond_loopback: prints what listens beyond the loopback, 0 — something does
-# (the same rule as configure in selkies.sh). SELKIES_PUBLIC is off only when
-# empty or false/0/no/off; SELKIES_COMPUTER_USE_BIND: a bare port is the
-# loopback, host:port — the host.
-beyond_loopback(){
+# The listeners of Selkies 2.0.0 and pixelflux 2.1.0 — see beyond_loopback in
+# selkies.sh (configure), the same rule; read from their sources 2026-11-12.
+bool_off(){ case "$1" in ''|[Ff][Aa][Ll][Ss][Ee]|0|[Nn][Oo]|[Oo][Ff][Ff]) return 0 ;; esac; return 1; }
+
+# cu_beyond_loopback: prints SELKIES_COMPUTER_USE_BIND, 0 — an entry is beyond
+# the loopback (a bare port is the loopback, host:port — the host).
+cu_beyond_loopback(){
     local e entries=()
-    loopback_host "$addr" || { echo "SELKIES_ADDR=$addr"; return 0; }
-    case "${SELKIES_PUBLIC:-}" in
-        ''|[Ff][Aa][Ll][Ss][Ee]|0|[Nn][Oo]|[Oo][Ff][Ff]) ;;
-        *) echo "SELKIES_PUBLIC=$SELKIES_PUBLIC"; return 0 ;;
-    esac
     IFS=, read -ra entries <<< "${SELKIES_COMPUTER_USE_BIND:-}"
     for e in "${entries[@]}"; do
         e="${e//[[:space:]]/}"
@@ -85,9 +96,27 @@ beyond_loopback(){
     return 1
 }
 
-addr="${SELKIES_ADDR:-127.0.0.1}"
+# beyond_loopback: prints what listens beyond the loopback, 0 — something does.
+beyond_loopback(){
+    loopback_host "$addr" || { echo "SELKIES_ADDR=$addr"; return 0; }
+    bool_off "${SELKIES_PUBLIC:-}" || { echo "SELKIES_PUBLIC=$SELKIES_PUBLIC"; return 0; }
+    case "${SELKIES_MODE:-}" in
+        ''|websockets) ;;
+        *) echo "SELKIES_MODE=$SELKIES_MODE (сокеты ICE WebRTC на всех адресах)"; return 0 ;;
+    esac
+    bool_off "$SELKIES_ENABLE_DUAL_MODE" \
+        || { echo "SELKIES_ENABLE_DUAL_MODE=$SELKIES_ENABLE_DUAL_MODE (переход на WebRTC, сокеты ICE на всех адресах)"; return 0; }
+    cu_beyond_loopback
+}
+
 loopback=0
 loopback_host "$addr" && loopback=1
+
+# The Computer-Use server is without a password whatever Selkies' is.
+if what="$(cu_beyond_loopback)"; then
+    log_error "сервер Computer-Use pixelflux (ввод без аутентификации) допустим только на петле, а $what слушает сеть — не запускаюсь"
+    exit 78
+fi
 
 if [[ -n "${SELKIES_BASIC_AUTH_PASSWORD:-}" ]]; then
     export SELKIES_ENABLE_BASIC_AUTH=true
