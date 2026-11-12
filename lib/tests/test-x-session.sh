@@ -16,6 +16,8 @@ LIB="$(dirname "$HERE")/x-session.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -r -f -- "$TMP"' EXIT
+ME="$(id -u)"
+BOB=$((ME + 1))
 
 pass=0; fail=0
 ok(){ pass=$((pass + 1)); }
@@ -63,12 +65,27 @@ echo "${XAUTHORITY:-} $*" >> "$FAKE/xdpyinfo.log"
 [[ "$1" == -display ]] || exit 1
 [[ -f "$FAKE/x.$2" && "$(cat "$FAKE/x.$2")" == "${XAUTHORITY:-}" ]]
 EOF
-    cat > "$ROOT/bin/getent" <<'EOF'
+    # The access control of a display as xhost prints it: enabled, unless
+    # fake/noac.<display> (a server started with -ac).
+    cat > "$ROOT/bin/xhost" <<'EOF'
 #!/usr/bin/env bash
-[[ "$1" == passwd ]] || exit 2
-case "$2" in
-    alice) echo "alice:x:1000:1000:Alice:/home/alice:/bin/bash" ;;
-    bob) echo "bob:x:1001:1001:Bob:/home/bob:/bin/bash" ;;
+echo "${XAUTHORITY:-} ${DISPLAY:-}" >> "$FAKE/xhost.log"
+[[ $# -eq 0 && -f "$FAKE/x.${DISPLAY:-}" && "$(cat "$FAKE/x.$DISPLAY")" == "${XAUTHORITY:-}" ]] || exit 1
+if [[ -e "$FAKE/noac.$DISPLAY" ]]; then
+    echo "access control disabled, clients can connect from any host"
+else
+    echo "access control enabled, only authorized clients can connect"
+    echo "SI:localuser:alice"
+fi
+EOF
+    # alice is the uid running the tests (files she owns are the files it
+    # creates), bob — the next uid (a file the tests create is not his).
+    cat > "$ROOT/bin/getent" <<EOF
+#!/usr/bin/env bash
+[[ "\$1" == passwd ]] || exit 2
+case "\$2" in
+    alice) echo "alice:x:$ME:$ME:Alice:/home/alice:/bin/bash" ;;
+    bob) echo "bob:x:$BOB:$BOB:Bob:/home/bob:/bin/bash" ;;
     *) exit 2 ;;
 esac
 EOF
@@ -90,7 +107,7 @@ session(){
         echo "Service=gdm-password"
     } > "$FAKE/session.$1"
 }
-user_sessions(){ local u="$1"; shift; printf 'UID=1000\nName=%s\nSessions=%s\nState=active\n' "$u" "$*" > "$FAKE/user.$u"; }
+user_sessions(){ local u="$1"; shift; printf 'UID=%s\nName=%s\nSessions=%s\nState=active\n' "$ME" "$u" "$*" > "$FAKE/user.$u"; }
 # xorg <pid> <arg>…: /proc/<pid>/cmdline of an Xorg.
 xorg(){ local pid="$1"; shift; mkdir -p "$ROOT/proc/$pid"; printf '%s\0' /usr/lib/xorg/Xorg "$@" > "$ROOT/proc/$pid/cmdline"; }
 
@@ -132,9 +149,9 @@ eq "дисплей :1" ":1" "$OUT"
 eq "дисплей :1 — код 0" 0 "$RC"
 
 # gdm_auth <display>: alice's GDM authority, and it opens <display>.
-gdm_auth(){ mkdir -p "$ROOT/run/user/1000/gdm"; : > "$ROOT/run/user/1000/gdm/Xauthority"; echo "$ROOT/run/user/1000/gdm/Xauthority" > "$FAKE/x.$1"; }
+gdm_auth(){ mkdir -p "$ROOT/run/user/$ME/gdm"; : > "$ROOT/run/user/$ME/gdm/Xauthority"; echo "$ROOT/run/user/$ME/gdm/Xauthority" > "$FAKE/x.$1"; }
 # xlock <N> <content>: /tmp/.X<N>-lock as Xorg writes it (printf "%10d\n").
-xlock(){ mkdir -p "$ROOT/tmp"; printf '%s' "$2" > "$ROOT/tmp/.X$1-lock"; }
+xlock(){ mkdir -p "$ROOT/tmp"; printf '%s' "$2" > "$ROOT/tmp/.X$1-lock"; chmod 444 "$ROOT/tmp/.X$1-lock"; }
 # xsock <pid> <inode> <path>: a listening unix socket of <pid> at <path>.
 xsock(){
     mkdir -p "$ROOT/proc/$1/fd" "$ROOT/proc/net"
@@ -147,7 +164,7 @@ echo "== Display пуст — Xorg пользователя с :N первым �
 new_root
 user_sessions alice c2
 session c2 seat0 user x11 "" active no
-echo 4242 > "$FAKE/pgrep.u1000"
+echo 4242 > "$FAKE/pgrep.u$ME"
 xorg 4242 :1 vt2 -keeptty -auth /tmp/serverauth.x
 gdm_auth :1
 xs xs_seat0_session alice
@@ -156,12 +173,12 @@ xs xs_find_display alice
 eq "дисплей из Xorg пользователя" ":1" "$OUT"
 has "путь назван — Xorg" "Xorg" "$ERR"
 has "путь назван — argv" "argv" "$ERR"
-has "Xorg ищется по uid пользователя" "-u 1000 -x Xorg" "$(cat "$FAKE/pgrep.log")"
+has "Xorg ищется по uid пользователя" "-u $ME -x Xorg" "$(cat "$FAKE/pgrep.log")"
 has "найденный дисплей подтверждён authority" "-display :1" "$(cat "$FAKE/xdpyinfo.log")"
 
 echo "== :N не первым аргументом =="
 new_root
-echo 4242 > "$FAKE/pgrep.u1000"
+echo 4242 > "$FAKE/pgrep.u$ME"
 xorg 4242 -nolisten tcp :2 vt7
 gdm_auth :2
 xs xs_find_display alice
@@ -169,7 +186,7 @@ eq ":N где угодно в argv" ":2" "$OUT"
 
 echo "== :N в argv, но authority его не открывает — не берётся =="
 new_root
-echo 4242 > "$FAKE/pgrep.u1000"
+echo 4242 > "$FAKE/pgrep.u$ME"
 xorg 4242 :1 vt2
 xs xs_find_display alice
 eq "без authority — код 1" 1 "$RC"
@@ -180,14 +197,14 @@ new_root
 user_sessions alice c2
 session c2 seat0 user x11 "" active no
 printf '1111\n4242\n' > "$FAKE/pgrep.all"
-echo 4242 > "$FAKE/pgrep.u1000"
+echo 4242 > "$FAKE/pgrep.u$ME"
 xorg 1111 vt1 -displayfd 3 -auth /run/user/120/gdm/Xauthority -nolisten tcp
-xorg 4242 vt2 -displayfd 3 -auth /run/user/1000/gdm/Xauthority -nolisten tcp -background none -noreset -keeptty -novtswitch -verbose 3
+xorg 4242 vt2 -displayfd 3 -auth "/run/user/$ME/gdm/Xauthority" -nolisten tcp -background none -noreset -keeptty -novtswitch -verbose 3
 xlock 0 "      1111"$'\n'
 xlock 1 "      4242"$'\n'
 gdm_auth :1
 # alice's authority would open :0 too (the fallback 2 must not be reached).
-echo "$ROOT/run/user/1000/gdm/Xauthority" > "$FAKE/x.:0"
+echo "$ROOT/run/user/$ME/gdm/Xauthority" > "$FAKE/x.:0"
 xs xs_find_display alice
 eq "rootless GDM — код 0" 0 "$RC"
 eq "rootless GDM — :1 по lock-файлу" ":1" "$OUT"
@@ -196,8 +213,8 @@ has "путь назван — pid" "4242" "$ERR"
 
 echo "== lock-файл с чужим pid или мусором — не берётся =="
 new_root
-echo 4242 > "$FAKE/pgrep.u1000"
-xorg 4242 vt2 -displayfd 3 -auth /run/user/1000/gdm/Xauthority
+echo 4242 > "$FAKE/pgrep.u$ME"
+xorg 4242 vt2 -displayfd 3 -auth "/run/user/$ME/gdm/Xauthority"
 xlock 0 "      1111"$'\n'
 xlock 5 "4242abc"$'\n'
 xlock 6 "  -4242"$'\n'
@@ -211,8 +228,8 @@ eq "чужой pid и мусор — пусто" "" "$OUT"
 
 echo "== lock-файла нет — слушающий сокет /tmp/.X11-unix/X<N> этого pid =="
 new_root
-echo 4242 > "$FAKE/pgrep.u1000"
-xorg 4242 vt2 -displayfd 3 -auth /run/user/1000/gdm/Xauthority
+echo 4242 > "$FAKE/pgrep.u$ME"
+xorg 4242 vt2 -displayfd 3 -auth "/run/user/$ME/gdm/Xauthority"
 xsock 1111 50001 /tmp/.X11-unix/X0
 xsock 4242 50003 @/tmp/.X11-unix/X1
 xsock 4242 50002 /tmp/.X11-unix/X1
@@ -223,7 +240,7 @@ eq "сокет — :1" ":1" "$OUT"
 has "путь назван — сокет" "/tmp/.X11-unix/X1" "$ERR"
 # The socket of another pid (the login screen) is not this Xorg's display.
 new_root
-echo 4242 > "$FAKE/pgrep.u1000"
+echo 4242 > "$FAKE/pgrep.u$ME"
 xorg 4242 vt2 -displayfd 3
 xsock 1111 50001 /tmp/.X11-unix/X0
 mkdir -p "$ROOT/proc/4242/fd"; ln -s "socket:[777]" "$ROOT/proc/4242/fd/9"
@@ -232,12 +249,99 @@ gdm_auth :3
 xs xs_find_display alice
 eq "сокет чужого pid или не слушающий — код 1" 1 "$RC"
 
+echo "== подложенный lock-файл (/tmp пишут все): чужой владелец, запись группе/остальным, ссылка — не берётся =="
+if (( ME != 0 )); then
+    # bob's Xorg; the lock with its pid was written by another uid (the tests').
+    new_root
+    echo 5151 > "$FAKE/pgrep.u$BOB"
+    xorg 5151 vt3 -displayfd 3
+    xlock 4 "      5151"$'\n'
+    xs _xs_xorg_display 5151 "$BOB"
+    eq "lock чужого владельца — дисплея нет" 1 "$RC"
+    eq "lock чужого владельца — пусто" "" "$OUT"
+    # The same lock of a uid that owns it — taken (the helper itself works).
+    echo 5151 > "$FAKE/pgrep.u$ME"
+    xs _xs_xorg_display 5151 "$ME"
+    eq "lock своего владельца — :4" ":4 lock /tmp/.X4-lock" "$OUT"
+fi
+for mode in 666 664 646; do
+    new_root
+    echo 4242 > "$FAKE/pgrep.u$ME"
+    xorg 4242 vt2 -displayfd 3
+    xlock 4 "      4242"$'\n'
+    chmod "$mode" "$ROOT/tmp/.X4-lock"
+    gdm_auth :4
+    xs xs_find_display alice
+    eq "lock с правами $mode — код 1" 1 "$RC"
+    hasnt "lock с правами $mode — дисплей :4 не проверялся" "-display :4" "$(cat "$FAKE/xdpyinfo.log" 2>/dev/null)"
+done
+new_root
+echo 4242 > "$FAKE/pgrep.u$ME"
+xorg 4242 vt2 -displayfd 3
+mkdir -p "$ROOT/tmp" "$ROOT/elsewhere"; printf '      4242\n' > "$ROOT/elsewhere/l"; chmod 444 "$ROOT/elsewhere/l"
+ln -s "$ROOT/elsewhere/l" "$ROOT/tmp/.X4-lock"
+gdm_auth :4
+xs xs_find_display alice
+eq "lock — ссылка — код 1" 1 "$RC"
+
+echo "== сокет раньше lock-файла: сокет привязан к процессу =="
+new_root
+echo 4242 > "$FAKE/pgrep.u$ME"
+xorg 4242 vt2 -displayfd 3
+xsock 4242 50002 /tmp/.X11-unix/X1
+xlock 5 "      4242"$'\n'
+gdm_auth :1; gdm_auth :5
+xs xs_find_display alice
+eq "сокет и lock — :1 по сокету" ":1" "$OUT"
+has "сокет и lock — путь — сокет" "socket" "$ERR"
+
+echo "== подтверждение — только authority самого пользователя и с контролем доступа =="
+# Only the -auth of an Xorg opens :1 — xs_find_authority finds it, the
+# confirmation of a found display does not take it.
+new_root
+printf '4242\n' > "$FAKE/pgrep.all"
+echo 4242 > "$FAKE/pgrep.u$ME"
+xorg 4242 :1 vt2 -auth /tmp/serverauth.x
+mkdir -p "$ROOT/tmp"; : > "$ROOT/tmp/serverauth.x"
+echo "$ROOT/tmp/serverauth.x" > "$FAKE/x.:1"
+xs xs_find_authority alice :1
+eq "-auth Xorg — xs_find_authority по-прежнему находит" "$ROOT/tmp/serverauth.x" "$OUT"
+xs xs_find_display alice
+eq "-auth Xorg — подтверждением не считается" 1 "$RC"
+# The user's own file that others may write — not the user's authority.
+new_root
+echo 4242 > "$FAKE/pgrep.u$ME"
+xorg 4242 :1 vt2
+gdm_auth :1; chmod 666 "$ROOT/run/user/$ME/gdm/Xauthority"
+xs xs_find_display alice
+eq "authority с записью для всех — не подтверждение" 1 "$RC"
+# A display without access control (Xorg -ac) opens with any authority.
+new_root
+echo 4242 > "$FAKE/pgrep.u$ME"
+xorg 4242 :1 vt2 -ac
+gdm_auth :1; : > "$FAKE/noac.:1"
+xs xs_find_display alice
+eq "без контроля доступа — код 1" 1 "$RC"
+has "без контроля доступа — сказано" "контроль доступа" "$ERR"
+new_root
+gdm_auth :0; : > "$FAKE/noac.:0"
+xs xs_find_display alice
+eq "запасной путь 2 без контроля доступа — код 1" 1 "$RC"
+# SDDM: the user's authority in the runtime dir.
+new_root
+echo 4242 > "$FAKE/pgrep.u$ME"
+xorg 4242 :1 vt2
+mkdir -p "$ROOT/run/user/$ME"; : > "$ROOT/run/user/$ME/xauth_AbC123"
+echo "$ROOT/run/user/$ME/xauth_AbC123" > "$FAKE/x.:1"
+xs xs_find_display alice
+eq "xauth_* в runtime-dir — :1" ":1" "$OUT"
+
 echo "== Xorg без :N, lock-файла и сокета — запасной путь :0 =="
 new_root
 user_sessions alice c2
 session c2 seat0 user x11 "" active no
-echo 4242 > "$FAKE/pgrep.u1000"
-xorg 4242 vt2 -displayfd 3 -auth /run/user/1000/gdm/Xauthority
+echo 4242 > "$FAKE/pgrep.u$ME"
+xorg 4242 vt2 -displayfd 3 -auth "/run/user/$ME/gdm/Xauthority"
 gdm_auth :0
 xs xs_find_display alice
 eq "ничего у Xorg — :0 с authority" ":0" "$OUT"
@@ -343,13 +447,13 @@ eq "нет loginctl вовсе — код 1 без падения" "rc=1" "$OUT"
 
 echo "== authority: кандидаты по порядку, -auth из Xorg =="
 new_root
-mkdir -p "$ROOT/run/user/1000/gdm" "$ROOT/run/lightdm/alice"
+mkdir -p "$ROOT/run/user/$ME/gdm" "$ROOT/run/lightdm/alice"
 : > "$ROOT/home/alice/.Xauthority"
-: > "$ROOT/run/user/1000/gdm/Xauthority"
-echo "$ROOT/run/user/1000/gdm/Xauthority" > "$FAKE/x.:1"
+: > "$ROOT/run/user/$ME/gdm/Xauthority"
+echo "$ROOT/run/user/$ME/gdm/Xauthority" > "$FAKE/x.:1"
 xs xs_find_authority alice :1
 eq "gdm Xauthority — код 0" 0 "$RC"
-eq "gdm Xauthority" "$ROOT/run/user/1000/gdm/Xauthority" "$OUT"
+eq "gdm Xauthority" "$ROOT/run/user/$ME/gdm/Xauthority" "$OUT"
 has "сначала ~/.Xauthority" "$ROOT/home/alice/.Xauthority -display :1" "$(head -1 "$FAKE/xdpyinfo.log")"
 new_root
 mkdir -p "$ROOT/run/lightdm/alice"
