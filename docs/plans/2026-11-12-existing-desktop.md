@@ -25,7 +25,7 @@
 - [ ] Task 11: `x11vnc` 6.0.0 — `X11VNC_USER`, `X11VNC_DISPLAY=auto`, проверка машины, uid-правило
 - [ ] Task 12: `cloud-user-desktop` 6.0.0 — `live: confirm`, снятие автологина удалённой учётки
 - [ ] Task 13: `code-server` 5.3.0 — снятие пакета только своего, через apt-guard
-- [ ] Task 14: `docker` 4.2.0 — снятие только своего источника apt
+- [x] Task 14: `docker` 4.2.0 — снятие только своего источника apt
 - [ ] Task 15: `firefox` 2.1.0 — снятие только своего источника apt
 - [x] Task 16: issue в cream: неудачная запись даёт способности (§9)
 - [ ] Task 17: сверка потребителей — VMFILE и скрипты обновления bisquite, stvor-agent
