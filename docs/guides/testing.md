@@ -62,14 +62,20 @@ ht_done                                   # итог; код 0 — все про
 `ubuntu:20.04`, `ubuntu:22.04` или `ubuntu:24.04` с systemd как PID 1 (без
 `--privileged`), настоящий cream по пину, каталог — источник `path`. Сценарий:
 
-1. зависимости из `LIVE_DEPS` (с `--allow-skip`);
-2. `install`, повтор (`changed: false`), `install --reinstall` — ни один файл в
+1. до cream — пакеты `LIVE_PREINSTALL`, дерево `LIVE_PRESEED` в корень, снимок
+   путей `LIVE_EXPECT_RESTORED` (машина, где рабочий стол уже стоял);
+2. зависимости из `LIVE_DEPS` (с `--allow-skip`), затем `remove --force`
+   зависимостей `LIVE_DEPS_FORCE_REMOVE`: оставшиеся — `installed`, `cream check`
+   поверх установленного находит граф целым;
+3. `install`, повтор (`changed: false`), `install --reinstall` — ни один файл в
    `/etc`, `/opt/cream`, `/usr/local`, `/var/lib/cream/ext` не меняется;
-3. две перезагрузки: `configure` на загрузке успешен и соблюдает отметку
+4. две перезагрузки: `configure` на загрузке успешен и соблюдает отметку
    выполнения (с `every_boot` — отработал, без него — пропущен, код 20 — снял
    отметку), `systemctl --failed` пуст, нет `ordering cycle`;
-4. значения секретов не видны в `ps`, журнале, реестре;
-5. `remove`, если есть хук.
+5. значения секретов не видны в `ps`, журнале, реестре;
+6. `remove`, если есть хук (`--force` при `LIVE_REMOVE_FORCE=1`); пути
+   `LIVE_EXPECT_RESTORED` — как в снимке до cream (тип, права, владелец, цель
+   ссылки, sha256; файла не было — нет и после).
 
 L-расширение — то, у которого есть `tests/live.env`: умолчания прогона (данные
 `KEY=value`, не скрипт), флаги `make test-live ARGS='…'` их перекрывают.
@@ -86,6 +92,19 @@ L-расширение — то, у которого есть `tests/live.env`: 
 | `LIVE_CAPS`, `LIVE_MEMORY` | capabilities контейнера (`firewall` — `NET_ADMIN`), память |
 | `LIVE_SNAPSHOT_IGNORE` | пути, которым разрешено меняться при `--reinstall` |
 | `LIVE_NIGHTLY_ONLY=1` | тяжёлое расширение — только ночью и вручную, не на PR |
+| `LIVE_NIGHTLY_DISTROS` | дистрибутивы, добавляемые к `LIVE_DISTROS` только в ночном прогоне (`live-matrix.sh --all`) |
+| `LIVE_PREINSTALL` | пакеты apt, поставленные до cream (`--preinstall`) |
+| `LIVE_PRESEED` | каталог под `tests/` (относительный, без `..`), выкладывается в `/` до cream файлами root (`--preseed`) |
+| `LIVE_EXPECT_RESTORED` | абсолютные пути, которые `remove` возвращает как было до cream; нужен хук `remove`, несовместим с `LIVE_EXPECT_SKIP` |
+| `LIVE_DEPS_FORCE_REMOVE` | зависимости из `LIVE_DEPS`, снимаемые `remove --force` до установки (переход с прежнего поставщика) |
+| `LIVE_REMOVE_FORCE=1` | расширение снимается `remove --force` (на нём держатся установленные) |
+
+Вариант — второй набор ключей того же расширения: `tests/live.<v>.env` поверх
+`tests/live.env` (значение варианта перекрывает базовое), запуск
+`make test-live EXT=<имя> ARGS='--variant <v>'`, журналы —
+`.scratchpad/live/<имя>.<v>-<дистрибутив>/`. Матрица `live.yml` ведёт варианты
+отдельными строками; `LIVE_NIGHTLY_ONLY` вариант берёт из своего файла, нет там — из
+базового.
 
 Журналы — `.scratchpad/live/<имя>-<дистрибутив>/`, итог — последняя строка
 (`проверок N, не прошло M`). Разбор падений (расширение / стенд / окружение) —

@@ -4,6 +4,10 @@
 # debian-12 и ubuntu-24.04); --changed — изменённое расширение и те, чьи
 # LIVE_DEPS изменились; пин cream — все; расширение без live.env — никогда;
 # LIVE_NIGHTLY_ONLY=1 — только в --all (ночь, ручной запуск), в --changed (PR) — никогда.
+# Варианты tests/live.<v>.env — отдельные строки с "variant" (ключи варианта
+# поверх live.env; LIVE_NIGHTLY_ONLY — своего файла, иначе базового), в
+# --changed — варианты изменённого расширения; LIVE_NIGHTLY_DISTROS — к
+# LIVE_DISTROS только в --all. Без вариантов вывод прежний (без ключа variant).
 #
 #   tools/test-live-matrix.sh        код 0 — все проверки прошли
 set -uo pipefail
@@ -21,6 +25,20 @@ printf 'LIVE_DEPS=lib-a\nLIVE_DISTROS="debian-12 ubuntu-22.04"\n' > "$R/extensio
 printf '# defaults\n' > "$R/extensions/debian/app-c/tests/live.env"
 printf 'LIVE_DEPS=lib-a\nLIVE_NIGHTLY_ONLY=1\nLIVE_DISTROS="debian-12"\n' > "$R/extensions/debian/night-d/tests/live.env"
 m(){ LIVE_MATRIX_REPO="$R" "$HERE/live-matrix.sh" "$@"; }
+
+# Варианты и ночные дистрибутивы — на втором подставном каталоге (первый даёт
+# прежний вывод побайтно).
+V="$TMP/repo-v"
+mkdir -p "$V/extensions/debian/"{base-e,dep-f}/tests
+printf 'LIVE_DISTROS="debian-12"\nLIVE_NIGHTLY_DISTROS="ubuntu-24.04"\nLIVE_DEPS=dep-f\n' > "$V/extensions/debian/base-e/tests/live.env"
+printf 'LIVE_PRESEED=root\n' > "$V/extensions/debian/base-e/tests/live.pre.env"
+printf 'LIVE_NIGHTLY_ONLY=1\n' > "$V/extensions/debian/base-e/tests/live.heavy.env"
+printf 'LIVE_DISTROS="ubuntu-22.04"\nLIVE_NIGHTLY_DISTROS=""\n' > "$V/extensions/debian/base-e/tests/live.jammy.env"
+printf 'LIVE_DISTROS="debian-12"\nLIVE_NIGHTLY_ONLY=1\n' > "$V/extensions/debian/dep-f/tests/live.env"
+printf 'LIVE_NIGHTLY_ONLY=0\n' > "$V/extensions/debian/dep-f/tests/live.light.env"
+printf 'LIVE_DISTROS="debian-12"\n' > "$V/extensions/debian/dep-f/tests/live.Bad_Name.env"
+mvar(){ LIVE_MATRIX_REPO="$V" "$HERE/live-matrix.sh" "$@"; }
+chvar(){ printf '%s\n' "$@" > "$TMP/changed-v"; mvar --changed "$TMP/changed-v"; }
 ch(){ printf '%s\n' "$@" > "$TMP/changed"; m --changed "$TMP/changed"; }
 
 eq "--all" '{"include":[{"ext":"app-b","distro":"debian-12"},{"ext":"app-b","distro":"ubuntu-22.04"},{"ext":"app-c","distro":"debian-12"},{"ext":"app-c","distro":"ubuntu-24.04"},{"ext":"lib-a","distro":"debian-12"},{"ext":"night-d","distro":"debian-12"}]}' "$(m --all)"
@@ -34,6 +52,14 @@ eq "пин cream — все, кроме ночных" '{"include":[{"ext":"app-b
 eq "изменено ночное — не в PR" '{"include":[]}' "$(ch extensions/debian/night-d/hooks/install)"
 eq "раннер — не матрица" '{"include":[]}' "$(ch tools/live-test.sh)"
 m --bogus >/dev/null 2>&1; eq "неверный вызов — 2" 2 "$?"
+
+eq "варианты и ночные дистрибутивы --all" '{"include":[{"ext":"base-e","distro":"debian-12"},{"ext":"base-e","distro":"ubuntu-24.04"},{"ext":"base-e","distro":"debian-12","variant":"heavy"},{"ext":"base-e","distro":"ubuntu-24.04","variant":"heavy"},{"ext":"base-e","distro":"ubuntu-22.04","variant":"jammy"},{"ext":"base-e","distro":"debian-12","variant":"pre"},{"ext":"base-e","distro":"ubuntu-24.04","variant":"pre"},{"ext":"dep-f","distro":"debian-12"},{"ext":"dep-f","distro":"debian-12","variant":"light"}]}' \
+    "$(mvar --all 2>/dev/null)"
+eq "изменено base-e — его варианты, без ночных дистрибутивов и ночного варианта" '{"include":[{"ext":"base-e","distro":"debian-12"},{"ext":"base-e","distro":"ubuntu-22.04","variant":"jammy"},{"ext":"base-e","distro":"debian-12","variant":"pre"}]}' \
+    "$(chvar extensions/debian/base-e/tests/live.pre.env 2>/dev/null)"
+eq "изменено dep-f — ночная база не в PR, вариант с LIVE_NIGHTLY_ONLY=0 — в PR, и зависимые" '{"include":[{"ext":"base-e","distro":"debian-12"},{"ext":"base-e","distro":"ubuntu-22.04","variant":"jammy"},{"ext":"base-e","distro":"debian-12","variant":"pre"},{"ext":"dep-f","distro":"debian-12","variant":"light"}]}' \
+    "$(chvar extensions/debian/dep-f/hooks/install 2>/dev/null)"
+mvar --all 2>&1 >/dev/null | grep -q 'live.Bad_Name.env'; eq "вариант с недопустимым именем — предупреждение, не строка" 0 "$?"
 
 echo "проверок: $((pass + fail)), не прошло: $fail"
 (( fail == 0 ))

@@ -1,0 +1,18 @@
+# Fixture of tools/test-live-test.sh: the new provider (existing-desktop after
+# gnome): LIVE_DEPS_FORCE_REMOVE takes the old one away before it, the deps left
+# stay installed and cream check finds the graph whole; LIVE_REMOVE_FORCE=1 —
+# the final remove with --force (live-user still requires the capability). The
+# variant noforce removes without --force — red (deps.dependents); notdep names
+# a dependency not in LIVE_DEPS — a call error before any container.
+schema: cream/v1
+name: live-prov-new
+version: 1.0.0
+summary: фикстура L-раннера — новый поставщик способности
+cream: ">=1.0.0"
+platform: {family: deb, arch: [amd64, arm64]}
+targets: {build: exec, live: "yes"}
+provides: [live-cap]
+conflicts: {capabilities: [live-cap]}
+hooks:
+  install: {}
+  remove: {}

@@ -10,11 +10,20 @@
 # зелёный с пометкой «разрешено упасть», юнит не из списка — красный, выражение без
 # якорей ^…$ — отказ (код 2). Две загрузки (cream 1.2.0, отметка configure):
 # хук без every_boot пропущен по отметке на обеих, с every_boot — отработал на обеих;
-# хук без every_boot, прошедший на загрузке мимо отметки, — красный. Плюс приёмка плана: настоящее расширение
+# хук без every_boot, прошедший на загрузке мимо отметки, — красный. Стол до cream
+# (план 2026-11-12-existing-desktop, Task 4): LIVE_PREINSTALL и LIVE_PRESEED — пакет и
+# дерево на месте до cream, LIVE_EXPECT_RESTORED — remove вернул как было (зелёный) и
+# не вернул (вариант broken — красный); LIVE_DEPS_FORCE_REMOVE — прежний поставщик
+# снят --force, оставшиеся зависимости installed, cream check находит граф целым;
+# LIVE_REMOVE_FORCE=1 — remove --force (вариант noforce без него — красный, 67);
+# отказы вызова до контейнера (код 2): --preseed с .. или с /, неизвестный и
+# кривой --variant, кривое имя пакета, относительный путь LIVE_EXPECT_RESTORED,
+# LIVE_DEPS_FORCE_REMOVE не из LIVE_DEPS. Плюс приёмка плана: настоящее расширение
 # stvor-agent (с teleport) — LIVE_REAL=1 (сеть: тарбол Teleport, .deb агента).
 #
 # Тяжёлая (контейнеры с systemd): не входит в make ci; цель make test-live-self.
 # Нужны docker и cream по пину (tools/cream-deb.sh; локально — CREAM_DEB=<.deb>).
+# LIVE_SELF_CASES="имя …" — только эти случаи (отладка одного ключа).
 #
 #   tools/test-live-test.sh [debian-12|ubuntu-24.04|…]   код 0 — все проверки прошли
 set -uo pipefail
@@ -35,6 +44,7 @@ trap cleanup EXIT
 run(){
     local name="$1" want="$2" line="$3"; shift 3
     local out rc want_lines
+    if [[ -n "${LIVE_SELF_CASES:-}" && " $LIVE_SELF_CASES " != *" $name "* ]]; then return 0; fi
     out="$(LIVE_LOGDIR="$LOGS/$name" "$HERE/live-test.sh" --distro "$DISTRO" --keep-image \
         --catalog "$CAT" "$@" 2>&1)"; rc=$?
     printf '%s\n' "$out" > "$LOGS/$name.out"
@@ -50,6 +60,15 @@ run(){
 }
 
 mkdir -p "$LOGS"
+# Call errors first: they stop before any container.
+run preseed-up 2 "--preseed ../x" --preseed ../x live-preinstall
+run preseed-abs 2 "--preseed /etc" --preseed /etc live-preinstall
+run preseed-missing 2 "нет каталога tests/nope" --preseed nope live-preinstall
+run variant-missing 2 "нет tests/live.nope.env" --variant nope live-preinstall
+run variant-bad 2 "--variant ../x" --variant ../x live-preinstall
+run preinstall-bad 2 "--preinstall -o: не имя пакета" --preinstall "-o x" live-preinstall
+run restored-relative 2 "LIVE_EXPECT_RESTORED etc/live-absent" --variant badpath live-preinstall
+run force-not-dep 2 "LIVE_DEPS_FORCE_REMOVE: live-nope не из LIVE_DEPS" --variant notdep live-prov-new
 run ok 0 "проверок 19, не прошло 0|ok   загрузка: configure пропущен по отметке|ok   вторая загрузка: configure пропущен по отметке" \
     --secret LIVE_OK_TOKEN live-ok
 run every-boot 0 "ok   загрузка: configure отработал (every_boot)|ok   вторая загрузка: configure отработал (every_boot)" \
@@ -71,6 +90,12 @@ run configure-20 0 "ok   загрузка: configure вернул 20|ok   вто
 run not-idempotent 1 "FAIL --reinstall изменил файлы" live-nonidem
 run secret-leak 1 "FAIL после install: секрет LIVE_LEAK_TOKEN виден: журнал" --secret LIVE_LEAK_TOKEN live-leak
 run ordering-cycle 1 "FAIL загрузка: «ordering cycle» в журнале или systemd-analyze" live-cycle
+run preinstall 0 "ok   preinstall: file|ok   preseed: tests/root|ok   remove вернул как было до cream: /etc/live-preinstall /etc/live-absent|не прошло 0" \
+    live-preinstall
+run not-restored 1 "FAIL remove не вернул как было до cream|live-test live-preinstall.broken" --variant broken live-preinstall
+run force-remove 0 "ok   зависимость live-prov-old снята (remove --force)|ok   после install зависимости installed: live-user|ok   cream check: граф цел|ok   cream remove --force: код 0|не прошло 0" \
+    live-prov-new
+run remove-not-forced 1 "FAIL cream remove: код 67" --variant noforce live-prov-new
 run unknown 2 "нет (или не одно)" live-nope
 run bad-distro 2 "неизвестный дистрибутив" --distro debian-11 live-ok
 
@@ -82,5 +107,6 @@ if [[ "${LIVE_REAL:-}" == 1 ]]; then
     else bad "stvor-agent: код $rc ($LOGS/stvor-agent.out)"; tail -n 20 <<< "$out" >&2; fi
 fi
 
+[[ -z "${LIVE_SELF_CASES:-}" ]] || echo "прогнаны только: $LIVE_SELF_CASES (LIVE_SELF_CASES) — это не полная самопроверка"
 echo "проверок: $((pass + fail)), не прошло: $fail"
 (( fail == 0 ))
