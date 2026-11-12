@@ -36,7 +36,9 @@ hasnt(){ if grep -qF -- "$2" <<< "$3"; then bad "$1: есть [$2] в [$3]"; els
 new_root(){
     ROOT="$(mktemp -d "$TMP/root.XXXXXX")"
     FAKE="$ROOT/fake"
-    mkdir -p "$ROOT/bin" "$FAKE" "$ROOT/home/alice" "$ROOT/home/bob" "$ROOT/proc"
+    mkdir -p "$ROOT/bin" "$FAKE" "$ROOT/home/alice" "$ROOT/home/bob" "$ROOT/proc/net"
+    # The header only: a machine has /proc/net/unix, X listeners come by xsock.
+    echo "Num       RefCount Protocol Flags    Type St Inode Path" > "$ROOT/proc/net/unix"
     cat > "$ROOT/bin/loginctl" <<'EOF'
 #!/usr/bin/env bash
 echo "$*" >> "$FAKE/loginctl.log"
@@ -166,13 +168,17 @@ xlock(){ mkdir -p "$ROOT/tmp"; printf '%s' "$2" > "$ROOT/tmp/.X$1-lock"; chmod 4
 # owner <path under ROOT> <uid>: stat reports <uid> as the owner of the file.
 owner(){ echo "$2" > "$FAKE/owner${ROOT//\//_}${1//\//_}"; }
 # x0srv [pid]: an X server really on :0 — /tmp/.X0-lock with its pid, a live
-# Xorg (/proc/<pid>/comm) and the socket /tmp/.X11-unix/X0; all alice's (rootless).
+# Xorg (/proc/<pid>/comm), the socket /tmp/.X11-unix/X0, and both listeners
+# (the file one, inode 61000, and the abstract @…/X0, 61001) among the fds of
+# the pid in /proc/net/unix; all alice's (rootless).
 x0srv(){
     local pid="${1:-4300}"
     xlock 0 "$(printf '%10d' "$pid")"$'\n'
     mkdir -p "$ROOT/proc/$pid" "$ROOT/tmp/.X11-unix"
     echo Xorg > "$ROOT/proc/$pid/comm"
     python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$ROOT/tmp/.X11-unix/X0"
+    xsock "$pid" 61000 /tmp/.X11-unix/X0
+    xsock "$pid" 61001 @/tmp/.X11-unix/X0
 }
 # xsock <pid> <inode> <path>: a listening unix socket of <pid> at <path>.
 xsock(){
@@ -317,6 +323,44 @@ xs xs_find_display alice
 eq "сокет и lock — :1 по сокету" ":1" "$OUT"
 has "сокет и lock — путь — сокет" "socket" "$ERR"
 
+echo "== запасной путь 1: сокеты X<N> держит другой процесс — cookie не уходит =="
+# xcb tries the abstract @/tmp/.X11-unix/X<N> first: whoever took the name gets
+# the cookie. Every listener of X<N> must be among the fds of the Xorg found.
+for c in abstract file; do
+    new_root
+    echo 4242 > "$FAKE/pgrep.u$ME"
+    xorg 4242 :1 vt2
+    gdm_auth :1
+    xsock 4242 50002 /tmp/.X11-unix/X1
+    if [[ "$c" == abstract ]]; then
+        xsock 4444 50003 @/tmp/.X11-unix/X1
+    else
+        xsock 4444 50004 /tmp/.X11-unix/X1
+    fi
+    xs xs_find_display alice
+    eq "чужой слушатель X1 ($c) — код 1" 1 "$RC"
+    eq "чужой слушатель X1 ($c) — cookie не отдана" "" "$(grep -- '-display :1' "$FAKE/xdpyinfo.log" 2>/dev/null)"
+done
+# Both listeners are the Xorg's — taken.
+new_root
+echo 4242 > "$FAKE/pgrep.u$ME"
+xorg 4242 :1 vt2
+gdm_auth :1
+xsock 4242 50002 /tmp/.X11-unix/X1
+xsock 4242 50003 @/tmp/.X11-unix/X1
+xsock 4444 50005 @/tmp/.X11-unix/X5
+xs xs_find_display alice
+eq "слушатели X1 — у этого Xorg — :1" ":1" "$OUT"
+# Listeners, but the fds of the Xorg are not readable — nothing to bind them to.
+new_root
+echo 4242 > "$FAKE/pgrep.u$ME"
+xorg 4242 :1 vt2
+gdm_auth :1
+xsock 4242 50002 /tmp/.X11-unix/X1
+rm -r -f "$ROOT/proc/4242/fd"
+xs xs_find_display alice
+eq "fd Xorg не читаются, а слушатель X1 есть — код 1" 1 "$RC"
+
 echo "== подтверждение — только authority самого пользователя и с контролем доступа =="
 # Only the -auth of an Xorg opens :1 — xs_find_authority finds it, the
 # confirmation of a found display does not take it.
@@ -387,7 +431,10 @@ eq "authority не проходит — пусто" "" "$OUT"
 echo "== запасной путь 2: cookie — только настоящему серверу :0 (lock, Xorg, сокет — root или пользователя) =="
 # fake_x0 <case>: alice's authority would open :0 — a fake X server on a free
 # :0 answers anything. Each case breaks one proof; the cookie must not be sent.
-for c in nolock nosock locklink lockbob lockwritable procbob notxorg deadpid sockbob socklink sockfile; do
+cases="nolock nosock locklink lockbob lockwritable procbob notxorg deadpid sockbob socklink sockfile"
+# Bound to the process: the listeners of X0 are the Xorg's fds, and only its.
+cases+=" sockforeign abstractforeign noabstract nofilelistener fdunreadable nonetunix"
+for c in $cases; do
     new_root
     : > "$ROOT/home/alice/.Xauthority"
     echo "$ROOT/home/alice/.Xauthority" > "$FAKE/x.:0"
@@ -404,6 +451,24 @@ for c in nolock nosock locklink lockbob lockwritable procbob notxorg deadpid soc
         sockbob) owner /tmp/.X11-unix/X0 "$BOB" ;;
         socklink) rm -f "$ROOT/tmp/.X11-unix/X0"; ln -s /run/evil "$ROOT/tmp/.X11-unix/X0" ;;
         sockfile) rm -f "$ROOT/tmp/.X11-unix/X0"; : > "$ROOT/tmp/.X11-unix/X0" ;;
+        # The file socket is held by another process (4400), not the lock's Xorg.
+        sockforeign)
+            rm -f "$ROOT/proc/4300/fd"/*; : > "$ROOT/proc/net/unix"
+            xsock 4400 61000 /tmp/.X11-unix/X0; xsock 4300 61001 @/tmp/.X11-unix/X0 ;;
+        # xcb tries the abstract @/tmp/.X11-unix/X0 first: another process has it.
+        abstractforeign)
+            rm -f "$ROOT/proc/4300/fd"/*; : > "$ROOT/proc/net/unix"
+            xsock 4300 61000 /tmp/.X11-unix/X0; xsock 4400 61001 @/tmp/.X11-unix/X0 ;;
+        # Nobody holds the abstract name — anyone may take it before xcb comes.
+        noabstract)
+            rm -f "$ROOT/proc/4300/fd"/*; : > "$ROOT/proc/net/unix"
+            xsock 4300 61000 /tmp/.X11-unix/X0 ;;
+        nofilelistener)
+            rm -f "$ROOT/proc/4300/fd"/*; : > "$ROOT/proc/net/unix"
+            xsock 4300 61001 @/tmp/.X11-unix/X0 ;;
+        # The fds of the Xorg are not readable (root's Xorg, the wrapper is the user).
+        fdunreadable) rm -r -f "$ROOT/proc/4300/fd" ;;
+        nonetunix) rm -f "$ROOT/proc/net/unix" ;;
     esac
     xs xs_find_display alice
     eq "подделка :0 ($c) — код 1" 1 "$RC"

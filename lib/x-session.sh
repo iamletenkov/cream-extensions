@@ -28,9 +28,13 @@
 #       (startx), else its listening socket /tmp/.X11-unix/X<N> (/proc/<pid>/fd
 #       against /proc/net/unix), else /tmp/.X<N>-lock holding its pid, owned
 #       by root or USER and writable by nobody else — rootless GDM runs
-#       `Xorg vtN -displayfd 3` without :N (ruling П13); nothing — fallback 2,
-#       :0, only when a real X server of root or USER serves it (_xs_served:
-#       lock, live Xorg, socket — no cookie for a fake server on a free :0).
+#       `Xorg vtN -displayfd 3` without :N (ruling П13), and every listener of
+#       X<N> (the file and the abstract name, which xcb tries first) is its fd
+#       (_xs_x_held); nothing — fallback 2, :0, only when a real X server of
+#       root or USER serves it (_xs_served: lock, live Xorg, socket, and both
+#       listeners of X0 its fds — no cookie for a fake server on a free :0 or
+#       on a taken abstract name; the fds of a root Xorg are not readable by
+#       USER, so the wrapper, running as USER, never takes it this way).
 #       A display of either fallback counts only when USER's own
 #       authority opens it and it has access control (_xs_confirm). The path
 #       taken goes to stderr. 0 — printed; 1 — none (yet); 2 — USER's seat0
@@ -83,6 +87,62 @@ _xs_trusted(){
     return 1
 }
 
+# _xs_pid_sockets PID: the socket inodes among the fds of PID, one per line;
+# 1 — /proc/PID/fd is not readable (a process of another uid).
+_xs_pid_sockets(){
+    local r f line
+    r="$(_xs_root)"
+    [[ "$1" =~ ^[0-9]+$ && -d "$r/proc/$1/fd" && -r "$r/proc/$1/fd" && -x "$r/proc/$1/fd" ]] || return 1
+    for f in "$r/proc/$1/fd"/*; do
+        line="$(readlink -- "$f" 2>/dev/null)" || continue
+        [[ "$line" =~ ^socket:\[([0-9]+)\]$ ]] && printf '%s\n' "${BASH_REMATCH[1]}"
+    done
+    return 0
+}
+
+# _xs_x_listeners [N]: "<n> <inode> <path>" of every listening unix socket
+# /tmp/.X11-unix/X<n> or abstract @/tmp/.X11-unix/X<n> in /proc/net/unix —
+# only X<N>'s when N is given. 1 — /proc/net/unix is not readable.
+_xs_x_listeners(){
+    local want="${1:-}" r
+    local -a fields=()
+    r="$(_xs_root)"
+    [[ -r "$r/proc/net/unix" ]] || return 1
+    while read -r -a fields; do
+        (( ${#fields[@]} >= 8 )) || continue
+        # __SO_ACCEPTCON and SS_UNCONNECTED: a listening socket.
+        [[ "${fields[3]}" == 00010000 && "${fields[5]}" == 01 && "${fields[6]}" =~ ^[0-9]+$ ]] || continue
+        [[ "${fields[7]}" =~ ^@?/tmp/\.X11-unix/X([0-9]+)$ ]] || continue
+        [[ -z "$want" || "${BASH_REMATCH[1]}" == "$want" ]] || continue
+        printf '%s %s %s\n' "${BASH_REMATCH[1]}" "${fields[6]}" "${fields[7]}"
+    done < "$r/proc/net/unix"
+    return 0
+}
+
+# _xs_x_held N PID: every listener of X<N> — the socket file and the abstract
+# @/tmp/.X11-unix/X<N> — is one of PID's fds (inode in /proc/net/unix against
+# /proc/PID/fd); prints what PID holds, "file" and/or "abstract", a line each.
+# xcb connects to the abstract name first: whoever else listens there would
+# get the cookie. 1 — a listener of another process, or listeners PID's fds
+# cannot be checked against (not readable, no /proc/net/unix).
+_xs_x_held(){
+    local n="$1" pid="$2" out ln inode path
+    local -a mine=() listeners=()
+    out="$(_xs_x_listeners "$n")" || return 1
+    [[ -n "$out" ]] || return 0
+    mapfile -t listeners <<< "$out"
+    out="$(_xs_pid_sockets "$pid")" || return 1
+    mapfile -t mine <<< "$out"
+    for ln in "${listeners[@]}"; do
+        read -r _ inode path <<< "$ln"
+        [[ " ${mine[*]} " == *" $inode "* ]] || return 1
+    done
+    for ln in "${listeners[@]}"; do
+        read -r _ inode path <<< "$ln"
+        if [[ "$path" == @* ]]; then echo abstract; else echo file; fi
+    done | sort -u
+}
+
 # _xs_xorg_display PID UID: "<:N> <how>" — the display the Xorg PID of UID
 # serves, by what is bound to the process first: a) :N anywhere in its argv
 # (startx, an explicit display); b) its listening socket /tmp/.X11-unix/X<N>
@@ -92,8 +152,8 @@ _xs_trusted(){
 # nobody else. GDM starts `Xorg vtN -displayfd 3`, no :N in argv. Only files
 # the owner of the process reads; 1 — none.
 _xs_xorg_display(){
-    local pid="$1" uid="$2" r arg f n c line inode path flags st
-    local -a fields=() inodes=()
+    local pid="$1" uid="$2" r arg f n c ln inode path out
+    local -a inodes=() listeners=()
     r="$(_xs_root)"
     [[ "$uid" =~ ^[0-9]+$ && -r "$r/proc/$pid/cmdline" ]] || return 1
     while IFS= read -r arg; do
@@ -102,25 +162,17 @@ _xs_xorg_display(){
             return 0
         fi
     done < <(tr '\0' '\n' < "$r/proc/$pid/cmdline" 2>/dev/null | tail -n +2)
-    if [[ -r "$r/proc/net/unix" ]]; then
-        for f in "$r/proc/$pid/fd"/*; do
-            line="$(readlink -- "$f" 2>/dev/null)" || continue
-            [[ "$line" =~ ^socket:\[([0-9]+)\]$ ]] && inodes+=("${BASH_REMATCH[1]}")
-        done
-    fi
-    if (( ${#inodes[@]} )); then
-        while read -r -a fields; do
-            (( ${#fields[@]} >= 8 )) || continue
-            flags="${fields[3]}"; st="${fields[5]}"; inode="${fields[6]}"; path="${fields[7]}"
-            # __SO_ACCEPTCON and SS_UNCONNECTED: a listening socket.
-            [[ "$flags" == 00010000 && "$st" == 01 ]] || continue
-            [[ "$path" =~ ^@?/tmp/\.X11-unix/X([0-9]+)$ ]] || continue
-            n="${BASH_REMATCH[1]}"
+    if out="$(_xs_pid_sockets "$pid")" && [[ -n "$out" ]]; then
+        mapfile -t inodes <<< "$out"
+        out="$(_xs_x_listeners)" || out=""
+        [[ -z "$out" ]] || mapfile -t listeners <<< "$out"
+        for ln in "${listeners[@]}"; do
+            read -r n inode path <<< "$ln"
             if [[ " ${inodes[*]} " == *" $inode "* ]]; then
                 printf ':%s socket %s\n' "$n" "$path"
                 return 0
             fi
-        done < "$r/proc/net/unix"
+        done
     fi
     for f in "$r"/tmp/.X*-lock; do
         n="${f##*/.X}"; n="${n%-lock}"
@@ -200,7 +252,7 @@ xs_seat0_active(){
 # without this, a fake server on a free :0 answering "access control enabled"
 # would get USER's MIT cookie from _xs_confirm. 0 — served.
 _xs_served(){
-    local display="$1" uid="$2" r n lock pid comm sock owner
+    local display="$1" uid="$2" r n lock pid comm sock owner held
     r="$(_xs_root)"
     [[ "$uid" =~ ^[0-9]+$ ]] || return 1
     [[ "$display" =~ ^:([0-9]+)(\.[0-9]+)?$ ]] || return 1
@@ -216,7 +268,11 @@ _xs_served(){
     sock="$r/tmp/.X11-unix/X$n"
     [[ -S "$sock" && ! -L "$sock" ]] || return 1
     read -r owner _ < <(stat -c '%u %a' -- "$sock" 2>/dev/null) || return 1
-    [[ "$owner" == 0 || "$owner" == "$uid" ]]
+    [[ "$owner" == 0 || "$owner" == "$uid" ]] || return 1
+    # Bound to the process: both listeners of X<N> are this Xorg's fds and
+    # nobody else listens there — a free abstract name would be anyone's.
+    held="$(_xs_x_held "$n" "$pid")" || return 1
+    [[ "$held" == $'abstract\nfile' ]]
 }
 
 # _xs_confirm USER DISPLAY: a display found without logind is USER's only when
@@ -257,7 +313,7 @@ _xs_confirm(){
 }
 
 xs_find_display(){
-    local user="${1:-}" s sid type display state pw uid pids pid found how
+    local user="${1:-}" s sid type display state pw uid pids pid found how n
     local -a pidv=()
     _xs_name_ok "$user" || return 1
     if s="$(xs_seat0_session "$user")"; then
@@ -282,6 +338,11 @@ xs_find_display(){
         found="$(_xs_xorg_display "$pid" "$uid")" || continue
         read -r display how <<< "$found"
         _xs_display_ok "$display" || continue
+        n="${display#:}"; n="${n%%.*}"
+        if ! _xs_x_held "$n" "$pid" >/dev/null; then
+            _xs_info "дисплей $display: сокет X$n слушает не Xorg $pid (или его fd не проверить) — не принимаю"
+            continue
+        fi
         if _xs_confirm "$user" "$display"; then
             _xs_info "дисплей $display: Xorg $pid пользователя $user, $how (в logind Display пуст)"
             printf '%s\n' "$display"

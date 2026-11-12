@@ -110,12 +110,18 @@ mask_dm() {
     ln -sfn /dev/null "$ROOT/etc/systemd/system/display-manager.service"
 }
 # x0srv: an X server really on :0 for lib/x-session.sh fallback 2 — the lock
-# with its pid, a live Xorg (/proc/<pid>/comm), the socket /tmp/.X11-unix/X0.
+# with its pid, a live Xorg (/proc/<pid>/comm), the socket /tmp/.X11-unix/X0,
+# and both listeners of X0 (file, abstract) among its fds in /proc/net/unix.
 x0srv() {
-    mkdir -p "$ROOT/tmp/.X11-unix" "$ROOT/proc/4300"
+    mkdir -p "$ROOT/tmp/.X11-unix" "$ROOT/proc/4300/fd" "$ROOT/proc/net"
     printf '%10d\n' 4300 > "$ROOT/tmp/.X0-lock"; chmod 0444 "$ROOT/tmp/.X0-lock"
     echo Xorg > "$ROOT/proc/4300/comm"
     python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$ROOT/tmp/.X11-unix/X0"
+    ln -sfn 'socket:[61000]' "$ROOT/proc/4300/fd/3"; ln -sfn 'socket:[61001]' "$ROOT/proc/4300/fd/4"
+    { echo "Num       RefCount Protocol Flags    Type St Inode Path"
+      echo "0000000000000000: 00000002 00000000 00010000 0001 01 61000 /tmp/.X11-unix/X0"
+      echo "0000000000000000: 00000002 00000000 00010000 0001 01 61001 @/tmp/.X11-unix/X0"
+    } > "$ROOT/proc/net/unix"
 }
 
 echo "== манифест и раскладка =="
