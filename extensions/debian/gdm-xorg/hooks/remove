@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# cream hook `remove` of gdm-xorg: the WaylandEnable line of gdm3 back byte for
+# byte as install found it (record $CREAM_STATE_DIR/wayland.before, library
+# lib/gdm-wayland.sh); lines others wrote meanwhile stay, a line someone changed
+# after install is left with a warning. No record — nothing to do, 0. A record
+# that is not ours, or a link instead of a gdm3 file — 1, nothing written, the
+# record stays.
+#
+# A change on a live machine is exit 10 (reboot required): gdm is not
+# restarted. At image build — 0.
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] gdm-xorg: $*"; }
+log_warn(){ >&2 echo "[WARN] gdm-xorg: $*"; }
+log_error(){ >&2 echo "[ERROR] gdm-xorg: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}/wayland.before"
+# shellcheck source=../../../../lib/gdm-wayland.sh
+source "${CREAM_EXT_DIR:?run by cream}/files/gdm-wayland.sh"
+
+res="$(gw_restore "$R" "$STATE")" || exit 1
+if [[ "$res" != changed ]]; then
+    log_info "WaylandEnable возвращать нечего"
+    exit 0
+fi
+if [[ "${CREAM_PHASE:-live}" == live ]]; then
+    log_warn "прежний WaylandEnable возвращён; gdm не перезапускаю — после перезагрузки как было до cream"
+    exit 10
+fi
+log_info "прежний WaylandEnable возвращён"

@@ -19,7 +19,7 @@
 - [x] Task 5: L-матрица — варианты и `LIVE_NIGHTLY_DISTROS`
 - [ ] Task 6: `existing-desktop` 1.0.0
 - [ ] Task 7: `desktop` 2.0.0 — автологин только по ключу, снимок и возврат, хук `upgrade`, отказ на SDDM
-- [ ] Task 8: `gdm-xorg` 1.0.0
+- [x] Task 8: `gdm-xorg` 1.0.0
 - [ ] Task 9: `gnome` 5.1.0 — `WaylandEnable` через `lib/gdm-wayland.sh`, код 10, возврат при снятии
 - [ ] Task 10: `selkies` 7.0.0 — `SELKIES_USER`, `SELKIES_DISPLAY=auto`, проверка машины, uid-правило
 - [ ] Task 11: `x11vnc` 6.0.0 — `X11VNC_USER`, `X11VNC_DISPLAY=auto`, проверка машины, uid-правило
@@ -83,6 +83,7 @@
 | П13 | `xs_find_display`, запасной путь 1: дисплей Xorg пользователя — `:N` в argv, иначе его слушающий сокет `/tmp/.X11-unix/X<N>` (`/proc/<pid>/fd` против `/proc/net/unix`), иначе `/tmp/.X<N>-lock` с его pid (владелец root или uid Xorg, без записи для группы и остальных, не ссылка); найденный дисплей (и `:0`) подтверждает только authority самого пользователя при включённом контроле доступа (`xhost`), спека §10; `ss -xlp` не используется. `xs_seat0_active` печатает `user type class`. В Task 20 (P1/P2) записать сработавший подпуть и заполнен ли `Display` | ревью волны 1: rootless GDM запускает `Xorg vtN -displayfd 3` без `:N`, а в S2 вход идёт на `:1` |
 | П14 | L `desktop` проверяет побайтный возврат после `remove` (`LIVE_EXPECT_RESTORED`); путь «`set 0` → `remove`» — в H | раннер не умеет `cream set` между шагами; заводить его ради одного теста — лишняя абстракция |
 | П15 | `x11-xserver-utils` (`xhost`) — зависимость каждого потребителя `lib/x-session.sh`: `existing-desktop` (Task 6), `selkies` (Task 10), `x11vnc` (Task 11). Пакет ставит `hooks/install` рядом с `x11-utils`/`xauth` (у `existing-desktop` — единственный пакет, который он ставит); README называет его, H проверяет вызов apt, L — `command -v xhost` после install | без `xhost` `_xs_confirm` не проверяет контроль доступа и не принимает дисплей запасных путей (П13): без пакета безопасного запасного пути нет; пакет маленький и есть в Debian и Ubuntu |
+| П16 | Рулинг исполнителя волны 2: L `gdm-xorg` гоняет debian-12 и ubuntu-24.04 **в PR** (`LIVE_DISTROS`), `LIVE_NIGHTLY_DISTROS` не заводится; gdm3 не ставится — файлы пакета (554 байта) ложатся `LIVE_PRESEED=live-root`: `custom.conf` закомментирован, `daemon.conf` с `true`. Код 10 раннер принимает без отметок (cream — rc 0, «нужна перезагрузка»). Ссылка вместо файла gdm3 — `install` 1 (отказ), не 20 | пакетов нет — прогон короткий, ночная добавка ничего не даёт; 20 скрыл бы от владельца, что gdm3 есть, а файл — чужая ссылка |
 
 ## Версии
 | Расширение | Было (после П1) | Станет | Мажор? | Задача |

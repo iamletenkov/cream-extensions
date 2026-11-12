@@ -60,7 +60,7 @@ RUN_COMMAND cream install --with-deps gnome x11vnc
 `tools/catalog-docs.sh` из манифестов; CI проверяет, что она не устарела.
 
 <!-- catalog:table -->
-Расширений — 48, библиотек — 4.
+Расширений — 49, библиотек — 4.
 
 | Расширение | Что делает | ОС | Архитектура | Параметры |
 |---|---|---|---|---|
@@ -77,6 +77,7 @@ RUN_COMMAND cream install --with-deps gnome x11vnc
 | [`docker`](extensions/debian/docker/README.md) | Docker CE из официального apt-репозитория Docker (download.docker.com) | Debian, Ubuntu | amd64, arm64 | — |
 | [`firefox`](extensions/debian/firefox/README.md) | Firefox из APT-репозитория Mozilla — настоящий .deb, а не снап | Debian, Ubuntu | amd64, arm64 | `FIREFOX_LANGPACK` |
 | [`firewall`](extensions/debian/firewall/README.md) | Файрвол машины — своя таблица nftables inet cream или цепочка iptables-legacy CREAM-INPUT | Debian, Ubuntu | amd64, arm64 | `FIREWALL_ENABLE`, `FIREWALL_BACKEND`, `FIREWALL_SSH_PORTS` |
+| [`gdm-xorg`](extensions/debian/gdm-xorg/README.md) | gdm3 на Xorg по согласию — WaylandEnable=false, при снятии прежняя строка побайтно | Debian, Ubuntu | amd64, arm64 | — |
 | [`gnome`](extensions/debian/gnome/README.md) | GNOME на Xorg и менеджер входа gdm3 — X-сервер и сессия для x11vnc, kiosk, selkies | Debian, Ubuntu | amd64, arm64 | — |
 | [`jetson-stats`](extensions/debian/jetson-stats/README.md) | jtop — монитор NVIDIA Jetson (CPU, GPU, память, питание) и служба jtop.service | Debian, Ubuntu | arm64 | `JETSON_STATS_VERSION` |
 | [`kiosk`](extensions/debian/kiosk/README.md) | Chromium в режиме киоска поверх графического сеанса — от пользователя сеанса, на весь экран | Debian | amd64, arm64 | `KIOSK_USER`, `KIOSK_URL`, `KIOSK_DISPLAY` и ещё 2 |

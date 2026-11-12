@@ -1,0 +1,34 @@
+# gdm-xorg — gdm3 on Xorg by consent: WaylandEnable=false in the config the
+# gdm3 package reads (daemon.conf on Debian, custom.conf on Ubuntu), the line as
+# it was put back by remove. For a machine whose GNOME was not installed by cream
+# (existing-desktop) and whose gdm3 starts sessions on Wayland: selkies and
+# x11vnc see only an X server.
+#
+# install — no gdm3 config: 20 ("not GDM"). Already false: 0, nothing written,
+#           the record says "was false". Otherwise the line as it was (no key,
+#           commented, true) goes to $CREAM_STATE_DIR/wayland.before and false
+#           is written; live: exit 10, gdm is NOT restarted (the owner's session
+#           would end). A link instead of the file is refused, nothing written.
+# remove  — the line back byte for byte; a change on a live machine: exit 10.
+# The edit is lib/gdm-wayland.sh (files/gdm-wayland.sh), shared with gnome — one
+# copy. The conflict with gnome is declared by both sides: the line has one owner.
+schema: cream/v1
+name: gdm-xorg
+version: 1.0.0
+summary: gdm3 на Xorg по согласию — WaylandEnable=false, при снятии прежняя строка побайтно
+cream: ">=1.0.0"
+platform:
+  family: deb
+  arch: [amd64, arm64]
+  os: [{id: debian}, {id: ubuntu}]
+targets:
+  build: exec
+  live: confirm
+  live_note: >-
+    выключает Wayland у GDM (WaylandEnable=false в /etc/gdm3/custom.conf или daemon.conf): после
+    перезагрузки все сеансы GNOME и экран входа — Xorg; прежнее значение возвращает cream remove
+conflicts:
+  extensions: [gnome]
+hooks:
+  install: {timeout: 1m}
+  remove: {timeout: 1m}
