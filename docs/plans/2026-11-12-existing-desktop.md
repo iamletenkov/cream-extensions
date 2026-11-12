@@ -82,6 +82,7 @@
 | П12 | Снимок `desktop` 2.0.0 — сырые строки и позиция (с закомментированными), а не «значение или не было»; фикстуры из настоящих пакетов gdm3 | `set_ini_key` удаляет закомментированные варианты — без сырых строк П6 «побайтно» невыполним |
 | П13 | `xs_find_display`, запасной путь 1: дисплей Xorg пользователя — `:N` в argv, иначе его слушающий сокет `/tmp/.X11-unix/X<N>` (`/proc/<pid>/fd` против `/proc/net/unix`), иначе `/tmp/.X<N>-lock` с его pid (владелец root или uid Xorg, без записи для группы и остальных, не ссылка); найденный дисплей (и `:0`) подтверждает только authority самого пользователя при включённом контроле доступа (`xhost`), спека §10; `ss -xlp` не используется. `xs_seat0_active` печатает `user type class`. В Task 20 (P1/P2) записать сработавший подпуть и заполнен ли `Display` | ревью волны 1: rootless GDM запускает `Xorg vtN -displayfd 3` без `:N`, а в S2 вход идёт на `:1` |
 | П14 | L `desktop` проверяет побайтный возврат после `remove` (`LIVE_EXPECT_RESTORED`); путь «`set 0` → `remove`» — в H | раннер не умеет `cream set` между шагами; заводить его ради одного теста — лишняя абстракция |
+| П15 | `x11-xserver-utils` (`xhost`) — зависимость каждого потребителя `lib/x-session.sh`: `existing-desktop` (Task 6), `selkies` (Task 10), `x11vnc` (Task 11). Пакет ставит `hooks/install` рядом с `x11-utils`/`xauth` (у `existing-desktop` — единственный пакет, который он ставит); README называет его, H проверяет вызов apt, L — `command -v xhost` после install | без `xhost` `_xs_confirm` не проверяет контроль доступа и не принимает дисплей запасных путей (П13): без пакета безопасного запасного пути нет; пакет маленький и есть в Debian и Ubuntu |
 
 ## Версии
 | Расширение | Было (после П1) | Станет | Мажор? | Задача |
@@ -230,7 +231,7 @@ H-тесты задач 6–15 можно писать до слияния за�
   корня или `/etc/X11/default-display-manager` с существующим бинарём, `*.desktop` в `/usr/share/xsessions`; только
   Wayland-сессии — отдельный текст), коды 0/1, в live — диагноз как у `status`; `check` 0/1; действие `status`
   (только чтение: DM и `is-active`, `WaylandEnable`, автологин gdm3/LightDM/SDDM, сеанс seat0 через
-  `xs_seat0_active`; без logind — строка «нет logind»); `remove` пустой. Подсказка в тексте отказа — «сначала
+  `xs_seat0_active`; без logind — строка «нет logind»); `install` ставит `x11-xserver-utils` (П15); `remove` пустой. Подсказка в тексте отказа — «сначала
   `cream remove existing-desktop`» (S5). `lib/x-session.consumers` с `debian/existing-desktop`.
   Создавать через `tools/new-extension.sh`.
 - **Файлы:** `extensions/debian/existing-desktop/{extension.yaml,hooks/install,hooks/check,hooks/remove,actions/status,README.md}`,
@@ -306,7 +307,7 @@ H-тесты задач 6–15 можно писать до слияния за�
 ### Task 10: `selkies` 7.0.0
 - **Модель:** Opus (учётка для захвата экрана, внешний ввод `SELKIES_USER`).
 - **Зависит от:** 1, 4, 6 (и П1). **Версия:** 6.2.2 → 7.0.0, мажор.
-- **Что:** §4.4 спеки, Р2–Р4, П8:
+- **Что:** §4.4 спеки, Р2–Р4, П8, П15 (`install` ставит `x11-xserver-utils` вместе с `x11-utils` и `xauth`):
   - ключи `SELKIES_USER` (`re:^[a-z_][a-z0-9_-]{0,31}$`, `empty: true`, `""`) и `SELKIES_DISPLAY`
     (`re:^(auto|:[0-9]+(\.[0-9]+)?)$`, `empty: true`, `"auto"`); умолчание манифеста (оно попадает в действующее
     окружение 6.2.2) и запасное значение обёртки `${SELKIES_DISPLAY:-auto}` совпадают;
@@ -334,7 +335,7 @@ H-тесты задач 6–15 можно писать до слияния за�
 ### Task 11: `x11vnc` 6.0.0
 - **Модель:** Opus.
 - **Зависит от:** 10 (образец и `lib/x-session.consumers`). **Версия:** 5.1.2 → 6.0.0, мажор.
-- **Что:** то же, что Task 10, для `X11VNC_USER`/`X11VNC_DISPLAY` (`"auto"`, сохранённое `:0` валидно):
+- **Что:** то же, что Task 10 (включая `x11-xserver-utils` по П15), для `X11VNC_USER`/`X11VNC_DISPLAY` (`"auto"`, сохранённое `:0` валидно):
   запасное значение `${X11VNC_DISPLAY:-auto}` в `run-x11vnc.sh` (cream кладёт в config только явные ключи — Р4);
   uid-правило; проверка машины в `install`/`configure`; `tests/live.env` — как у Task 10; дописать `debian/x11vnc` в
   `lib/x-session.consumers`.
