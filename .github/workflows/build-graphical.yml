@@ -81,6 +81,15 @@ jobs:
           sudo apt-get install -y -q libguestfs-tools qemu-utils
           sudo chmod 0644 /boot/vmlinuz-*
 
+      # DNS appliance идёт через resolv.conf хоста, а на раннере там заглушка
+      # systemd-resolved 127.0.0.53 — из гостя недостижима (apt: Temporary failure
+      # resolving). Вышестоящие серверы resolved — в resolv.conf хоста.
+      - name: DNS for the appliance
+        run: |
+          set -euo pipefail
+          sudo ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+          grep '^nameserver' /etc/resolv.conf
+
       - name: tools/build-graphical.sh
         env:
           SCENARIO: ${{ matrix.scenario }}
