@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.25.1](https://github.com/iamletenkov/cream-extensions/compare/v5.25.0...v5.25.1) (2026-11-12)
+
+
+### Исправлено
+
+* **stvor-agent-openwrt:** ключ /dist принимается на OpenWrt — длина без повтора {16,512} ([#142](https://github.com/iamletenkov/cream-extensions/issues/142)) ([44daa50](https://github.com/iamletenkov/cream-extensions/commit/44daa503b5ec42aafa5574e3b6d72953fba95db4))
+
 ## [5.25.0](https://github.com/iamletenkov/cream-extensions/compare/v5.24.0...v5.25.0) (2026-11-12)
 
 
