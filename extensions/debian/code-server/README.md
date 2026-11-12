@@ -155,6 +155,9 @@ RUN_COMMAND cream install --with-deps code-server CODE_SERVER_PORT=9002
 
 ## Известные ограничения
 
+- Запись `kept` защищает пакет владельца только от снятия: `install` всё равно ставит
+  закреплённую версию code-server поверх его версии, и после `remove` остаётся версия
+  cream, а не прежняя версия владельца.
 - Формат cream/v1 на железе (P) не проверен: вход в code-server через Teleport с
   паролем из `secrets`, `cert: true` на arm64.
 - `armhf` не собирается и не объявлен (`.deb` релиза — только `amd64`, `arm64`).
