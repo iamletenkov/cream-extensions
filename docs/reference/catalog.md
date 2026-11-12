@@ -22,7 +22,7 @@
 | [`cloud-growroot`](../../extensions/debian/cloud-growroot/README.md) | ≥ 1.0.0 | `cloud-growroot` | — | — | — | — | нет, только образ |
 | [`cloud-user`](../../extensions/debian/cloud-user/README.md) | ≥ 1.0.0 | — | — | — | — | — | да |
 | [`cloud-user-desktop`](../../extensions/debian/cloud-user-desktop/README.md) | ≥ 1.0.0 | `cloud-user-desktop` | — | [`desktop`](../../extensions/debian/desktop/README.md), [`cloud-user`](../../extensions/debian/cloud-user/README.md) | — | — | да |
-| [`code-server`](../../extensions/debian/code-server/README.md) | ≥ 1.2.0 | `web-ide` | — | [`cloud-user`](../../extensions/debian/cloud-user/README.md) | — | стадия `cloud-user`, на каждой загрузке (`every_boot`) | да |
+| [`code-server`](../../extensions/debian/code-server/README.md) | ≥ 1.2.0 | `web-ide` | — | [`cloud-user`](../../extensions/debian/cloud-user/README.md), [`apt-guard`](../../extensions/debian/apt-guard/README.md) | — | стадия `cloud-user`, на каждой загрузке (`every_boot`) | да |
 | [`cuda-toolkit`](../../extensions/debian/cuda-toolkit/README.md) | ≥ 1.0.0 | `cuda` | — | [`apt-guard`](../../extensions/debian/apt-guard/README.md) | — | — | да |
 | [`desktop`](../../extensions/debian/desktop/README.md) | ≥ 1.2.0 | — | — | [`cloud-user`](../../extensions/debian/cloud-user/README.md) | — | стадия `system`, на каждой загрузке (`every_boot`) | да |
 | [`docker`](../../extensions/debian/docker/README.md) | ≥ 1.2.0 | `container-runtime` | — | [`cloud-user`](../../extensions/debian/cloud-user/README.md), [`apt-guard`](../../extensions/debian/apt-guard/README.md) | — | стадия `system`, на каждой загрузке (`every_boot`) | с `--accept-risk` |

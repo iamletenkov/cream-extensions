@@ -99,13 +99,13 @@ teleport_render() {
 echo "== манифест и раскладка =="
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
 eq "name" code-server "$(mf 'm["name"]')"
-eq "версия 5.2.3 (без пароля — только петля)" 5.2.3 "$(mf 'm["version"]')"
+eq "версия 5.3.0 (remove — только свой пакет)" 5.3.0 "$(mf 'm["version"]')"
 eq "cream >=1.2.0 (every_boot, спека cream §10.9)" ">=1.2.0" "$(mf 'm["cream"]')"
 eq "configure на каждой загрузке (аудит 2026-10-21)" True "$(mf 'm["hooks"]["configure"].get("every_boot")')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
 eq "стадия cloud-user" cloud-user "$(mf 'm["hooks"]["configure"]["stage"]')"
 eq "хуки" "apply configure install remove" "$(mf '" ".join(sorted(m["hooks"]))')"
-eq "depends только cloud-user (fetch не нужен)" "cloud-user >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
+eq "depends cloud-user и apt-guard (fetch не нужен)" "cloud-user >=1.0.0 <2 apt-guard >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
 eq "provides" "web-ide" "$(mf '" ".join(m["provides"])')"
 eq "arch" "amd64 arm64" "$(mf '" ".join(m["platform"]["arch"])')"
 eq "секрет — только пароль, secret: file" "CODE_SERVER_PASSWORD" \
@@ -547,6 +547,84 @@ ht_fake dpkg-query 'exit 1'
 : > "$FAKE/calls"
 ht_hook remove; eq "повтор remove — 0" 0 "$?"
 check_not "повтор: удалять нечего" ht_called '^apt-get'
+
+echo "== 5.3.0: remove снимает только свой пакет, через apt-guard =="
+STATE="$ROOT/var/lib/cream/ext/code-server"
+# with_pkg: a fake package database — dpkg-query sees $FAKE/pkg, apt-get
+# install of a .deb creates it, purge removes it; -s answers like apt.
+with_pkg() {
+    ht_fake dpkg 'echo amd64'
+    ht_fake dpkg-query '[[ -e "$FAKE/pkg" ]] || exit 1; echo "installed $(cat "$FAKE/pkg")"'
+    ht_fake apt-get '
+if [[ "$1" == -s ]]; then echo "Purg code-server [1]"; cat "$FAKE/sim-extra" 2>/dev/null; exit 0; fi
+for a in "$@"; do
+    [[ "$a" == *.deb ]] && echo '"$VER"' > "$FAKE/pkg"
+done
+[[ " $* " == *" purge code-server"* ]] && rm -f "$FAKE/pkg"
+exit 0'
+    ht_fake curl 'while (( $# )); do [[ "$1" == -o ]] && { echo good-deb > "$2"; }; shift; done; exit 0'
+    sed -i -E "s/\[amd64\]=[0-9a-f]{64}/[amd64]=$good/" "$HT_EXT/files/code-server.sh"
+    STATE="$ROOT/var/lib/cream/ext/code-server"
+}
+# Not there before: install records "ours", remove purges it through apt-guard.
+cs_root; with_pkg
+ht_hook install; eq "свой пакет: install — 0" 0 "$?"
+eq "запись: пакет свой" ours "$(cat "$STATE/package" 2>/dev/null)"
+ht_hook install; eq "повтор install — 0" 0 "$?"
+eq "повтор: запись та же (пакет уже стоит, но он свой)" ours "$(cat "$STATE/package" 2>/dev/null)"
+: > "$FAKE/calls"
+ht_hook remove; eq "свой пакет: remove — 0" 0 "$?"
+check "свой пакет: apt-guard спросил симуляцию" ht_called '^apt-get -s purge code-server$'
+check "свой пакет: снят" ht_called '^apt-get -q -y purge code-server$'
+check_not "свой пакет: пакета нет" test -e "$FAKE/pkg"
+check_not "свой пакет: запись снята" test -e "$STATE/package"
+# There before cream (any version): it survives remove.
+for pre in "$VER" 4.99.0; do
+    cs_root; with_pkg
+    echo "$pre" > "$FAKE/pkg"
+    ht_hook install; eq "предустановленный $pre: install — 0" 0 "$?"
+    eq "предустановленный $pre: запись — чужой" kept "$(cat "$STATE/package" 2>/dev/null)"
+    : > "$FAKE/calls"
+    ht_hook remove; eq "предустановленный $pre: remove — 0" 0 "$?"
+    check_not "предустановленный $pre: apt-get не зовётся" ht_called '^apt-get'
+    check "предустановленный $pre: пакет на месте" test -e "$FAKE/pkg"
+    check "предустановленный $pre: сказано, что оставлен" grep -q 'был до cream' "$ROOT/out"
+    check_not "предустановленный $pre: запись снята" test -e "$STATE/package"
+done
+# apt would take something else along: refuse, keep the package and the record.
+cs_root; with_pkg
+ht_hook install; eq "свой, с зависимым: install — 0" 0 "$?"
+echo 'Purg code-server-extras [1]' > "$FAKE/sim-extra"
+: > "$FAKE/calls"
+ht_hook remove; eq "apt снял бы чужое — remove 1" 1 "$?"
+check_not "apt снял бы чужое: purge не зовётся" ht_called '^apt-get -q -y purge'
+check "apt снял бы чужое: пакет на месте" test -e "$FAKE/pkg"
+eq "apt снял бы чужое: запись осталась для повтора" ours "$(cat "$STATE/package" 2>/dev/null)"
+check "apt снял бы чужое: назван" grep -q 'code-server-extras' "$ROOT/out"
+# Installed by 5.2.x (no record): remove as before — the package goes, through apt-guard.
+cs_root; with_pkg
+echo "$VER" > "$FAKE/pkg"
+: > "$FAKE/calls"
+ht_hook remove; eq "без записи (5.2.x): remove — 0" 0 "$?"
+check "без записи: пакет снят, как в 5.2.x" ht_called '^apt-get -q -y purge code-server$'
+check "без записи: через симуляцию apt-guard" ht_called '^apt-get -s purge code-server$'
+# Upgrade from 5.2.x: the package is 5.2.x's own — no record, remove as before.
+cs_root; with_pkg
+echo "$VER" > "$FAKE/pkg"
+ht_hook install CREAM_PREV_VERSION=5.2.3; eq "обновление с 5.2.3: install — 0" 0 "$?"
+check_not "обновление с 5.2.3: записи нет" test -e "$STATE/package"
+# Upgrade with a record: the record stays.
+cs_root; with_pkg
+echo "$VER" > "$FAKE/pkg"; mkdir -p "$STATE"; echo kept > "$STATE/package"
+ht_hook install CREAM_PREV_VERSION=5.3.0; eq "обновление с записью: install — 0" 0 "$?"
+eq "обновление с записью: запись та же" kept "$(cat "$STATE/package")"
+# A record that is neither: refused, nothing removed.
+cs_root; with_pkg
+echo "$VER" > "$FAKE/pkg"; mkdir -p "$STATE"; echo 'junk' > "$STATE/package"
+: > "$FAKE/calls"
+ht_hook remove; eq "непонятная запись — remove 1" 1 "$?"
+check_not "непонятная запись: apt-get не зовётся" ht_called '^apt-get'
+check "непонятная запись: пакет на месте" test -e "$FAKE/pkg"
 
 echo "== обёртка start: fail-closed и окружение =="
 # run_start <env pairs…>: the wrapper as systemd starts it for alice (User=%i,

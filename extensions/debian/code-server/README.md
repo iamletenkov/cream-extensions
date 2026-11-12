@@ -13,7 +13,7 @@ ssh-туннель.
 | cream | ≥ 1.2.0 |
 | Даёт | `web-ide` |
 | Требует | — |
-| Зависит от | [`cloud-user`](../cloud-user/README.md) |
+| Зависит от | [`cloud-user`](../cloud-user/README.md), [`apt-guard`](../apt-guard/README.md) |
 | Конфликтует с | — |
 | Хуки | `install`, `configure`, `apply`, `remove` |
 | Настройка на загрузке | стадия `cloud-user`, на каждой загрузке (`every_boot`) |
@@ -33,7 +33,11 @@ ssh-туннель.
   ничего не ставится); `openssl` — им code-server выпускает свой сертификат.
   Службу не запускает, настроек и домашних каталогов не трогает. Повтор при
   установленной версии сеть не трогает. Найдены остатки 4.x — отказ до любых
-  изменений (см. «Остатки 4.x»).
+  изменений (см. «Остатки 4.x»). До установки записывает, стоял ли пакет
+  `code-server` до cream (любой версии): `/var/lib/cream/ext/code-server/package` —
+  `ours` или `kept`. Запись делается один раз; повтор и обновление её не трогают,
+  обновление с 5.2.x записи не заводит. Стоявший пакет другой версии `install`
+  поднимает до закреплённой, но своим не считает.
 - **`files`** — `code-server@.service` → `/etc/systemd/system/code-server@.service`
   (перекрывает юнит пакета).
 - **`configure`** — на каждой загрузке (стадия `cloud-user`: после `cloud-final`,
@@ -55,8 +59,12 @@ ssh-туннель.
      включается** (`enable`): его каждый раз запускает configure, проверив пароль.
 - **`apply`** — после `cream set code-server …`: то же без ожидания пользователя,
   `restart --no-block` (или останов, если аутентификации больше нет).
-- **`remove`** — останавливает `code-server@*` (и снимает их из `--failed`), снимает объявление, удаляет пакет
-  (`apt-get purge`). `~/.config/code-server` и `~/.local/share/code-server`
+- **`remove`** — останавливает `code-server@*` (и снимает их из `--failed`), снимает объявление и
+  удаляет пакет (`purge`) **только свой**: запись `ours` — снимается, `kept` — остаётся;
+  записи нет (поставил 5.2.x) — снимается, как раньше. Снятие идёт через библиотеку
+  [`apt-guard`](../apt-guard/README.md): apt сначала спрашивается симуляцией, и если он
+  снял бы что-то кроме `code-server` — отказ (код 1) до любых изменений, запись остаётся
+  для повтора. `~/.config/code-server` и `~/.local/share/code-server`
   пользователя (настройки редактора, расширения VS Code, сертификат) остаются.
   Юнит удаляет cream (`files`).
 - **`files/code-server.sh start`** — обёртка юнита (от имени пользователя,
@@ -236,12 +244,12 @@ ss -ltnp | grep 9001
   окружении `runuser`/`timeout`, объявлении; ссылки в домашнем каталоге и в
   `apps.d`; адреса; пользователь — явный, cloud-init, root, без дома, кривое имя;
   чужие экземпляры гасятся; только `--no-block`), объявление через настоящий
-  `teleport/files/teleport.sh render`, `apply`, `remove`, обёртка `start` (отказ
+  `teleport/files/teleport.sh render`, `apply`, `remove` (только свой пакет, через `apt-guard`; без записи — как 5.2.x), обёртка `start` (отказ
   78, чистое окружение code-server), `write-config` (не по форме, чужой каталог), остатки 4.x (каждый вид — отказ
   `install` до сети и apt и отказ `configure` без старта; свой шаблон и свой
   `config.yaml` с `auth: none` — не остатки; чужой `config.yaml` с `auth: none` и
   FIFO в чужом доме не мешают `install`/`configure` и не гасят службу — сторож 20 с).
-- **L** — `make test-live EXT=code-server` (`tests/live.env`: dep `cloud-user`,
+- **L** — `make test-live EXT=code-server` (`tests/live.env`: deps `apt-guard`, `cloud-user`,
   пароль — случайный секрет): установка `.deb`, повтор, `--reinstall` без
   изменений, аудит секрета (`ps`, журнал, реестр, `config`), загрузка, `remove`.
   В контейнере нет пользователя cloud-init — configure предупреждает и выходит 0.

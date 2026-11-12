@@ -4,7 +4,7 @@
 #   code-server.sh install     the .deb of the pinned version by sha256
 #   code-server.sh configure   CREAM_REASON=boot|install|upgrade|apply
 #   code-server.sh apply       after `cream set code-server …` (own apply hook)
-#   code-server.sh remove
+#   code-server.sh remove      the package only when install put it on (apt-guard)
 #   code-server.sh write-config <home> <bind> <port> <password|none>
 #                              AS THE USER (runuser from configure): the
 #                              password on stdin, ~/.config/code-server/config.yaml
@@ -61,6 +61,10 @@ TP_DIR="$R/etc/cream/teleport"
 APPS_DIR="$TP_DIR/apps.d"
 DECL="$APPS_DIR/code-server.conf"
 CS_BIN="$R/usr/bin/code-server"
+# Whether the package was there before cream (record_package), and the library
+# that removes only our own packages (depends: apt-guard).
+PKG_RECORD="${CREAM_STATE_DIR:-$R/var/lib/cream/ext/code-server}/package"
+APT_GUARD="$R/opt/cream/ext/apt-guard/apt-guard.sh"
 OPENSSL_BIN="$R/usr/bin/openssl"
 
 # The .deb of the GitHub release; sha256 from the release's asset digests.
@@ -526,6 +530,24 @@ installed_version(){
     return 0
 }
 
+# record_package: before anything is installed, whether the package code-server
+# was there before cream — "kept" (any version: remove leaves it) or "ours" — in
+# $PKG_RECORD. Written once: a repeat finds our own package and would call it
+# foreign. An upgrade from 5.2.x (CREAM_PREV_VERSION, no record) writes none —
+# the package is 5.2.x's own, and remove without a record does what 5.2.x did.
+record_package(){
+    local owner=ours ver
+    [[ ! -e "$PKG_RECORD" && -z "${CREAM_PREV_VERSION:-}" ]] || return 0
+    ver="$(installed_version)"
+    if [[ -n "$ver" ]]; then
+        owner=kept
+        log "пакет code-server был до cream ($ver) — remove его не снимет"
+    fi
+    install -d -m 0755 "${PKG_RECORD%/*}"
+    printf '%s\n' "$owner" > "$PKG_RECORD.new"
+    mv -f -- "$PKG_RECORD.new" "$PKG_RECORD"
+}
+
 cmd_install(){
     local arch work have=0 url rc
     local -a need=()
@@ -533,6 +555,7 @@ cmd_install(){
     arch="$(dpkg --print-architecture)"
     [[ -n "${DEB_SHA256[$arch]:-}" ]] || die "архитектура $arch — .deb code-server закреплён только для amd64 и arm64"
     export DEBIAN_FRONTEND=noninteractive
+    record_package
     [[ "$(installed_version)" == "$CS_VERSION" ]] && have=1
     # openssl: code-server issues its self-signed certificate with it (cert: true).
     [[ -x "$OPENSSL_BIN" ]] || need+=(openssl)
@@ -569,18 +592,34 @@ cmd_install(){
 }
 
 cmd_remove(){
-    local u
+    local u owner
     while IFS= read -r u; do
         [[ -n "$u" ]] || continue
         systemctl stop "$u" || warn "не остановить $u"
         systemctl reset-failed "$u" 2>/dev/null || true
     done < <(instances)
     decl_remove
-    if [[ -n "$(installed_version)" ]]; then
+    # The package: only ours (the record of install 5.3.0+); no record —
+    # installed by 5.2.x — it goes as it did then. Either way through apt-guard:
+    # apt is asked in simulation first, and anything besides code-server in
+    # the answer is a refusal before any change (the record stays for a retry).
+    owner=ours
+    if [[ -e "$PKG_RECORD" ]]; then
+        owner="$(head -n 1 -- "$PKG_RECORD" 2>/dev/null || true)"
+        [[ "$owner" == ours || "$owner" == kept ]] \
+            || die "запись ${PKG_RECORD#"$R"} — не ours и не kept; пакет не трогаю"
+    fi
+    if [[ "$owner" == kept ]]; then
+        log "пакет code-server был до cream — не снимаю"
+    elif [[ -n "$(installed_version)" ]]; then
+        [[ -f "$APT_GUARD" ]] || die "нет библиотеки apt-guard ($APT_GUARD) — cream ставит её по depends"
+        # shellcheck source=../../apt-guard/apt-guard.sh
+        source "$APT_GUARD"
         export DEBIAN_FRONTEND=noninteractive
-        apt-get purge -y -q code-server || die "пакет code-server не удалился"
+        apt_guard_remove purge code-server || exit 1
         log "пакет code-server удалён; ~/.config/code-server и ~/.local/share/code-server пользователя остаются"
     fi
+    rm -f -- "$PKG_RECORD"
 }
 
 case "${1:-}" in
