@@ -117,7 +117,8 @@ for o in "${ovl[@]}"; do
     [[ "$o" =~ ^tegra234-camera[A-Za-z0-9._+-]*\.dtbo$ ]] && rm -f -- "$R/boot/$o"
 done
 rm -f -- "$R/etc/modprobe.d/sensing-gmsl2-camera.conf" \
-    "$R/etc/systemd/system/multi-user.target.wants/sensing-gmsl2-clock.service"
+    "$R/etc/systemd/system/multi-user.target.wants/sensing-gmsl2-clock.service" \
+    "$R/etc/systemd/system/multi-user.target.wants/sensing-gmsl2-adapter.service"
 [[ -e "$STATE/opt" ]] && rm -r -f -- "$R/opt/sensing"
 
 # --- libnvisppg.so --------------------------------------------------------------------

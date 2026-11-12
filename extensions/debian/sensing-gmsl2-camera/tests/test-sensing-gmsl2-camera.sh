@@ -157,19 +157,29 @@ eq "live: confirm" confirm "$(mf 'm["targets"]["live"]')"
 check "live_note называет ядро и перезагрузку" bash -c 'grep -q "ядр" <<<"$1" && grep -q "перезагруз" <<<"$1"' _ "$(mf 'm["targets"]["live_note"]')"
 eq "provides" gmsl2-camera "$(mf '" ".join(m["provides"])')"
 eq "хуки" "apply install remove" "$(mf '" ".join(sorted(m["hooks"]))')"
-eq "ключи" "SENSING_BOOST_CLOCK SENSING_CAMERA_CONTROLS SENSING_GMSLMODE" "$(mf '" ".join(sorted(m["config"]["keys"]))')"
+eq "ключи" "SENSING_ADAPTER_WAIT SENSING_BOOST_CLOCK SENSING_CAMERA_CONTROLS SENSING_GMSLMODE" "$(mf '" ".join(sorted(m["config"]["keys"]))')"
 eq "GMSLMODE — scope install" install "$(mf 'm["config"]["keys"]["SENSING_GMSLMODE"]["scope"]')"
-eq "действия" "boost-clock camera-profile" "$(mf '" ".join(sorted(m["actions"]))')"
-eq "действия из юнитов — lock: none" "none none" "$(mf '" ".join(a["lock"] for a in m["actions"].values())')"
+eq "действия" "adapter-check boost-clock camera-profile" "$(mf '" ".join(sorted(m["actions"]))')"
+eq "действия из юнитов — lock: none" "none none none" "$(mf '" ".join(a["lock"] for a in m["actions"].values())')"
 eq "files → цели" \
-    "/etc/systemd/system/sensing-gmsl2-camera@.service /etc/systemd/system/sensing-gmsl2-clock.service /etc/udev/rules.d/99-sensing-gmsl2-camera.rules" \
+    "/etc/systemd/system/sensing-gmsl2-adapter.service /etc/systemd/system/sensing-gmsl2-camera@.service /etc/systemd/system/sensing-gmsl2-clock.service /etc/udev/rules.d/99-sensing-gmsl2-camera.rules" \
     "$(mf '" ".join(sorted(f["dst"] for f in m["files"]))')"
 for f in $(mf '" ".join(f["src"] for f in m["files"])'); do check "files: $f есть" test -f "$X/$f"; done
 check "юнит камеры зовёт действие по абсолютному пути" \
     grep -qx 'ExecStart=/opt/cream/ext/sensing-gmsl2-camera/actions/camera-profile %i' "$X/files/sensing-gmsl2-camera@.service"
 check "юнит частот зовёт действие по абсолютному пути" \
     grep -qx 'ExecStart=/opt/cream/ext/sensing-gmsl2-camera/actions/boost-clock' "$X/files/sensing-gmsl2-clock.service"
-check "юниты читают настройки cream" bash -c "grep -qx 'EnvironmentFile=/etc/cream/sensing-gmsl2-camera/config' '$X/files/sensing-gmsl2-camera@.service' && grep -qx 'EnvironmentFile=/etc/cream/sensing-gmsl2-camera/config' '$X/files/sensing-gmsl2-clock.service'"
+check "юнит адаптера зовёт действие по абсолютному пути" \
+    grep -qx 'ExecStart=/opt/cream/ext/sensing-gmsl2-camera/actions/adapter-check' "$X/files/sensing-gmsl2-adapter.service"
+for u in sensing-gmsl2-camera@ sensing-gmsl2-clock sensing-gmsl2-adapter; do
+    check "$u: читает настройки cream" grep -qx 'EnvironmentFile=/etc/cream/sensing-gmsl2-camera/config' "$X/files/$u.service"
+done
+# Type=exec: the boot target does not wait for the wait of the check; exit 1
+# still leaves the unit failed, exit 0 — active (RemainAfterExit).
+check "юнит адаптера: Type=exec" grep -qx 'Type=exec' "$X/files/sensing-gmsl2-adapter.service"
+check "юнит адаптера: RemainAfterExit=yes" grep -qx 'RemainAfterExit=yes' "$X/files/sensing-gmsl2-adapter.service"
+check "юнит адаптера: на загрузке" grep -qx 'WantedBy=multi-user.target' "$X/files/sensing-gmsl2-adapter.service"
+check_not "юнит адаптера: без Restart" grep -q '^Restart=' "$X/files/sensing-gmsl2-adapter.service"
 check "udev хочет юнит камеры" grep -qF 'ENV{SYSTEMD_WANTS}+="sensing-gmsl2-camera@%k.service"' "$X/files/99-sensing-gmsl2-camera.rules"
 check "udev: только узлы videoN" grep -qF 'KERNEL=="video[0-9]*"' "$X/files/99-sensing-gmsl2-camera.rules"
 for f in install.sh knobs knobs.apply bisquite-sensing-camera-ctl; do check_not "layout 2: $f не остался" test -e "$X/$f"; done  # check-names: allow — the old CLI name
@@ -212,6 +222,87 @@ ht_action boost-clock SENSING_BOOST_CLOCK=0; eq "SENSING_BOOST_CLOCK=0 — 0" 0 
 eq "частоты не тронуты" 1 "$(cat "$CLK/vi/rate")"
 rm -r "$CLK/emc"
 ht_action boost-clock; eq "нет emc в debugfs — 1" 1 "$?"
+
+echo "== действие adapter-check: адаптер SG8A на I2C (поддельный sysfs) =="
+# The camera mux of the overlay as on the board 2026-11-12: tca9543@70 on
+# i2c@3180000 (bus 2), channels i2c@0 and i2c@1 with the deserializers; plus a
+# disabled mux of the base tree with a max96712 under it (must be ignored).
+# sg8a_root [client] — the client name (bus-addr) of the mux, 2-0070 by default.
+sg8a_root() {
+    local client="${1:-2-0070}" dt
+    ht_root "$X"
+    dt="$ROOT/sys/firmware/devicetree/base/bus@0"
+    MUX="$dt/i2c@3180000/tca9543@70"
+    mkdir -p "$MUX/i2c@0/max96712_0@29" "$MUX/i2c@0/cam_0@20" "$MUX/i2c@1/max96712_1@2d" "$MUX/i2c@1/cam_4@20"
+    printf 'nxp,pca9543\0' > "$MUX/compatible"
+    printf 'okay\0' > "$MUX/status"
+    printf 'okay\0' > "$MUX/i2c@0/status"
+    mkdir -p "$dt/i2c@c240000/tca9546@70/i2c@0/max96712_a@29"
+    printf 'nxp,pca9546\0' > "$dt/i2c@c240000/tca9546@70/compatible"
+    printf 'disabled\0' > "$dt/i2c@c240000/tca9546@70/status"
+    mkdir -p "$dt/i2c@31e0000/tca9548@71/i2c@0/max96712_b@29"
+    printf 'nxp,pca9548\0' > "$dt/i2c@31e0000/tca9548@71/compatible"
+    printf 'disabled\0' > "$dt/i2c@31e0000/status"
+    CLIENT="$ROOT/sys/devices/platform/bus@0/3180000.i2c/i2c-${client%%-*}/$client"
+    mkdir -p "$CLIENT" "$ROOT/sys/bus/i2c/devices" "$ROOT/sys/bus/i2c/drivers/pca954x"
+    ln -s "$CLIENT" "$ROOT/sys/bus/i2c/devices/$client"
+    ln -s "$MUX" "$CLIENT/of_node"
+    : > "$ROOT/sys/bus/i2c/drivers/pca954x/bind"
+    : > "$ROOT/sys/bus/i2c/drivers/pca954x/unbind"
+}
+sg8a_bind() { ln -s "$ROOT/sys/bus/i2c/drivers/pca954x" "$CLIENT/driver"; }
+sg8a_channels() { local n; for n in "$@"; do mkdir -p "$CLIENT/i2c-$n"; done; }
+SG8A_MSG='SG8A не отвечает: i2c-2/0x70 без драйвера, камер нет — проверьте питание и шлейф'
+
+sg8a_root; sg8a_bind; sg8a_channels 9 10
+ht_action adapter-check SENSING_ADAPTER_WAIT=0; eq "драйвер и оба канала — 0" 0 "$?"
+check "…назван адаптер и каналы" bash -c 'grep -q "i2c-2/0x70" "$1" && grep -q "i2c-9" "$1" && grep -q "i2c-10" "$1"' _ "$ROOT/out"
+check_not "…без ошибки" grep -q 'не отвечает' "$ROOT/out"
+
+sg8a_root
+ht_action adapter-check SENSING_ADAPTER_WAIT=0; eq "клиент 2-0070 без драйвера — 1" 1 "$?"
+check "…явная ошибка в журнал" grep -qxF "$SG8A_MSG" "$ROOT/out"
+eq "…в I2C не пишет: bind пуст" "" "$(cat "$ROOT/sys/bus/i2c/drivers/pca954x/bind")"
+eq "…и unbind пуст" "" "$(cat "$ROOT/sys/bus/i2c/drivers/pca954x/unbind")"
+check_not "…повторного bind нет (драйвер не появился)" test -e "$CLIENT/driver"
+
+sg8a_root
+ht_action adapter-check SENSING_ADAPTER_WAIT=0 JOURNAL_STREAM=8:1234; eq "под systemd — тоже 1" 1 "$?"
+check "…строка с уровнем err для журнала (<3>)" grep -qxF "<3>$SG8A_MSG" "$ROOT/out"
+
+sg8a_root 7-0071
+ht_action adapter-check SENSING_ADAPTER_WAIT=0; eq "шина и адрес из sysfs, не зашиты — 1" 1 "$?"
+check "…i2c-7/0x71" grep -qF 'SG8A не отвечает: i2c-7/0x71 без драйвера' "$ROOT/out"
+
+sg8a_root; sg8a_bind; sg8a_channels 9
+ht_action adapter-check SENSING_ADAPTER_WAIT=0; eq "драйвер есть, канал один из двух — 1" 1 "$?"
+check "…каналы названы" grep -qF 'SG8A не отвечает: i2c-2/0x70 — каналов мультиплексора 1 из 2' "$ROOT/out"
+
+sg8a_root; rm "$ROOT/sys/bus/i2c/devices/2-0070"
+ht_action adapter-check SENSING_ADAPTER_WAIT=0; eq "в дереве мультиплексор есть, клиента i2c нет — 1" 1 "$?"
+check "…узел дерева назван" grep -qF 'i2c@3180000/tca9543@70' "$ROOT/out"
+
+sg8a_root; rm -r "$MUX"
+ht_action adapter-check SENSING_ADAPTER_WAIT=0; eq "оверлея камер в дереве нет — 1" 1 "$?"
+check "…сказано про оверлей" grep -q 'оверлей' "$ROOT/out"
+check_not "…выключенный мультиплексор базы не взят" grep -q 'tca9546' "$ROOT/out"
+check_not "…мультиплексор под выключенным контроллером не взят" grep -q 'tca9548' "$ROOT/out"
+
+sg8a_root
+start=$SECONDS
+ht_action adapter-check SENSING_ADAPTER_WAIT=2; eq "ожидание вышло — 1" 1 "$?"
+check "…ждал не меньше SENSING_ADAPTER_WAIT" test $((SECONDS - start)) -ge 2
+check "…та же ошибка" grep -qxF "$SG8A_MSG" "$ROOT/out"
+
+sg8a_root
+( sleep 1; sg8a_bind; sg8a_channels 9 10 ) &
+ht_action adapter-check SENSING_ADAPTER_WAIT=10; eq "адаптер поднялся во время ожидания — 0" 0 "$?"
+wait
+check_not "…без ошибки" grep -q 'не отвечает' "$ROOT/out"
+
+sg8a_root
+ht_action adapter-check SENSING_ADAPTER_WAIT=abc; eq "SENSING_ADAPTER_WAIT не число — 1" 1 "$?"
+check "…ключ назван" grep -q SENSING_ADAPTER_WAIT "$ROOT/out"
 
 echo "== apply =="
 ht_root "$X"
@@ -337,6 +428,8 @@ check "режим GMSL по портам" grep -qx 'options sgx_yuv_gmsl2 GMSLMO
 check "ядро закреплено" grep -qx nvidia-l4t-kernel "$FAKE/holds"
 eq "свои hold записаны" "$(sorted "$ALL")" "$(held "$STATE/held")"
 check "частоты включены на загрузку" test -L "$ROOT/etc/systemd/system/multi-user.target.wants/sensing-gmsl2-clock.service"
+eq "проверка адаптера включена на загрузку" /etc/systemd/system/sensing-gmsl2-adapter.service \
+    "$(readlink "$ROOT/etc/systemd/system/multi-user.target.wants/sensing-gmsl2-adapter.service")"
 check "пакет драйверов в /opt/sensing" test -f "$ROOT/opt/sensing/install.sh"
 check_not "v4l2-ctl был — apt не зовётся" ht_called '^apt-get'
 check_not "временный каталог убран" compgen -G "$ROOT/var/tmp/sensing-gmsl2-camera.*"
@@ -377,6 +470,7 @@ check "depmod после снятия" ht_called "^depmod (-b [^ ]+ )?$KV\$"
 check_not "оверлей камер снят" test -e "$ROOT/boot/tegra234-camera-sgx-yuv-gmsl2.dtbo"
 check_not "modprobe.d снят" test -e "$MP"
 check_not "автозапуск частот снят" test -L "$ROOT/etc/systemd/system/multi-user.target.wants/sensing-gmsl2-clock.service"
+check_not "автозапуск проверки адаптера снят" test -L "$ROOT/etc/systemd/system/multi-user.target.wants/sensing-gmsl2-adapter.service"
 check_not "/opt/sensing снят" test -e "$ROOT/opt/sensing"
 check "штатная libnvisppg.so вернулась" grep -qx stock-lib "$ROOT/$L"
 check "ядро снято с hold" test ! -s "$FAKE/holds"

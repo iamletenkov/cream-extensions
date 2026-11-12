@@ -1,0 +1,18 @@
+[Unit]
+Description=Sensing GMSL2 camera: SG8A adapter answers on I2C (camera mux bound, channels up)
+# A unit of its own, not part of the clock unit: the clocks are a SoC setting
+# that works without the adapter (and SENSING_BOOST_CLOCK=0 skips it), and the
+# camera profile unit starts only when a video node appears — which is exactly
+# what does not happen here. A failed unit with this name is what the operator
+# and the agent's telemetry see. Read-only: sysfs and the device tree.
+
+[Service]
+# exec, not oneshot: the boot target does not wait for SENSING_ADAPTER_WAIT;
+# exit 1 still leaves the unit failed, exit 0 — active (RemainAfterExit).
+Type=exec
+RemainAfterExit=yes
+EnvironmentFile=/etc/cream/sensing-gmsl2-camera/config
+ExecStart=/opt/cream/ext/sensing-gmsl2-camera/actions/adapter-check
+
+[Install]
+WantedBy=multi-user.target
