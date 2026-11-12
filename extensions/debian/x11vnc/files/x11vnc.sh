@@ -36,8 +36,25 @@
 # passfile.sha256 — e.g. left by layout 2) with no secret in cream is neither
 # removed nor used: the server stays off with a hint how to set the password.
 #
-# No user or no display manager (a container, a server without a desktop): a
-# warning and 0, rule R11 — the password decision is still written.
+# THE USER (6.0.0, spec 2026-11-12-existing-desktop §4.4, ruling Р3):
+# X11VNC_USER, or the cloud-init user when it is empty. Only an account of
+# passwd with 1000 <= uid < 65534 (the rule of cloud-user/get_cloud_user.sh):
+# root, gdm, lightdm, sddm and other system accounts are refused — for gdm the
+# authority is the greeter's, and the login screen would be shown. A refused
+# X11VNC_USER — the instances off, exit 78 (a setting to fix). No cloud-init
+# user, or an unfit one — a warning, the instances off, exit 0 (an instance
+# of an X11VNC_USER unset since would go on otherwise).
+#
+# THE MACHINE (ruling Р2), on a live machine only — at image build the desktop
+# may come with the same build: no Xorg (/usr/lib/xorg/Xorg, /usr/bin/Xorg) or
+# no enabled display manager (the display-manager.service link to a unit that
+# is there) — the instances off, exit 1 with "put a desktop or existing-desktop".
+# Enabled but not running yet (right after a desktop, before the reboot) — the
+# instance is enabled for the boot but not restarted: Requires= would start the
+# display manager (a warning and 0, R11).
+#
+# THE DIAGNOSIS: one line on who is on seat0 (xs_seat0_active of
+# lib/x-session.sh — files/x-session.sh).
 set -euo pipefail
 
 R="${CREAM_ROOT:-}"; R="${R%/}"
@@ -53,9 +70,93 @@ CLOUD_USER_LIB="$R/opt/cream/ext/cloud-user/get_cloud_user.sh"
 # (the RFB quirk). Public, in every VNC implementation; not a secret.
 VNC_DES_KEY=e84ad660c4721ae0
 USER_RE='^[a-z_][a-z0-9_-]{0,31}$'
+RE_DISPLAY='^(auto|:[0-9]+(\.[0-9]+)?)$'
+XS_LIB="${CREAM_EXT_DIR:-$R/opt/cream/ext/x11vnc}/files/x-session.sh"
+DM_LINK="$SYSD/display-manager.service"
+NO_DESKTOP='нет X-сервера / менеджера входа: поставьте стол или `existing-desktop`'
 
 log(){ >&2 echo "x11vnc: $*"; }
 die(){ log "ОШИБКА: $*"; exit 1; }
+
+# The values reach a unit environment: their form is checked here too, not
+# only in cream (an older config file, a hand edit).
+check_values(){
+    [[ -z "${X11VNC_DISPLAY:-}" || "$X11VNC_DISPLAY" =~ $RE_DISPLAY ]] || die "X11VNC_DISPLAY: auto или :N"
+}
+
+# dm_enabled: 0 — display-manager.service is a link to a unit that is there.
+dm_enabled(){
+    local t
+    [[ -L "$DM_LINK" ]] || return 1
+    t="$(readlink "$DM_LINK")" || return 1
+    if [[ "$t" == /* ]]; then t="$R$t"; else t="${DM_LINK%/*}/$t"; fi
+    [[ -e "$t" ]]
+}
+
+# machine_ok: prints what is missing; 0 — Xorg and an enabled display manager
+# are on the machine (files, not their state).
+machine_ok(){
+    local missing=()
+    [[ -e "$R/usr/lib/xorg/Xorg" || -e "$R/usr/bin/Xorg" ]] || missing+=("X-сервера (Xorg)")
+    dm_enabled || missing+=("включённого менеджера входа (display-manager.service)")
+    (( ${#missing[@]} == 0 )) && return 0
+    echo "${missing[*]}"
+    return 1
+}
+
+# user_ok <user>: prints why not; 0 — a name of passwd with 1000 <= uid < 65534.
+user_ok(){
+    local uid
+    if [[ ! "$1" =~ $USER_RE ]]; then echo "имя не подходит для юнита"; return 1; fi
+    if ! uid="$(id -u "$1" 2>/dev/null)" || [[ ! "$uid" =~ ^[0-9]+$ ]]; then
+        echo "нет в passwd"; return 1
+    fi
+    if (( uid < 1000 || uid >= 65534 )); then
+        echo "uid $uid вне 1000..65533 — системная учётка (root, менеджер входа), её экран не показываю"
+        return 1
+    fi
+}
+
+dm_active(){ systemctl is-active --quiet display-manager.service 2>/dev/null; }
+
+# stop_instances [keep]: every enabled instance but x11vnc@<keep> off and stopped.
+stop_instances(){
+    local keep="${1:-}" u
+    while read -r u; do
+        [[ -n "$u" && "$u" != "$keep" ]] || continue
+        log "гашу экземпляр x11vnc@$u.service"
+        systemctl disable "x11vnc@$u.service" || log "x11vnc@$u.service не выключился"
+        systemctl --no-block stop "x11vnc@$u.service" || true
+    done < <(instances)
+}
+
+# refuse <rc>: every instance off, then exit rc.
+refuse(){
+    stop_instances
+    exit "$1"
+}
+
+# diagnose <user>: one line on who is on seat0 (logind).
+diagnose(){
+    local want="$1" a name type class
+    [[ -f "$XS_LIB" ]] || return 0
+    # shellcheck source=../../../../lib/x-session.sh
+    source "$XS_LIB"
+    if ! a="$(xs_seat0_active)"; then
+        log "на seat0 нет активного сеанса (или нет logind) — x11vnc ждёт сеанс $want"
+        return 0
+    fi
+    read -r name type class <<< "$a"
+    if [[ "$class" != user ]]; then
+        log "на seat0 экран входа ($class) — x11vnc ждёт входа $want (или DESKTOP_AUTOLOGIN=1 расширения desktop)"
+    elif [[ "$name" == "$want" ]]; then
+        log "на seat0 сеанс $name ($type) — x11vnc подключится к нему"
+        [[ "$type" != wayland ]] \
+            || log "ВНИМАНИЕ: сеанс $name — Wayland: x11vnc видит только X.Org (gdm-xorg — Xorg у GDM), обёртка выйдет с 78"
+    else
+        log "на seat0 сеанс $name ($type), x11vnc ждёт $want: sudo cream set x11vnc X11VNC_USER=$name"
+    fi
+}
 
 # instances: the user names of the enabled x11vnc@<user> instances.
 instances(){
@@ -173,46 +274,61 @@ build_passfile(){
 }
 
 configure(){
-    local wait_s=0 user="" u
-    [[ "${CREAM_REASON:-boot}" == boot ]] && wait_s=30
-    user="$(resolve_user "$wait_s")" || user=""
-    [[ -n "$user" ]] || log "пользователь cloud-init не найден — сервер не включаю (файл пароля без владельца)"
+    local wait_s=0 user="" why missing
+    check_values
+    if [[ "${CREAM_PHASE:-live}" == live ]] && ! missing="$(machine_ok)"; then
+        log "ОШИБКА: $NO_DESKTOP"
+        log "на машине нет: $missing — x11vnc выключен"
+        refuse 1
+    fi
+    if [[ -n "${X11VNC_USER:-}" ]]; then
+        if ! why="$(user_ok "$X11VNC_USER")"; then
+            log "ОШИБКА: X11VNC_USER=$(printf '%q' "$X11VNC_USER"): $why; годится учётка с uid 1000..65533 — x11vnc выключен"
+            refuse 78
+        fi
+        user="$X11VNC_USER"
+    else
+        [[ "${CREAM_REASON:-boot}" == boot ]] && wait_s=30
+        user="$(resolve_user "$wait_s")" || user=""
+        if [[ -n "$user" ]] && ! why="$(user_ok "$user")"; then
+            log "пользователь cloud-init $user: $why — сервер не включаю (свой: sudo cream set x11vnc X11VNC_USER=<имя>)"
+            user=""
+        elif [[ -z "$user" ]]; then
+            log "пользователь cloud-init не найден — сервер не включаю (свой: sudo cream set x11vnc X11VNC_USER=<имя>)"
+        fi
+    fi
     local auth_rc=0
     build_passfile "$user" || auth_rc=$?
     if [[ "$auth_rc" == 2 || "$auth_rc" == 3 ]]; then
-        while read -r u; do
-            [[ -n "$u" ]] || continue
-            systemctl disable "x11vnc@$u.service" || log "x11vnc@$u.service не выключился"
-            systemctl --no-block stop "x11vnc@$u.service" || true
-        done < <(instances)
+        stop_instances
         # 3 — no password beyond the loopback: a configuration error (78).
         [[ "$auth_rc" == 3 ]] && exit 78
         return 0
     fi
-    [[ -n "$user" ]] || return 0
-    if [[ ! -L "$SYSD/display-manager.service" ]]; then
-        log "менеджера входа нет (display-manager.service) — сервер не включаю"
+    if [[ -z "$user" ]]; then
+        stop_instances
         return 0
     fi
-    while read -r u; do
-        [[ -n "$u" && "$u" != "$user" ]] || continue
-        log "гашу прежний экземпляр x11vnc@$u.service"
-        systemctl disable "x11vnc@$u.service" || log "x11vnc@$u.service не выключился"
-        systemctl --no-block stop "x11vnc@$u.service" || true
-    done < <(instances)
+    # At image build: no display manager link yet is normal — nothing to enable.
+    if ! dm_enabled; then
+        log "менеджера входа нет (display-manager.service) — сервер не включаю"
+        stop_instances
+        return 0
+    fi
+    stop_instances "$user"
     systemctl enable "x11vnc@$user.service" || die "x11vnc@$user.service не включился"
+    if [[ "${CREAM_PHASE:-live}" == live ]] && ! dm_active; then
+        log "менеджер входа не запущен — x11vnc@$user.service включён и поднимется с ним (на загрузке)"
+        return 0
+    fi
+    [[ "${CREAM_PHASE:-live}" == live ]] && diagnose "$user"
     systemctl --no-block restart "x11vnc@$user.service" \
         || die "x11vnc@$user.service не поставлен в очередь перезапуска"
     log "x11vnc@$user.service: перезапуск поставлен в очередь (journalctl -u x11vnc@$user)"
 }
 
 remove(){
-    local u
-    while read -r u; do
-        [[ -n "$u" ]] || continue
-        systemctl disable "x11vnc@$u.service" || log "x11vnc@$u.service не выключился"
-        systemctl --no-block stop "x11vnc@$u.service" || true
-    done < <(instances)
+    stop_instances
     if [[ ! -L "$DIR" ]]; then
         rm -f -- "$NOPW"
         # Only the file this configure built; one left by an older version stays.

@@ -1,0 +1,5 @@
+[Desktop Entry]
+Name=Live X session (L x11vnc)
+Comment=Preseeded by tests/live-root: an X session of a desktop installed before cream
+Exec=/bin/true
+Type=Application
