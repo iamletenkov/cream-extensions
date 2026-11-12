@@ -52,7 +52,7 @@ VNC-доступ к рабочему столу X11 пользователя, с
 | `X11VNC_DISPLAY` | строка `^:[0-9]+(\.[0-9]+)?$` | `:0` | X-дисплей |
 | `X11VNC_LISTEN` | `localhost` \| `all` | `localhost` | localhost — только петля (доступ ssh-туннелем), all — все интерфейсы |
 | `X11VNC_PASSWORD` | `str` | пусто | пароль VNC (значимы первые 8 символов); пусто — сервер выключен; задаётся только через stdin: cream set x11vnc X11VNC_PASSWORD=- *(секрет: `KEY=-` со stdin или `--params-file`, не в argv)* |
-| `X11VNC_ALLOW_NO_PASSWORD` | `bool` | `0` | 1 — разрешить сервер без пароля при пустом X11VNC_PASSWORD (предупреждение при каждом configure и старте); 0 — без пароля сервер выключен |
+| `X11VNC_ALLOW_NO_PASSWORD` | `bool` | `0` | 1 — разрешить сервер без пароля при пустом X11VNC_PASSWORD, только с X11VNC_LISTEN=localhost (предупреждение при каждом configure и старте; с all — отказ, код 78); 0 — без пароля сервер выключен |
 <!-- /catalog:params -->
 
 Домен `x11vnc`: настройки — `/etc/cream/x11vnc/config`, пароль — в
@@ -99,7 +99,8 @@ RUN_COMMAND cream install --with-deps x11vnc X11VNC_PORT=5901
 
 - Только X11: на Wayland-сессии бесполезен (см. «Wayland»).
 - Пустой пароль — сервер **выключен**; без пароля — только явным
-  `X11VNC_ALLOW_NO_PASSWORD=1`.
+  `X11VNC_ALLOW_NO_PASSWORD=1` и только на петле (решение владельца 2026-11-12):
+  с `X11VNC_LISTEN=all` configure выключает и гасит экземпляры, код 78, обёртка — тоже 78.
 - Сессии в контейнере нет — включение сервера пользователю проверяет только H.
 
 ## Подробности

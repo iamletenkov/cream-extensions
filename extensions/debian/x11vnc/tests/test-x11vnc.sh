@@ -127,6 +127,24 @@ check "маркер nopw есть" test -f "$NOPW"
 check "x11vnc@alice включён" test -L "$WANTS/x11vnc@alice.service"
 check "перезапуск без блокировки" ht_called '^systemctl --no-block restart x11vnc@alice.service'
 
+echo "== configure: без пароля — только на петле (решение владельца 2026-11-12) =="
+fresh
+mkdir -p "$ROOT/etc/x11vnc"; : > "$NOPW"
+ln -s /etc/systemd/system/x11vnc@.service "$WANTS/x11vnc@alice.service"
+ht_hook configure CREAM_REASON=apply X11VNC_ALLOW_NO_PASSWORD=1 X11VNC_LISTEN=all
+eq "X11VNC_LISTEN=all без пароля — 78" 78 "$?"
+check_not "маркер nopw снят" test -e "$NOPW"
+check_not "x11vnc@alice выключен" test -L "$WANTS/x11vnc@alice.service"
+check "x11vnc@alice гасится" ht_called '^systemctl --no-block stop x11vnc@alice.service'
+check_not "перезапуска нет" ht_called '^systemctl --no-block restart'
+check "сказано, что без пароля — только петля" grep -q 'только на петле' <(ht_out)
+ht_hook apply X11VNC_ALLOW_NO_PASSWORD=1 X11VNC_LISTEN=all; eq "apply: X11VNC_LISTEN=all без пароля — 78" 78 "$?"
+check_not "apply: маркера nopw нет" test -e "$NOPW"
+fresh; printf '%s' "$PASS" > "$FAKE/secret"
+ht_hook configure CREAM_REASON=apply X11VNC_ALLOW_NO_PASSWORD=1 X11VNC_LISTEN=all
+eq "X11VNC_LISTEN=all с паролем — 0" 0 "$?"
+check "с паролем на всех интерфейсах — включён" test -L "$WANTS/x11vnc@alice.service"
+
 echo "== configure: пароль есть — файл 0600, владелец — пользователь =="
 fresh
 printf '%s' "$PASS" > "$FAKE/secret"
@@ -276,6 +294,13 @@ eq "маркер без ключа — отказ" "refuse" "$(wrap "$PF" "$NOPW
 eq "маркер и X11VNC_ALLOW_NO_PASSWORD=1 — -nopw" "-nopw" "$(wrap "$PF" "$NOPW" 1 | tail -n1)"
 check "-nopw — предупреждение в журнал при каждом старте" grep -q 'БЕЗ ПАРОЛЯ' <(wrap "$PF" "$NOPW" 1)
 eq "ключ без маркера — отказ" "refuse" "$(rm -f "$NOPW"; wrap "$PF" "$NOPW" 1 | tail -n1; : > "$NOPW")"
+# Without a password only on the loopback (owner's ruling 2026-11-12).
+X11VNC_ALLOW_NO_PASSWORD=1 X11VNC_LISTEN=all "$EXT/files/run-x11vnc.sh" --decide-auth "$PF" "$NOPW" > "$ROOT/out" 2>&1
+eq "-nopw и X11VNC_LISTEN=all — 78" 78 "$?"
+eq "-nopw и X11VNC_LISTEN=all — отказ" "refuse" "$(tail -n1 "$ROOT/out")"
+check "сказано, что без пароля — только петля" grep -q 'только на петле' "$ROOT/out"
+X11VNC_ALLOW_NO_PASSWORD=1 X11VNC_LISTEN=localhost "$EXT/files/run-x11vnc.sh" --decide-auth "$PF" "$NOPW" > "$ROOT/out" 2>&1
+eq "-nopw на петле — 0" 0 "$?"
 printf 'xxxxxxxx' > "$PF"; chmod 0600 "$PF"
 eq "файл есть — -rfbauth" "-rfbauth $PF" "$(wrap "$PF" "$NOPW" | tail -n1)"
 chmod 0000 "$PF"

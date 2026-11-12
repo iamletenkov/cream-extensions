@@ -19,7 +19,10 @@ name: x11vnc
 version: 5.1.2
 # 5.1.2: a Wayland session — the wrapper exits 78 (EX_CONFIG) and the unit does
 #        not restart it (RestartPreventExitStatus=78), not a loop every 5 s
-#        (audit 2026-11-12).
+#        (audit 2026-11-12). X11VNC_ALLOW_NO_PASSWORD=1 without a password only
+#        on the loopback (owner's ruling 2026-11-12): with X11VNC_LISTEN=all
+#        configure disables and stops the instances and exits 78, the wrapper
+#        exits 78.
 # 5.1.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 # 5.0.2: только README (выпуск 5.1.1 изменил дерево без подъёма версии —
 #        cream отвергал обновление с 5.0.1: version.same_digest).
@@ -71,6 +74,6 @@ config:
     X11VNC_ALLOW_NO_PASSWORD:
       type: bool
       default: "0"
-      description: "1 — разрешить сервер без пароля при пустом X11VNC_PASSWORD (предупреждение при каждом configure и старте); 0 — без пароля сервер выключен"
+      description: "1 — разрешить сервер без пароля при пустом X11VNC_PASSWORD, только с X11VNC_LISTEN=localhost (предупреждение при каждом configure и старте; с all — отказ, код 78); 0 — без пароля сервер выключен"
 files:
   - {src: files/x11vnc@.service, dst: /etc/systemd/system/x11vnc@.service, mode: "0644"}

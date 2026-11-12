@@ -70,7 +70,8 @@ log_error(){ >&2 echo -e "${RED}[ERROR]${NC} x11vnc: $*"; }
 PASSFILE=/etc/x11vnc/passwd
 NOPW=/etc/x11vnc/nopw
 
-# decide_auth: prints the -rfbauth/-nopw argument, or "refuse" with status 1.
+# decide_auth: prints the -rfbauth/-nopw argument, or "refuse" with status 1
+# (78 — no password beyond the loopback).
 decide_auth(){
     if [[ -e "$PASSFILE" || -L "$PASSFILE" ]]; then
         if [[ -f "$PASSFILE" && -r "$PASSFILE" ]]; then
@@ -82,6 +83,13 @@ decide_auth(){
         echo refuse; return 1
     fi
     if [[ -f "$NOPW" && "${X11VNC_ALLOW_NO_PASSWORD:-0}" == 1 ]]; then
+        # Owner's ruling 2026-11-12: without a password only on the loopback;
+        # 78 — the unit does not restart it (RestartPreventExitStatus=78).
+        if [[ "${X11VNC_LISTEN:-localhost}" != localhost ]]; then
+            log_error "без пароля x11vnc допустим только на петле, а X11VNC_LISTEN=$X11VNC_LISTEN — не запускаюсь"
+            log_error "задайте пароль (echo 'пароль' | sudo cream set x11vnc X11VNC_PASSWORD=-) или верните sudo cream set x11vnc X11VNC_LISTEN=localhost"
+            echo refuse; return 78
+        fi
         log_warn "сервер БЕЗ ПАРОЛЯ: X11VNC_ALLOW_NO_PASSWORD=1 (снять: cream set x11vnc X11VNC_ALLOW_NO_PASSWORD=0)"
         echo "-nopw"; return 0
     fi
@@ -96,8 +104,8 @@ decide_auth(){
 # Test entry (tests/test-x11vnc.sh): the decision for the given paths.
 if [[ "${1:-}" == --decide-auth ]]; then
     PASSFILE="${2:?}"; NOPW="${3:?}"
-    decide_auth || true
-    exit 0
+    decide_auth
+    exit
 fi
 
 USERNAME="${1:?usage: run-x11vnc.sh <user>}"
@@ -191,12 +199,11 @@ args=(
 # ставят `firewall: false`. Позиция проекта на этот счёт записана в
 # examples/build/ubuntu1804/README.md: только loopback, доступ через
 # SSH-туннель. Расширение с ней расходилось.
-auth="$(decide_auth)" || exit 1
+auth="$(decide_auth)" || exit "$?"
 if [[ "$LISTEN" == "localhost" ]]; then
     args+=(-localhost)
 else
     log_warn "слушаю ВСЕ интерфейсы (X11VNC_LISTEN=$LISTEN)"
-    [[ "$auth" == -nopw ]] && log_warn "и БЕЗ ПАРОЛЯ — кто угодно в сети получит рабочий стол"
 fi
 if [[ "$auth" == -nopw ]]; then
     args+=(-nopw)
