@@ -334,6 +334,10 @@ EOF
 install -d -m 0755 "$R/etc/systemd/system/multi-user.target.wants"
 ln -sfn /etc/systemd/system/sensing-gmsl2-clock.service \
     "$R/etc/systemd/system/multi-user.target.wants/sensing-gmsl2-clock.service"
+# The adapter check (action adapter-check): an SG8A that does not answer on I2C
+# is a failed unit with one clear line, not a silent absence of /dev/video*.
+ln -sfn /etc/systemd/system/sensing-gmsl2-adapter.service \
+    "$R/etc/systemd/system/multi-user.target.wants/sensing-gmsl2-adapter.service"
 
 # v4l2-ctl is the only tool of the actions; the L4T base does not always have it.
 if [[ ! -x "$R/usr/bin/v4l2-ctl" ]]; then

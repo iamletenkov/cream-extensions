@@ -14,12 +14,15 @@
 #           back and releases its holds (never one held before cream or by
 #           another extension); refuses before any change while can-usb modules
 #           are built for the Sensing kernel or extlinux.conf was edited since.
-# The CLI of layout 2 is the actions camera-profile and boost-clock; the units
+# The CLI of layout 2 is the actions camera-profile and boost-clock; adapter-check
+# (sensing-gmsl2-adapter.service) fails the boot check when the SG8A camera mux
+# has no driver or channels — read-only, sysfs and the device tree. The units
 # and the udev rule are `files` and call them by absolute path (ruling R7).
 schema: cream/v1
 name: sensing-gmsl2-camera
-version: 5.0.2
-# 5.0.2: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
+version: 5.1.0
+# 5.1.0: проверка адаптера SG8A на загрузке — sensing-gmsl2-adapter.service, действие
+#        adapter-check, ключ SENSING_ADAPTER_WAIT (инцидент Orin 2026-11-12).
 summary: Камеры Sensing GMSL2 на Jetson AGX Orin (SG8A-AGON-G2Y-A1, L4T 36.4.3) — ядро, модули, оверлей, запуск на загрузке
 cream: ">=1.0.0"
 platform:
@@ -43,6 +46,7 @@ hooks:
 files:
   - {src: files/sensing-gmsl2-camera@.service, dst: /etc/systemd/system/sensing-gmsl2-camera@.service, mode: "0644"}
   - {src: files/sensing-gmsl2-clock.service, dst: /etc/systemd/system/sensing-gmsl2-clock.service, mode: "0644"}
+  - {src: files/sensing-gmsl2-adapter.service, dst: /etc/systemd/system/sensing-gmsl2-adapter.service, mode: "0644"}
   - {src: files/99-sensing-gmsl2-camera.rules, dst: /etc/udev/rules.d/99-sensing-gmsl2-camera.rules, mode: "0644"}
 config:
   keys:
@@ -59,7 +63,15 @@ config:
       type: bool
       default: "1"
       description: "1 — частоты VI/ISP/NVCSI/EMC на максимум"
+    SENSING_ADAPTER_WAIT:
+      type: "re:^[0-9]{1,4}$"
+      default: "60"
+      description: "сколько секунд на загрузке ждать, пока мультиплексор адаптера SG8A получит драйвер и каналы, прежде чем юнит sensing-gmsl2-adapter упадёт"
 actions:
+  adapter-check:
+    summary: "адаптер SG8A на I2C: у мультиплексора камер есть драйвер и каналы, иначе ошибка и код 1 (только чтение)"
+    lock: none
+    phases: [live]
   camera-profile:
     summary: "поставить профиль камеры (SENSING_CAMERA_CONTROLS) на узел videoN; не Sensing — мимо"
     args: free

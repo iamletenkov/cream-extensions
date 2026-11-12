@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# cream action `adapter-check` of sensing-gmsl2-camera: does the SG8A adapter
+# answer on I2C — its camera mux bound to a driver, the mux channels created.
+# sensing-gmsl2-adapter.service calls it by absolute path on every boot, with
+# the keys from EnvironmentFile=/etc/cream/sensing-gmsl2-camera/config.
+#
+# WHY. When the adapter is unpowered or its cable is off, the mux (tca9543@70
+# of the camera overlay) fails its probe at the 4th second, no channel buses,
+# no deserializer or camera clients, no modalias — and nothing else fails:
+# no /dev/video*, not a word about cameras in the journal (Orin 2026-11-12).
+# This turns that silence into a failed unit with one clear line.
+#
+# READ ONLY. sysfs and the device tree are only read: no I2C transfer, no
+# bind/unbind — a mux that does not answer cannot be fixed from here.
+#
+# What is the mux: no address is hard-coded. In the live device tree
+# (/sys/firmware/devicetree/base) the deserializer nodes max96712* sit on the
+# channels i2c@N of the mux; the mux is their grandparent with an i2c-mux
+# compatible (pca954x/tca954x), and only nodes not disabled (nor their I2C
+# controller) count. Its I2C
+# client is the device of /sys/bus/i2c/devices whose of_node is that node;
+# the name of the client (2-0070) gives the bus and the address. Healthy: the
+# client has a driver and one child bus i2c-N per channel with a deserializer.
+#
+# SENSING_ADAPTER_WAIT seconds (default 60) the check is repeated every 2 s:
+# a probe deferred for a supplier (regulator, GPIO) binds later. A probe that
+# failed outright is not retried by the kernel; the wait only spares a false
+# alarm.
+#
+# Exit: 0 — the adapter answers; 1 — it does not (or the camera overlay is not
+# in the device tree, or a bad SENSING_ADAPTER_WAIT): the unit fails, the agent
+# shows it in telemetry.
+set -euo pipefail
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+wait_s="${SENSING_ADAPTER_WAIT:-60}"
+
+# Under systemd stderr goes to the journal: <3> is the err priority there.
+err() {
+    if [[ -n "${JOURNAL_STREAM:-}" ]]; then echo "<3>$*" >&2; else echo "$*" >&2; fi
+}
+
+if [[ ! "$wait_s" =~ ^[0-9]{1,4}$ ]]; then
+    err "SENSING_ADAPTER_WAIT: число секунд 0-9999"
+    exit 1
+fi
+
+DT="$R/sys/firmware/devicetree/base"
+I2C="$R/sys/bus/i2c/devices"
+
+# prop FILE: a device tree string property without the NUL bytes.
+prop() { tr '\0' ' ' 2>/dev/null < "$1" | sed 's/ *$//'; }
+enabled() { [[ ! -f "$1/status" ]] || [[ "$(prop "$1/status")" == ok* ]]; }
+
+# Mux nodes of the overlay -> number of channels with a deserializer.
+declare -A want=()
+if [[ -d "$DT" ]]; then
+    while IFS= read -r -d '' des; do
+        chan="$(dirname "$des")"
+        mux="$(dirname "$chan")"
+        [[ "$(basename "$chan")" == i2c@* ]] || continue
+        [[ "$(prop "$mux/compatible" 2>/dev/null || true)" =~ (pca|tca)954[0-9] ]] || continue
+        # The controller too: under a disabled one the kernel makes no client.
+        enabled "$des" && enabled "$chan" && enabled "$mux" && enabled "$(dirname "$mux")" || continue
+        want["$mux"]=$(( ${want["$mux"]:-0} + 1 ))
+    done < <(find "$DT" -type d -name 'max96712*' -print0 2>/dev/null | sort -z -u)
+fi
+if (( ${#want[@]} == 0 )); then
+    err "SG8A: в дереве устройств нет мультиплексора камер — оверлей камер не применён (загружена запись backup?), камер нет"
+    exit 1
+fi
+
+# client_of MUX: the I2C client whose of_node is MUX (its sysfs path), or nothing.
+client_of() {
+    local c real
+    real="$(realpath -e -- "$1")"
+    for c in "$I2C"/[0-9]*-[0-9a-f]*; do
+        [[ -e "$c/of_node" ]] || continue
+        if [[ "$(realpath -e -- "$c/of_node" 2>/dev/null || true)" == "$real" ]]; then
+            echo "$c"; return 0
+        fi
+    done
+    return 1
+}
+
+# check_all: one pass; 0 — all muxes healthy. PROBLEMS and GOOD get the lines.
+check_all() {
+    local mux c name where n chans
+    PROBLEMS=(); GOOD=()
+    for mux in "${!want[@]}"; do
+        if ! c="$(client_of "$mux")"; then
+            PROBLEMS+=("SG8A не отвечает: мультиплексор ${mux#"$DT"/} есть в дереве устройств, но клиента i2c нет, камер нет — проверьте питание и шлейф")
+            continue
+        fi
+        name="$(basename "$c")"
+        where="i2c-${name%%-*}/0x$(printf '%x' "$((16#${name#*-}))")"
+        if [[ ! -e "$c/driver" ]]; then
+            PROBLEMS+=("SG8A не отвечает: $where без драйвера, камер нет — проверьте питание и шлейф")
+            continue
+        fi
+        chans=()
+        for n in "$c"/i2c-[0-9]*; do [[ -e "$n" ]] && chans+=("$(basename "$n")"); done
+        if (( ${#chans[@]} < ${want[$mux]} )); then
+            PROBLEMS+=("SG8A не отвечает: $where — каналов мультиплексора ${#chans[@]} из ${want[$mux]}, камер нет — проверьте питание и шлейф")
+            continue
+        fi
+        GOOD+=("SG8A на месте: $where — драйвер $(basename "$(readlink "$c/driver")"), каналы ${chans[*]}")
+    done
+    (( ${#PROBLEMS[@]} == 0 ))
+}
+
+deadline=$(( SECONDS + wait_s ))
+until check_all; do
+    (( SECONDS < deadline )) || break
+    sleep 2
+done
+if (( ${#PROBLEMS[@]} )); then
+    for line in "${PROBLEMS[@]}"; do err "$line"; done
+    exit 1
+fi
+printf '%s\n' "${GOOD[@]}"

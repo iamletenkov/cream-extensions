@@ -18,7 +18,7 @@ p3701-0000, носитель p3737-0000) с адаптером **SG8A-AGON-G2Y-A
 | Конфликтует с | — |
 | Хуки | `install`, `apply`, `remove` |
 | Настройка на загрузке | — |
-| Действия | `cream run sensing-gmsl2-camera camera-profile`, `cream run sensing-gmsl2-camera boost-clock` |
+| Действия | `cream run sensing-gmsl2-camera adapter-check`, `cream run sensing-gmsl2-camera camera-profile`, `cream run sensing-gmsl2-camera boost-clock` |
 | Живая машина | с `--accept-risk` |
 
 > **Живая машина — с `--accept-risk`.** Заменяет ядро платы (/boot/Image — ядро Sensing, штатное — в Image.backup), модули камер и libnvisppg.so (dpkg-divert), добавляет загрузочную запись с оверлеем камер и делает её основной, закрепляет пакеты ядра L4T (apt-mark hold); камеры заработают после перезагрузки; откат — пункт backup загрузочного меню или cream remove
@@ -59,6 +59,8 @@ p3701-0000, носитель p3737-0000) с адаптером **SG8A-AGON-G2Y-A
    «Запуск камер» ниже: `/etc/modprobe.d/sensing-gmsl2-camera.conf`, а через
    `files` — `sensing-gmsl2-camera@.service`, `sensing-gmsl2-clock.service`,
    `99-sensing-gmsl2-camera.rules`.
+9. Включает на загрузку проверку адаптера `sensing-gmsl2-adapter.service` —
+   раздел «Адаптер SG8A не отвечает» ниже.
 
 **`apply`** — после `cream set`: проверка значения, запись, перезапуск юнитов
 профиля и частот.
@@ -68,7 +70,8 @@ p3701-0000, носитель p3737-0000) с адаптером **SG8A-AGON-G2Y-A
 **Действия** `camera-profile` и `boost-clock` (`lock: none` — их зовут юниты по
 абсолютному пути `/opt/cream/ext/sensing-gmsl2-camera/actions/…` с
 `EnvironmentFile=/etc/cream/sensing-gmsl2-camera/config`) заново проверяют имя узла и
-значения, прежде чем они дойдут до `v4l2-ctl`.
+значения, прежде чем они дойдут до `v4l2-ctl`. Действие `adapter-check` (его
+зовёт `sensing-gmsl2-adapter.service`) только читает sysfs и дерево устройств.
 
 ## Параметры
 
@@ -78,6 +81,7 @@ p3701-0000, носитель p3737-0000) с адаптером **SG8A-AGON-G2Y-A
 | `SENSING_GMSLMODE` | строка `^[012](,[012]){7}$` | `1,1,1,1,1,1,1,1` | режим линка на 8 портах через запятую: 0 — GMSL1, 1 — GMSL2 6 Гбит/с, 2 — GMSL2 3 Гбит/с; параметр модуля — действует после перезагрузки *(только при установке)* |
 | `SENSING_CAMERA_CONTROLS` | строка `^[a-z_]+=[0-9a-fx]+(,[a-z_]+=[0-9a-fx]+)*$` | `sensor_mode=1,trig_mode=0,trig_pin=0x00020007` | профиль камеры: контролы v4l2 имя=число через запятую; умолчание — пункт 3 меню вендора (SG2-AR0233-5200-G-Hxxx) |
 | `SENSING_BOOST_CLOCK` | `bool` | `1` | 1 — частоты VI/ISP/NVCSI/EMC на максимум |
+| `SENSING_ADAPTER_WAIT` | строка `^[0-9]{1,4}$` | `60` | сколько секунд на загрузке ждать, пока мультиплексор адаптера SG8A получит драйвер и каналы, прежде чем юнит sensing-gmsl2-adapter упадёт |
 <!-- /catalog:params -->
 
 - `SENSING_GMSLMODE` — `scope: install`: параметр модуля, после смены — повтор
@@ -87,6 +91,9 @@ p3701-0000, носитель p3737-0000) с адаптером **SG8A-AGON-G2Y-A
   номера.
 - `SENSING_BOOST_CLOCK` — `0`: не фиксировать частоты SoC на максимуме (меньше
   потребление, вендор так не делает).
+- `SENSING_ADAPTER_WAIT` — сколько секунд проверка адаптера ждёт драйвер
+  мультиплексора, прежде чем упасть; `0` — проверить один раз. Действует со
+  следующей загрузки или `systemctl restart sensing-gmsl2-adapter.service`.
 
 Неверный формат — отказ `cream set`, а при ручной правке файла — отказ действия
 (в журнале юнита), а не молча неработающие камеры.
@@ -121,7 +128,7 @@ sudo reboot
 | Когда | Что происходит |
 |---|---|
 | сборка образа / `cream install` | проверка платы и релиза, оверлей ISP, ядро и модули Sensing, закрепление ядра, оверлей DTB, записи `extlinux.conf`, запуск камер; код 10 при изменении |
-| загрузка | модули с `GMSLMODE`; udev → `sensing-gmsl2-camera@videoN.service` → `camera-profile`; `sensing-gmsl2-clock.service` → `boost-clock` |
+| загрузка | модули с `GMSLMODE`; udev → `sensing-gmsl2-camera@videoN.service` → `camera-profile`; `sensing-gmsl2-clock.service` → `boost-clock`; `sensing-gmsl2-adapter.service` → `adapter-check` (адаптер не отвечает — юнит `failed`) |
 | `cream set` (хук `apply`) | профиль и частоты — сразу; `SENSING_GMSLMODE` — повтор install и перезагрузка |
 | `cream remove` | полный возврат штатного ядра, модулей, `extlinux.conf`, `libnvisppg.so`; код 10 |
 
@@ -398,6 +405,39 @@ i2ctransfer -y -f 10 w2@0x2d 0x00 0x0d r1
 оговорено в документации Sensing; в софте это `i2c-9` (CN1) и `i2c-10`
 (CN2).
 
+#### Адаптер SG8A не отвечает
+
+Если адаптер обесточен или отошёл шлейф, мультиплексор `tca9543@70` из
+оверлея не отвечает на шине камер: `pca954x 2-0070: probe failed` на 4-й
+секунде, клиент `2-0070` остаётся без драйвера, каналов `i2c-9`/`i2c-10` нет, а
+значит нет клиентов дешериализаторов и камер, модули не грузятся сами и
+`/dev/video*` не появляются. Ни одна служба при этом не падает (Orin, 2026-11-12).
+
+Это ловит `sensing-gmsl2-adapter.service` (действие `adapter-check`) на каждой
+загрузке. Мультиплексор он находит по дереву устройств, адрес не зашит: узлы
+`max96712*` на каналах `i2c@N` включённого мультиплексора `pca954x`/`tca954x`,
+клиент i2c — тот, у кого `of_node` указывает на этот узел. Проверка повторяется
+каждые 2 с в течение `SENSING_ADAPTER_WAIT` секунд (по умолчанию 60): так
+доходит отложенный probe, который ждал регулятор или GPIO. Если нет драйвера или
+дочерних шин, в журнал пишется ошибка с приоритетом `err`, а юнит падает
+(`failed`). Агент Stvor показывает упавшие юниты в телеметрии.
+
+```
+SG8A не отвечает: i2c-2/0x70 без драйвера, камер нет — проверьте питание и шлейф
+```
+
+Проверка только читает sysfs: в I2C не пишет и `bind` не повторяет. Probe,
+который упал с ошибкой, ядро само не повторяет, так что ожидание лишь убирает
+ложную тревогу на позднем старте.
+
+```bash
+systemctl status sensing-gmsl2-adapter.service
+journalctl -b -u sensing-gmsl2-adapter.service
+# после исправления питания или шлейфа — перезагрузка платы; без неё:
+echo 2-0070 | sudo tee /sys/bus/i2c/drivers/pca954x/bind
+sudo systemctl restart sensing-gmsl2-adapter.service
+```
+
 ### Проверено
 
 Ручной прогон той же последовательности — живая плата, JetPack 6.2,
@@ -415,7 +455,10 @@ L4T 36.4.3, 2026-09-11: живое видео 1920×1080 UYVY с `/dev/video6`,
 - **V** — `make cream-validate`, `tools/check-names.sh`.
 - **H** — `tests/test-sensing-gmsl2-camera.sh`: функции `nvisppg.sh` (релиз, оверлей,
   подмена и снятие) и `kernel-hold.sh`, манифест, `files`,
-  действия (узел Sensing и чужой, имя узла и контролы с чужими символами, частоты),
+  действия (узел Sensing и чужой, имя узла и контролы с чужими символами, частоты;
+  `adapter-check` на поддельном sysfs: драйвер и каналы есть, нет драйвера, нет
+  канала, нет клиента, нет оверлея, выключенный мультиплексор базы, другая шина и
+  адрес, ожидание и поздний bind, уровень `<3>` под systemd, `bind` не тронут),
   `apply`, `install` на подменённом корне (20, отказы до сети, установка, код 10 и
   повтор с теми же файлами, смена режима GMSL, v4l-utils), `remove` (полный возврат,
   чужие и прежние закрепления остаются, отказы до изменений).
