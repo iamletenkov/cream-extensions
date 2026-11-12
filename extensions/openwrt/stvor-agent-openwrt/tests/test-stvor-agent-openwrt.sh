@@ -222,7 +222,8 @@ installed STVOR_AGENT_AUTH_FILE="$ROOT/dist.key"
 check "не ключ — отказ" test "$?" -ne 0
 check_not "не ключ — без скачивания" test -s "$FAKE/curl.argv"
 # Длина — отдельной проверкой (повтор {16,512} musl не принимает; на OpenWrt — make test-openwrt).
-check "проверка ключа без повтора больше 255" grep -qx "RE_SA_BEARER='^\[A-Za-z0-9._~+/=-\]+\\\$'" "$SRC/files/agent.sh"
+check_not "в обёртке нет повтора больше 255 (musl)" \
+    grep -qE '^[^#]*\{([0-9]+,)?([0-9]{4,}|[3-9][0-9]{2}|2[6-9][0-9]|25[6-9])\}' "$SRC/files/agent.sh"
 for n in 15 513; do
     setup; head -c "$n" /dev/zero | tr '\0' k > "$ROOT/dist.key"; echo >> "$ROOT/dist.key"
     installed STVOR_AGENT_AUTH_FILE="$ROOT/dist.key"

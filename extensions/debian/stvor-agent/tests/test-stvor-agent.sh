@@ -311,6 +311,24 @@ out="$(hook install STVOR_AGENT_MIRROR="$MIRROR" STVOR_AGENT_AUTH_FILE="$ROOT/tm
 check "ключ /dist не того вида — отказ" test "$rc" -ne 0
 eq "ключ /dist не того вида — без скачивания" "" "$(net)"
 check_not "ключ /dist не того вида — значение не в журнале" grep -qF 'sbk_a b' <<< "$out"
+# Length 16..512 is checked apart from the character class (musl rejects a bound over
+# 255 — the same check as openwrt/stvor-agent-openwrt): the bounds and a foreign character.
+kkey(){ head -c "$1" /dev/zero | tr '\0' k; }
+for bad in "$(kkey 15)" "$(kkey 513)" "$(kkey 20)!"; do
+    new_root; printf '%s\n' "$bad" > "$ROOT/tmp/bad.key"
+    out="$(hook install STVOR_AGENT_MIRROR="$MIRROR" STVOR_AGENT_AUTH_FILE="$ROOT/tmp/bad.key" 2>&1)"; rc=$?
+    check "ключ /dist длиной ${#bad} (${bad: -1}) — отказ" test "$rc" -ne 0
+    eq "ключ /dist длиной ${#bad} — без скачивания" "" "$(net)"
+    check "ключ /dist длиной ${#bad} — причина" grep -qF "в файле не ключ" <<< "$out"
+    check_not "ключ /dist длиной ${#bad} — значение не в журнале" grep -qF -- "$bad" <<< "$out"
+done
+for n in 16 512; do
+    new_root; printf '%s\n' "$(kkey "$n")" > "$TMP/dist.key"
+    hook install STVOR_AGENT_MIRROR="$MIRROR" STVOR_AGENT_AUTH_FILE="$TMP/dist.key" >/dev/null 2>&1; rc=$?
+    eq "ключ /dist длиной $n — код 0" 0 "$rc"
+    eq "ключ /dist длиной $n — Authorization: Bearer" "Authorization: Bearer $(kkey "$n")" \
+        "$(cat "$FAKE/curl.headers" 2>/dev/null)"
+done
 # Without a mirror the key has nowhere to go: GitHub never gets it.
 new_root; printf '%s\n' "$KEY" > "$ROOT/tmp/dist.key"
 hook install STVOR_AGENT_AUTH_FILE="$ROOT/tmp/dist.key" >/dev/null 2>&1
