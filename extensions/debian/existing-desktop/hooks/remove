@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# cream hook `remove` of existing-desktop: install changed nothing of the
+# desktop, so there is nothing to take away — the desktop belongs to the
+# machine. x11-xserver-utils (xhost), when install put it on, stays: small,
+# harmless, and other extensions use it.
+set -euo pipefail
+>&2 echo "[INFO] existing-desktop: стол принадлежит машине — снимать нечего"

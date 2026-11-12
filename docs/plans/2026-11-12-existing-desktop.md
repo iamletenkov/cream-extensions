@@ -17,7 +17,7 @@
 - [x] Task 3: диапазон `desktop <3` у `gnome`, `xfce4`, `lxde`, `cloud-user-desktop`; ночной ubuntu-24.04 у `xfce4`, `lxde`, `wallpaper`
 - [x] Task 4: L-раннер — `LIVE_PREINSTALL`, `LIVE_PRESEED`, `LIVE_EXPECT_RESTORED`, принудительное снятие, варианты `live.<v>.env`
 - [x] Task 5: L-матрица — варианты и `LIVE_NIGHTLY_DISTROS`
-- [ ] Task 6: `existing-desktop` 1.0.0
+- [x] Task 6: `existing-desktop` 1.0.0
 - [ ] Task 7: `desktop` 2.0.0 — автологин только по ключу, снимок и возврат, хук `upgrade`, отказ на SDDM
 - [x] Task 8: `gdm-xorg` 1.0.0
 - [ ] Task 9: `gnome` 5.1.0 — `WaylandEnable` через `lib/gdm-wayland.sh`, код 10, возврат при снятии
