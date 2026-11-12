@@ -4,3 +4,4 @@
 # "${CREAM_EXT_DIR}/files/x-session.sh" — no `depends`, nothing to install first.
 # tools/check-shared-libs.sh and tools/check-version-bump.sh read this list.
 debian/existing-desktop
+debian/selkies

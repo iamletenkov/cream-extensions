@@ -21,7 +21,7 @@
 - [x] Task 7: `desktop` 2.0.0 — автологин только по ключу, снимок и возврат, хук `upgrade`, отказ на SDDM
 - [x] Task 8: `gdm-xorg` 1.0.0
 - [x] Task 9: `gnome` 5.1.0 — `WaylandEnable` через `lib/gdm-wayland.sh`, код 10, возврат при снятии
-- [ ] Task 10: `selkies` 7.0.0 — `SELKIES_USER`, `SELKIES_DISPLAY=auto`, проверка машины, uid-правило
+- [x] Task 10: `selkies` 7.0.0 — `SELKIES_USER`, `SELKIES_DISPLAY=auto`, проверка машины, uid-правило
 - [ ] Task 11: `x11vnc` 6.0.0 — `X11VNC_USER`, `X11VNC_DISPLAY=auto`, проверка машины, uid-правило
 - [ ] Task 12: `cloud-user-desktop` 6.0.0 — `live: confirm`, снятие автологина удалённой учётки
 - [x] Task 13: `code-server` 5.3.0 — снятие пакета только своего, через apt-guard
@@ -88,6 +88,7 @@
 | П18 | Рулинг исполнителя волны 2 (`existing-desktop`): `check` спеки §4.1 — **действие** `check` (`lock: none`, `phases: [build, live]`), не `hooks.check` | cream 1.4.0 (пин) отвергает `hooks.check`: «зарезервировано в cream/v1, не реализовано» (`manifest.reserved`, 65) — каталог не проходит `cream validate`, а `cream check` всех потребителей `x11-server` падает каскадом; смысл (0/1 по файлам) тот же |
 | П19 | Рулинг исполнителя волны 2 по ревью (`existing-desktop`): `install` ставит `x11-xserver-utils` с `-o DPkg::Lock::Timeout=120` и тремя попытками (`apt_retry`, как `desktop/hooks/install`), таймаут хука — **10m**, а не 2m спеки §4.1; ожидание 120 с на попытку, чтобы 2 команды × 3 попытки укладывались в 10m и таймаут хука не обрывал dpkg посреди повторов | на готовом Ubuntu Desktop блокировку dpkg часто держат unattended-upgrades или packagekit: сразу «Could not get lock» — 1, а неудачная запись держит конфликт `desktop-session`; обрыв по 2m посреди dpkg оставил бы на чужой машине «dpkg was interrupted» |
 | П20 | Рулинг исполнителя волны 3 (`gnome` 5.1.0): ссылка вместо `daemon.conf`/`custom.conf` (или `/etc/gdm3`) — `install` 1 до любой записи (как `gw_set_false` и `gdm-xorg`), а не «ссылку пропустить, второй файл править», как в 5.0.x. `remove` возвращает `WaylandEnable` **первым**: отказ `gw_restore` (чужая запись, ссылка) — 1, цель загрузки и DM не трогаются, обе записи остаются | одна копия правки на двоих (§4.5): своя обработка ссылок в `gnome` разошлась бы с библиотекой; частичный `remove` с потерянной записью `before` не повторить |
+| П21 | Рулинг исполнителя волны 3 (`selkies` 7.0.0): обёртка отдаёт Selkies найденный `SELKIES_DISPLAY=:N`, никогда `auto`; uid-правило обёртка применяет к экземпляру (`selkies@<user>`), откуда бы он ни пришёл (`SELKIES_USER`, cloud-init), до обращения к logind и X — 78; `configure`/`apply`: негодный `SELKIES_USER` — 78, нет Xorg/DM — 1, обе проверки до аутентификации, со снятием объявления и остановом `selkies@*`; Wayland проверяется и при жёстком `:N` — до поиска authority; файл действующих значений теперь несёт `SELKIES_DISPLAY=auto` (умолчание манифеста) | Selkies 2.0.0 читает `SELKIES_DISPLAY` сам и `auto` не понимает; экземпляр с uid системной учётки мог остаться от ручного `systemctl start`; Wayland при жёстком `:0` иначе ждал бы вечно вместо 78 |
 
 ## Версии
 | Расширение | Было (после П1) | Станет | Мажор? | Задача |

@@ -1,21 +1,31 @@
 # selkies — the X session on the monitor, in a browser, over one WebSocket port.
 #
-# install   — the AppImage of Selkies by the pinned version and sha256 per
+# install   — on a live machine first the machine check: no Xorg or no enabled
+#             display manager (display-manager.service) — exit 20 (cream 68),
+#             "put a desktop or existing-desktop"; at image build no check. Then
+#             the AppImage of Selkies by the pinned version and sha256 per
 #             architecture, extracted to /opt/selkies/<version> (no FUSE);
-#             x11-utils and xauth for the wrapper. Starts nothing.
+#             x11-utils, xauth and x11-xserver-utils (xhost) for the wrapper and
+#             lib/x-session.sh. Starts nothing.
 # configure — every boot, stage graphical (after the display manager): the
 #             Teleport declaration /etc/cream/teleport/apps.d/selkies.conf and
-#             `systemctl start --no-block selkies@<cloud-init user>`. Fail-closed:
+#             `systemctl start --no-block selkies@<user>` — SELKIES_USER, or the
+#             cloud-init user when empty; a user not in passwd or with a uid
+#             outside 1000..65533 — exit 78, nothing started. Fail-closed:
 #             without SELKIES_BASIC_AUTH_PASSWORD and without an explicit
 #             SELKIES_ALLOW_NO_AUTH=1 the service is not started (a warning, exit 0);
-#             no display manager, no user — a warning and exit 0 (plan ruling R11).
+#             no Xorg or no enabled display manager — exit 1; the display
+#             manager enabled but not running, no cloud-init user — a warning
+#             and exit 0 (plan ruling R11). One line of diagnosis: who is on seat0.
 # apply     — after `cream set selkies …`: the same check, the declaration and
 #             a non-blocking restart (or stop) of the instance.
 # remove    — stops the instances, takes away the declaration and the AppImage.
 # files     — selkies@.service: EnvironmentFile effective env (configure writes
 #             it: defaults of the manifest + config), config and secrets, User=%i, the
 #             wrapper files/run-selkies.sh (refuses to start without
-#             authentication, exit 78 — not restarted).
+#             authentication, on Wayland or for a user outside uid 1000..65533,
+#             exit 78 — not restarted; finds the display of the user by
+#             lib/x-session.sh — files/x-session.sh).
 #
 # 6.0.0: cream/v1 (plan 2026-10-19, Task 17): settings in /etc/cream/selkies/config,
 #        passwords and the token in /etc/cream/selkies/secrets (secret: file);
@@ -27,7 +37,15 @@
 #        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: selkies
-version: 6.2.3
+version: 7.0.0
+# 7.0.0: SELKIES_USER (empty — the cloud-init user as before) and SELKIES_DISPLAY=auto by default
+#        (lib/x-session.sh: the logind Display of the user's X11 session on seat0, else
+#        his Xorg, else :0 confirmed by his own authority; a saved :N stays as it is); the
+#        user only with 1000 <= uid < 65534 — exit 78 in the wrapper and in configure/apply
+#        (no greeter account, no root); install on a live machine without Xorg or an
+#        enabled display manager — 20, configure — 1; a diagnosis of seat0 in configure and
+#        every 5 minutes of waiting; apt-get update once before x11-utils, xauth and
+#        x11-xserver-utils (xhost); the wrapper never gives Selkies SELKIES_USER.
 # 6.2.3: SELKIES_COMPUTER_USE_BIND of commas and blanks only ("," or ", ,") is
 #        Computer-Use off, as if unset: the wrapper does not pass the key on and
 #        configure does not write it to the effective values.
@@ -164,11 +182,16 @@ config:
     SELKIES_UI_SIDEBAR_SHOW_WEBCAM: {type: "enum:true,false", default: "false", description: "панель: веб-камера"}
     SELKIES_UI_SIDEBAR_SHOW_SHARING: {type: "enum:true,false", default: "false", description: "панель: совместный доступ"}
     SELKIES_UI_SIDEBAR_SHOW_APPS: {type: "enum:true,false", default: "false", description: "панель: приложения"}
-    SELKIES_DISPLAY:
-      type: 're:^:[0-9]+(\.[0-9]+)?$'
+    SELKIES_USER:
+      type: 're:^[a-z_][a-z0-9_-]{0,31}$'
       default: ""
       empty: true
-      description: "X-дисплей; пусто — :0 (ключ обёртки)"
+      description: "ключ расширения: чей X-сеанс транслировать; пусто — пользователь cloud-init; uid только 1000..65533, иначе отказ (код 78)"
+    SELKIES_DISPLAY:
+      type: 're:^(auto|:[0-9]+(\.[0-9]+)?)$'
+      default: "auto"
+      empty: true
+      description: "ключ обёртки: auto (и пусто) — дисплей X-сеанса пользователя на seat0 (logind, его Xorg, :0); :N — жёстко"
     SELKIES_HTTPS_CERT:
       type: 're:^/[A-Za-z0-9._/-]{1,1000}$'
       default: ""

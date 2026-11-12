@@ -13,7 +13,20 @@
 # после graphical.target; при выходе пользователя и повторном входе X
 # authority меняется. Юнит перезапускает службу всегда, а обёртка до появления
 # сессии ждёт молча (одна строка в журнал), вместо цикла падений каждые 5 с.
-# Пропажу сессии во время работы ловит сторож в конце файла.
+# Пропажу сессии во время работы ловит сторож в конце файла. Пока ждём —
+# раз в 5 минут строка в журнал и диагноз: кто на seat0 («на seat0 сеанс bob
+# (x11), Selkies ждёт alice»).
+#
+# ДИСПЛЕЙ И ПОЛЬЗОВАТЕЛЬ (7.0.0, спека 2026-11-12-existing-desktop §4.4).
+# Пользователь — экземпляр юнита (selkies@<user>), откуда бы он ни пришёл
+# (SELKIES_USER или cloud-init): только учётка passwd с uid 1000..65533, иначе
+# 78 — до любого обращения к logind и X; root, gdm, lightdm не транслируются
+# (у gdm authority — экрана входа). SELKIES_USER самому Selkies не передаётся.
+# SELKIES_DISPLAY=auto (и пусто) — дисплей X11-сеанса пользователя на seat0 по
+# lib/x-session.sh (files/x-session.sh): logind Display, иначе его Xorg, иначе
+# :0, подтверждённый его собственной authority; путь — в журнал. :N — жёстко,
+# как раньше. Selkies получает найденный :N, никогда не auto. Сеанс на Wayland
+# — 78 и подсказка про gdm-xorg.
 #
 # АУТЕНТИФИКАЦИЯ — FAIL-CLOSED. Без SELKIES_BASIC_AUTH_PASSWORD Selkies не
 # запускается вовсе, на любом адресе: петля не защищает от других учёток и
@@ -47,12 +60,28 @@ for k in "${SECRET_KEYS[@]}"; do
     if [[ -n "${!k:-}" ]]; then export -n "${k?}"; else unset "$k"; fi
 done
 
+# SELKIES_USER is the key of configure (whose instance to start), not Selkies'.
+unset SELKIES_USER
+
 USERNAME="${1:?usage: run-selkies.sh <user>}"
 (( EUID != 0 )) || { log_error "не от root: юнит запускает обёртку от имени пользователя (User=%i)"; exit 78; }
-UID_OF_USER="$(id -u "$USERNAME")" || { log_error "нет пользователя $USERNAME"; exit 1; }
-HOME_OF_USER="$R$(getent passwd "$USERNAME" | cut -d: -f6)"
+# The uid rule (ruling Р3) — before logind or X are asked anything: 78, a unit
+# of a system account is a setting to fix, not a restart loop.
+[[ "$USERNAME" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] \
+    || { log_error "selkies@$USERNAME: имя пользователя не подходит — не запускаюсь"; exit 78; }
+PW_LINE="$(getent passwd "$USERNAME" 2>/dev/null)" \
+    || { log_error "нет пользователя $USERNAME в passwd — не запускаюсь"; exit 78; }
+UID_OF_USER="$(cut -d: -f3 <<< "$PW_LINE")"
+if [[ ! "$UID_OF_USER" =~ ^[0-9]+$ ]] || (( UID_OF_USER < 1000 || UID_OF_USER >= 65534 )); then
+    log_error "selkies@$USERNAME: uid $UID_OF_USER вне 1000..65533 — системная учётка (root, менеджер входа), её экран не транслирую"
+    log_error "пользователь сеанса: sudo cream set selkies SELKIES_USER=<имя>"
+    exit 78
+fi
+HOME_OF_USER="$R$(cut -d: -f6 <<< "$PW_LINE")"
 PREFIX="$R/opt/selkies/current"
-DISPLAY_NUM="${SELKIES_DISPLAY:-:0}"
+WANT_DISPLAY="${SELKIES_DISPLAY:-auto}"
+[[ "$WANT_DISPLAY" =~ ^(auto|:[0-9]+(\.[0-9]+)?)$ ]] \
+    || { log_error "SELKIES_DISPLAY=$WANT_DISPLAY: нужно auto или :N — не запускаюсь"; exit 78; }
 
 # The monitor is the robot's, not the browser's. The settings come with the
 # defaults of the manifest from /var/lib/cream/ext/selkies/env (written by
@@ -175,54 +204,65 @@ fi
 
 [[ -x "$PREFIX/usr/conda/bin/selkies" ]] || { log_error "нет $PREFIX/usr/conda/bin/selkies — расширение не установлено"; exit 1; }
 
-session_type(){
-    local sid
-    sid="$(loginctl list-sessions --no-legend 2>/dev/null | awk -v u="$USERNAME" '$3 == u && $4 == "seat0" {print $1; exit}')"
-    [[ -n "$sid" ]] || return 1
-    loginctl show-session "$sid" -p Type --value 2>/dev/null
+XS_LIB="$R/opt/cream/ext/selkies/files/x-session.sh"
+[[ -f "$XS_LIB" ]] || { log_error "нет $XS_LIB — дерево расширения неполное (снимок каталога кладёт lib/x-session.sh)"; exit 1; }
+# shellcheck source=../../../../lib/x-session.sh
+source "$XS_LIB"
+
+# wayland_exit: 78 (EX_CONFIG) — the session type is a setting of the display
+# manager, a restart every 5 s would not change it (RestartPreventExitStatus=78).
+wayland_exit(){
+    log_error "сессия '$USERNAME' на Wayland — Selkies подключается только к X.Org, служба остановлена"
+    log_error "включите Xorg у менеджера входа (расширение gdm-xorg — Xorg у GDM; gnome пишет WaylandEnable=false), войдите заново"
+    log_error "и запустите: sudo systemctl restart selkies@$USERNAME"
+    exit 78
 }
 
-# Кандидаты в X authority — те же и в том же порядке, что у x11vnc
-# (разбор с замерами — x11vnc/run-x11vnc.sh).
-find_authority(){
-    local c xorg_pid xorg_auth
-    local -a candidates=(
-        "$HOME_OF_USER/.Xauthority"
-        "/run/user/${UID_OF_USER}/gdm/Xauthority"
-        "/run/lightdm/${USERNAME}/xauthority"
-    )
-    xorg_pid="$(pgrep -x Xorg | head -1 || true)"
-    if [[ -n "$xorg_pid" && -r "/proc/$xorg_pid/cmdline" ]]; then
-        xorg_auth="$(tr '\0' '\n' < "/proc/$xorg_pid/cmdline" | awk '/^-auth$/{getline; print; exit}')"
-        [[ -n "$xorg_auth" ]] && candidates+=("$xorg_auth")
+# seat0_note: one line on who is on seat0 while we wait.
+seat0_note(){
+    local a name type class
+    if ! a="$(xs_seat0_active)"; then
+        log_info "на seat0 нет активного сеанса (или нет logind) — жду вход '$USERNAME'"
+        return 0
     fi
-    for c in "${candidates[@]}"; do
-        [[ -r "$c" ]] || continue
-        if env XAUTHORITY="$c" xdpyinfo -display "$DISPLAY_NUM" >/dev/null 2>&1; then
-            echo "$c"; return 0
+    read -r name type class <<< "$a"
+    if [[ "$class" != user ]]; then
+        log_info "на seat0 экран входа ($class) — жду вход '$USERNAME' (или DESKTOP_AUTOLOGIN=1 расширения desktop)"
+    elif [[ "$name" != "$USERNAME" ]]; then
+        log_info "на seat0 сеанс $name ($type), Selkies ждёт $USERNAME: sudo cream set selkies SELKIES_USER=$name"
+    else
+        log_info "на seat0 сеанс $name ($type) — его дисплей пока не открывается"
+    fi
+}
+
+# find_session: sets DISPLAY_NUM and AUTH; 1 — not (yet); exits 78 on Wayland.
+find_session(){
+    local s rc=0
+    if [[ "$WANT_DISPLAY" == auto ]]; then
+        DISPLAY_NUM="$(xs_find_display "$USERNAME")" || rc=$?
+        (( rc != 2 )) || wayland_exit
+        (( rc == 0 )) || return 1
+    else
+        if s="$(xs_seat0_session "$USERNAME")" && [[ "$(cut -d' ' -f2 <<< "$s")" == wayland ]]; then
+            wayland_exit
         fi
-    done
-    return 1
+        DISPLAY_NUM="$WANT_DISPLAY"
+    fi
+    AUTH="$(xs_find_authority "$USERNAME" "$DISPLAY_NUM")"
 }
 
-AUTH=""; waited=0
-until AUTH="$(find_authority)"; do
-    if (( waited == 0 )); then
-        log_info "жду X-сессию '$USERNAME' на $DISPLAY_NUM (без DESKTOP_AUTOLOGIN=1 она появится после входа человека)"
-    fi
-    # 78 (EX_CONFIG): the session type is a setting of the display manager, a
-    # restart every 5 s would not change it (RestartPreventExitStatus=78).
-    if [[ "$(session_type)" == wayland ]]; then
-        log_error "сессия '$USERNAME' на Wayland — Selkies подключается только к X.Org, служба остановлена"
-        log_error "включите Xorg у менеджера входа (расширение gnome пишет WaylandEnable=false), войдите заново"
-        log_error "и запустите: sudo systemctl restart selkies@$USERNAME"
-        exit 78
+DISPLAY_NUM=""; AUTH=""; waited=0
+until find_session; do
+    if (( waited % 300 == 0 )); then
+        log_info "жду X-сессию '$USERNAME' (дисплей $WANT_DISPLAY; без DESKTOP_AUTOLOGIN=1 она появится после входа человека)"
+        seat0_note
     fi
     sleep 5; waited=$((waited + 5))
 done
 log_info "дисплей $DISPLAY_NUM, authority $AUTH"
 
-export DISPLAY="$DISPLAY_NUM" XAUTHORITY="$AUTH"
+# Selkies gets the display found, never "auto".
+export DISPLAY="$DISPLAY_NUM" XAUTHORITY="$AUTH" SELKIES_DISPLAY="$DISPLAY_NUM"
 export HOME="$HOME_OF_USER" USER="$USERNAME"
 export XDG_RUNTIME_DIR="/run/user/${UID_OF_USER}"
 export PULSE_RUNTIME_PATH="$XDG_RUNTIME_DIR/pulse"
