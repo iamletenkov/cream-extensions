@@ -21,9 +21,11 @@
 # AutomaticLoginEnable, TimedLogin=<user> with TimedLoginEnable/TimedLoginDelay;
 # in LightDM (lightdm.conf, lightdm.conf.d/*.conf) autologin-user=<user> with
 # autologin-user-timeout — the keys of that section only. Another account's
-# autologin, a commented key, a link or a non-regular file are left alone (a
-# link — a warning: an autologin of an account that is no more opens nothing).
-# In place: the mode and owner of the package's file stay.
+# autologin, a commented key, a link (the file or its directory: /etc/gdm3,
+# /etc/lightdm, lightdm.conf.d) or a non-regular file are left alone (a link — a
+# warning: an autologin of an account that is no more opens nothing). The file
+# is replaced whole (mv -T of a temporary file beside it), its mode and owner
+# copied.
 #
 # Refuses (exit 1) a name of the wrong form, root and system accounts
 # (uid < 1000), and an account that survives userdel: an image must not carry
@@ -71,7 +73,10 @@ drop_keys(){
         END { exit changed ? 0 : 1 }
     ' "$f" "$f" > "$tmp" || rc=$?
     if (( rc == 0 )); then
-        cat -- "$tmp" > "$f" || rc=2
+        # Replaced whole, not rewritten in place: a link put at <f> meanwhile is
+        # replaced itself, never followed; the mode and owner are the file's.
+        { chmod --reference="$f" -- "$tmp" && chown --reference="$f" -- "$tmp" \
+            && mv -fT -- "$tmp" "$f"; } || rc=2
     elif (( rc != 1 )); then
         rc=2
     fi
@@ -79,11 +84,26 @@ drop_keys(){
     return "$rc"
 }
 
+# link_dir <file>: prints the directory between /etc and <file> that is a link
+# (/etc/gdm3, /etc/lightdm, /etc/lightdm/lightdm.conf.d); 1 — none is.
+link_dir(){
+    local d="${1%/*}"
+    while [[ "$d" == "$R"/etc/* ]]; do
+        if [[ -L "$d" ]]; then printf '%s' "${d#"$R"}"; return 0; fi
+        d="${d%/*}"
+    done
+    return 1
+}
+
 # clear_autologin <user>: the autologin of gdm3 and LightDM naming <user> off.
 clear_autologin(){
-    local u="$1" f rel rc changed
+    local u="$1" f rel rc changed d
     for f in "$R/etc/gdm3/daemon.conf" "$R/etc/gdm3/custom.conf" \
              "$R/etc/lightdm/lightdm.conf" "$R"/etc/lightdm/lightdm.conf.d/*.conf; do
+        if d="$(link_dir "$f")"; then
+            [[ -e "$f" ]] && log_warn "$d — символическая ссылка: автологин в ${f#"$R"} не трогаю (учётки '$u' уже нет)"
+            continue
+        fi
         if [[ -L "$f" ]]; then
             log_warn "${f#"$R"} — символическая ссылка: автологин в ней не трогаю (учётки '$u' уже нет)"
             continue

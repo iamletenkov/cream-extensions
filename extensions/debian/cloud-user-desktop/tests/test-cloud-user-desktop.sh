@@ -189,6 +189,34 @@ check "цель ссылки не тронута" grep -qx 'AutomaticLogin=jetso
 check "ссылка осталась ссылкой" test -L "$ROOT/etc/gdm3/custom.conf"
 check "предупреждение про ссылку" grep -q 'ссылка' <<< "$(ht_out)"
 
+echo "== install: каталог конфигов — ссылка — не идём по ней =="
+# /etc/gdm3, /etc/lightdm, /etc/lightdm/lightdm.conf.d — each a link to a
+# directory outside, the config inside it names jetson.
+for d in etc/gdm3 etc/lightdm etc/lightdm/lightdm.conf.d; do
+    fresh
+    mkdir -p "$ROOT/$(dirname "$d")" "$ROOT/victim"
+    case "$d" in
+        etc/gdm3) printf '%s\n' '[daemon]' 'AutomaticLogin=jetson' > "$ROOT/victim/custom.conf" ;;
+        etc/lightdm) printf '%s\n' '[Seat:*]' 'autologin-user=jetson' > "$ROOT/victim/lightdm.conf" ;;
+        *) printf '%s\n' '[Seat:*]' 'autologin-user=jetson' > "$ROOT/victim/50-vendor.conf" ;;
+    esac
+    cp -r "$ROOT/victim" "$ROOT/victim.orig"
+    ln -s "$ROOT/victim" "$ROOT/$d"
+    ht_hook install CLOUD_USER_DESKTOP_REMOVE=jetson; eq "/$d — ссылка: install — 0" 0 "$?"
+    check "/$d — ссылка: цель не тронута" diff -r "$ROOT/victim.orig" "$ROOT/victim"
+    check "/$d — ссылка: предупреждение" grep -q "/$d — символическая ссылка" <<< "$(ht_out)"
+done
+
+echo "== install: правка — заменой файла (mv), права и владелец те же =="
+fresh; dm_confs
+ino="$(stat -c %i "$ROOT/etc/gdm3/custom.conf")"
+own="$(stat -c %u:%g "$ROOT/etc/gdm3/custom.conf")"
+ht_hook install CLOUD_USER_DESKTOP_REMOVE=jetson; eq "install — 0" 0 "$?"
+check_not "custom.conf заменён целиком (новый inode)" test "$ino" = "$(stat -c %i "$ROOT/etc/gdm3/custom.conf")"
+eq "custom.conf: права те же" 640 "$(stat -c %a "$ROOT/etc/gdm3/custom.conf")"
+eq "custom.conf: владелец тот же" "$own" "$(stat -c %u:%g "$ROOT/etc/gdm3/custom.conf")"
+check_not "временных файлов не осталось" compgen -G "$ROOT/etc/gdm3/.cloud-user-desktop.*"
+
 echo "== install: ключ пуст или учётка осталась — конфиги не трогаются =="
 fresh; dm_confs; cp "$ROOT/etc/gdm3/custom.conf" "$ROOT/gdm.orig"
 ht_hook install; eq "пустой ключ — 0" 0 "$?"
