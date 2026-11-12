@@ -128,6 +128,15 @@ if [[ ! -e /etc/resolv.conf && ! -L /etc/resolv.conf ]] || cp -P /etc/resolv.con
     rm -f /etc/resolv.conf
     printf 'nameserver 1.1.1.1\\nnameserver 8.8.8.8\\noptions timeout:2 attempts:3\\n' > /etc/resolv.conf
 fi
+# The network of the appliance as the guest sees it: the host prints it on a failure.
+{
+    echo "== ip -4 addr"; ip -4 addr
+    echo "== ip route"; ip route
+    echo "== resolv.conf of the guest before the build"; cat /etc/resolv.conf.build-graphical
+    echo "== resolv.conf of the build"; cat /etc/resolv.conf
+    echo "== getent ahostsv4 archive.ubuntu.com"; { timeout 20 getent ahostsv4 archive.ubuntu.com || echo "rc=\$?"; } | head -n 3
+    echo "== tcp 1.1.1.1:53"; timeout 5 bash -c ': < /dev/tcp/1.1.1.1/53' && echo ok || echo "rc=\$?"
+} > "\$L/net.diag" 2>&1
 step(){ local n="\$1" rc=0; shift; "\$@" > "\$L/\$n.out" 2> "\$L/\$n.err" || rc=\$?; echo "\$rc" > "\$L/\$n.rc"; return "\$rc"; }
 EOF
     while IFS='|' read -r n _ cmd; do
@@ -280,6 +289,10 @@ build(){
             echo "--- ${f##*/}: хвост ${f%.rc}.err и .out" >&2
             tail -n 30 "${f%.rc}.err" "${f%.rc}.out" >&2 || true
         done
+        if [[ -e "$work/logs/net.diag" ]]; then
+            echo "--- net.diag: сеть appliance глазами гостя" >&2
+            cat "$work/logs/net.diag" >&2
+        fi
     fi
     return "$rc"
 }

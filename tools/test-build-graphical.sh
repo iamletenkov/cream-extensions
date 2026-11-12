@@ -77,6 +77,17 @@ has "cream-gnome: ловушка зовёт возврат" "trap 'restore' EXIT
 wf="$(cat "$HERE/../.github/workflows/build-graphical.yml")"
 has "workflow: сеть appliance — isc-dhcp-client на раннере" "isc-dhcp-client" "$wf"
 before "workflow: isc-dhcp-client до сборки" "isc-dhcp-client" "tools/build-graphical.sh \"\$SCENARIO\"" "$wf"
+# The network of the appliance as the guest sees it goes to the logs before the
+# first step: address, route, resolvers, a name, TCP to a resolver.
+has "cream-gnome: сеть гостя — в журнал net.diag" '> "$L/net.diag" 2>&1' "$g"
+has "cream-gnome: net.diag — адрес" "ip -4 addr" "$g"
+has "cream-gnome: net.diag — маршрут" "ip route" "$g"
+has "cream-gnome: net.diag — резолверы гостя до замены" "cat /etc/resolv.conf.build-graphical" "$g"
+has "cream-gnome: net.diag — имя" "getent ahostsv4 archive.ubuntu.com" "$g"
+has "cream-gnome: net.diag — TCP до резолвера" "/dev/tcp/1.1.1.1/53" "$g"
+before "cream-gnome: net.diag после замены резолверов" "nameserver 1.1.1.1" "net.diag" "$g"
+before "cream-gnome: net.diag до первого шага" "net.diag" "step 01-cream" "$g"
+has "сбой: хост печатает net.diag" 'net.diag' "$(cat "$B")"
 
 # --- сценарий гостя: готовый gdm3 -------------------------------------------
 g="$("$B" --guest-script existing-gdm3 cream-extensions-9.9.9.tar.gz "$SHA")"
