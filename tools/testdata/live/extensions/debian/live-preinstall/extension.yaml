@@ -1,0 +1,19 @@
+# Fixture of tools/test-live-test.sh: a desktop put there before cream —
+# LIVE_PREINSTALL (a package by apt before cream), LIVE_PRESEED (a tree of tests/
+# into the root before cream) and LIVE_EXPECT_RESTORED (remove gives back the
+# preseeded file and takes away the one install made). The variant broken
+# (tests/live.broken.env) keeps the change at remove — red; the variant badpath
+# names a relative path — a call error before any container.
+schema: cream/v1
+name: live-preinstall
+version: 1.0.0
+summary: фикстура L-раннера — пакет и файлы до cream, точный возврат при снятии
+cream: ">=1.0.0"
+platform: {family: deb, arch: [amd64, arm64]}
+targets: {build: exec, live: "yes"}
+hooks:
+  install: {}
+  remove: {}
+config:
+  keys:
+    LIVE_PREINSTALL_BREAK: {type: str, default: "", empty: true, description: "yes — remove не возвращает файл (вариант broken)"}

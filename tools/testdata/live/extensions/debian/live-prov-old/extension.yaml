@@ -1,0 +1,14 @@
+# Fixture of tools/test-live-test.sh: the provider a machine had before
+# (gnome before existing-desktop) — removed by LIVE_DEPS_FORCE_REMOVE.
+schema: cream/v1
+name: live-prov-old
+version: 1.0.0
+summary: фикстура L-раннера — прежний поставщик способности
+cream: ">=1.0.0"
+platform: {family: deb, arch: [amd64, arm64]}
+targets: {build: exec, live: "yes"}
+provides: [live-cap]
+conflicts: {capabilities: [live-cap]}
+hooks:
+  install: {}
+  remove: {}

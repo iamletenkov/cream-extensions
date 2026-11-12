@@ -18,7 +18,11 @@ gh workflow run live.yml -f ext=<имя>                     # то же в CI (
 Умолчания прогона — `tests/live.env` расширения (данные, не скрипт): `LIVE_DISTROS`,
 `LIVE_DEPS`, `LIVE_ACCEPT_RISK`, `LIVE_EXPECT_SKIP`, `LIVE_PARAMS`, `LIVE_SECRETS`,
 `LIVE_MEMORY`, `LIVE_CAPS`, `LIVE_SNAPSHOT_IGNORE`, `LIVE_BOOT_CONFIGURE`,
-`LIVE_FAILED_IGNORE`. Флаги перекрывают файл.
+`LIVE_FAILED_IGNORE`, `LIVE_PREINSTALL`, `LIVE_PRESEED`, `LIVE_EXPECT_RESTORED`,
+`LIVE_DEPS_FORCE_REMOVE`, `LIVE_REMOVE_FORCE`; в матрице — ещё `LIVE_NIGHTLY_ONLY`,
+`LIVE_NIGHTLY_DISTROS` (таблица — [testing](../guides/testing.md)). Флаги перекрывают
+файл. Вариант — `tests/live.<v>.env` поверх `tests/live.env`:
+`make test-live EXT=<имя> ARGS='--variant <v>'`, журналы — `.scratchpad/live/<ext>.<v>-<distro>`.
 
 ## Разбор падения
 
@@ -35,7 +39,19 @@ gh workflow run live.yml -f ext=<имя>                     # то же в CI (
    - **окружение** — сеть, apt-зеркало, нехватка памяти/диска, `systemd в контейнере не
      загрузился` — повторить; `--cap SYS_ADMIN` с профилем AppArmor `docker-default`
      systemd не загружает, `apparmor=unconfined` на общем хосте не используется.
-4. Повторить прогон того же дистрибутива; затем остальные из `LIVE_DISTROS`.
+4. Ключи «машины до cream»:
+   - `FAIL preinstall` / `preseed` — до cream ничего не установлено, это **окружение**
+     (apt-зеркало) или опечатка в имени пакета/каталоге; журнал — `preinstall.log`,
+     `preseed.log`;
+   - `FAIL remove не вернул как было до cream` — **расширение**: `remove` не вернул
+     файл, права, владельца или оставил созданный им файл; что разошлось — `restored.diff`
+     (снимки `restored-before.snap`/`restored-after.snap`);
+   - `FAIL после install не installed` / `cream check` после `LIVE_DEPS_FORCE_REMOVE` —
+     граф без снятого поставщика не держится: расширение не даёт его capability
+     (`provides`), или зависимый требует то, чего больше нет; журнал — `graph.err`;
+   - `FAIL cream remove: код 67` при установленных зависимых — нужен `LIVE_REMOVE_FORCE=1`,
+     если снятие с зависимыми — и есть сценарий.
+5. Повторить прогон того же дистрибутива; затем остальные из `LIVE_DISTROS`.
 
 ## Проверка результата
 

@@ -1,0 +1,13 @@
+#!/bin/sh
+# What LIVE_PREINSTALL and LIVE_PRESEED put there before cream must be there;
+# the preseeded file is kept once and then changed. Idempotent.
+set -eu
+seed=/etc/live-preinstall/seed.conf
+command -v file >/dev/null || { echo "нет пакета file (LIVE_PREINSTALL)" >&2; exit 1; }
+[ "$(stat -c %u:%g "$seed")" = 0:0 ] || { echo "$seed не root:root (LIVE_PRESEED)" >&2; exit 1; }
+if [ ! -s "$CREAM_STATE_DIR/seed.conf" ]; then
+    grep -qx seed "$seed" || { echo "$seed — не дерево LIVE_PRESEED" >&2; exit 1; }
+    cp -p "$seed" "$CREAM_STATE_DIR/seed.conf"
+fi
+printf 'changed by cream\n' > "$seed"
+printf 'made by cream\n' > /etc/live-absent

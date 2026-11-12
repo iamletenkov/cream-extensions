@@ -20,6 +20,9 @@
 #                     ^…$, сравнивается с именем юнита целиком; каждый такой юнит
 #                     печатается строкой «разрешено упасть: <юнит>»
 #   --keep-image      не удалять образ (самопроверка гоняет несколько прогонов подряд)
+#   --preinstall "p…" пакеты apt, которые ставятся до cream (стол, поставленный не через cream)
+#   --preseed DIR     дерево tests/DIR расширения — в корень контейнера до cream (root:root)
+#   --variant V       поверх tests/live.env читается tests/live.V.env (его ключи перекрывают)
 #
 # Умолчания флагов расширения — в его tests/live.env (строки KEY=value, читаются
 # как данные, не исполняются): LIVE_DEPS, LIVE_ACCEPT_RISK=1, LIVE_EXPECT_SKIP=1,
@@ -27,10 +30,18 @@
 # LIVE_SNAPSHOT_IGNORE (ERE путей, которым разрешено меняться при --reinstall),
 # LIVE_BOOT_CONFIGURE=optional (configure на загрузке может не запускаться),
 # LIVE_FAILED_IGNORE (как --failed-ignore: стенд, а не расширение, роняет юнит),
-# LIVE_DISTROS="debian-12 ubuntu-24.04" (матрица CI). Флаги перекрывают файл.
+# LIVE_PREINSTALL="p …" и LIVE_PRESEED=DIR (как --preinstall, --preseed; путь — только
+# внутри tests/, без ..), LIVE_EXPECT_RESTORED="/путь …" (sha256, режим, владелец и
+# ссылки путей после preinstall/preseed совпадают с ними же после remove; нет пути до —
+# нет и после), LIVE_DEPS_FORCE_REMOVE="имя …" (после LIVE_DEPS и до расширения —
+# cream remove --force этих зависимостей; после install оставшиеся зависимости
+# installed, cream check с ними поверх установленного — без ошибок графа),
+# LIVE_REMOVE_FORCE=1 (итоговый remove с --force: от расширения зависят оставшиеся),
+# LIVE_DISTROS="debian-12 ubuntu-24.04" (матрица CI; LIVE_NIGHTLY_DISTROS,
+# LIVE_NIGHTLY_ONLY — её же, tools/live-matrix.sh). Флаги перекрывают файл.
 # Наличие tests/live.env — признак L-расширения для CI (ночной прогон, PR).
 #
-# Сценарий: cream по пину (tools/cream-deb.sh) → dpkg -i, system init, источник path
+# Сценарий: cream по пину (tools/cream-deb.sh) → preinstall, preseed → dpkg -i, system init, источник path
 # с временным каталогом (расширение и deps без tests/) → deps → install → повтор
 # install (changed: false) → снимок sha256/режимов /etc, /opt/cream, /usr/local,
 # /var/lib/cream/ext → install --reinstall → снимок совпал (идемпотентность §6.3) →
@@ -45,7 +56,8 @@
 # cgroup v2 на запись, --tmpfs /run, /run/lock, /tmp, явный --memory, сеть есть
 # (apt, загрузки по пину). Весь прогон — под замком flock ($LIVE_LOCK, общий для
 # всех worktree хоста): живые прогоны идут по одному. Контейнер (и образ, без
-# --keep-image) удаляется в trap. Журналы — .scratchpad/live/<ext>-<distro>/.
+# --keep-image) удаляется в trap. Журналы — .scratchpad/live/<ext>-<distro>/, с
+# --variant — .scratchpad/live/<ext>.<вариант>-<distro>/.
 #
 # Код: 0 — все проверки прошли; 1 — проверка не прошла; 2 — ошибка вызова или окружения.
 set -uo pipefail
@@ -55,7 +67,7 @@ REPO="$(dirname "$HERE")"
 die() { echo "live-test: $*" >&2; exit 2; }
 log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*" >&2; }
 
-usage() { sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 # ---------------------------------------------------------------------------
 # Arguments
@@ -64,9 +76,13 @@ keep_image="${LIVE_KEEP_IMAGE:-}" ext=""
 caps=() params=() secrets=()
 set_deps="" set_risk="" set_skip="" set_mem="" set_caps="" set_params="" set_secrets=""
 failed_ignore="" set_failed_ignore=""
+preinstall="" set_preinstall="" preseed="" set_preseed="" variant=""
 while (( $# )); do
     case "$1" in
         --distro) distro="${2:?}"; shift 2 ;;
+        --preinstall) preinstall="${2-}"; set_preinstall=1; shift 2 ;;
+        --preseed) preseed="${2-}"; set_preseed=1; shift 2 ;;
+        --variant) variant="${2:?}"; shift 2 ;;
         --deps) deps="${2-}"; set_deps=1; shift 2 ;;
         --accept-risk) accept_risk=1; set_risk=1; shift ;;
         --expect-skip) expect_skip=1; set_skip=1; shift ;;
@@ -100,11 +116,23 @@ find_ext() {
 }
 ext_dir="$(find_ext "$ext")" || die "$ext: нет (или не одно) extensions/*/$ext/extension.yaml в $catalog"
 
-# live.env: data, KEY=value per line; flags win.
+# --variant: tests/live.<variant>.env over tests/live.env.
+if [[ -n "$variant" ]]; then
+    [[ "$variant" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "--variant $variant: не имя варианта ([a-z0-9-])"
+    [[ -f "$ext_dir/tests/live.$variant.env" ]] || die "$ext: нет tests/live.$variant.env (--variant $variant)"
+fi
+env_files=("$ext_dir/tests/live.env")
+[[ -n "$variant" ]] && env_files+=("$ext_dir/tests/live.$variant.env")
+
+# live.env (and the variant's file): data, KEY=value per line; the variant wins
+# over live.env, flags win over both.
 envval() {
-    local f="$ext_dir/tests/live.env" line
-    [[ -f "$f" ]] || return 0
-    line="$(grep -E "^$1=" "$f" | tail -n1)" || true
+    local f line="" l
+    for f in "${env_files[@]}"; do
+        [[ -f "$f" ]] || continue
+        l="$(grep -E "^$1=" "$f" | tail -n1)" || true
+        [[ -n "$l" ]] && line="$l"
+    done
     line="${line#*=}"
     line="${line%\"}"; line="${line#\"}"
     printf '%s' "$line"
@@ -132,6 +160,38 @@ if [[ -n "$failed_ignore" ]]; then
     (( re_rc != 2 )) || die "LIVE_FAILED_IGNORE «$failed_ignore»: не регулярное выражение"
 fi
 read -r -a dep_list <<< "$deps"
+for d in "${dep_list[@]}"; do [[ "$d" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "зависимость «$d» — не имя"; done
+# A desktop put there before cream (plan 2026-11-12-existing-desktop, Task 4).
+[[ -n "$set_preinstall" ]] || preinstall="$(envval LIVE_PREINSTALL)"
+[[ -n "$set_preseed" ]] || preseed="$(envval LIVE_PRESEED)"
+read -r -a pre_pkgs <<< "$preinstall"
+# Package names only (Debian policy, an optional :arch): never an option of apt.
+for p in "${pre_pkgs[@]}"; do
+    [[ "$p" =~ ^[a-z0-9][a-z0-9+.-]+(:[a-z0-9]+)?$ ]] || die "--preinstall $p: не имя пакета"
+done
+preseed_dir=""
+if [[ -n "$preseed" ]]; then
+    if [[ "$preseed" == /* || "$preseed" =~ (^|/)\.\.(/|$) ]]; then
+        die "--preseed $preseed: каталог внутри tests/ расширения — без / в начале и без .."
+    fi
+    tests_real="$(cd "$ext_dir/tests" 2>/dev/null && pwd -P)" || die "--preseed $preseed: у $ext нет tests/"
+    preseed_dir="$(cd "$ext_dir/tests/$preseed" 2>/dev/null && pwd -P)" \
+        || die "--preseed $preseed: нет каталога tests/$preseed у $ext"
+    # A link inside tests/ must not lead out of it.
+    [[ "$preseed_dir" == "$tests_real"/* ]] || die "--preseed $preseed: ведёт вне tests/ расширения"
+fi
+read -r -a restored <<< "$(envval LIVE_EXPECT_RESTORED)"
+for p in "${restored[@]}"; do
+    if [[ "$p" != /* || "$p" =~ (^|/)\.\.(/|$) || ! "$p" =~ ^[A-Za-z0-9_./+@:-]+$ ]]; then
+        die "LIVE_EXPECT_RESTORED $p: нужен абсолютный путь без .. и пробелов"
+    fi
+done
+read -r -a force_remove <<< "$(envval LIVE_DEPS_FORCE_REMOVE)"
+for d in "${force_remove[@]}"; do
+    [[ " ${dep_list[*]} " == *" $d "* ]] || die "LIVE_DEPS_FORCE_REMOVE: $d не из LIVE_DEPS (${dep_list[*]})"
+done
+remove_force=""
+[[ "$(envval LIVE_REMOVE_FORCE)" == 1 ]] && remove_force=1
 for c in "${caps[@]}"; do [[ "$c" =~ ^[A-Z_]+$ ]] || die "--cap $c: не имя capability"; done
 for p in "${params[@]}"; do [[ "$p" =~ ^[A-Z][A-Z0-9_]*=.*$ ]] || die "--param $p: ждали KEY=VALUE"; done
 for s in "${secrets[@]}"; do [[ "$s" =~ ^[A-Z][A-Z0-9_]*$ ]] || die "--secret $s: не имя ключа"; done
@@ -156,6 +216,9 @@ PY
 has_remove="$(manifest "$ext_dir" remove)"
 has_configure="$(manifest "$ext_dir" configure)"
 every_boot="$(manifest "$ext_dir" every_boot)"
+if (( ${#restored[@]} )) && [[ -z "$has_remove" || -n "$expect_skip" ]]; then
+    die "LIVE_EXPECT_RESTORED: сверяется после remove, а у $ext нет хука remove (или прогон с --expect-skip)"
+fi
 dep_dirs=()
 for d in "${dep_list[@]}"; do
     dd="$(find_ext "$d")" || die "зависимость $d: нет в каталоге"
@@ -175,12 +238,13 @@ if ! flock -n 9; then
     flock 9 || die "замок $LOCK"
 fi
 
-LOGDIR="${LIVE_LOGDIR:-$REPO/.scratchpad/live/$ext-$distro}"
+label="$ext${variant:+.$variant}"
+LOGDIR="${LIVE_LOGDIR:-$REPO/.scratchpad/live/$label-$distro}"
 rm -r -f -- "$LOGDIR"
 mkdir -p "$LOGDIR"
 TMP="$(mktemp -d)"
 IMAGE="cream-live:$distro"
-NAME="cream-live-$ext-$distro-$$"
+NAME="cream-live-$label-$distro-$$"
 cleanup() {
     docker rm -f "$NAME" >/dev/null 2>&1 || true
     [[ -n "$keep_image" ]] || docker image rm "$IMAGE" >/dev/null 2>&1 || true
@@ -198,7 +262,7 @@ finish() {
         cx systemctl --failed --no-legend --plain || true
         cx journalctl -b --no-pager -o short-monotonic || true
     } > "$LOGDIR/journal.log" 2>&1
-    echo "live-test $ext ($distro): проверок $((pass + fail)), не прошло $fail; журналы — $LOGDIR"
+    echo "live-test $label ($distro): проверок $((pass + fail)), не прошло $fail; журналы — $LOGDIR"
     (( fail == 0 )) && exit 0
     exit 1
 }
@@ -259,7 +323,7 @@ wait_boot() {
 
 # ---------------------------------------------------------------------------
 # Image and container
-log "$ext ($distro): образ $IMAGE"
+log "$label ($distro): образ $IMAGE"
 base="${distro/-/:}"
 docker build -q -t "$IMAGE" --build-arg "BASE=$base" - > "$LOGDIR/image.log" 2>&1 <<'EOF' || die "образ $IMAGE не собрался ($LOGDIR/image.log)"
 ARG BASE=debian:12
@@ -275,7 +339,7 @@ EOF
 
 cap_args=()
 for c in "${caps[@]}"; do cap_args+=(--cap-add "$c"); done
-log "$ext ($distro): контейнер $NAME (память $memory${caps[*]:+, cap ${caps[*]}})"
+log "$label ($distro): контейнер $NAME (память $memory${caps[*]:+, cap ${caps[*]}})"
 docker run -d --name "$NAME" \
     --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
     --tmpfs /run --tmpfs /run/lock --tmpfs /tmp \
@@ -304,6 +368,52 @@ docker cp "$deb" "$NAME:/live/cream.deb" > /dev/null || die "docker cp cream"
 docker cp "$TMP/params" "$NAME:/live/params" > /dev/null || die "docker cp параметров"
 cx sh -c 'chown -R root:root /live && chmod 0600 /live/params' || die "chown /live"
 
+# restored_snap <name>: type, mode, owner, link target and sha256 of every file
+# under the LIVE_EXPECT_RESTORED paths; a missing path is a line of its own.
+restored_snap() {
+    # shellcheck disable=SC2016  # expanded inside the container
+    cx sh -c 'for p do
+            if [ -e "$p" ] || [ -L "$p" ]; then
+                find "$p" -xdev \( -type f -o -type l -o -type d \) -printf "%y %m %u:%g %p %l\n"
+            else
+                echo "нет $p"
+            fi
+        done | LC_ALL=C sort
+        for p do [ -e "$p" ] && find "$p" -xdev -type f -print0; done | LC_ALL=C sort -z | xargs -0 -r sha256sum' \
+        sh "${restored[@]}" > "$LOGDIR/$1.snap" 2>/dev/null
+}
+
+# A desktop put there before cream: packages, then the tree (it may replace a
+# file of a package), then what remove has to give back.
+if (( ${#pre_pkgs[@]} )) || [[ -n "$preseed_dir" ]] || (( ${#restored[@]} )); then
+    echo "== до cream =="
+fi
+if (( ${#pre_pkgs[@]} )); then
+    # shellcheck disable=SC2016  # expanded inside the container
+    if cx sh -c 'apt-get update -q && apt-get install -y -q --no-install-recommends "$@"' sh "${pre_pkgs[@]}" \
+        > "$LOGDIR/preinstall.log" 2>&1; then
+        ok "preinstall: ${pre_pkgs[*]}"
+    else
+        tail -n 15 "$LOGDIR/preinstall.log" | sed 's/^/    /'
+        abort "preinstall: apt-get install ${pre_pkgs[*]} не прошёл ($LOGDIR/preinstall.log)"
+    fi
+fi
+if [[ -n "$preseed_dir" ]]; then
+    # Files of root, not of the host user; directories already in the container
+    # (/, /etc, …) keep their mode and owner.
+    if tar -C "$preseed_dir" --owner=0 --group=0 --numeric-owner -cf - . \
+        | cx tar -C / --no-overwrite-dir -xf - > "$LOGDIR/preseed.log" 2>&1; then
+        ok "preseed: tests/$preseed → /"
+    else
+        tail -n 15 "$LOGDIR/preseed.log" | sed 's/^/    /'
+        abort "preseed: tests/$preseed не лёг в корень ($LOGDIR/preseed.log)"
+    fi
+fi
+if (( ${#restored[@]} )); then
+    restored_snap restored-before
+    ok "до cream записаны ${restored[*]} (сверка после remove)"
+fi
+
 echo "== cream =="
 cx dpkg -i /live/cream.deb > "$LOGDIR/dpkg.log" 2>&1 || abort "dpkg -i cream ($LOGDIR/dpkg.log)"
 creamj init system init || { tailerr init; abort "cream system init"; }
@@ -326,6 +436,17 @@ for d in "${dep_list[@]}"; do
     else
         ok "зависимость $d установлена"
     fi
+done
+# The provider the machine had before goes, its dependents stay (the move from
+# gnome to existing-desktop, spec 2026-11-12-existing-desktop §5).
+for d in "${force_remove[@]}"; do
+    rc=0
+    creamj "force-$d" remove --force "$d" || rc=$?
+    if [[ "$rc" != 0 ]]; then
+        tailerr "force-$d"
+        abort "зависимость $d: cream remove --force — код $rc"
+    fi
+    ok "зависимость $d снята (remove --force)"
 done
 
 install_args=(install)
@@ -392,7 +513,55 @@ else
     fi
 fi
 
+# deps_graph_check: after LIVE_DEPS_FORCE_REMOVE — every dependency left is
+# installed, and cream check finds the graph whole: the installed minus those
+# dependencies as the base (provides from the staged manifests), each of them a
+# step `install <dep>` in the order of LIVE_DEPS.
+deps_graph_check() {
+    local left=() d steps=() bad_deps
+    for d in "${dep_list[@]}"; do
+        [[ " ${force_remove[*]} " == *" $d "* ]] || left+=("$d")
+    done
+    (( ${#left[@]} )) || return 0
+    creamj list-deps list || { tailerr list-deps; bad "cream list после install"; return 0; }
+    bad_deps="$(python3 - "$LOGDIR/list-deps.json" "$TMP/cat/extensions" "$TMP/installed.json" "${left[@]}" <<'PY'
+import json, os, sys, yaml
+lst, cat, out, *left = sys.argv[1:]
+exts = json.load(open(lst, encoding="utf-8"))["result"]["extensions"]
+status = {e["name"]: e["status"] for e in exts}
+for n in left:
+    if status.get(n) != "installed":
+        print(f"{n}: {status.get(n, 'нет в cream list')}")
+base = []
+for e in exts:
+    if e["name"] in left:
+        continue
+    m = os.path.join(cat, e["name"], "extension.yaml")
+    prov = []
+    if os.path.isfile(m):
+        prov = (yaml.safe_load(open(m, encoding="utf-8")) or {}).get("provides") or []
+    base.append({"name": e["name"], "version": e["version"], "provides": prov})
+json.dump(base, open(out, "w", encoding="utf-8"))
+PY
+)" || { bad "разбор cream list после install"; return 0; }
+    if [[ -z "$bad_deps" ]]; then
+        ok "после install зависимости installed: ${left[*]}"
+    else
+        bad "после install не installed:"
+        printf '%s\n' "$bad_deps" | sed 's/^/    /'
+    fi
+    docker cp "$TMP/installed.json" "$NAME:/live/installed.json" > /dev/null || { bad "docker cp installed.json"; return 0; }
+    for d in "${left[@]}"; do steps+=(--step "install $d"); done
+    if creamj graph check --catalog live=/live/cat --installed /live/installed.json "${steps[@]}"; then
+        ok "cream check: граф цел (поверх установленного — install ${left[*]})"
+    else
+        tailerr graph
+        bad "cream check: $(jf graph 'j["error"]["code"]') — $(jf graph 'j["error"]["message"]')"
+    fi
+}
+
 if [[ -z "$expect_skip" ]]; then
+    (( ${#force_remove[@]} )) && deps_graph_check
     # Repeat without the params file (deleted after install): the keys are in
     # the domain already, nothing is to change.
     repeat=(install)
@@ -506,11 +675,15 @@ boot_round "вторая загрузка"
 
 if [[ -n "$has_remove" && -z "$expect_skip" ]]; then
     echo "== remove =="
-    if creamj remove remove "$ext"; then
-        ok "cream remove: код 0"
+    remove_args=(remove)
+    [[ -n "$remove_force" ]] && remove_args+=(--force)
+    rc=0
+    creamj remove "${remove_args[@]}" "$ext" || rc=$?
+    if (( rc == 0 )); then
+        ok "cream ${remove_args[*]}: код 0"
     else
         tailerr remove
-        bad "cream remove: код $?"
+        bad "cream ${remove_args[*]}: код $rc"
     fi
     creamj list list
     if [[ "$(jf list '",".join(e["name"] for e in j["result"]["extensions"])')" =~ (^|,)$ext(,|$) ]]; then
@@ -520,6 +693,15 @@ if [[ -n "$has_remove" && -z "$expect_skip" ]]; then
     fi
     failed="$(failed_units)"
     if [[ -z "$failed" ]]; then ok "после remove systemctl --failed пуст"; else bad "после remove упавшие юниты: $failed"; fi
+    if (( ${#restored[@]} )); then
+        restored_snap restored-after
+        if diff -u "$LOGDIR/restored-before.snap" "$LOGDIR/restored-after.snap" > "$LOGDIR/restored.diff"; then
+            ok "remove вернул как было до cream: ${restored[*]}"
+        else
+            bad "remove не вернул как было до cream (LIVE_EXPECT_RESTORED), $LOGDIR/restored.diff:"
+            grep -E '^[-+][^-+]' "$LOGDIR/restored.diff" | head -n 20 | sed 's/^/    /'
+        fi
+    fi
 fi
 
 finish

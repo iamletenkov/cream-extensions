@@ -1,0 +1,6 @@
+#!/bin/sh
+# The exact return; LIVE_PREINSTALL_BREAK=yes forgets it (the red variant).
+set -eu
+[ "${LIVE_PREINSTALL_BREAK:-}" = yes ] && exit 0
+cp -p "$CREAM_STATE_DIR/seed.conf" /etc/live-preinstall/seed.conf
+rm -f /etc/live-absent
