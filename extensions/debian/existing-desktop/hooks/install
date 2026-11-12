@@ -13,7 +13,7 @@
 # absent — lib/x-session.sh confirms a display found without logind only with
 # it (plan ruling П15). On a live machine the diagnosis of `status` ends the log.
 #
-# apt waits for the dpkg lock up to 5 minutes and is retried 3 times (plan
+# apt waits for the dpkg lock up to 2 minutes and is retried 3 times (plan
 # ruling П19): a ready Ubuntu Desktop often has unattended-upgrades or
 # packagekit holding it, and an immediate "Could not get lock" would fail the
 # record, which keeps the desktop-session conflict.
