@@ -88,6 +88,14 @@ has "cream-gnome: net.diag — TCP до резолвера" "/dev/tcp/1.1.1.1/53
 before "cream-gnome: net.diag после замены резолверов" "nameserver 1.1.1.1" "net.diag" "$g"
 before "cream-gnome: net.diag до первого шага" "net.diag" "step 01-cream" "$g"
 has "сбой: хост печатает net.diag" 'net.diag' "$(cat "$B")"
+# On the runner DHCP of the appliance gave up: dhcpcd took an IPv4LL address and
+# an on-link default route, slirp answers no ARP for the world — No route to
+# host. With no gateway route the guest sets the libguestfs gateway 169.254.2.2.
+has "cream-gnome: нет шлюза — проверка маршрута по умолчанию" "ip route show default" "$g"
+has "cream-gnome: нет шлюза — шлюз libguestfs" "ip route replace default via 169.254.2.2 dev eth0" "$g"
+before "cream-gnome: шлюз до net.diag" "via 169.254.2.2" "net.diag" "$g"
+before "cream-gnome: шлюз до первого шага" "via 169.254.2.2" "step 01-cream" "$g"
+has "cream-gnome: net.diag — ставился ли шлюз" "== gateway" "$g"
 
 # --- сценарий гостя: готовый gdm3 -------------------------------------------
 g="$("$B" --guest-script existing-gdm3 cream-extensions-9.9.9.tar.gz "$SHA")"

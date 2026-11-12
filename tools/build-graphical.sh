@@ -128,8 +128,17 @@ if [[ ! -e /etc/resolv.conf && ! -L /etc/resolv.conf ]] || cp -P /etc/resolv.con
     rm -f /etc/resolv.conf
     printf 'nameserver 1.1.1.1\\nnameserver 8.8.8.8\\noptions timeout:2 attempts:3\\n' > /etc/resolv.conf
 fi
+# On a slow runner dhcpcd of the appliance gives up on DHCP and takes an IPv4LL
+# address with an on-link default route: slirp answers no ARP for the world, so
+# "No route to host". The gateway of the libguestfs user network comes back —
+# in the appliance's kernel only, nothing of it reaches the image.
+GW=as-is
+if ! ip route show default | grep -q ' via '; then
+    ip route replace default via 169.254.2.2 dev eth0 && GW=169.254.2.2 || GW="failed rc=\$?"
+fi
 # The network of the appliance as the guest sees it: the host prints it on a failure.
 {
+    echo "== gateway: \$GW"
     echo "== ip -4 addr"; ip -4 addr
     echo "== ip route"; ip route
     echo "== resolv.conf of the guest before the build"; cat /etc/resolv.conf.build-graphical
