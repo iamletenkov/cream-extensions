@@ -61,6 +61,16 @@ has "cream-gnome: метки образа — в журналы" "/etc/image-lab
 has "cream-gnome: apt повторяет скачивание" 'Acquire::Retries "10";' "$g"
 before "cream-gnome: повторы apt до первого шага" "Acquire::Retries" "step 01-cream" "$g"
 has "cream-gnome: настройка повторов снимается на выходе" "rm -f /etc/apt/apt.conf.d/99build-graphical-retries" "$g"
+# DNS of a hosted runner through slirp answers now and then (П29: no
+# self-hosted runner): public resolvers for the build, the guest's own
+# resolv.conf — a link or the libguestfs copy — saved first, back on exit.
+has "cream-gnome: публичный резолвер 1.1.1.1" "nameserver 1.1.1.1" "$g"
+has "cream-gnome: публичный резолвер 8.8.8.8" "nameserver 8.8.8.8" "$g"
+before "cream-gnome: resolv.conf гостя сохраняется до замены" "cp -P /etc/resolv.conf /etc/resolv.conf.build-graphical" "nameserver 1.1.1.1" "$g"
+before "cream-gnome: резолверы до первого шага" "nameserver 1.1.1.1" "step 01-cream" "$g"
+has "cream-gnome: resolv.conf гостя возвращается на выходе" "mv -f /etc/resolv.conf.build-graphical /etc/resolv.conf" "$g"
+before "cream-gnome: возврат resolv.conf — в ловушке EXIT" "mv -f /etc/resolv.conf.build-graphical" "trap " "$g"
+has "cream-gnome: ловушка зовёт возврат" "trap 'restore' EXIT" "$g"
 
 # --- сценарий гостя: готовый gdm3 -------------------------------------------
 g="$("$B" --guest-script existing-gdm3 cream-extensions-9.9.9.tar.gz "$SHA")"

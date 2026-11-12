@@ -103,11 +103,30 @@ set -u
 L=$GUEST_DIR/logs
 mkdir -p "\$L"
 export DEBIAN_FRONTEND=noninteractive
-# DNS of the appliance on a hosted runner answers now and then: apt retries a
-# fetch; the setting lives for the build only and never reaches the image.
+# DNS of a hosted runner, reached through slirp, answers now and then: apt
+# retries a fetch, and the build asks public resolvers. Both live for the build
+# only: the guest's own resolv.conf (a link or the libguestfs copy) is saved
+# first and comes back on exit, nothing of it reaches the image.
 R=/etc/apt/apt.conf.d/99build-graphical-retries
 echo 'Acquire::Retries "10";' > "\$R"
-trap 'rm -f /etc/apt/apt.conf.d/99build-graphical-retries; cp /etc/image-labels.d/cream.json "\$L/cream.json" 2>/dev/null || true' EXIT
+DNS_SWAPPED=0
+restore(){
+    rm -f /etc/apt/apt.conf.d/99build-graphical-retries
+    if [[ "\$DNS_SWAPPED" == 1 ]]; then
+        rm -f /etc/resolv.conf
+        if [[ -e /etc/resolv.conf.build-graphical || -L /etc/resolv.conf.build-graphical ]]; then
+            mv -f /etc/resolv.conf.build-graphical /etc/resolv.conf
+        fi
+    fi
+    cp /etc/image-labels.d/cream.json "\$L/cream.json" 2>/dev/null || true
+}
+trap 'restore' EXIT
+rm -f /etc/resolv.conf.build-graphical
+if [[ ! -e /etc/resolv.conf && ! -L /etc/resolv.conf ]] || cp -P /etc/resolv.conf /etc/resolv.conf.build-graphical; then
+    DNS_SWAPPED=1
+    rm -f /etc/resolv.conf
+    printf 'nameserver 1.1.1.1\\nnameserver 8.8.8.8\\noptions timeout:2 attempts:3\\n' > /etc/resolv.conf
+fi
 step(){ local n="\$1" rc=0; shift; "\$@" > "\$L/\$n.out" 2> "\$L/\$n.err" || rc=\$?; echo "\$rc" > "\$L/\$n.rc"; return "\$rc"; }
 EOF
     while IFS='|' read -r n _ cmd; do
