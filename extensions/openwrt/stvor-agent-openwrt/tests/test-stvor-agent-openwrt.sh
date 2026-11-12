@@ -221,6 +221,19 @@ setup; printf 'sbk_a b\n' > "$ROOT/dist.key"
 installed STVOR_AGENT_AUTH_FILE="$ROOT/dist.key"
 check "не ключ — отказ" test "$?" -ne 0
 check_not "не ключ — без скачивания" test -s "$FAKE/curl.argv"
+# Длина — отдельной проверкой (повтор {16,512} musl не принимает; на OpenWrt — make test-openwrt).
+check_not "в обёртке нет повтора больше 255 (musl)" \
+    grep -qE '^[^#]*\{([0-9]+,)?([0-9]{4,}|[3-9][0-9]{2}|2[6-9][0-9]|25[6-9])\}' "$SRC/files/agent.sh"
+for n in 15 513; do
+    setup; head -c "$n" /dev/zero | tr '\0' k > "$ROOT/dist.key"; echo >> "$ROOT/dist.key"
+    installed STVOR_AGENT_AUTH_FILE="$ROOT/dist.key"
+    check "ключ длиной $n — отказ" test "$?" -ne 0
+    check_not "ключ длиной $n — без скачивания" test -s "$FAKE/curl.argv"
+done
+for n in 16 512; do
+    setup; head -c "$n" /dev/zero | tr '\0' k > "$ROOT/dist.key"; echo >> "$ROOT/dist.key"
+    installed STVOR_AGENT_AUTH_FILE="$ROOT/dist.key"; eq "ключ длиной $n — 0" 0 "$?"
+done
 setup
 installed STVOR_AGENT_AUTH_FILE="$ROOT/none.key"; eq "файла ключа нет — 0" 0 "$?"
 check_not "файла ключа нет — без заголовка" test -s "$FAKE/curl.headers"

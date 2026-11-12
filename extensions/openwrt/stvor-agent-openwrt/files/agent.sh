@@ -57,7 +57,12 @@ SA_RELEASES=https://github.com/iamletenkov/stvor-agent/releases/download
 RE_SA_VERSION='^[0-9]+\.[0-9]+\.[0-9]+$'
 RE_SA_SHA256='^[0-9a-f]{64}$'
 RE_SA_URL='^https?://[A-Za-z0-9._~:/%+-]+$'
-RE_SA_BEARER='^[A-Za-z0-9._~+/=-]{16,512}$'
+# The key of the distribution: 16..512 of these characters. The length is checked
+# apart — the regex engine of musl (OpenWrt) rejects a bound over RE_DUP_MAX (255),
+# and {16,512} made every key "not a key" there.
+RE_SA_BEARER='^[A-Za-z0-9._~+/=-]+$'
+SA_BEARER_MIN=16
+SA_BEARER_MAX=512
 # STVOR_AGENT_DIST: https only (the key goes there), no userinfo, query or fragment.
 RE_SA_DIST='^https://[A-Za-z0-9.:/-]+$'
 SA_SERVICES=(stvor-agent stvor-agent-telemetry)
@@ -175,7 +180,7 @@ sa_check_source(){
         if [[ -s "$STVOR_AGENT_AUTH_FILE" ]]; then
             IFS= read -r SA_BEARER < "$STVOR_AGENT_AUTH_FILE" || [[ -n "$SA_BEARER" ]] || SA_BEARER=""
             SA_BEARER="${SA_BEARER%$'\r'}"
-            [[ "$SA_BEARER" =~ $RE_SA_BEARER ]] \
+            (( ${#SA_BEARER} >= SA_BEARER_MIN && ${#SA_BEARER} <= SA_BEARER_MAX )) && [[ "$SA_BEARER" =~ $RE_SA_BEARER ]] \
                 || { SA_BEARER=""; sa_die "STVOR_AGENT_AUTH_FILE: в файле не ключ (одна строка, base64url/токен)"; }
             [[ "$src" == https://* ]] || sa_die "STVOR_AGENT_AUTH_FILE: ключ — только https, а зеркало $src"
         else
