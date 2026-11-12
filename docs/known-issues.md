@@ -22,18 +22,20 @@
 - **Сеанс на Wayland не захватывается.** `selkies` и `x11vnc` подключаются только к
   X.Org: на Wayland-сеансе обёртка выходит с 78, юнит её не перезапускает. Xorg у GDM —
   [`gdm-xorg`](../extensions/debian/gdm-xorg/README.md) (стол не через cream) или `gnome`;
-  у SDDM своего переключателя в каталоге нет (Plasma 6, по сведениям, по умолчанию на
-  Wayland — не замерено, P4 спеки).
+  у SDDM своего переключателя в каталоге нет (Kubuntu 24.04 — Plasma 5.27, сеанс по
+  умолчанию X11, замер P4; Plasma 6, по сведениям, по умолчанию на Wayland).
 - **Xorg от root при пустом `Display` в logind — обёртка ждёт.** Это GDM с Xorg через
   `Xorg.wrap` от root (нет KMS, NVIDIA без `nvidia-drm.modeset=1`) и `startx` с
   root-Xorg. Обёртки `selkies` и `x11vnc` работают от пользователя и fd такого Xorg не
   видят. Без них дисплей не доказать (запасные пути `lib/x-session.sh`): cookie уходит
-  только Xorg, чей доверенный lock-файл хранит его pid и чьи оба слушателя `X<N>` —
-  его fd. Поэтому обёртка ждёт, строка в журнале раз в 5 минут. LightDM и SDDM пишут
-  `Display`, rootless GDM — Xorg пользователя: их это не задевает. Обход — сознательно
+  только Xorg, чей `N` доказан — доверенным lock-файлом с его pid, а без lock-файла
+  единственным `N` его собственных слушающих сокетов — и чьи оба слушателя `X<N>` — его
+  fd. Поэтому обёртка ждёт, строка в журнале раз в 5 минут. Их это не задевает: LightDM
+  и SDDM пишут `Display`, rootless GDM — Xorg пользователя без lock-файла, `N` из его
+  сокетов (замер P1/P2, П27б). Обход — сознательно
   задать дисплей: `sudo cream set selkies SELKIES_DISPLAY=:N` /
-  `sudo cream set x11vnc X11VNC_DISPLAY=:N`. Пуст ли `Display` на реальных машинах —
-  замер P1–P3 спеки, [#139](https://github.com/iamletenkov/cream-extensions/issues/139).
+  `sudo cream set x11vnc X11VNC_DISPLAY=:N`. Замеры по DM — [runbook 05](runbooks/05_existing-desktop-acceptance.md),
+  [#139](https://github.com/iamletenkov/cream-extensions/issues/139).
 - **Жёсткий `:N` и `Display` из logind — без привязки к Xorg.** Authority предлагается
   дисплею как есть (как в 5.x); проверка authority и подключение x11vnc/Selkies — по
   `unix:N`, без отката на TCP. Но GDM

@@ -185,10 +185,15 @@ seat0_note(){
 }
 
 # find_session: sets DISPLAY_NUM and AUTH; 1 — not (yet); exits 78 on Wayland.
+# The library journals its path and why an authority is missing; a try every
+# 5 s would put a line there every 5 s, so one try in 5 minutes speaks and the
+# rest are XS_QUIET (ruling П27б). QUIET_TRY — the last try was silent.
 find_session(){
     local s rc=0
+    QUIET_TRY=1
+    if (( waited % 300 == 0 )); then QUIET_TRY=""; fi
     if [[ "$WANT_DISPLAY" == auto ]]; then
-        DISPLAY_NUM="$(xs_find_display "$USERNAME")" || rc=$?
+        DISPLAY_NUM="$(XS_QUIET="$QUIET_TRY" xs_find_display "$USERNAME")" || rc=$?
         (( rc != 2 )) || wayland_exit
         (( rc == 0 )) || return 1
     else
@@ -197,12 +202,12 @@ find_session(){
         fi
         DISPLAY_NUM="$WANT_DISPLAY"
     fi
-    AUTH="$(xs_find_authority "$USERNAME" "$DISPLAY_NUM")"
+    AUTH="$(XS_QUIET="$QUIET_TRY" xs_find_authority "$USERNAME" "$DISPLAY_NUM")"
 }
 
 # Until the user's X session is there — waiting, a line in the journal every
 # 5 minutes (not a restart loop of the unit).
-DISPLAY_NUM=""; AUTH=""; waited=0
+DISPLAY_NUM=""; AUTH=""; waited=0; QUIET_TRY=""
 until find_session; do
     if (( waited % 300 == 0 )); then
         log_info "жду X-сессию '$USERNAME' (дисплей $WANT_DISPLAY; без DESKTOP_AUTOLOGIN=1 она появится после входа человека)"
@@ -210,6 +215,10 @@ until find_session; do
     fi
     sleep 5; waited=$((waited + 5))
 done
+# Found on a silent try: the path the library took goes to the journal once.
+if [[ -n "$QUIET_TRY" && "$WANT_DISPLAY" == auto ]]; then
+    xs_find_display "$USERNAME" > /dev/null || true
+fi
 log_info "дисплей $DISPLAY_NUM, authority $AUTH"
 
 # No -loop: x11vnc ends with its X session, the unit restarts the wrapper

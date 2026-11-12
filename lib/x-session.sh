@@ -26,11 +26,14 @@
 #       The display of USER's X session: logind Display of an x11 session;
 #       empty — fallback 1, an Xorg owned by USER: :N bound to it by
 #       /tmp/.X<N>-lock holding its pid, owned by root or USER and writable by
-#       nobody else — :N from its argv (startx) or the lock alone (rootless
-#       GDM runs `Xorg vtN -displayfd 3` without :N, ruling П13) — and both
-#       listeners of X<N>, the file and the abstract name xcb tries first,
-#       its fds and nobody else's (_xs_x_held; a socket name alone proves
-#       nothing — /proc/net/unix prints any abstract name, newlines included);
+#       nobody else — :N from its argv (startx) or the lock alone (ruling П13);
+#       no lock holds it (GDM runs `Xorg vtN -displayfd 3` and writes none —
+#       measured, ruling П27б) — :N of its own listening sockets, exactly one
+#       N among them and no inode of its on two lines (_xs_own_display); then
+#       both listeners of X<N>, the file and the abstract name xcb tries
+#       first, its fds and nobody else's (_xs_x_held; a socket name alone
+#       proves nothing — /proc/net/unix prints any abstract name, newlines
+#       included);
 #       nothing — fallback 2, :0, only when a real X server of root or USER
 #       serves it (_xs_served: lock, live Xorg, socket, both listeners its
 #       fds — no cookie for a fake server on a free :0 or a taken abstract
@@ -44,19 +47,24 @@
 #   xs_find_authority USER DISPLAY
 #       The first X authority that opens DISPLAY for USER (xdpyinfo on unix:N):
 #       ~/.Xauthority, /run/user/<uid>/gdm/Xauthority,
-#       /run/lightdm/<user>/xauthority, then the -auth of every Xorg. 0 —
-#       printed; 1 — none.
+#       /run/lightdm/<user>/xauthority, /tmp/xauth_* of SDDM (only a regular
+#       file of USER's uid, mode 0600 or narrower — _xs_private, ruling П27б),
+#       then the -auth of every Xorg. 0 — printed; 1 — none (said in the
+#       journal).
 #
 # USER arrives checked by the consumer (its key pattern, the uid rule); here it
 # is checked again only as a name — never an option, a path or a word for a
 # shell — and goes to every command as a separate argument. Paths of the machine
 # go under $CREAM_ROOT (tests on a substituted root). The caller's
-# log_info is used when defined, plain stderr otherwise. Library code sets no
-# shell options and prints nothing but its result to stdout.
+# log_info is used when defined, plain stderr otherwise; XS_QUIET non-empty —
+# no journal at all (a wrapper waiting for the session asks every 5 s and lets
+# one try in 5 minutes speak, ruling П27б). Library code sets no shell options
+# and prints nothing but its result to stdout.
 
 _xs_root(){ local r="${CREAM_ROOT:-}"; printf '%s' "${r%/}"; }
 
 _xs_info(){
+    [[ -z "${XS_QUIET:-}" ]] || return 0
     if declare -F log_info >/dev/null; then log_info "$@"; else >&2 echo "[INFO] ${CREAM_EXT:-x-session}: $*"; fi
 }
 
@@ -87,6 +95,19 @@ _xs_trusted(){
     (( (8#$mode & 8#022) == 0 )) || return 1
     for u in "$@"; do [[ "$owner" == "$u" ]] && return 0; done
     return 1
+}
+
+# _xs_private FILE UID: FILE is a regular file (not a link) of UID alone —
+# owned by UID, nothing for its group or others (0600 or narrower). The
+# /tmp/xauth_* of SDDM lies in /tmp, where anyone creates files: only UID (or
+# root) could have made a file UID owns, and a cookie others may read is not
+# the session's own.
+_xs_private(){
+    local f="$1" uid="$2" owner mode
+    [[ -f "$f" && ! -L "$f" && "$uid" =~ ^[0-9]+$ ]] || return 1
+    read -r owner mode < <(stat -c '%u %a' -- "$f" 2>/dev/null) || return 1
+    [[ "$owner" == "$uid" && "$mode" =~ ^[0-7]+$ ]] || return 1
+    (( (8#$mode & 8#077) == 0 ))
 }
 
 # _xs_pid_sockets PID: the socket inodes among the fds of PID, one per line;
@@ -171,13 +192,55 @@ _xs_lock_holds(){
     [[ "$c" =~ ^[0-9]+$ && "$c" == "$pid" ]]
 }
 
+# _xs_own_display PID: ":<N>" — the one display PID listens on by its own
+# sockets: the listening lines of /proc/net/unix at /tmp/.X11-unix/X<N> or
+# @/tmp/.X11-unix/X<N> whose inode is among the fds of PID. The name of a line
+# alone proves nothing (an abstract name with a newline adds a line of
+# anyone's choice), the inode does: only PID holds its fds. A forged line may
+# still carry an inode of PID — of its listener (then the inode is on two
+# lines) or of a socket the list does not show (netlink: then a second N
+# appears, the real X<N> is there too). 1 — no such listener, the fds or
+# /proc/net/unix not readable, a second N, an inode of PID on two lines.
+_xs_own_display(){
+    local pid="$1" r out line i n=""
+    local -a fields=() lines=()
+    local -A mine=() seen=()
+    r="$(_xs_root)"
+    [[ -r "$r/proc/net/unix" ]] || return 1
+    out="$(_xs_pid_sockets "$pid")" || return 1
+    [[ -n "$out" ]] || return 1
+    while IFS= read -r i; do mine[$i]=1; done <<< "$out"
+    mapfile -t lines < "$r/proc/net/unix" || return 1
+    for line in "${lines[@]}"; do
+        read -r -a fields <<< "$line"
+        (( ${#fields[@]} >= 7 )) || continue
+        i="${fields[6]}"
+        [[ "$i" =~ ^[0-9]+$ && -n "${mine[$i]:-}" ]] || continue
+        seen[$i]=$(( ${seen[$i]:-0} + 1 ))
+        (( ${seen[$i]} == 1 )) || return 1
+        (( ${#fields[@]} >= 8 )) || continue
+        # __SO_ACCEPTCON and SS_UNCONNECTED: a listening socket.
+        [[ "${fields[3]}" == 00010000 && "${fields[5]}" == 01 ]] || continue
+        [[ "${fields[7]}" =~ ^@?/tmp/\.X11-unix/X([0-9]+)$ ]] || continue
+        if [[ -z "$n" ]]; then
+            n="${BASH_REMATCH[1]}"
+        elif [[ "$n" != "${BASH_REMATCH[1]}" ]]; then
+            return 1
+        fi
+    done
+    [[ -n "$n" ]] || return 1
+    printf ':%s\n' "$n"
+}
+
 # _xs_xorg_display PID UID: "<:N> <how>" — the display the Xorg PID of UID
-# serves. N is bound to the process only by /tmp/.X<N>-lock holding PID
+# serves. N is bound to the process by /tmp/.X<N>-lock holding PID
 # (_xs_lock_holds: Xorg writes "%10d\n", mode 0444, owned by root or UID and
 # writable by nobody else): a) :N anywhere in its argv (startx, an explicit
-# display) when its lock holds PID; b) else the lock that holds PID — GDM
-# starts `Xorg vtN -displayfd 3`, no :N in argv. A socket name proves nothing:
-# /proc/net/unix prints whatever an abstract name holds. 1 — none.
+# display) when its lock holds PID; b) else the lock that holds PID. c) No lock
+# holds PID — GDM starts `Xorg vtN -displayfd 3` and writes no lock (measured
+# on Ubuntu 24.04, ruling П27б): the one N of its own listening sockets
+# (_xs_own_display). A socket name alone proves nothing: /proc/net/unix prints
+# whatever an abstract name holds. 1 — none.
 _xs_xorg_display(){
     local pid="$1" uid="$2" r arg f n
     r="$(_xs_root)"
@@ -196,6 +259,10 @@ _xs_xorg_display(){
             return 0
         fi
     done
+    if n="$(_xs_own_display "$pid")"; then
+        printf '%s сокеты Xorg (lock-файла нет)\n' "$n"
+        return 0
+    fi
     return 1
 }
 
@@ -289,9 +356,10 @@ _xs_served(){
 
 # _xs_confirm USER DISPLAY: a display found without logind is USER's only when
 # an authority of USER himself opens it — $XAUTHORITY, ~/.Xauthority, the files
-# of his runtime dir (/run/user/<uid>/gdm/Xauthority, xauth_* of SDDM),
-# /run/lightdm/<user>/xauthority; each a regular file of his uid nobody else may
-# write (never the -auth of some Xorg) — and the display has access control
+# of his runtime dir (/run/user/<uid>/gdm/Xauthority, xauth_*),
+# /run/lightdm/<user>/xauthority — each a regular file of his uid nobody else
+# may write — and /tmp/xauth_* of SDDM 0.20, only of his uid and 0600 or
+# narrower (_xs_private; never the -auth of some Xorg) — and the display has access control
 # (xhost): a server started with -ac opens with any authority, so it proves
 # nothing. No xhost — not confirmed. Both connect to unix:N, never :N: with no
 # unix listener libxcb falls back to TCP 127.0.0.1:6000+N, an unprivileged
@@ -307,8 +375,15 @@ _xs_confirm(){
     candidates+=("$r$home/.Xauthority" "$r/run/user/$uid/gdm/Xauthority")
     for c in "$r/run/user/$uid"/xauth_*; do candidates+=("$c"); done
     candidates+=("$r/run/lightdm/$user/xauthority")
+    for c in "$r/tmp"/xauth_*; do candidates+=("$c"); done
     for c in "${candidates[@]}"; do
-        if ! _xs_trusted "$c" "$uid" || [[ ! -r "$c" ]]; then continue; fi
+        # SDDM's /tmp/xauth_*: in /tmp, so the session's uid alone, 0600.
+        if [[ "$c" == "$r/tmp/xauth_"* ]]; then
+            _xs_private "$c" "$uid" || continue
+        elif ! _xs_trusted "$c" "$uid"; then
+            continue
+        fi
+        [[ -r "$c" ]] || continue
         env XAUTHORITY="$c" xdpyinfo -display "unix$display" >/dev/null 2>&1 || continue
         if ! command -v xhost >/dev/null 2>&1; then
             _xs_info "дисплей $display: нет xhost — контроль доступа не проверить, не принимаю"
@@ -390,6 +465,9 @@ xs_find_authority(){
         "$r/run/user/$uid/gdm/Xauthority"
         "$r/run/lightdm/$user/xauthority"
     )
+    # SDDM 0.20: the session's XAUTHORITY is /tmp/xauth_XXXXXX, the -auth of
+    # its root Xorg is not readable by the user (measured on Kubuntu 24.04).
+    for c in "$r/tmp"/xauth_*; do candidates+=("$c"); done
     pids="$(pgrep -x Xorg 2>/dev/null)" || pids=""
     for pid in $pids; do
         [[ "$pid" =~ ^[0-9]+$ ]] || continue
@@ -397,6 +475,10 @@ xs_find_authority(){
         [[ "$auth" == /* ]] && candidates+=("$r$auth")
     done
     for c in "${candidates[@]}"; do
+        # /tmp is everyone's: an xauth_* there counts only as USER's alone.
+        if [[ "$c" == "$r/tmp/xauth_"* ]]; then
+            _xs_private "$c" "$uid" || continue
+        fi
         [[ -f "$c" && -r "$c" ]] || continue
         # unix:N — no fallback to TCP 6000+N (see _xs_confirm).
         if env XAUTHORITY="$c" xdpyinfo -display "unix$display" >/dev/null 2>&1; then
@@ -404,5 +486,6 @@ xs_find_authority(){
             return 0
         fi
     done
+    _xs_info "дисплей $display: ни одна authority пользователя $user его не открывает (~/.Xauthority, /run/user/$uid/gdm, /run/lightdm/$user, /tmp/xauth_* SDDM, -auth Xorg)"
     return 1
 }

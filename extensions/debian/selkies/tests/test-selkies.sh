@@ -950,6 +950,22 @@ eq "строка ожидания — на 0, 5 и 10 минуте" 3 "$(grep -c
 check "диагноз: на seat0 bob" grep -q 'на seat0 сеанс bob (x11)' "$ROOT/out"
 check "подсказка: SELKIES_USER=bob" grep -q 'SELKIES_USER=bob' "$ROOT/out"
 
+echo "== run-selkies.sh: дисплей есть, authority нет — журнал раз в 5 минут (П27б) =="
+# SDDM before the fix: logind gives :0, no authority opens it — the library
+# spoke on every try, a line every 5 s. One try in 5 minutes speaks now, and
+# the path is named once when the display is found.
+wr_root
+ht_fake xdpyinfo '[[ -e "$FAKE/x-up" ]]'
+ht_fake sleep 'n=$(( $(cat "$FAKE/sleeps" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/sleeps"
+(( n == 130 )) && : > "$FAKE/x-up"
+(( n < 2000 )) || kill -TERM "$PPID"
+exit 0'
+run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"
+check "selkies запущен, когда authority открылась" test -e "$FAKE/selkies.env"
+eq "authority не открывает — на 0, 5 и 10 минуте" 3 "$(grep -c 'ни одна authority' "$ROOT/out")"
+eq "путь logind — на 0, 5, 10 минуте и раз при находке" 4 "$(grep -c 'logind Display' "$ROOT/out")"
+eq "строка ожидания — на 0, 5 и 10 минуте" 3 "$(grep -c 'жду X-сессию' "$ROOT/out")"
+
 echo "== run-selkies.sh: xdpyinfo — только unix:N, без отката на TCP 6000+N =="
 # With no unix listener libxcb goes to 127.0.0.1:6000+N, where anyone may
 # listen, and hands it the cookie — the search and the watcher of the session
