@@ -78,6 +78,8 @@
 | П8 | Обёртка `selkies` снимает `SELKIES_USER` из окружения (`unset`) до `exec` Selkies: 6.2.2 кладёт все действующие ключи в `EnvironmentFile`, и шаблон `SELKIES_*` иначе отдал бы его Selkies. H проверяет окружение подставного `selkies` | спека §4.4 «обёртка не передаёт его Selkies» |
 | П9 | Варианты L — файлы `tests/live.<вариант>.env` поверх `tests/live.env`; три DM у `existing-desktop`, gdm3 у `desktop`, переход с `gnome` — вариантами, а не отдельными скриптами | один L-раннер, данные вместо кода |
 | П10 | `vino-vnc` в ночной ubuntu-24.04 — только после замера P1 (пакет `vino` в noble). Решение и правка `tests/live.env` (5.1.2) — в Task 20 | без замера ночь краснела бы от отсутствующего пакета |
+| П11 | Ночные варианты `sddm` и `from-gnome` обязаны быть зелёными (Task 6 и Task 21); `from-gnome` ставит `gdm3` до `gnome` (`LIVE_PREINSTALL`), иначе `gnome` запоминает пустой `dm=` и проверяется не миграция §5 | skeptic по плану: «разобраны» в Task 6 против «два зелёных ночных подряд» в Task 21 |
+| П12 | Снимок `desktop` 2.0.0 — сырые строки и позиция (с закомментированными), а не «значение или не было»; фикстуры из настоящих пакетов gdm3 | `set_ini_key` удаляет закомментированные варианты — без сырых строк П6 «побайтно» невыполним |
 | П11 | L `desktop` проверяет побайтный возврат после `remove` (`LIVE_EXPECT_RESTORED`); путь «`set 0` → `remove`» — в H | раннер не умеет `cream set` между шагами; заводить его ради одного теста — лишняя абстракция |
 
 ## Версии
@@ -234,7 +236,7 @@ H-тесты задач 6–15 можно писать до слияния за�
   `tests/test-existing-desktop.sh`, `tests/live.env` (debian-12 и ubuntu-24.04, `LIVE_PREINSTALL="xserver-xorg-core lightdm"`,
   `LIVE_PRESEED` с `usr/share/xsessions/*.desktop`, `LIVE_EXPECT_RESTORED="/etc/lightdm /etc/X11"`),
   `tests/live.gdm3.env`, `tests/live.sddm.env` (ubuntu-24.04, `LIVE_NIGHTLY_ONLY=1`),
-  `tests/live.from-gnome.env` (ubuntu-24.04, ночь: `LIVE_DEPS="cloud-user desktop gnome selkies"`,
+  `tests/live.from-gnome.env` (ubuntu-24.04, ночь: `LIVE_PREINSTALL="gdm3 xserver-xorg-core"` (готовый стол до `gnome`, П11), `LIVE_DEPS="cloud-user desktop gnome selkies"`,
   `LIVE_DEPS_FORCE_REMOVE=gnome`, `LIVE_REMOVE_FORCE=1`, `LIVE_ACCEPT_RISK=1`), `tests/live-root/…`;
   `lib/x-session.consumers`.
 - **Тесты:** H (до кода) — фикстуры gdm3 Ubuntu (`custom.conf`: нет ключа, закомментирован, `false`), gdm3 Debian
@@ -242,15 +244,17 @@ H-тесты задач 6–15 можно писать до слияния за�
   `loginctl`/`systemctl is-active`; `status` на моках `loginctl`; снимок дерева корня до и после — без изменений.
   L — `make test-live EXT=existing-desktop` на debian-12 и ubuntu-24.04; варианты `gdm3`, `sddm`, `from-gnome` —
   `make test-live EXT=existing-desktop DISTRO=ubuntu-24.04 ARGS='--variant <v>'`.
-- **Готово когда:** `make ci` зелёный, три L-прогона (основной ×2, `gdm3`) зелёные; `sddm` и `from-gnome` — зелёные
-  или разобраны по runbook 04 с записью в PR.
+- **Готово когда:** `make ci` зелёный, L-прогоны (основной ×2, `gdm3`, `sddm`, `from-gnome`) зелёные — ночной набор
+  целиком входит в критерий Task 21 (П11).
 
 ### Task 7: `desktop` 2.0.0
 - **Модель:** Opus (автологин).
 - **Зависит от:** 3, 4. **Версия:** 1.1.1 → 2.0.0, мажор.
 - **Что:** §4.3 спеки, рулинги Р1, П6, П7: `DESKTOP_AUTOLOGIN` — `bool`, `empty: true`, умолчание `""`; снимок
-  `$CREAM_STATE_DIR/autologin.before` (по файлу и ключу: значение или «не было» — `AutomaticLoginEnable`,
-  `AutomaticLogin` в `[daemon]` gdm3; `autologin-user`, `autologin-user-timeout` LightDM) только при
+  `$CREAM_STATE_DIR/autologin.before` (П12: по файлу и ключу — сырые строки секции, совпавшие с регэкспом
+  `set_ini_key`, включая закомментированные, и их позиция, как `lib/gdm-wayland.sh` хранит `WaylandEnable`;
+  ключи — `AutomaticLoginEnable`, `AutomaticLogin` в `[daemon]` gdm3; `autologin-user`, `autologin-user-timeout`
+  LightDM) только при
   `CREAM_REASON=install`, не перезаписывается; новый `hooks/upgrade` (работа `install` + маркер `legacy` при
   `CREAM_PREV_VERSION` < 2.0.0); возврат при пустом ключе и в `remove` (снимок → значения; `legacy` или нет записи →
   выключить, как 1.x); `active_dm` узнаёт `sddm`; SDDM + ключ `0`/`1` → прочие ручки, затем 1 с текстом
@@ -263,7 +267,9 @@ H-тесты задач 6–15 можно писать до слияния за�
   (при `boot`, `apply`, `upgrade` — нет); точный возврат; `remove` без записи = 1.x; **Р1:** «1.x с
   `DESKTOP_AUTOLOGIN=1` → `upgrade` (маркер `legacy`) → `configure` при `boot` → `remove`: автологин выключен» и то
   же с `DESKTOP_AUTOLOGIN=` вместо `remove`; обновление с 1.x при пустом ключе — отпечаток не меняется, DM не
-  перезапускается; П6 — install с пустым ключом, затем `apply` с `1`, `remove` → исходный файл побайтно.
+  перезапускается; П6 — install с пустым ключом, затем `apply` с `1`, `remove` → исходный файл побайтно (П12: фикстуры H и варианта
+  `gdm3` — настоящие `custom.conf`/`daemon.conf` из пакетов gdm3 Ubuntu 24.04 и Debian 12, с закомментированными
+  ключами).
   L — `make test-live EXT=desktop` (debian-12, ubuntu-24.04) и вариант `gdm3`.
 - **Готово когда:** `make ci` и L зелёные; `actions/status` показывает `sddm`.
 
