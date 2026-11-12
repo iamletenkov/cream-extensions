@@ -52,6 +52,14 @@ HOME_OF_USER="$R$(getent passwd "$USERNAME" | cut -d: -f6)"
 PREFIX="$R/opt/selkies/current"
 DISPLAY_NUM="${SELKIES_DISPLAY:-:0}"
 
+# The monitor is the robot's, not the browser's. The settings come with the
+# defaults of the manifest from /var/lib/cream/ext/selkies/env (written by
+# configure); should that file be missing, Selkies' own default would be
+# «sized by the client» — it resizes the X screen, and on a NVIDIA driver that
+# refuses the mode it leaves a logical monitor bigger than the screen, so the
+# clicks miss (Orin 2026-11-12). Empty means Selkies' default too.
+export SELKIES_ENABLE_RESIZE="${SELKIES_ENABLE_RESIZE:-false}"
+
 addr="${SELKIES_ADDR:-127.0.0.1}"
 loopback=0
 case "$addr" in 127.*|::1|localhost) loopback=1 ;; esac
@@ -109,9 +117,13 @@ until AUTH="$(find_authority)"; do
     if (( waited == 0 )); then
         log_info "жду X-сессию '$USERNAME' на $DISPLAY_NUM (без DESKTOP_AUTOLOGIN=1 она появится после входа человека)"
     fi
+    # 78 (EX_CONFIG): the session type is a setting of the display manager, a
+    # restart every 5 s would not change it (RestartPreventExitStatus=78).
     if [[ "$(session_type)" == wayland ]]; then
-        log_error "сессия '$USERNAME' на Wayland — Selkies подключается только к X.Org"
-        exit 1
+        log_error "сессия '$USERNAME' на Wayland — Selkies подключается только к X.Org, служба остановлена"
+        log_error "включите Xorg у менеджера входа (расширение gnome пишет WaylandEnable=false), войдите заново"
+        log_error "и запустите: sudo systemctl restart selkies@$USERNAME"
+        exit 78
     fi
     sleep 5; waited=$((waited + 5))
 done

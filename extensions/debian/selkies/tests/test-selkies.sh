@@ -76,7 +76,7 @@ blocking_systemctl() { grep -E '^systemctl (start|restart|stop|reload|enable --n
 echo "== манифест и раскладка =="
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
 eq "name" selkies "$(mf 'm["name"]')"
-eq "версия 6.2.1 (fetch_verified из files/fetch.sh)" 6.2.1 "$(mf 'm["version"]')"
+eq "версия 6.2.2 (действующие значения с умолчаниями манифеста)" 6.2.2 "$(mf 'm["version"]')"
 eq "cream >=1.2.0 (every_boot, спека cream §10.9)" ">=1.2.0" "$(mf 'm["cream"]')"
 eq "configure на каждой загрузке (аудит 2026-10-21)" True "$(mf 'm["hooks"]["configure"].get("every_boot")')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
@@ -92,6 +92,8 @@ eq "Р8: SELKIES_ALLOW_NO_AUTH — bool, 0" "bool 0" \
 eq "шаблон SELKIES_*" True "$(mf 'm["config"]["keys"]["SELKIES_*"]["pattern"]')"
 eq "SELKIES_ENABLE_BASIC_AUTH — не ручка: ставит обёртка по паролю" False \
     "$(mf '"SELKIES_ENABLE_BASIC_AUTH" in m["config"]["keys"]')"
+eq "SELKIES_ENCODER: пусто — выбор клиента (одно значение Selkies запирает)" ":True" \
+    "$(mf 'm["config"]["keys"]["SELKIES_ENCODER"]["default"] + ":" + str(m["config"]["keys"]["SELKIES_ENCODER"].get("empty"))')"
 eq "files: юнит" "files/selkies@.service /etc/systemd/system/selkies@.service 0644" \
     "$(mf '" ".join(f["src"]+" "+f["dst"]+" "+f["mode"] for f in m["files"])')"
 # Every value reaches an EnvironmentFile and a Teleport declaration: the types
@@ -125,8 +127,13 @@ for f in install.sh configure.sh configure-selkies.service knobs knobs.apply tel
     check_not "layout 2: $f не остался в корне" test -e "$EXT/$f"
 done
 UNIT="$EXT/files/selkies@.service"
-check "юнит: EnvironmentFile config" grep -qx 'EnvironmentFile=/etc/cream/selkies/config' "$UNIT"
-check "юнит: EnvironmentFile -secrets" grep -qx 'EnvironmentFile=-/etc/cream/selkies/secrets' "$UNIT"
+# Orin 2026-11-12: config holds only the keys set explicitly, so the defaults of
+# the manifest come from the effective file configure writes; config after it
+# (an explicit key wins), secrets last; config is optional (a password alone
+# creates no config).
+eq "юнит: действующие значения → config → secrets" \
+    "-/var/lib/cream/ext/selkies/env -/etc/cream/selkies/config -/etc/cream/selkies/secrets" \
+    "$(sed -n 's/^EnvironmentFile=//p' "$UNIT" | tr '\n' ' ' | sed 's/ $//')"
 check "юнит: от имени пользователя" grep -qx 'User=%i' "$UNIT"
 check "юнит: обёртка из дерева расширения" grep -qx 'ExecStart=/bin/bash /opt/cream/ext/selkies/files/run-selkies.sh %i' "$UNIT"
 check "юнит: отказ по аутентификации не перезапускается" grep -qx 'RestartPreventExitStatus=78' "$UNIT"
@@ -232,6 +239,52 @@ decl1="$(stat -c '%i %Y' "$DECL")"
 ht_hook configure CREAM_REASON=boot; eq "повтор — 0" 0 "$?"
 eq "повтор: объявление не переписано" "$decl1" "$(stat -c '%i %Y' "$DECL")"
 
+echo "== configure: действующие значения — с умолчаниями манифеста (Orin 2026-11-12) =="
+sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+EFF="$ROOT/var/lib/cream/ext/selkies/env"
+# What cream show reports: every non-secret key of the manifest with a
+# non-empty default, sorted.
+want_eff="$(python3 - "$EXT/extension.yaml" <<'PY'
+import sys, yaml
+keys = yaml.safe_load(open(sys.argv[1]))["config"]["keys"]
+print("\n".join(sorted(f"{k}={v['default']}" for k, v in keys.items()
+                       if not v.get("pattern") and not v.get("secret") and v.get("default"))))
+PY
+)"
+ht_hook configure CREAM_REASON=boot; eq "configure — 0" 0 "$?"
+check "файл действующих значений — обычный файл" test -f "$EFF" -a ! -L "$EFF"
+eq "файл 0644 (секретов нет)" 644 "$(stat -c %a "$EFF")"
+eq "файл = непустые умолчания манифеста" "$want_eff" "$(cat "$EFF")"
+check "SELKIES_ENABLE_RESIZE=false — монитор не меняется" grep -qx 'SELKIES_ENABLE_RESIZE=false' "$EFF"
+check_not "пустые умолчания не пишутся (пусто у Selkies — своё умолчание)" \
+    grep -qE '^SELKIES_(DISPLAY|ENCODER|HTTPS_CERT|HTTPS_KEY)=' "$EFF"
+check_not "секретов нет" leaked "$EFF"
+check_not "только SELKIES_*" grep -qv '^SELKIES_' "$EFF"
+eff1="$(stat -c '%i %Y' "$EFF")"
+ht_hook configure CREAM_REASON=boot; eq "повтор — 0" 0 "$?"
+eq "повтор: файл не переписан" "$eff1" "$(stat -c '%i %Y' "$EFF")"
+ht_hook configure CREAM_REASON=boot SELKIES_PORT=9090 SELKIES_SCALING_DPI=96; eq "заданные — 0" 0 "$?"
+check "заданное значение" grep -qx 'SELKIES_PORT=9090' "$EFF"
+check "ключ шаблона SELKIES_*" grep -qx 'SELKIES_SCALING_DPI=96' "$EFF"
+ht_hook configure CREAM_REASON=boot 'SELKIES_SCALING_DPI=9 6'; eq "значение с пробелом — 0" 0 "$?"
+check_not "значение не для EnvironmentFile не пишется" grep -q '^SELKIES_SCALING_DPI=' "$EFF"
+check "предупреждение про пропущенный ключ" grep -q 'SELKIES_SCALING_DPI' "$ROOT/out"
+sk_root
+ht_hook configure CREAM_REASON=boot; eq "без аутентификации — 0" 0 "$?"
+check "без аутентификации файл тоже пишется" grep -qx 'SELKIES_ENABLE_RESIZE=false' "$EFF"
+sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+mkdir -p "$ROOT/victim"; echo keep > "$ROOT/victim/file"; ln -s "$ROOT/victim/file" "$EFF"
+ht_hook configure CREAM_REASON=boot; eq "файл — ссылка: configure 0" 0 "$?"
+eq "цель ссылки не тронута" keep "$(cat "$ROOT/victim/file")"
+check "файл — обычный, на месте ссылки" test -f "$EFF" -a ! -L "$EFF"
+sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+rmdir "$ROOT/var/lib/cream/ext/selkies"; mkdir -p "$ROOT/victim"
+ln -s "$ROOT/victim" "$ROOT/var/lib/cream/ext/selkies"
+ht_hook configure CREAM_REASON=boot; eq "каталог состояния — ссылка: configure 0" 0 "$?"
+check_not "через ссылку каталога ничего не легло" test -e "$ROOT/victim/env"
+check "предупреждение про ссылку каталога" grep -q 'символическая ссылка' "$ROOT/out"
+check "служба всё равно стартует" started alice
+
 echo "== configure: после install — restart; HTTPS и порт в объявлении =="
 sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
 ht_hook configure CREAM_REASON=install SELKIES_PORT=8443 SELKIES_ENABLE_HTTPS=true; eq "configure — 0" 0 "$?"
@@ -324,6 +377,7 @@ sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
 ht_hook apply CREAM_CHANGED_KEYS=SELKIES_PORT SELKIES_PORT=9090; eq "apply — 0" 0 "$?"
 check "restart --no-block selkies@alice" ht_called '^systemctl restart --no-block selkies@alice\.service'
 check "порт доехал до объявления" grep -qx 'URI=http://127.0.0.1:9090' "$DECL"
+check "порт доехал до действующих значений" grep -qx 'SELKIES_PORT=9090' "$ROOT/var/lib/cream/ext/selkies/env"
 check_not "apply не ждёт" ht_called '^sleep'
 check_not "блокирующих systemctl нет" blocking_systemctl
 check_not "секреты не в выводе" leaked "$ROOT/out" "$FAKE"
@@ -337,6 +391,7 @@ check "предупреждение" grep -q 'SELKIES_ALLOW_NO_AUTH' "$ROOT/out"
 echo "== remove: службы, объявление, AppImage =="
 sk_root; fake_appimage; ln -s "$ROOT/opt/selkies/$VER" "$ROOT/opt/selkies/current"
 mkdir -p "$APPS"; echo 'NAME=selkies' > "$DECL"; echo 'NAME=other' > "$APPS/other.conf"
+echo 'SELKIES_ENABLE_RESIZE=false' > "$ROOT/var/lib/cream/ext/selkies/env"
 printf '%s\n' 'selkies@alice.service loaded active running Selkies' > "$FAKE/units"
 ht_hook remove; eq "remove — 0" 0 "$?"
 check "экземпляры остановлены" ht_called '^systemctl stop .*selkies@alice\.service'
@@ -344,6 +399,7 @@ check_not "объявление снято" test -e "$DECL"
 check "чужое объявление на месте" test -f "$APPS/other.conf"
 check_not "AppImage удалён" test -e "$ROOT/opt/selkies/$VER"
 check_not "ссылка current удалена" test -L "$ROOT/opt/selkies/current"
+check_not "файл действующих значений снят" test -e "$ROOT/var/lib/cream/ext/selkies/env"
 ht_hook remove; eq "повтор remove — 0" 0 "$?"
 sk_root; mkdir -p "$ROOT/victim/$VER"; echo keep > "$ROOT/victim/$VER/f"
 mkdir -p "$ROOT/opt"; ln -s "$ROOT/victim" "$ROOT/opt/selkies"
@@ -399,6 +455,60 @@ run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_ENABLE_HTTPS=true
 d="$ROOT/home/alice/.local/state/selkies"
 eq "каталог TLS 0700" 700 "$(stat -c %a "$d")"
 check "сертификат — в состоянии пользователя" grep -qxF "SELKIES_HTTPS_CERT=$d/selkies.pem" "$FAKE/selkies.env"
+
+echo "== run-selkies.sh: SELKIES_ENABLE_RESIZE=false и без файла действующих значений =="
+wr_root
+run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"
+check "selkies запущен" test -e "$FAKE/selkies.env"
+check "резерв обёртки: SELKIES_ENABLE_RESIZE=false" grep -qx 'SELKIES_ENABLE_RESIZE=false' "$FAKE/selkies.env"
+wr_root
+run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_ENABLE_RESIZE=
+check "пусто — тоже false (пусто у Selkies — его true)" grep -qx 'SELKIES_ENABLE_RESIZE=false' "$FAKE/selkies.env"
+wr_root
+run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_ENABLE_RESIZE=true
+check "явный true остаётся" grep -qx 'SELKIES_ENABLE_RESIZE=true' "$FAKE/selkies.env"
+
+echo "== юнит → обёртка → Selkies: умолчания манифеста доходят до Selkies (Orin 2026-11-12) =="
+# unit_env: KEY=VALUE lines systemd gives the wrapper — the EnvironmentFile
+# files of the unit in their order under $ROOT (a later one overrides: env
+# applies the pairs in order); "-" — an absent file is skipped, without it
+# the unit would not start (UNIT-FAILED).
+unit_env() {
+    local f opt
+    while IFS= read -r f; do
+        opt=0; [[ "$f" == -* ]] && { opt=1; f="${f#-}"; }
+        if [[ ! -f "$ROOT$f" ]]; then (( opt )) || echo UNIT-FAILED; continue; fi
+        grep -E '^[A-Z][A-Z0-9_]*=' "$ROOT$f"
+    done < <(sed -n 's/^EnvironmentFile=//p' "$UNIT")
+}
+wr_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+ht_hook configure CREAM_REASON=boot; eq "configure — 0" 0 "$?"
+mapfile -t uenv < <(unit_env)
+check_not "только пароль, config нет — юнит стартует" grep -qx UNIT-FAILED <(printf '%s\n' "${uenv[@]}")
+run_wrapper "${uenv[@]}" SELKIES_AUDIO_ENABLED=false
+check "selkies запущен" test -e "$FAKE/selkies.env"
+check "у Selkies SELKIES_ENABLE_RESIZE=false" grep -qx 'SELKIES_ENABLE_RESIZE=false' "$FAKE/selkies.env"
+check "у Selkies SELKIES_FRAMERATE=30,8-60" grep -qx 'SELKIES_FRAMERATE=30,8-60' "$FAKE/selkies.env"
+check "у Selkies SELKIES_ENABLE_DUAL_MODE=false" grep -qx 'SELKIES_ENABLE_DUAL_MODE=false' "$FAKE/selkies.env"
+check_not "SELKIES_ENCODER не задан — кодер выбирает клиент" grep -q '^SELKIES_ENCODER=' "$FAKE/selkies.env"
+check "пароль дошёл" grep -qxF "SELKIES_BASIC_AUTH_PASSWORD=$PW" "$FAKE/selkies.env"
+printf '%s\n' SELKIES_ENABLE_RESIZE=true > "$ROOT/etc/cream/selkies/config"
+mapfile -t uenv < <(unit_env)
+run_wrapper "${uenv[@]}" SELKIES_AUDIO_ENABLED=false
+check "явный ключ config побеждает файл действующих значений" grep -qx 'SELKIES_ENABLE_RESIZE=true' "$FAKE/selkies.env"
+
+echo "== run-selkies.sh: сессия на Wayland — 78, без цикла перезапусков =="
+wr_root
+ht_fake xdpyinfo 'exit 1'
+ht_fake loginctl '
+case "$1" in
+    list-sessions) echo "2 1000 alice seat0 tty2" ;;
+    show-session) echo wayland ;;
+esac'
+run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"; eq "Wayland — 78 (EX_CONFIG)" 78 "$?"
+check "сказано про Wayland" grep -q 'Wayland' "$ROOT/out"
+check "сказано, как вернуть" grep -q 'systemctl restart selkies@alice' "$ROOT/out"
+check_not "selkies не запущен" test -e "$FAKE/selkies.env"
 
 echo "== имена layout 2 =="
 # check-names: off

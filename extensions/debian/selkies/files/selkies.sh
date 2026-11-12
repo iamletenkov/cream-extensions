@@ -26,11 +26,27 @@
 # inside a systemd job, apply inside `cream set`). The instance is not enabled:
 # configure starts it on every boot after checking the authentication.
 #
+# EFFECTIVE SETTINGS (Orin 2026-11-12). The domain config holds only the keys
+# set explicitly, while cream gives a hook every non-secret key with its
+# default. The unit reads $CREAM_STATE_DIR/env before config, so configure and
+# apply write there the SELKIES_* of their environment with a non-empty value
+# (an empty one means Selkies' own default) — what `cream show selkies`
+# reports. Otherwise a default of the manifest such as SELKIES_ENABLE_RESIZE=false
+# never reaches Selkies, and Selkies resizes the monitor to the browser window.
+# Root's, 0644, no secrets; atomically through a temporary file and rename,
+# never through a symlink.
+#
 # Never writes into a home directory: that is the wrapper's, as the user.
 set -euo pipefail
 
 R="${CREAM_ROOT:-}"; R="${R%/}"
 SECRETS="${CREAM_SECRETS_FILE:-$R/etc/cream/selkies/secrets}"
+STATE="${CREAM_STATE_DIR:-$R/var/lib/cream/ext/selkies}"
+EFFECTIVE="$STATE/env"
+RE_SECRET_KEY='^SELKIES_(BASIC_AUTH_PASSWORD|BASIC_AUTH_VIEWONLY_PASSWORD|MASTER_TOKEN)$'
+# The union of the value types of the manifest: no quote, space, $, backquote
+# or backslash — a plain KEY=VALUE line of an EnvironmentFile.
+RE_ENV_VALUE='^[A-Za-z0-9_.,:/@%+=-]+$'
 CLOUD_USER_LIB="$R/opt/cream/ext/cloud-user/get_cloud_user.sh"
 TP_DIR="$R/etc/cream/teleport"
 APPS_DIR="$TP_DIR/apps.d"
@@ -83,6 +99,49 @@ auth_ok(){
     warn "  пароль: echo <пароль> | sudo cream set selkies SELKIES_BASIC_AUTH_PASSWORD=-"
     warn "  или осознанно без пароля: sudo cream set selkies SELKIES_ALLOW_NO_AUTH=1"
     return 1
+}
+
+# ---------------------------------------------------------------------------
+# The effective settings for the unit
+# ---------------------------------------------------------------------------
+# effective_content: KEY=VALUE lines of the effective non-secret settings, sorted.
+effective_content(){
+    local k v
+    while IFS= read -r k; do
+        [[ "$k" =~ ^SELKIES_[A-Z0-9_]+$ && ! "$k" =~ $RE_SECRET_KEY ]] || continue
+        v="${!k}"
+        [[ -n "$v" ]] || continue
+        if [[ ! "$v" =~ $RE_ENV_VALUE ]]; then
+            warn "$k: значение не годится для EnvironmentFile — Selkies его не получит"
+            continue
+        fi
+        printf '%s=%s\n' "$k" "$v"
+    done < <(compgen -e | LC_ALL=C sort)
+}
+
+effective_write(){
+    local content tmp
+    content="$(effective_content)"
+    if [[ -L "$STATE" ]]; then
+        warn "${STATE#"$R"} — символическая ссылка, действующие значения не пишу"
+        return 0
+    fi
+    # cream runs hooks with umask 022: the directory is 0755.
+    [[ -d "$STATE" ]] || mkdir -p -- "$STATE" || { warn "не создать ${STATE#"$R"}"; return 0; }
+    if [[ -f "$EFFECTIVE" && ! -L "$EFFECTIVE" ]] && [[ "$(cat -- "$EFFECTIVE")" == "$content" ]]; then
+        return 0
+    fi
+    # mktemp: O_EXCL, 0600, never follows; rename replaces a symlink, not its target.
+    tmp="$(mktemp "$STATE/.env.XXXXXX")" || { warn "не создать временный файл в ${STATE#"$R"}"; return 0; }
+    { [[ -z "$content" ]] || printf '%s\n' "$content"; } > "$tmp" && chmod 0644 "$tmp" \
+        && mv -f -T -- "$tmp" "$EFFECTIVE" \
+        || { rm -f -- "$tmp"; warn "действующие значения не записаны"; return 0; }
+    log "действующие значения для юнита: ${EFFECTIVE#"$R"}"
+}
+
+effective_remove(){
+    [[ -L "$STATE" ]] && return 0
+    rm -f -- "$EFFECTIVE"
 }
 
 # ---------------------------------------------------------------------------
@@ -179,6 +238,7 @@ resolve_user(){
 run(){
     local mode="$1" user wait_s=0 verb=restart
     check_values
+    effective_write
     if ! auth_ok; then
         decl_remove
         stop_instances
@@ -204,6 +264,7 @@ cmd_remove(){
         systemctl stop "$u" || warn "не остановить $u"
     done < <(instances)
     decl_remove
+    effective_remove
     if [[ -L "$OPT" ]]; then
         warn "${OPT#"$R"} — символическая ссылка, AppImage не удаляю"
     elif [[ -d "$OPT" ]]; then
