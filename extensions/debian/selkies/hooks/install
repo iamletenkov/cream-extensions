@@ -23,7 +23,7 @@
 # provider still provides, §9), so on a live machine install checks itself
 # before anything is downloaded: an X server (/usr/lib/xorg/Xorg or
 # /usr/bin/Xorg) and an enabled display manager (the display-manager.service
-# link). Either missing — exit 20 (cream 68). At image build no check: the
+# link, pointing to a unit that is there). Either missing — exit 20 (cream 68). At image build no check: the
 # desktop may come with the same build.
 set -euo pipefail
 
@@ -40,11 +40,19 @@ declare -A APPIMAGE_SHA256=(
 OPT="$R/opt/selkies"
 PREFIX="$OPT/${SELKIES_VERSION}"
 
+# dm_enabled: 0 — display-manager.service is a link to a unit that is there.
+dm_enabled(){
+    local link="$R/etc/systemd/system/display-manager.service" t
+    [[ -L "$link" ]] || return 1
+    t="$(readlink "$link")" || return 1
+    if [[ "$t" == /* ]]; then t="$R$t"; else t="${link%/*}/$t"; fi
+    [[ -e "$t" ]]
+}
+
 if [[ "${CREAM_PHASE:-live}" == live ]]; then
     missing=()
     [[ -e "$R/usr/lib/xorg/Xorg" || -e "$R/usr/bin/Xorg" ]] || missing+=("X-сервера (Xorg)")
-    [[ -L "$R/etc/systemd/system/display-manager.service" ]] \
-        || missing+=("включённого менеджера входа (display-manager.service)")
+    dm_enabled || missing+=("включённого менеджера входа (display-manager.service)")
     if (( ${#missing[@]} )); then
         log_error "нет X-сервера / менеджера входа: поставьте стол или \`existing-desktop\`"
         log_error "на машине нет: ${missing[*]} — Selkies не ставлю"

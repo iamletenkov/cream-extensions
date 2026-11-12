@@ -532,6 +532,9 @@ for u in gdm root nobody ghost -x; do
     check_not "$u: x11vnc не запущен" test -e "$FAKE/x11vnc.args"
     check_not "$u: дисплей не искали" ht_called '^(loginctl|xdpyinfo)'
 done
+wr_root
+WR_USER='Bad\x41\e[2J' run_wrapper; eq "негодное имя — 78" 78 "$?"
+check_not "негодное имя не попадает в журнал (echo -e)" grep -qE 'Bad|BadA' "$ROOT/out"
 wr_root; seat0 2 carol x11 :0; mkdir -p "$ROOT/home/carol"; : > "$ROOT/home/carol/.Xauthority"
 WR_USER=carol run_wrapper; eq "x11vnc@carol (uid 1002) — 0" 0 "$?"
 eq "x11vnc@carol: authority carol" "$ROOT/home/carol/.Xauthority" "$(arg_after -auth)"

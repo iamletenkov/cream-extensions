@@ -1,7 +1,8 @@
 # selkies — the X session on the monitor, in a browser, over one WebSocket port.
 #
 # install   — on a live machine first the machine check: no Xorg or no enabled
-#             display manager (display-manager.service) — exit 20 (cream 68),
+#             display manager (display-manager.service, a link to a unit that
+#             is there) — exit 20 (cream 68),
 #             "put a desktop or existing-desktop"; at image build no check. Then
 #             the AppImage of Selkies by the pinned version and sha256 per
 #             architecture, extracted to /opt/selkies/<version> (no FUSE);
@@ -10,13 +11,15 @@
 # configure — every boot, stage graphical (after the display manager): the
 #             Teleport declaration /etc/cream/teleport/apps.d/selkies.conf and
 #             `systemctl start --no-block selkies@<user>` — SELKIES_USER, or the
-#             cloud-init user when empty; a user not in passwd or with a uid
-#             outside 1000..65533 — exit 78, nothing started. Fail-closed:
+#             cloud-init user when empty; a SELKIES_USER not in passwd or with a uid
+#             outside 1000..65533 — exit 78, nothing started (a cloud-init user
+#             like that — a warning and 0, the instances stopped). Fail-closed:
 #             without SELKIES_BASIC_AUTH_PASSWORD and without an explicit
 #             SELKIES_ALLOW_NO_AUTH=1 the service is not started (a warning, exit 0);
-#             no Xorg or no enabled display manager — exit 1; the display
-#             manager enabled but not running, no cloud-init user — a warning
-#             and exit 0 (plan ruling R11). One line of diagnosis: who is on seat0.
+#             on a live machine no Xorg or no enabled display manager (a link
+#             to a unit that is there) — exit 1, at image build no check; the
+#             display manager enabled but not running, no cloud-init user — a
+#             warning and exit 0 (plan ruling R11). One line of diagnosis: who is on seat0.
 # apply     — after `cream set selkies …`: the same check, the declaration and
 #             a non-blocking restart (or stop) of the instance.
 # remove    — stops the instances, takes away the declaration and the AppImage.

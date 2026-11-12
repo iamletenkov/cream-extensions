@@ -27,6 +27,7 @@ NoNewPrivileges=yes
 ExecStart=/bin/bash /opt/cream/ext/selkies/files/run-selkies.sh %i
 Restart=always
 RestartSec=5
-# 78 (EX_CONFIG) — refused to start without authentication or on a Wayland
-# session: no restart loop.
+# 78 (EX_CONFIG) — a setting to fix, a restart would not change it: no
+# authentication; the session is on Wayland; a uid outside 1000..65533 (root, a
+# system account) or a SELKIES_DISPLAY that is neither auto nor :N.
 RestartPreventExitStatus=78

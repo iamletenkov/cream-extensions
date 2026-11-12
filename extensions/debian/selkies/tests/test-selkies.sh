@@ -35,8 +35,10 @@ VER=2.0.0
 # fake loginctl answers from files, none yet).
 sk_root() {
     ht_root "$EXT"
-    mkdir -p "$ROOT/home/alice" "$ROOT/home/root" "$ROOT/usr/lib/xorg" "$ROOT/etc/systemd/system"
+    mkdir -p "$ROOT/home/alice" "$ROOT/home/root" "$ROOT/usr/lib/xorg" "$ROOT/etc/systemd/system" \
+        "$ROOT/lib/systemd/system"
     printf '#!/bin/sh\n' > "$ROOT/usr/lib/xorg/Xorg"; chmod 0755 "$ROOT/usr/lib/xorg/Xorg"
+    : > "$ROOT/lib/systemd/system/lightdm.service"
     ln -s /lib/systemd/system/lightdm.service "$ROOT/etc/systemd/system/display-manager.service"
     printf '%s\n' 'root:x:0:0::/root:/bin/bash' 'alice:x:1000:1000::/home/alice:/bin/bash' \
         'bob:x:1001:1001::/home/bob:/bin/bash' 'carol:x:1002:1002::/home/carol:/bin/bash' \
@@ -175,6 +177,9 @@ eq "юнит: действующие значения → config → secrets" \
 check "юнит: от имени пользователя" grep -qx 'User=%i' "$UNIT"
 check "юнит: обёртка из дерева расширения" grep -qx 'ExecStart=/bin/bash /opt/cream/ext/selkies/files/run-selkies.sh %i' "$UNIT"
 check "юнит: отказ по аутентификации не перезапускается" grep -qx 'RestartPreventExitStatus=78' "$UNIT"
+check "юнит: комментарий к 78 — uid-правило" grep -qE '^#.*uid outside 1000\.\.65533' "$UNIT"
+check "юнит: комментарий к 78 — SELKIES_DISPLAY" grep -qE '^#.*SELKIES_DISPLAY that is neither auto nor :N' "$UNIT"
+check "манифест: 78 у configure — только за SELKIES_USER" grep -qE '^#.*SELKIES_USER not in passwd or with a uid' "$EXT/extension.yaml"
 check_not "юнит: не включается сам (стартует configure)" grep -q '^WantedBy=' "$UNIT"
 
 echo "== install: AppImage уже распакован =="
@@ -215,6 +220,14 @@ ht_hook install; eq "нет display-manager.service — 20" 20 "$?"
 check "текст про менеджер входа" grep -q 'менеджера входа' "$ROOT/out"
 rm -f "$ROOT/usr/lib/xorg/Xorg"
 HT_PHASE=build ht_hook install; eq "сборка образа: без Xorg и DM — 0 (стол ставит та же сборка)" 0 "$?"
+sk_root; fake_appimage
+ht_fake dpkg 'echo amd64'
+ht_fake apt-get
+rm -f "$ROOT/lib/systemd/system/lightdm.service"
+ht_hook install; eq "display-manager.service висит (цели нет) — 20" 20 "$?"
+check_not "висячая ссылка: ничего не качается" ht_called '^(curl|apt-get)'
+rm -f "$ROOT/usr/lib/xorg/Xorg"
+HT_PHASE=build ht_hook install; eq "сборка образа: висячая ссылка, без Xorg — 0" 0 "$?"
 
 echo "== install: sha256 не совпал — отказ, ничего не распаковано =="
 sk_root
@@ -538,6 +551,16 @@ sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
 rm -f "$ROOT/etc/systemd/system/display-manager.service"
 ht_hook configure CREAM_REASON=boot; eq "нет display-manager.service: configure — 1" 1 "$?"
 check_not "не стартует" started alice
+sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+rm -f "$ROOT/lib/systemd/system/lightdm.service"
+ht_hook configure CREAM_REASON=boot; eq "display-manager.service висит: configure — 1" 1 "$?"
+check "висячая ссылка: текст existing-desktop" grep -qF 'поставьте стол или `existing-desktop`' "$ROOT/out"
+check_not "висячая ссылка: не стартует" started alice
+ht_hook apply CREAM_CHANGED_KEYS=SELKIES_PORT; eq "display-manager.service висит: apply — 1" 1 "$?"
+sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+rm -f "$ROOT/usr/lib/xorg/Xorg" "$ROOT/etc/systemd/system/display-manager.service"
+HT_PHASE=build ht_hook configure CREAM_REASON=install; eq "сборка образа: configure без Xorg и DM — 0" 0 "$?"
+check_not "сборка: текста про existing-desktop нет" grep -q 'existing-desktop' "$ROOT/out"
 
 echo "== configure: SELKIES_DISPLAY проверяется =="
 sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
@@ -830,6 +853,9 @@ for u in gdm root nobody ghost -x; do
     check_not "$u: selkies не запущен" test -e "$FAKE/selkies.env"
     check_not "$u: дисплей не искали" ht_called '^(loginctl|xdpyinfo)'
 done
+wr_root
+WR_USER='Bad\x41\e[2J' run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"; eq "негодное имя — 78" 78 "$?"
+check_not "негодное имя не попадает в журнал (echo -e)" grep -qE 'Bad|BadA' "$ROOT/out"
 wr_root; seat0 2 carol x11 :0; mkdir -p "$ROOT/home/carol"; : > "$ROOT/home/carol/.Xauthority"
 WR_USER=carol run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"
 check "selkies@carol (uid 1002) запущен" test -e "$FAKE/selkies.env"

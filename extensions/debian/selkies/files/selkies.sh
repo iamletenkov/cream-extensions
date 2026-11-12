@@ -47,10 +47,12 @@
 # streamed. A refused SELKIES_USER — the instances stop, the declaration goes,
 # exit 78 (a setting to fix, as the loopback rule).
 #
-# THE MACHINE (ruling Р2): no Xorg (/usr/lib/xorg/Xorg, /usr/bin/Xorg) or no
-# enabled display manager (the display-manager.service link) — the instances
-# stop, the declaration goes, exit 1 with "put a desktop or existing-desktop".
-# Enabled but not running yet — a warning and 0 (R11).
+# THE MACHINE (ruling Р2), on a live machine only — at image build the desktop
+# may come with the same build: no Xorg (/usr/lib/xorg/Xorg, /usr/bin/Xorg) or
+# no enabled display manager (the display-manager.service link to a unit that
+# is there) — the instances stop, the declaration goes, exit 1 with "put a
+# desktop or existing-desktop". Enabled but not running yet — a warning and 0
+# (R11).
 #
 # THE DIAGNOSIS: one line on who is on seat0 (xs_seat0_active of
 # lib/x-session.sh — files/x-session.sh): "на seat0 сеанс bob (x11), Selkies
@@ -96,12 +98,21 @@ check_values(){
         || die "SELKIES_DISPLAY: auto или :N"
 }
 
+# dm_enabled: 0 — display-manager.service is a link to a unit that is there.
+dm_enabled(){
+    local t
+    [[ -L "$DM_LINK" ]] || return 1
+    t="$(readlink "$DM_LINK")" || return 1
+    if [[ "$t" == /* ]]; then t="$R$t"; else t="${DM_LINK%/*}/$t"; fi
+    [[ -e "$t" ]]
+}
+
 # machine_ok: prints what is missing; 0 — Xorg and an enabled display manager
 # are on the machine (files, not their state).
 machine_ok(){
     local missing=()
     [[ -e "$R/usr/lib/xorg/Xorg" || -e "$R/usr/bin/Xorg" ]] || missing+=("X-сервера (Xorg)")
-    [[ -L "$DM_LINK" ]] || missing+=("включённого менеджера входа (display-manager.service)")
+    dm_enabled || missing+=("включённого менеджера входа (display-manager.service)")
     (( ${#missing[@]} == 0 )) && return 0
     echo "${missing[*]}"
     return 1
@@ -401,7 +412,7 @@ run(){
     local mode="$1" user wait_s=0 verb=restart rc=0 why
     check_values
     effective_write
-    if ! why="$(machine_ok)"; then
+    if [[ "${CREAM_PHASE:-live}" == live ]] && ! why="$(machine_ok)"; then
         warn "$NO_DESKTOP"
         warn "  на машине нет: $why — Selkies остановлен"
         refuse 1
