@@ -532,7 +532,7 @@ arg_after() { awk -v f="$1" 'p { print; exit } $0 == f { p = 1 }' "$FAKE/x11vnc.
 echo "== обёртка: X11VNC_DISPLAY — auto по logind, :N жёстко, без ключа — auto (Р4) =="
 wr_root; seat0 2 alice x11 :1
 run_wrapper; eq "ключ не задан — 0" 0 "$?"
-eq "ключ не задан: дисплей из logind — :1" :1 "$(arg_after -display)"
+eq "ключ не задан: дисплей из logind — :1" unix:1 "$(arg_after -display)"
 eq "authority — ~/.Xauthority alice" "$ROOT/home/alice/.Xauthority" "$(arg_after -auth)"
 check "путь назван в журнале (logind)" grep -q 'logind' "$ROOT/out"
 check "пароль — -rfbauth" grep -qx -- '-rfbauth' "$FAKE/x11vnc.args"
@@ -540,10 +540,10 @@ check "только петля" grep -qx -- '-localhost' "$FAKE/x11vnc.args"
 check_not "-loop нет: пропажу X ловит юнит (Restart=always), обёртка найдёт новый сеанс" grep -qx -- '-loop' "$FAKE/x11vnc.args"
 wr_root; seat0 2 alice x11 :1
 run_wrapper X11VNC_DISPLAY=auto
-eq "auto: дисплей :1" :1 "$(arg_after -display)"
+eq "auto: дисплей :1" unix:1 "$(arg_after -display)"
 wr_root; seat0 2 alice x11 :1
 run_wrapper X11VNC_DISPLAY=:0
-eq "сохранённое :0 не меняется" :0 "$(arg_after -display)"
+eq "сохранённое :0 не меняется" unix:0 "$(arg_after -display)"
 wr_root
 run_wrapper 'X11VNC_DISPLAY=:0;x'; eq "негодный X11VNC_DISPLAY — 78" 78 "$?"
 check_not "x11vnc не запущен" test -e "$FAKE/x11vnc.args"
@@ -555,7 +555,7 @@ ht_fake stat 'echo "1000 600"'
 ht_fake xhost 'echo "access control enabled, only authorized clients can connect"'
 x0srv
 run_wrapper; eq "запасной путь — 0" 0 "$?"
-eq "дисплей :0 (как 5.x)" :0 "$(arg_after -display)"
+eq "дисплей :0 (как 5.x)" unix:0 "$(arg_after -display)"
 check "путь назван: запасной" grep -q 'запасной путь' "$ROOT/out"
 
 echo "== обёртка: сессия на Wayland — 78, юнит не крутит перезапуски =="

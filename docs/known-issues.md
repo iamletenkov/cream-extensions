@@ -35,7 +35,8 @@
   `sudo cream set x11vnc X11VNC_DISPLAY=:N`. Пуст ли `Display` на реальных машинах —
   замер P1–P3 спеки, [#139](https://github.com/iamletenkov/cream-extensions/issues/139).
 - **Жёсткий `:N` и `Display` из logind — без привязки к Xorg.** Authority предлагается
-  дисплею как есть (как в 5.x); проверка authority — по `unix:N`, без отката на TCP. Но GDM
+  дисплею как есть (как в 5.x); проверка authority и подключение x11vnc/Selkies — по
+  `unix:N`, без отката на TCP. Но GDM
   пишет wild-cookie, и на `:N` без X-сервера (например, сохранённый с 5.x `:0`, а сеанс
   на `:1`) cookie получит тот, кто займёт абстрактное имя `@/tmp/.X11-unix/X<N>`.
   Задавайте жёсткий `:N` только там, где на нём гарантированно X-сервер пользователя.

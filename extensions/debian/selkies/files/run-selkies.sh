@@ -263,7 +263,12 @@ done
 log_info "дисплей $DISPLAY_NUM, authority $AUTH"
 
 # Selkies gets the display found, never "auto".
-export DISPLAY="$DISPLAY_NUM" XAUTHORITY="$AUTH" SELKIES_DISPLAY="$DISPLAY_NUM"
+# DISPLAY is unix:N, not :N: Xlib clients with ":N" fall back to TCP 6000+N
+# when the unix socket is missing, and someone else's listener there would get
+# our cookie (issue #139 item 2, defence in depth). Selkies 2.0.0 parses
+# "unix:N" (x_display_socket) and its python-xlib uses only the unix socket
+# for host "unix". SELKIES_DISPLAY stays ":N" — Selkies does not read it.
+export DISPLAY="unix$DISPLAY_NUM" XAUTHORITY="$AUTH" SELKIES_DISPLAY="$DISPLAY_NUM"
 export HOME="$HOME_OF_USER" USER="$USERNAME"
 export XDG_RUNTIME_DIR="/run/user/${UID_OF_USER}"
 export PULSE_RUNTIME_PATH="$XDG_RUNTIME_DIR/pulse"

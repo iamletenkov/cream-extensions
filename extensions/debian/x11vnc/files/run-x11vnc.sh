@@ -215,8 +215,12 @@ log_info "дисплей $DISPLAY_NUM, authority $AUTH"
 # No -loop: x11vnc ends with its X session, the unit restarts the wrapper
 # (Restart=always), and the wrapper finds the new session — after a logout and
 # login it may be on another display, which -loop would never look for.
+#
+# -display unix:N, not :N: libX11 with ":N" falls back to TCP 6000+N when the
+# unix socket is missing, and someone else's listener there would get our
+# cookie (issue #139 item 2, defence in depth).
 args=(
-    -display "$DISPLAY_NUM"
+    -display "unix$DISPLAY_NUM"
     -auth "$AUTH"
     -forever -noxdamage -repeat -shared
     -rfbport "$PORT"

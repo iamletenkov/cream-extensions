@@ -905,18 +905,18 @@ check_not "SELKIES_USER нет в окружении Selkies" grep -q '^SELKIES_
 echo "== run-selkies.sh: SELKIES_DISPLAY — auto по logind, :N жёстко, без ключа — auto (Р4) =="
 wr_root; seat0 2 alice x11 :1
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"
-check "ключ не задан: дисплей из logind — :1" grep -qx 'DISPLAY=:1' "$FAKE/selkies.env"
+check "ключ не задан: дисплей из logind — :1" grep -qx 'DISPLAY=unix:1' "$FAKE/selkies.env"
 check "Selkies получает найденный дисплей, не auto" grep -qx 'SELKIES_DISPLAY=:1' "$FAKE/selkies.env"
 check "путь назван в журнале (logind)" grep -q 'logind' "$ROOT/out"
 wr_root; seat0 2 alice x11 :1
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_DISPLAY=auto
-check "auto: дисплей :1" grep -qx 'DISPLAY=:1' "$FAKE/selkies.env"
+check "auto: дисплей :1" grep -qx 'DISPLAY=unix:1' "$FAKE/selkies.env"
 wr_root; seat0 2 alice x11 :1
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_DISPLAY=
-check "пусто — как auto: :1" grep -qx 'DISPLAY=:1' "$FAKE/selkies.env"
+check "пусто — как auto: :1" grep -qx 'DISPLAY=unix:1' "$FAKE/selkies.env"
 wr_root; seat0 2 alice x11 :1
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_DISPLAY=:0
-check "сохранённое :0 не меняется" grep -qx 'DISPLAY=:0' "$FAKE/selkies.env"
+check "сохранённое :0 не меняется" grep -qx 'DISPLAY=unix:0' "$FAKE/selkies.env"
 wr_root
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" 'SELKIES_DISPLAY=:0;x'; eq "негодный SELKIES_DISPLAY — 78" 78 "$?"
 check_not "selkies не запущен" test -e "$FAKE/selkies.env"
@@ -929,7 +929,7 @@ ht_fake xhost 'echo "access control enabled, only authorized clients can connect
 x0srv
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"
 check "selkies запущен" test -e "$FAKE/selkies.env"
-check "дисплей :0 (как 6.x)" grep -qx 'DISPLAY=:0' "$FAKE/selkies.env"
+check "дисплей :0 (как 6.x)" grep -qx 'DISPLAY=unix:0' "$FAKE/selkies.env"
 check "путь назван: запасной" grep -q 'запасной путь' "$ROOT/out"
 
 echo "== run-selkies.sh: ожидание сеанса — диагноз раз в 5 минут =="
