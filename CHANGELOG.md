@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.24.0](https://github.com/iamletenkov/cream-extensions/compare/v5.23.0...v5.24.0) (2026-11-12)
+
+
+### Добавлено
+
+* **sensing-gmsl2-camera:** юнит падает, если адаптер SG8A не отвечает на I2C ([#128](https://github.com/iamletenkov/cream-extensions/issues/128)) ([d027662](https://github.com/iamletenkov/cream-extensions/commit/d027662f5a9fce04d1e14577ff43a6109087d623))
+
 ## [5.23.0](https://github.com/iamletenkov/cream-extensions/compare/v5.22.0...v5.23.0) (2026-11-11)
 
 
