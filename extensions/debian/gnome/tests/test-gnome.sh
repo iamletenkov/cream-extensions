@@ -214,11 +214,28 @@ check "custom.conf не тронут" same "$GDM/custom.conf" "$ORIG/custom.conf
 check_not "записи прежнего нет" test -s "$WB"
 check_not "gdm не включали" ht_called '^systemctl enable'
 eq "default не тронут" multi-user.target "$(cat "$FAKE/default")"
+check_not "отказ до apt: пакеты не ставились" ht_called '^apt-get'
+check_not "отказ до apt: записи «до» нет" test -e "$STATE/before"
 fresh
 mkdir -p "$ROOT/outside"; debian_conf "$ROOT/outside/daemon.conf"
 ln -s "$ROOT/outside/daemon.conf" "$GDM/daemon.conf"
 ht_hook install; rc=$?
 check "только ссылка — отказ: Wayland не выключен" test "$rc" -ne 0 -a "$rc" -ne 10
+check_not "только ссылка — отказ до apt" ht_called '^apt-get'
+
+echo "== install: /etc/gdm3 — ссылка или конфиг — не файл: отказ до apt =="
+fresh
+mkdir -p "$ROOT/outside/gdm3"; debian_conf "$ROOT/outside/gdm3/daemon.conf"
+before="$(sha256sum "$ROOT/outside/gdm3/daemon.conf")"
+rmdir "$GDM"; ln -s "$ROOT/outside/gdm3" "$GDM"
+ht_hook install; eq "/etc/gdm3 — ссылка — 1" 1 "$?"
+eq "цель ссылки не тронута" "$before" "$(sha256sum "$ROOT/outside/gdm3/daemon.conf")"
+check "сказано про ссылку" grep -q 'ссылка' <(ht_out)
+check_not "/etc/gdm3 — ссылка: отказ до apt" ht_called '^apt-get'
+fresh
+mkdir -p "$GDM/custom.conf"
+ht_hook install; eq "custom.conf — каталог — 1" 1 "$?"
+check_not "не файл: отказ до apt" ht_called '^apt-get'
 
 echo "== install: уже graphical и gdm включён до нас, WaylandEnable меняется — 10 =="
 fresh

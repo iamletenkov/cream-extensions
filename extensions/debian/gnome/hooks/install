@@ -10,7 +10,8 @@
 #   lib/gdm-wayland.sh (files/gdm-wayland.sh, one copy with gdm-xorg): the line
 #   as it was goes to $CREAM_STATE_DIR/wayland.before first (a repeat keeps the
 #   first record), `remove` puts it back byte for byte. A link instead of a gdm3
-#   file is refused before any write. Not cream `files`: both are dpkg
+#   file (or of /etc/gdm3) already on the machine is refused before apt and
+#   before any write. Not cream `files`: both are dpkg
 #   conffiles of gdm3 — laying them would make cream refuse
 #   (conflict.file_unowned) on any machine that has gdm3 already, and gdm has
 #   no drop-in directory;
@@ -56,6 +57,29 @@ dm_current(){
 is_gdm(){ [[ "$1" == gdm.service || "$1" == gdm3.service ]]; }
 
 default_current(){ systemctl get-default 2>/dev/null || true; }
+
+# --- gdm3 configs that can never be written: refuse before apt -----------------
+# gw_set_false refuses a link (/etc/gdm3 or a config) and a config that is not a
+# regular file anyway, but only after the packages — gigabytes, up to an hour.
+# What is on the machine already is checked here, before anything is written.
+gdm_writable(){
+    local rel
+    if [[ -L "$R/etc/gdm3" ]]; then
+        log_error "/etc/gdm3 — ссылка; по ней не пишу — Wayland не выключить, пакеты не ставлю"
+        return 1
+    fi
+    for rel in /etc/gdm3/daemon.conf /etc/gdm3/custom.conf; do
+        if [[ -L "$R$rel" ]]; then
+            log_error "$rel — ссылка; по ней не пишу — Wayland не выключить, пакеты не ставлю"
+            return 1
+        fi
+        if [[ -e "$R$rel" && ! -f "$R$rel" ]]; then
+            log_error "$rel — не обычный файл — Wayland не выключить, пакеты не ставлю"
+            return 1
+        fi
+    done
+}
+gdm_writable || exit 1
 
 # --- what was there before (first install only) --------------------------------
 if [[ ! -s "$STATE/before" ]]; then
