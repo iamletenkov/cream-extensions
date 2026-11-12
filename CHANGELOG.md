@@ -1,5 +1,36 @@
 # Changelog
 
+## [5.25.0](https://github.com/iamletenkov/cream-extensions/compare/v5.24.0...v5.25.0) (2026-11-12)
+
+
+### Добавлено
+
+* **desktop:** gnome, xfce4, lxde, cloud-user-desktop принимают desktop 2.x ([3405c32](https://github.com/iamletenkov/cream-extensions/commit/3405c32eafb8e02f50250239018ee03e6c34f070))
+* **desktop:** волна 3 — gnome 5.1.0, selkies 7.0.0, cloud-user-desktop 6.0.0, firefox 2.1.0 ([#136](https://github.com/iamletenkov/cream-extensions/issues/136)) ([6c6985b](https://github.com/iamletenkov/cream-extensions/commit/6c6985bc1cd032b8c431675f9fa5d1f27f7ae795))
+* **existing-desktop:** волна 2 — установка на систему с дисплей-менеджером ([#135](https://github.com/iamletenkov/cream-extensions/issues/135)) ([113eebc](https://github.com/iamletenkov/cream-extensions/commit/113eebc21917cd62c0155ae6b062860b4588785e))
+* **lib:** existing-desktop волна 1 — сессия пользователя на стоящем дисплей-менеджере ([aa5d8cc](https://github.com/iamletenkov/cream-extensions/commit/aa5d8ccf79be4832ed91c48cc894def8a680486a))
+* **lib:** gdm-wayland.sh — WaylandEnable gdm3 с записью и точным возвратом ([6d15dbd](https://github.com/iamletenkov/cream-extensions/commit/6d15dbd929a866c3919010dbfb95a67452895323))
+* **lib:** x-session.sh — X-сеанс пользователя на seat0 по logind ([ad021bd](https://github.com/iamletenkov/cream-extensions/commit/ad021bdf2f2a1710cb2dedf9f5364cd5c3bd5283))
+* **stvor-agent:** пин агента 5.8.0 ([#141](https://github.com/iamletenkov/cream-extensions/issues/141)) ([4515cc8](https://github.com/iamletenkov/cream-extensions/commit/4515cc8d220c2375de9a8c497e68ca38fe2295d6))
+* **tools:** L-матрица ведёт варианты и ночные дистрибутивы ([4b3b3ea](https://github.com/iamletenkov/cream-extensions/commit/4b3b3ea3b223a6f44633df93f8369748210517c7))
+* **tools:** L-раннер проверяет машину с рабочим столом до cream ([138d289](https://github.com/iamletenkov/cream-extensions/commit/138d289899b450f08c747eb1d505ccde24a2c02b))
+* **x11vnc:** 6.0.0 — X11VNC_USER, дисплей auto и проверка машины ([c33fe9c](https://github.com/iamletenkov/cream-extensions/commit/c33fe9c11bced5c1ae97f01b6530e2b75429265c))
+* **x11vnc:** волна 4 existing-desktop — x11vnc 6.0.0, NIT selkies, документация, fix-раунд ревью ([33a70e2](https://github.com/iamletenkov/cream-extensions/commit/33a70e24775e5c018c92c8ff4366223c6a532a23))
+
+
+### Исправлено
+
+* **desktop:** хвост ревью волны 3 — firefox, cloud-user-desktop, gnome, selkies ([#137](https://github.com/iamletenkov/cream-extensions/issues/137)) ([3d406cc](https://github.com/iamletenkov/cream-extensions/commit/3d406ccb38755cb762a0ab04cb8643407778a15d))
+* **lib:** xs_find_display находит дисплей rootless GDM без :N в argv ([80d5367](https://github.com/iamletenkov/cream-extensions/commit/80d5367e88a5d72e9a94a43f2016e5ce39dcf70e))
+* **lib:** xs_find_display не берёт подложенный lock и X без контроля доступа ([2b9e82f](https://github.com/iamletenkov/cream-extensions/commit/2b9e82f4c49e63bb4b497554529168e0957c021b))
+* **lib:** повторный gw_set_false дописывает в запись новый файл gdm3 ([d56f5d0](https://github.com/iamletenkov/cream-extensions/commit/d56f5d0b82a5d2e4488cc55a2e243a758f320a29))
+* **selkies:** SELKIES_COMPUTER_USE_BIND из одних запятых — Computer-Use выключен ([c9e832b](https://github.com/iamletenkov/cream-extensions/commit/c9e832bcbfa22259f67c4c412355cc199e203440))
+* **selkies:** SELKIES_COMPUTER_USE_BIND из одних запятых — Computer-Use выключен ([a2756c6](https://github.com/iamletenkov/cream-extensions/commit/a2756c61af78af19cf9fc9ac40fe6c99afe46b54))
+* **selkies:** висячая ссылка DM — как нет DM, проверка машины только вживую ([c0cfd66](https://github.com/iamletenkov/cream-extensions/commit/c0cfd666f0d63a84d3179e9350b996f25841465e))
+* **x-session:** дисплей без logind — по lock-файлу и обоим слушателям, unix:N ([6cd1b5c](https://github.com/iamletenkov/cream-extensions/commit/6cd1b5c95b8730f90f6c2fcdecf20377fb9630c5))
+* **x-session:** сокеты X&lt;N&gt; привязаны к процессу Xorg, абстрактное имя — тоже ([4faa1e1](https://github.com/iamletenkov/cream-extensions/commit/4faa1e1e5e9b92a48fbf978a79bc620c2530140f))
+* **x11vnc:** ревью волны 4 — hardening юнита, 78, маска DM, :0 без подделки ([530b36e](https://github.com/iamletenkov/cream-extensions/commit/530b36e493a1224e73b4a9668bf7fd9ac0a80db1))
+
 ## [5.24.0](https://github.com/iamletenkov/cream-extensions/compare/v5.23.0...v5.24.0) (2026-11-12)
 
 
