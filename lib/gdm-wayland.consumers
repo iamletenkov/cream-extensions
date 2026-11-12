@@ -4,3 +4,4 @@
 # `depends`, nothing to install first. tools/check-shared-libs.sh and
 # tools/check-version-bump.sh read this list.
 debian/gdm-xorg
+debian/gnome

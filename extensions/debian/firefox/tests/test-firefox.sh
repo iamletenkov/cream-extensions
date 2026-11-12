@@ -4,7 +4,8 @@
 # зовёт cream. Ключ Mozilla принимается только с закреплённым отпечатком и
 # ровно одним основным ключом, источник и пин apt, языковой пакет по ключу
 # FIREFOX_LANGPACK, отказ при оставшемся транзитном snap-пакете, повтор install
-# не меняет файлы, remove снимает только поставленное этим расширением.
+# не меняет файлы, remove снимает только поставленное этим расширением — пакеты
+# и (2.1.0) источник, пин и ключ: лежавшие до cream переживают remove.
 # apt-get, curl, gpg, gpgconf, dpkg, dpkg-query — подставные; root и сеть не нужны.
 #
 #   extensions/debian/firefox/tests/test-firefox.sh        код 0 — все проверки прошли
@@ -46,13 +47,14 @@ esac'
     L="$ROOT/etc/apt/sources.list.d/mozilla.list"
     P="$ROOT/etc/apt/preferences.d/mozilla"
     S="$ROOT/var/lib/cream/ext/firefox/packages"
+    REC="$ROOT/var/lib/cream/ext/firefox/apt-source"
 }
 sum() { sha256sum "$@" | awk '{print $1}'; }
 
 echo "== манифест =="
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "версия 2.0.3" 2.0.3 "$(mf 'm["version"]')"
+eq "версия 2.1.0 (источник, пин и ключ — только свои)" 2.1.0 "$(mf 'm["version"]')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
 eq "хуки install и remove" "['install', 'remove']" "$(mf 'sorted(m["hooks"])')"
 eq "FIREFOX_LANGPACK — scope install" install "$(mf 'm["config"]["keys"]["FIREFOX_LANGPACK"]["scope"]')"
@@ -143,5 +145,85 @@ fresh
 printf '1:1snap1-0ubuntu2\n' > "$FAKE/version"
 ht_hook install; eq "остался snap-пакет — 1" 1 "$?"
 check "сообщение про snap" grep -q 'snap' <(ht_out)
+
+echo "== 2.1.0: источник, пин и ключ — снимаются только свои =="
+OURS3="$(printf '%s\n' 'ours /etc/apt/keyrings/packages.mozilla.org.asc' \
+    'ours /etc/apt/preferences.d/mozilla' 'ours /etc/apt/sources.list.d/mozilla.list')"
+# Fresh machine: install records all three as its own; remove takes them away.
+fresh
+ht_hook install; eq "свежая машина: install — 0" 0 "$?"
+eq "запись: все три свои" "$OURS3" "$(LC_ALL=C sort "$REC" 2>/dev/null)"
+rec="$(cat "$REC" 2>/dev/null)"
+ht_hook install; eq "повтор install — 0" 0 "$?"
+eq "повтор не перезаписывает запись (файлы уже есть, но они свои)" "$rec" "$(cat "$REC" 2>/dev/null)"
+: > "$FAKE/calls"
+ht_hook remove; eq "свои: remove — 0" 0 "$?"
+check_not "свои: источник снят" test -e "$L"
+check_not "свои: пин снят" test -e "$P"
+check_not "свои: ключ снят" test -e "$K"
+check "свои: списки apt обновлены" ht_called '^apt-get .*update'
+check_not "свои: запись снята" test -e "$REC"
+# Source, pin and key there before cream (Mozilla's own instructions): they survive.
+fresh
+mkdir -p "$(dirname "$L")" "$(dirname "$P")" "$(dirname "$K")"
+echo 'deb [signed-by=/etc/apt/keyrings/packages.mozilla.org.asc] https://packages.mozilla.org/apt mozilla main' > "$L"
+printf 'Package: *\nPin: origin packages.mozilla.org\nPin-Priority: 1000\n' > "$P"
+echo 'THEIR KEY' > "$K"
+ht_hook install; eq "чужие: install — 0" 0 "$?"
+eq "запись: все три чужие" "$(sed 's/^ours/kept/' <<< "$OURS3")" "$(LC_ALL=C sort "$REC" 2>/dev/null)"
+check "чужие: сказано при install" grep -q 'был до cream' "$ROOT/out"
+: > "$FAKE/calls"
+ht_hook remove; eq "чужие: remove — 0" 0 "$?"
+check "чужие: источник пережил remove" test -f "$L"
+check "чужие: пин пережил remove" test -f "$P"
+check "чужие: ключ пережил remove" test -f "$K"
+check_not "чужие: apt-get update не нужен (ничего не снято)" ht_called '^apt-get .*update'
+check_not "чужие: запись снята" test -e "$REC"
+check "чужие: сказано, что оставлено" grep -q 'не снимаю' "$ROOT/out"
+# Only the key was there: source and pin go, the key stays.
+fresh
+mkdir -p "$(dirname "$K")"; echo 'THEIR KEY' > "$K"
+ht_hook install; eq "чужой ключ: install — 0" 0 "$?"
+ht_hook remove; eq "чужой ключ: remove — 0" 0 "$?"
+check_not "чужой ключ: свой источник снят" test -e "$L"
+check_not "чужой ключ: свой пин снят" test -e "$P"
+check "чужой ключ: ключ остался" test -f "$K"
+# 2.0.x installed it, no record: remove as before — all three go.
+fresh
+mkdir -p "$(dirname "$L")" "$(dirname "$P")" "$(dirname "$K")" "$(dirname "$S")"
+echo deb > "$L"; echo pin > "$P"; echo key > "$K"
+ht_hook remove; eq "без записи (2.0.x): remove — 0" 0 "$?"
+check_not "без записи: источник снят, как в 2.0.x" test -e "$L"
+check_not "без записи: пин снят, как в 2.0.x" test -e "$P"
+check_not "без записи: ключ снят, как в 2.0.x" test -e "$K"
+# Upgrade from 2.0.x: the files are 2.0.x's own — install does not call them foreign.
+fresh
+mkdir -p "$(dirname "$L")" "$(dirname "$P")" "$(dirname "$K")"
+echo deb > "$L"; echo pin > "$P"; echo key > "$K"
+ht_hook install CREAM_PREV_VERSION=2.0.3; eq "обновление с 2.0.3: install — 0" 0 "$?"
+check_not "обновление с 2.0.3: записи нет (прежнее неизвестно)" test -e "$REC"
+ht_hook remove; eq "обновление с 2.0.3: remove — 0" 0 "$?"
+check_not "обновление с 2.0.3: источник снят, как в 2.0.x" test -e "$L"
+check_not "обновление с 2.0.3: ключ снят, как в 2.0.x" test -e "$K"
+# Upgrade 2.1.x → later with a record: the record stays as it is.
+fresh
+mkdir -p "$(dirname "$L")" "$(dirname "$P")" "$(dirname "$K")" "$(dirname "$REC")"
+echo deb > "$L"; echo pin > "$P"; echo key > "$K"
+printf '%s\n' 'kept /etc/apt/sources.list.d/mozilla.list' 'ours /etc/apt/preferences.d/mozilla' \
+    'ours /etc/apt/keyrings/packages.mozilla.org.asc' > "$REC"
+rec="$(cat "$REC")"
+ht_hook install CREAM_PREV_VERSION=2.1.0; eq "обновление с записью: install — 0" 0 "$?"
+eq "обновление с записью: запись та же" "$rec" "$(cat "$REC")"
+ht_hook remove; eq "обновление с записью: remove — 0" 0 "$?"
+check "обновление с записью: чужой источник остался" test -f "$L"
+check_not "обновление с записью: свой пин снят" test -e "$P"
+check_not "обновление с записью: свой ключ снят" test -e "$K"
+# A record line outside the three paths is ignored, never removed.
+fresh
+mkdir -p "$(dirname "$REC")" "$ROOT/etc"
+echo keep > "$ROOT/etc/passwd-like"
+printf 'ours /etc/passwd-like\nours /etc/apt/sources.list.d/../../passwd-like\n' > "$REC"
+ht_hook remove; eq "чужой путь в записи: remove — 0" 0 "$?"
+check "чужой путь в записи не удалён" test -f "$ROOT/etc/passwd-like"
 
 ht_done

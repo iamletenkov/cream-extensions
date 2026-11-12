@@ -10,7 +10,11 @@
 # Security is the point: no start without authentication unless
 # SELKIES_ALLOW_NO_AUTH=1 (fail-closed), secrets never in argv, the output or
 # the environment of helper processes, the Teleport declaration written without
-# following symlinks.
+# following symlinks. 7.0.0 (spec 2026-11-12-existing-desktop §4.4): the user
+# (SELKIES_USER or cloud-user) only with 1000 <= uid < 65534, the display by
+# lib/x-session.sh (SELKIES_DISPLAY=auto), the machine check (Xorg and an
+# enabled display manager) in install and configure; loginctl answers from
+# files $FAKE/user.<name>, session.<sid>, seat.seat0.
 #
 #   extensions/debian/selkies/tests/test-selkies.sh   code 0 — all checks passed
 set -uo pipefail
@@ -26,12 +30,28 @@ TOKEN='Tok-Master-9e1c5a7b'
 VER=2.0.0
 
 # sk_root: fresh root; user alice (uid 1000, home /home/alice) from the
-# cloud-user library stub ($FAKE/user); the display manager is active.
+# cloud-user library stub ($FAKE/user); Xorg is there, the display manager is
+# enabled (display-manager.service) and active; logind has no session (the
+# fake loginctl answers from files, none yet).
 sk_root() {
     ht_root "$EXT"
-    mkdir -p "$ROOT/home/alice" "$ROOT/home/root"
+    mkdir -p "$ROOT/home/alice" "$ROOT/home/root" "$ROOT/usr/lib/xorg" "$ROOT/etc/systemd/system"
+    printf '#!/bin/sh\n' > "$ROOT/usr/lib/xorg/Xorg"; chmod 0755 "$ROOT/usr/lib/xorg/Xorg"
+    ln -s /lib/systemd/system/lightdm.service "$ROOT/etc/systemd/system/display-manager.service"
     printf '%s\n' 'root:x:0:0::/root:/bin/bash' 'alice:x:1000:1000::/home/alice:/bin/bash' \
-        'bob:x:1001:1001::/home/bob:/bin/bash' > "$FAKE/passwd"
+        'bob:x:1001:1001::/home/bob:/bin/bash' 'carol:x:1002:1002::/home/carol:/bin/bash' \
+        'gdm:x:120:125:Gnome Display Manager:/var/lib/gdm3:/bin/false' \
+        'nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin' > "$FAKE/passwd"
+    ht_fake loginctl 'env > "$FAKE/loginctl.env"
+cmd="$1"; target="${!#}"
+case "$cmd" in
+    show-user) f="$FAKE/user.$target" ;;
+    show-session) f="$FAKE/session.$target" ;;
+    show-seat) f="$FAKE/seat.$target" ;;
+    *) exit 1 ;;
+esac
+[[ -f "$f" ]] || exit 1
+cat "$f"' 
     echo alice > "$FAKE/user"
     : > "$FAKE/active-display-manager"
     : > "$FAKE/units"
@@ -59,6 +79,15 @@ exit 0'
     APPS="$ROOT/etc/cream/teleport/apps.d"
     DECL="$APPS/selkies.conf"
 }
+# seat0 <sid> <user> <type> <display> [class] [active]: a local session of <user>
+# on seat0 in logind; active (default yes) — the active session of seat0.
+seat0() {
+    printf 'Name=%s\nSeat=seat0\nClass=%s\nType=%s\nDisplay=%s\nState=active\nRemote=no\n' \
+        "$2" "${5:-user}" "$3" "$4" > "$FAKE/session.$1"
+    [[ "${5:-user}" == user ]] && printf 'Sessions=%s\n' "$1" > "$FAKE/user.$2"
+    [[ "${6:-yes}" == yes ]] && printf 'ActiveSession=%s\n' "$1" > "$FAKE/seat.seat0"
+    return 0
+}
 # fake_appimage: an extracted AppImage already in /opt/selkies/<ver>; its
 # selkies binary dumps its environment and argv into $FAKE.
 fake_appimage() {
@@ -76,7 +105,16 @@ blocking_systemctl() { grep -E '^systemctl (start|restart|stop|reload|enable --n
 echo "== манифест и раскладка =="
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
 eq "name" selkies "$(mf 'm["name"]')"
-eq "версия 6.2.3 (Computer-Use из одних запятых — как выключенный)" 6.2.3 "$(mf 'm["version"]')"
+eq "версия 7.0.0 (SELKIES_USER, SELKIES_DISPLAY=auto, проверка машины)" 7.0.0 "$(mf 'm["version"]')"
+eq "SELKIES_USER: имя, пусто — cloud-user" "re:^[a-z_][a-z0-9_-]{0,31}\$||True" \
+    "$(mf '(lambda k: k["type"] + "|" + k["default"] + "|" + str(k.get("empty")))(m["config"]["keys"]["SELKIES_USER"])')"
+eq "SELKIES_DISPLAY: auto или :N, умолчание auto" "re:^(auto|:[0-9]+(\.[0-9]+)?)\$|auto|True" \
+    "$(mf '(lambda k: k["type"] + "|" + k["default"] + "|" + str(k.get("empty")))(m["config"]["keys"]["SELKIES_DISPLAY"])')"
+check "умолчание манифеста = запасное значение обёртки (auto)" \
+    grep -qF 'WANT_DISPLAY="${SELKIES_DISPLAY:-auto}"' "$EXT/files/run-selkies.sh"
+check "selkies — потребитель lib/x-session.sh" grep -qx 'debian/selkies' "$EXT/../../../lib/x-session.consumers"
+check "обёртка берёт files/x-session.sh" grep -q 'files/x-session.sh' "$EXT/files/run-selkies.sh"
+check "configure берёт files/x-session.sh" grep -q 'files/x-session.sh' "$EXT/files/selkies.sh"
 eq "cream >=1.2.0 (every_boot, спека cream §10.9)" ">=1.2.0" "$(mf 'm["cream"]')"
 eq "configure на каждой загрузке (аудит 2026-10-21)" True "$(mf 'm["hooks"]["configure"].get("every_boot")')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
@@ -147,11 +185,36 @@ ht_hook install; eq "install — 0" 0 "$?"
 eq "current → $VER" "$ROOT/opt/selkies/$VER" "$(readlink "$ROOT/opt/selkies/current")"
 check_not "сеть не нужна" ht_called '^curl'
 check "x11-utils и xauth" ht_called '^apt-get .*install .*x11-utils xauth'
+check "x11-xserver-utils (xhost, П15)" ht_called '^apt-get .*install .*x11-xserver-utils'
+eq "apt-get update — ровно один раз (curl уже был)" 1 "$(grep -c '^apt-get .*update' "$FAKE/calls")"
+check "update — до установки x11-utils" \
+    test "$(grep -n '^apt-get .*update' "$FAKE/calls" | head -1 | cut -d: -f1)" -lt \
+         "$(grep -n '^apt-get .*install .*x11-utils' "$FAKE/calls" | head -1 | cut -d: -f1)"
 check_not "install не трогает службы" ht_called '^systemctl'
 check_not "install не пишет объявление (это configure)" test -e "$DECL"
 link1="$(stat -c '%i %Y' "$ROOT/opt/selkies/current")"
 ht_hook install; eq "повтор — 0" 0 "$?"
 eq "повтор: ссылка та же" "$link1" "$(stat -c '%i %Y' "$ROOT/opt/selkies/current")"
+
+echo "== install: живая машина без Xorg или без менеджера входа — 20 (Р2) =="
+sk_root; fake_appimage
+ht_fake dpkg 'echo amd64'
+ht_fake apt-get
+rm -f "$ROOT/usr/lib/xorg/Xorg"
+ht_hook install; eq "нет Xorg — 20" 20 "$?"
+check "текст: поставьте стол или existing-desktop" grep -q 'нет X-сервера / менеджера входа: поставьте стол или `existing-desktop`' "$ROOT/out"
+check_not "ничего не качается и не ставится" ht_called '^(curl|apt-get)'
+check_not "ссылки current нет" test -L "$ROOT/opt/selkies/current"
+mkdir -p "$ROOT/usr/bin"; printf '#!/bin/sh\n' > "$ROOT/usr/bin/Xorg"
+ht_hook install; eq "Xorg в /usr/bin — 0" 0 "$?"
+sk_root; fake_appimage
+ht_fake dpkg 'echo amd64'
+ht_fake apt-get
+rm -f "$ROOT/etc/systemd/system/display-manager.service"
+ht_hook install; eq "нет display-manager.service — 20" 20 "$?"
+check "текст про менеджер входа" grep -q 'менеджера входа' "$ROOT/out"
+rm -f "$ROOT/usr/lib/xorg/Xorg"
+HT_PHASE=build ht_hook install; eq "сборка образа: без Xorg и DM — 0 (стол ставит та же сборка)" 0 "$?"
 
 echo "== install: sha256 не совпал — отказ, ничего не распаковано =="
 sk_root
@@ -257,7 +320,8 @@ eq "файл 0644 (секретов нет)" 644 "$(stat -c %a "$EFF")"
 eq "файл = непустые умолчания манифеста" "$want_eff" "$(cat "$EFF")"
 check "SELKIES_ENABLE_RESIZE=false — монитор не меняется" grep -qx 'SELKIES_ENABLE_RESIZE=false' "$EFF"
 check_not "пустые умолчания не пишутся (пусто у Selkies — своё умолчание)" \
-    grep -qE '^SELKIES_(DISPLAY|ENCODER|HTTPS_CERT|HTTPS_KEY)=' "$EFF"
+    grep -qE '^SELKIES_(USER|ENCODER|HTTPS_CERT|HTTPS_KEY)=' "$EFF"
+check "SELKIES_DISPLAY=auto — обёртке (7.0.0: умолчание auto)" grep -qx 'SELKIES_DISPLAY=auto' "$EFF"
 check_not "секретов нет" leaked "$EFF"
 check_not "только SELKIES_*" grep -qv '^SELKIES_' "$EFF"
 eff1="$(stat -c '%i %Y' "$EFF")"
@@ -273,6 +337,7 @@ sk_root
 ht_hook configure CREAM_REASON=boot; eq "без аутентификации — 0" 0 "$?"
 check "без аутентификации файл тоже пишется" grep -qx 'SELKIES_ENABLE_RESIZE=false' "$EFF"
 sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+EFF="$ROOT/var/lib/cream/ext/selkies/env"
 mkdir -p "$ROOT/victim"; echo keep > "$ROOT/victim/file"; ln -s "$ROOT/victim/file" "$EFF"
 ht_hook configure CREAM_REASON=boot; eq "файл — ссылка: configure 0" 0 "$?"
 eq "цель ссылки не тронута" keep "$(cat "$ROOT/victim/file")"
@@ -429,6 +494,67 @@ echo 'bad;name' > "$FAKE/user"
 ht_hook configure CREAM_REASON=boot; eq "кривое имя — 0" 0 "$?"
 check_not "кривое имя не идёт в имя юнита" ht_called 'selkies@bad'
 
+echo "== configure: SELKIES_USER — этот пользователь, без cloud-user =="
+sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+ht_hook configure CREAM_REASON=boot SELKIES_USER=carol; eq "SELKIES_USER=carol — 0" 0 "$?"
+check "стартует selkies@carol" started carol
+check_not "selkies@alice не стартует" started alice
+check_not "cloud-user не ждали" ht_called '^sleep'
+
+echo "== configure/apply: SELKIES_USER — системная учётка, root, nobody, нет в passwd — 78 (Р3) =="
+for u in gdm root nobody ghost; do
+    sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+    printf '%s\n' 'selkies@alice.service loaded active running Selkies' > "$FAKE/units"
+    ht_hook configure CREAM_REASON=boot "SELKIES_USER=$u"; eq "configure SELKIES_USER=$u — 78" 78 "$?"
+    check_not "$u: экземпляр не стартует" ht_called '^systemctl (start|restart) --no-block selkies@'
+    check "$u: прежний экземпляр гасится" ht_called '^systemctl stop --no-block selkies@alice\.service'
+    check "$u: причина в журнале (uid 1000..65533)" grep -q '1000' "$ROOT/out"
+    check_not "$u: объявление не пишется" test -e "$DECL"
+    : > "$FAKE/calls"
+    ht_hook apply CREAM_CHANGED_KEYS=SELKIES_USER "SELKIES_USER=$u"; eq "apply SELKIES_USER=$u — 78" 78 "$?"
+    check_not "$u: apply не перезапускает" ht_called '^systemctl (start|restart) --no-block selkies@'
+done
+
+echo "== configure/apply: нет Xorg или менеджера входа — 1 (Р2); DM не активен — 0 (Р11) =="
+sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+rm -f "$ROOT/usr/lib/xorg/Xorg"
+printf '%s\n' 'selkies@alice.service loaded active running Selkies' > "$FAKE/units"
+ht_hook configure CREAM_REASON=boot; eq "нет Xorg: configure — 1" 1 "$?"
+check "текст: existing-desktop" grep -q 'нет X-сервера / менеджера входа: поставьте стол или `existing-desktop`' "$ROOT/out"
+check_not "не стартует" started alice
+check "прежний экземпляр гасится" ht_called '^systemctl stop --no-block selkies@alice\.service'
+ht_hook apply CREAM_CHANGED_KEYS=SELKIES_PORT; eq "нет Xorg: apply — 1" 1 "$?"
+sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+rm -f "$ROOT/etc/systemd/system/display-manager.service"
+ht_hook configure CREAM_REASON=boot; eq "нет display-manager.service: configure — 1" 1 "$?"
+check_not "не стартует" started alice
+
+echo "== configure: SELKIES_DISPLAY проверяется =="
+sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+ht_hook configure CREAM_REASON=boot SELKIES_DISPLAY=:1; eq "SELKIES_DISPLAY=:1 — 0" 0 "$?"
+check "SELKIES_DISPLAY=:1 в действующих значениях" grep -qx 'SELKIES_DISPLAY=:1' "$ROOT/var/lib/cream/ext/selkies/env"
+ht_hook configure CREAM_REASON=boot 'SELKIES_DISPLAY=:0;x'; eq "SELKIES_DISPLAY с мусором — 1" 1 "$?"
+ht_hook configure CREAM_REASON=boot 'SELKIES_USER=-x'; eq "SELKIES_USER не имя — 78" 78 "$?"
+
+echo "== configure: диагноз seat0 одной строкой (xs_seat0_active) =="
+sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+seat0 3 bob x11 :0
+ht_hook configure CREAM_REASON=boot; eq "на экране bob — 0" 0 "$?"
+check "диагноз: сеанс bob, Selkies ждёт alice" grep -q 'на seat0 сеанс bob (x11), Selkies ждёт alice' "$ROOT/out"
+check "подсказка: SELKIES_USER=bob" grep -q 'SELKIES_USER=bob' "$ROOT/out"
+check "всё равно стартует (ждёт сеанс alice)" started alice
+sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+seat0 c1 gdm x11 :0 greeter
+ht_hook configure CREAM_REASON=boot; eq "на экране вход — 0" 0 "$?"
+check "диагноз: экран входа" grep -q 'экран входа' "$ROOT/out"
+sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+seat0 2 alice x11 :1
+ht_hook configure CREAM_REASON=boot; eq "на экране alice — 0" 0 "$?"
+check "диагноз: сеанс alice (x11)" grep -q 'на seat0 сеанс alice (x11)' "$ROOT/out"
+sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
+ht_hook configure CREAM_REASON=boot; eq "logind без сеанса — 0" 0 "$?"
+check "диагноз: активного сеанса нет" grep -q 'на seat0 нет активного сеанса' "$ROOT/out"
+
 echo "== configure: прежний экземпляр другого пользователя гасится =="
 sk_root; ht_secret SELKIES_BASIC_AUTH_PASSWORD "$PW"
 printf '%s\n' 'selkies@bob.service loaded active running Selkies' 'selkies@alice.service loaded inactive dead Selkies' > "$FAKE/units"
@@ -480,19 +606,27 @@ check "по ссылке не удаляет" test -f "$ROOT/victim/$VER/f"
 echo "== run-selkies.sh: fail-closed и секреты =="
 # run_wrapper <env pairs…>: the wrapper as systemd starts it for alice (User=%i):
 # config and secrets in the environment, nothing else.
+# WR_USER — the instance (selkies@<user>), alice by default.
 run_wrapper() {
     (
         cd / || exit 125
         exec env -i "PATH=$ROOT/bin:$HT_PATH_TAIL" LANG=C.UTF-8 "CREAM_ROOT=$ROOT" \
-            SELKIES_AUDIO_ENABLED=false "$@" /bin/bash "$EXT/files/run-selkies.sh" alice < /dev/null
+            SELKIES_AUDIO_ENABLED=false "$@" /bin/bash "$EXT/files/run-selkies.sh" "${WR_USER:-alice}" < /dev/null
     ) > "$ROOT/out" 2>&1
 }
+# wr_root: alice is logged in on seat0, an X11 session on :0 (logind Display);
+# xdpyinfo opens every display; sleep is counted, and the 2000th kills the
+# wrapper (a test that would wait for ever fails instead of hanging).
 wr_root() {
     sk_root; fake_appimage; ln -s "$ROOT/opt/selkies/$VER" "$ROOT/opt/selkies/current"
     : > "$ROOT/home/alice/.Xauthority"
-    for c in xdpyinfo pactl loginctl pgrep; do
+    for c in xdpyinfo pactl pgrep; do
         ht_fake "$c" "env > \"\$FAKE/$c.env\"; [[ $c == pgrep ]] && exit 1; exit 0"
     done
+    seat0 2 alice x11 :0
+    ht_fake sleep 'n=$(( $(cat "$FAKE/sleeps" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/sleeps"
+(( n < 2000 )) || kill -TERM "$PPID"
+exit 0'
 }
 wr_root
 run_wrapper; eq "без пароля и ключа — 78" 78 "$?"
@@ -667,16 +801,82 @@ check "явный ключ config побеждает файл действующ
 
 echo "== run-selkies.sh: сессия на Wayland — 78, без цикла перезапусков =="
 wr_root
-ht_fake xdpyinfo 'exit 1'
-ht_fake loginctl '
-case "$1" in
-    list-sessions) echo "2 1000 alice seat0 tty2" ;;
-    show-session) echo wayland ;;
-esac'
+seat0 2 alice wayland -
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"; eq "Wayland — 78 (EX_CONFIG)" 78 "$?"
 check "сказано про Wayland" grep -q 'Wayland' "$ROOT/out"
 check "сказано, как вернуть" grep -q 'systemctl restart selkies@alice' "$ROOT/out"
+check "подсказка: gdm-xorg" grep -q 'gdm-xorg' "$ROOT/out"
 check_not "selkies не запущен" test -e "$FAKE/selkies.env"
+check_not "list-sessions не разбирается" ht_called '^loginctl list-sessions'
+wr_root
+seat0 2 alice wayland -
+run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_DISPLAY=:0; eq "Wayland при жёстком :0 — тоже 78" 78 "$?"
+check_not "selkies не запущен" test -e "$FAKE/selkies.env"
+
+echo "== run-selkies.sh: пользователь — uid 1000..65533, иначе 78 (Р3) =="
+for u in gdm root nobody ghost -x; do
+    wr_root
+    WR_USER="$u" run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"; eq "selkies@$u — 78" 78 "$?"
+    check_not "$u: selkies не запущен" test -e "$FAKE/selkies.env"
+    check_not "$u: дисплей не искали" ht_called '^(loginctl|xdpyinfo)'
+done
+wr_root; seat0 2 carol x11 :0; mkdir -p "$ROOT/home/carol"; : > "$ROOT/home/carol/.Xauthority"
+WR_USER=carol run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"
+check "selkies@carol (uid 1002) запущен" test -e "$FAKE/selkies.env"
+check "USER=carol у Selkies" grep -qx 'USER=carol' "$FAKE/selkies.env"
+
+echo "== run-selkies.sh: SELKIES_USER не доходит до Selkies (П8) =="
+wr_root
+run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_USER=alice
+check "selkies запущен" test -e "$FAKE/selkies.env"
+check_not "SELKIES_USER нет в окружении Selkies" grep -q '^SELKIES_USER=' "$FAKE/selkies.env"
+
+echo "== run-selkies.sh: SELKIES_DISPLAY — auto по logind, :N жёстко, без ключа — auto (Р4) =="
+wr_root; seat0 2 alice x11 :1
+run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"
+check "ключ не задан: дисплей из logind — :1" grep -qx 'DISPLAY=:1' "$FAKE/selkies.env"
+check "Selkies получает найденный дисплей, не auto" grep -qx 'SELKIES_DISPLAY=:1' "$FAKE/selkies.env"
+check "путь назван в журнале (logind)" grep -q 'logind' "$ROOT/out"
+wr_root; seat0 2 alice x11 :1
+run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_DISPLAY=auto
+check "auto: дисплей :1" grep -qx 'DISPLAY=:1' "$FAKE/selkies.env"
+wr_root; seat0 2 alice x11 :1
+run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_DISPLAY=
+check "пусто — как auto: :1" grep -qx 'DISPLAY=:1' "$FAKE/selkies.env"
+wr_root; seat0 2 alice x11 :1
+run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_DISPLAY=:0
+check "сохранённое :0 не меняется" grep -qx 'DISPLAY=:0' "$FAKE/selkies.env"
+wr_root
+run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" 'SELKIES_DISPLAY=:0;x'; eq "негодный SELKIES_DISPLAY — 78" 78 "$?"
+check_not "selkies не запущен" test -e "$FAKE/selkies.env"
+
+echo "== run-selkies.sh: logind не отдаёт сеанс — запасной путь 2 (:0) =="
+wr_root
+rm -f "$FAKE"/user.* "$FAKE"/session.* "$FAKE/seat.seat0"
+ht_fake stat 'echo "1000 600"'
+ht_fake xhost 'echo "access control enabled, only authorized clients can connect"'
+run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"
+check "selkies запущен" test -e "$FAKE/selkies.env"
+check "дисплей :0 (как 6.x)" grep -qx 'DISPLAY=:0' "$FAKE/selkies.env"
+check "путь назван: запасной" grep -q 'запасной путь' "$ROOT/out"
+
+echo "== run-selkies.sh: ожидание сеанса — диагноз раз в 5 минут =="
+wr_root
+rm -f "$FAKE"/user.alice "$FAKE"/session.2
+seat0 3 bob x11 :0
+ht_fake xdpyinfo '[[ -e "$FAKE/x-up" ]]'
+ht_fake sleep 'n=$(( $(cat "$FAKE/sleeps" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/sleeps"
+if (( n == 130 )); then
+    printf "Name=alice\nSeat=seat0\nClass=user\nType=x11\nDisplay=:0\nState=active\nRemote=no\n" > "$FAKE/session.2"
+    printf "Sessions=2\n" > "$FAKE/user.alice"; printf "ActiveSession=2\n" > "$FAKE/seat.seat0"; : > "$FAKE/x-up"
+fi
+(( n < 2000 )) || kill -TERM "$PPID"
+exit 0'
+run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"
+check "selkies запущен, когда alice вошла" test -e "$FAKE/selkies.env"
+eq "строка ожидания — на 0, 5 и 10 минуте" 3 "$(grep -c 'жду X-сессию' "$ROOT/out")"
+check "диагноз: на seat0 bob" grep -q 'на seat0 сеанс bob (x11)' "$ROOT/out"
+check "подсказка: SELKIES_USER=bob" grep -q 'SELKIES_USER=bob' "$ROOT/out"
 
 echo "== имена layout 2 =="
 # check-names: off

@@ -26,27 +26,49 @@ X-сессия, которая на мониторе, — в браузере, �
 
 С `x11vnc` работает параллельно (конфликта нет).
 
+**Чей экран и какой дисплей** (7.0.0). Пользователь — `SELKIES_USER`, пусто —
+пользователь cloud-init (как раньше); только учётка с uid **1000..65533**: root,
+`gdm`, `lightdm` и другие системные — отказ, код 78 (у `gdm` authority — экрана
+входа). Дисплей — `SELKIES_DISPLAY=auto` (умолчание): X11-сеанс пользователя на
+seat0 по logind, иначе его Xorg, иначе `:0`, подтверждённый его собственной
+authority ([`lib/x-session.sh`](../../../lib/x-session.sh)); `:N` — жёстко. Стол,
+поставленный не через cream (готовая Ubuntu, GDM/LightDM/SDDM), —
+[`existing-desktop`](../existing-desktop/README.md); сеанс на Wayland не
+транслируется — [`gdm-xorg`](../gdm-xorg/README.md).
+
 ## Что делает
 
-- **`install`** — AppImage Selkies по закреплённой версии и sha256 на архитектуру,
-  распаковка в `/opt/selkies/2.0.0` (**+1,7 ГБ**, без FUSE), ссылка
-  `/opt/selkies/current`; `x11-utils`, `xauth` для обёртки. Службу не запускает,
-  настроек не пишет. Повтор при распакованном дереве сеть не трогает. Загрузка —
+- **`install`** — на живой машине сначала проверка: нет Xorg (`/usr/lib/xorg/Xorg`,
+  `/usr/bin/Xorg`) или включённого менеджера входа (ссылка
+  `display-manager.service`) — код 20 (cream — 68) и «нет X-сервера / менеджера
+  входа: поставьте стол или `existing-desktop`», ничего не скачано; при сборке
+  образа проверки нет. Затем AppImage Selkies по закреплённой версии и sha256 на
+  архитектуру, распаковка в `/opt/selkies/2.0.0` (**+1,7 ГБ**, без FUSE), ссылка
+  `/opt/selkies/current`; `apt-get update` один раз, `x11-utils`, `xauth` и
+  `x11-xserver-utils` (`xhost` — запасной путь `lib/x-session.sh`) для обёртки.
+  Службу не запускает, настроек не пишет. Повтор при распакованном дереве сеть не трогает. Загрузка —
   `fetch_verified` из [`lib/fetch.sh`](../../../lib/fetch.sh): 5 попыток на адрес (curl 7.68 focal
   сам обрыв не повторяет). cream
   раскладывает юнит `selkies@.service` → `/etc/systemd/system/selkies@.service`.
 - **`configure`** — на каждой загрузке (стадия `graphical`, после менеджера входа),
   после `install` на живой машине:
-  1. проверка значений (адрес, порт, `SELKIES_ENABLE_HTTPS`, `SELKIES_ALLOW_NO_AUTH`;
-     иначе сбой, код 1); действующие значения — в `/var/lib/cream/ext/selkies/env`
-     (раздел «Параметры»); проверка аутентификации (ниже); нет аутентификации — объявление для Teleport снимается,
-     запущенные `selkies@*` гасятся (`--no-block`), предупреждение, код 0;
-  2. объявление `/etc/cream/teleport/apps.d/selkies.conf`;
-  3. менеджер входа не запущен — предупреждение, код 0;
-  4. пользователь cloud-init (библиотека [`cloud-user`](../cloud-user/README.md);
-     на загрузке ждёт до 60 с); нет, root или имя не годится для юнита —
-     предупреждение, код 0;
-  5. экземпляры других пользователей гасятся, `systemctl start --no-block
+  1. проверка значений (адрес, порт, `SELKIES_ENABLE_HTTPS`, `SELKIES_ALLOW_NO_AUTH`,
+     `SELKIES_DISPLAY`; иначе сбой, код 1); действующие значения — в
+     `/var/lib/cream/ext/selkies/env` (раздел «Параметры»);
+  2. машина: нет Xorg или включённого менеджера входа — объявление снимается,
+     `selkies@*` гасятся, код 1 (как у `install`, текст про `existing-desktop`);
+  3. `SELKIES_USER` задан, но не учётка с uid 1000..65533 — объявление снимается,
+     `selkies@*` гасятся, код 78;
+  4. проверка аутентификации (ниже); нет аутентификации — объявление для Teleport
+     снимается, запущенные `selkies@*` гасятся (`--no-block`), предупреждение, код 0;
+  5. объявление `/etc/cream/teleport/apps.d/selkies.conf`;
+  6. менеджер входа не запущен — предупреждение, код 0;
+  7. пользователь — `SELKIES_USER`, пусто — пользователь cloud-init (библиотека
+     [`cloud-user`](../cloud-user/README.md); на загрузке ждёт до 60 с); нет, root,
+     uid вне 1000..65533 или имя не годится для юнита — предупреждение, код 0;
+  8. одна строка диагноза: кто на seat0 («на seat0 сеанс bob (x11), Selkies ждёт
+     alice: sudo cream set selkies SELKIES_USER=bob», экран входа, нет сеанса);
+  9. экземпляры других пользователей гасятся, `systemctl start --no-block
      selkies@<пользователь>` (после `install` — `restart`). Экземпляр **не
      включается** (`enable`): его каждый раз запускает configure, проверив пароль.
 - **`apply`** — после `cream set selkies …`: то же без ожидания пользователя,
@@ -56,9 +78,13 @@ X-сессия, которая на мониторе, — в браузере, �
   значений, удаляет `/opt/selkies` (по ссылке — нет). Юнит удаляет cream (`files`).
 - **`files/run-selkies.sh`** — обёртка юнита (от имени пользователя, `User=%i`):
   ещё раз проверяет аутентификацию (отказ — код 78, `RestartPreventExitStatus=78`,
-  без цикла перезапусков), ждёт X-сессию (сеанс на Wayland — тоже код 78 и
-  подсказка, как вернуть), запускает бинарь мимо `AppRun` (иначе без дисплея
-  поднялся бы Xvfb с пустым экраном) и сторожит пропажу сессии.
+  без цикла перезапусков) и uid экземпляра (1000..65533, иначе 78 — до обращения к
+  logind и X), ищет дисплей по `SELKIES_DISPLAY` (auto — `lib/x-session.sh`, путь
+  в журнал) и ждёт X-сессию — раз в 5 минут строка и диагноз seat0; сеанс на
+  Wayland — тоже код 78 и подсказка про `gdm-xorg`. Selkies получает найденный
+  `SELKIES_DISPLAY=:N` (не `auto`) и не получает `SELKIES_USER`. Бинарь запускается
+  мимо `AppRun` (иначе без дисплея поднялся бы Xvfb с пустым экраном), сторож
+  ловит пропажу сессии.
 
 ## Параметры
 
@@ -90,7 +116,8 @@ X-сессия, которая на мониторе, — в браузере, �
 | `SELKIES_UI_SIDEBAR_SHOW_WEBCAM` | `true` \| `false` | `false` | панель: веб-камера |
 | `SELKIES_UI_SIDEBAR_SHOW_SHARING` | `true` \| `false` | `false` | панель: совместный доступ |
 | `SELKIES_UI_SIDEBAR_SHOW_APPS` | `true` \| `false` | `false` | панель: приложения |
-| `SELKIES_DISPLAY` | строка `^:[0-9]+(\.[0-9]+)?$` | пусто | X-дисплей; пусто — :0 (ключ обёртки) |
+| `SELKIES_USER` | строка `^[a-z_][a-z0-9_-]{0,31}$` | пусто | ключ расширения: чей X-сеанс транслировать; пусто — пользователь cloud-init; uid только 1000..65533, иначе отказ (код 78) |
+| `SELKIES_DISPLAY` | строка `^(auto\|:[0-9]+(\.[0-9]+)?)$` | `auto` | ключ обёртки: auto (и пусто) — дисплей X-сеанса пользователя на seat0 (logind, его Xorg, :0); :N — жёстко |
 | `SELKIES_HTTPS_CERT` | строка `^/[A-Za-z0-9._/-]{1,1000}$` | пусто | сертификат; пусто — пара, выпущенная на машине в состоянии пользователя |
 | `SELKIES_HTTPS_KEY` | строка `^/[A-Za-z0-9._/-]{1,1000}$` | пусто | ключ сертификата |
 | `SELKIES_*` | строка `^[A-Za-z0-9_.,:/@%+=-]{1,512}$` | — | любая переменная Selkies (selkies --help), не секрет: секреты — только три ключа выше *(шаблон имени)* |
@@ -139,7 +166,7 @@ X-сессия, которая на мониторе, — в браузере, �
 | `SELKIES_FILE_TRANSFERS` | `upload,download` | в `~/Downloads` пользователя; `none` — выключить |
 | `SELKIES_MICROPHONE_ENABLED`, `SELKIES_WEBCAM_ENABLED`, `SELKIES_GAMEPAD_ENABLED` | `false` | машине не нужны |
 | `SELKIES_MODE` | `websockets` | WebRTC через веб-приложение Teleport не проходит |
-| `SELKIES_DISPLAY` | пусто (`:0`) | ключ обёртки |
+| `SELKIES_DISPLAY` | `auto` | ключ обёртки: Selkies получает найденный `:N` |
 | `SELKIES_HTTPS_CERT`, `SELKIES_HTTPS_KEY` | пусто | пара выпускается на машине в `~/.local/state/selkies/` пользователя |
 
 Аутентификация:
@@ -196,8 +223,19 @@ RUN_COMMAND cream install --with-deps selkies SELKIES_PORT=8090 SELKIES_FILE_TRA
 ```
 
 Пароль задают на машине, а не в образе (см. выше). **Без `DESKTOP_AUTOLOGIN=1`**
-показывать нечего до входа человека: обёртка ждёт сессию и пишет об этом одну
-строку в журнал.
+показывать нечего до входа человека: обёртка ждёт сессию и раз в 5 минут пишет
+строку и диагноз seat0 в журнал.
+
+На готовой машине со своим столом (Ubuntu с GDM, LightDM, SDDM):
+
+```bash
+sudo cream install --with-deps existing-desktop gdm-xorg   # gdm-xorg — только для GDM
+sudo cream install --with-deps selkies
+sudo cream set selkies SELKIES_USER=<кто входит на экран>  # если не пользователь cloud-init
+```
+
+`pixelflux-tegra`, `vino-vnc` и `wallpaper` пользователя берут по-прежнему из
+`cloud-user` (Jetson Nano: группа `video`) — `SELKIES_USER` на них не влияет.
 
 **HTTPS обязателен для «всех функций»** в сети: буфер обмена, микрофон, камеру и
 геймпады браузер даёт только защищённому контексту (`localhost` туннеля — тоже).
@@ -210,7 +248,7 @@ RUN_COMMAND cream install --with-deps selkies SELKIES_PORT=8090 SELKIES_FILE_TRA
 | Когда | Что происходит |
 |---|---|
 | сборка образа / `cream install` | AppImage распакован, юнит разложен; служба не запускается |
-| загрузка (`cream-configure@selkies`, стадия `graphical`) | проверка аутентификации, объявление для Teleport, запуск `selkies@<пользователь>` |
+| загрузка (`cream-configure@selkies`, стадия `graphical`) | проверка машины, пользователя и аутентификации, объявление для Teleport, диагноз seat0, запуск `selkies@<пользователь>` |
 | `cream set` (хук `apply`) | то же без ожидания пользователя; перезапуск или останов экземпляра |
 | `cream remove` | экземпляры остановлены, объявление и `/opt/selkies` сняты, юнит снимает cream |
 
@@ -292,10 +330,14 @@ ss -ltnp | grep 8080
   одним паролем просмотра, `SELKIES_ALLOW_NO_AUTH=1` с предупреждением, адреса не
   петли, проверка значений, объявление не по ссылкам, без менеджера входа и без
   пользователя — 0, root не запускается, чужие экземпляры гасятся, только
-  `--no-block`), `apply`, `remove`, обёртка (отказ 78, basic auth принудительно,
-  секреты только у Selkies, каталог TLS 0700).
-- **L** — `make test-live EXT=selkies` (`tests/live.env`: deps `cloud-user desktop
-  xfce4`, пароль — случайный секрет, debian-12): установка AppImage, повтор,
+  `--no-block`; `SELKIES_USER` и uid-правило — 78, нет Xorg/DM — 1, диагноз seat0),
+  `install` на живой машине без Xorg/DM — 20, `apply`, `remove`, обёртка (отказ 78,
+  basic auth принудительно, секреты только у Selkies, каталог TLS 0700, uid-правило
+  до logind, Wayland — 78, `SELKIES_DISPLAY` auto/`:N`, запасной путь `:0`,
+  ожидание с диагнозом раз в 5 минут, `SELKIES_USER` не у Selkies).
+- **L** — `make test-live EXT=selkies` (`tests/live.env`: deps `cloud-user
+  existing-desktop`, Xorg и LightDM — apt до cream, X-сессия — `tests/live-root`,
+  пароль — случайный секрет, debian-12, ночью ubuntu-24.04): установка AppImage, повтор,
   `--reinstall` без изменений, аудит секретов, загрузка, `remove`. lightdm в
   контейнере падает — configure предупреждает «менеджер входа не запущен» и выходит
   0; сама служба Selkies в L не стартует.

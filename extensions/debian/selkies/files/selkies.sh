@@ -39,6 +39,23 @@
 # Root's, 0644, no secrets; atomically through a temporary file and rename,
 # never through a symlink.
 #
+# THE USER (7.0.0, spec 2026-11-12-existing-desktop §4.4, ruling Р3): SELKIES_USER,
+# or the cloud-init user when it is empty. Only an account of passwd with
+# 1000 <= uid < 65534 (the rule of cloud-user/get_cloud_user.sh): root, gdm,
+# lightdm, sddm and other system accounts are refused — for gdm the second
+# authority candidate is the greeter's, and the login screen would be
+# streamed. A refused SELKIES_USER — the instances stop, the declaration goes,
+# exit 78 (a setting to fix, as the loopback rule).
+#
+# THE MACHINE (ruling Р2): no Xorg (/usr/lib/xorg/Xorg, /usr/bin/Xorg) or no
+# enabled display manager (the display-manager.service link) — the instances
+# stop, the declaration goes, exit 1 with "put a desktop or existing-desktop".
+# Enabled but not running yet — a warning and 0 (R11).
+#
+# THE DIAGNOSIS: one line on who is on seat0 (xs_seat0_active of
+# lib/x-session.sh — files/x-session.sh): "на seat0 сеанс bob (x11), Selkies
+# ждёт alice", the greeter, no session.
+#
 # Never writes into a home directory: that is the wrapper's, as the user.
 set -euo pipefail
 
@@ -58,6 +75,10 @@ OPT="$R/opt/selkies"
 USER_WAIT_BOOT=60
 RE_USER='^[a-z_][a-z0-9_-]{0,31}$'
 RE_ADDR='^[A-Za-z0-9.:-]{1,253}$'
+RE_DISPLAY='^(auto|:[0-9]+(\.[0-9]+)?)$'
+XS_LIB="${CREAM_EXT_DIR:-$R/opt/cream/ext/selkies}/files/x-session.sh"
+DM_LINK="$R/etc/systemd/system/display-manager.service"
+NO_DESKTOP='нет X-сервера / менеджера входа: поставьте стол или `existing-desktop`'
 
 log(){ >&2 echo "selkies: $*"; }
 warn(){ >&2 echo "selkies: ВНИМАНИЕ: $*"; }
@@ -71,6 +92,61 @@ check_values(){
         || die "SELKIES_PORT: недопустимое значение"
     case "${SELKIES_ENABLE_HTTPS:=false}" in true|false) ;; *) die "SELKIES_ENABLE_HTTPS: true или false" ;; esac
     case "${SELKIES_ALLOW_NO_AUTH:=0}" in 0|1) ;; *) die "SELKIES_ALLOW_NO_AUTH: 0 или 1" ;; esac
+    [[ -z "${SELKIES_DISPLAY:-}" || "$SELKIES_DISPLAY" =~ $RE_DISPLAY ]] \
+        || die "SELKIES_DISPLAY: auto или :N"
+}
+
+# machine_ok: prints what is missing; 0 — Xorg and an enabled display manager
+# are on the machine (files, not their state).
+machine_ok(){
+    local missing=()
+    [[ -e "$R/usr/lib/xorg/Xorg" || -e "$R/usr/bin/Xorg" ]] || missing+=("X-сервера (Xorg)")
+    [[ -L "$DM_LINK" ]] || missing+=("включённого менеджера входа (display-manager.service)")
+    (( ${#missing[@]} == 0 )) && return 0
+    echo "${missing[*]}"
+    return 1
+}
+
+# user_ok <user>: prints why not; 0 — a name of passwd with 1000 <= uid < 65534.
+user_ok(){
+    local uid
+    if [[ ! "$1" =~ $RE_USER ]]; then echo "имя не подходит для юнита"; return 1; fi
+    if ! uid="$(id -u "$1" 2>/dev/null)" || [[ ! "$uid" =~ ^[0-9]+$ ]]; then
+        echo "нет в passwd"; return 1
+    fi
+    if (( uid < 1000 || uid >= 65534 )); then
+        echo "uid $uid вне 1000..65533 — системная учётка (root, менеджер входа), её экран не транслирую"
+        return 1
+    fi
+}
+
+# diagnose <user>: one line on who is on seat0 (logind).
+diagnose(){
+    local want="$1" a name type class
+    [[ -f "$XS_LIB" ]] || return 0
+    # shellcheck source=../../../../lib/x-session.sh
+    source "$XS_LIB"
+    if ! a="$(xs_seat0_active)"; then
+        log "на seat0 нет активного сеанса (или нет logind) — Selkies ждёт сеанс $want"
+        return 0
+    fi
+    read -r name type class <<< "$a"
+    if [[ "$class" != user ]]; then
+        log "на seat0 экран входа ($class) — Selkies ждёт входа $want (или DESKTOP_AUTOLOGIN=1 расширения desktop)"
+    elif [[ "$name" == "$want" ]]; then
+        log "на seat0 сеанс $name ($type) — Selkies подключится к нему"
+        [[ "$type" != wayland ]] \
+            || warn "сеанс $name — Wayland: Selkies видит только X.Org (gdm-xorg — Xorg у GDM), обёртка выйдет с 78"
+    else
+        log "на seat0 сеанс $name ($type), Selkies ждёт $want: sudo cream set selkies SELKIES_USER=$name"
+    fi
+}
+
+# refuse <rc>: stop every instance and take the declaration away, then exit rc.
+refuse(){
+    decl_remove
+    stop_instances
+    exit "$1"
 }
 
 # secret_set <key>: 0 — the key has a non-empty value in the secrets file.
@@ -298,12 +374,13 @@ dm_active(){ systemctl is-active --quiet display-manager.service 2>/dev/null; }
 
 # resolve_user <wait seconds>: the cloud-init user — an account that is not root.
 resolve_user(){
-    local wait_s="$1" waited=0 user uid
+    local wait_s="$1" waited=0 user uid why
     while :; do
         user=""
         [[ -x "$CLOUD_USER_LIB" ]] && user="$("$CLOUD_USER_LIB" 2>/dev/null || true)"
         if [[ "$user" =~ $RE_USER ]] && uid="$(id -u "$user" 2>/dev/null)"; then
             if [[ "$uid" == 0 ]]; then warn "пользователь cloud-init — root: Selkies от root не запускается"; return 1; fi
+            if ! why="$(user_ok "$user")"; then warn "пользователь cloud-init $user: $why — Selkies не запущен"; return 1; fi
             echo "$user"; return 0
         fi
         (( waited < wait_s )) || break
@@ -321,9 +398,19 @@ resolve_user(){
 
 # run <boot|now>: the whole decision; boot — start, wait for the user; now — restart.
 run(){
-    local mode="$1" user wait_s=0 verb=restart rc=0
+    local mode="$1" user wait_s=0 verb=restart rc=0 why
     check_values
     effective_write
+    if ! why="$(machine_ok)"; then
+        warn "$NO_DESKTOP"
+        warn "  на машине нет: $why — Selkies остановлен"
+        refuse 1
+    fi
+    if [[ -n "${SELKIES_USER:-}" ]] && ! why="$(user_ok "$SELKIES_USER")"; then
+        warn "SELKIES_USER=$SELKIES_USER: $why — Selkies остановлен"
+        warn "  нужен пользователь сеанса с uid 1000..65533: sudo cream set selkies SELKIES_USER=<имя>"
+        refuse 78
+    fi
     auth_ok || rc=$?
     if (( rc != 0 )); then
         decl_remove
@@ -337,7 +424,12 @@ run(){
         return 0
     fi
     if [[ "$mode" == boot ]]; then wait_s=$USER_WAIT_BOOT; verb=start; fi
-    user="$(resolve_user "$wait_s")" || return 0
+    if [[ -n "${SELKIES_USER:-}" ]]; then
+        user="$SELKIES_USER"
+    else
+        user="$(resolve_user "$wait_s")" || return 0
+    fi
+    diagnose "$user"
     # Another user's instance would fight for the same port.
     stop_instances "$user"
     systemctl "$verb" --no-block "selkies@${user}.service" || warn "selkies@${user}: $verb не поставлен в очередь"

@@ -8,18 +8,24 @@
 #           its home directory: at BUILD, not at first boot — otherwise the
 #           image carries a known password until then. Only a regular account
 #           (uid >= 1000) by a name of the right form; an account that survives
-#           userdel fails the hook. Empty key — nothing to do.
+#           userdel fails the hook. Empty key — nothing to do. Then the
+#           autologin of gdm3 and LightDM that names the removed account is
+#           taken away (6.0.0; desktop 1.x did it by its default
+#           DESKTOP_AUTOLOGIN=0, desktop 2.x leaves it alone); another
+#           account's autologin is not touched.
 # remove  — nothing to give back: a removed account is not restored.
-# No service of its own: the groups and the autologin are the configure of
-# desktop (every boot, before the display manager), which also turns off the
-# vendor autologin with its first run (DESKTOP_AUTOLOGIN=0 by default).
+# No service of its own: the groups and the autologin of the cloud-init user
+# are the configure of desktop (every boot, before the display manager).
 #
 # 5.0.0: cream/v1; the shared desktop code of layout 2 → extension desktop
 #        (depends).
 schema: cream/v1
 name: cloud-user-desktop
-version: 5.0.2
-# 5.0.2: диапазон desktop <3 (desktop 2.0.0).
+version: 6.0.0
+# 6.0.0: targets.live: confirm — userdel -r необратим (cream upgrade --all — только с
+#        --accept-risk cloud-user-desktop или после cream hold); install снимает автологин
+#        gdm3 и LightDM, указывающий на удалённую учётку (раньше — умолчание desktop 1.x);
+#        диапазон desktop <3 (desktop 2.0.0).
 # 5.0.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 summary: Вендорский рабочий стол — удаление вендорской учётки и ручки desktop для пользователя cloud-init
 cream: ">=1.0.0"
@@ -29,7 +35,11 @@ platform:
   os: [{id: debian}, {id: ubuntu}]
 targets:
   build: exec
-  live: "yes"
+  live: confirm
+  live_note: >-
+    удаляет вендорскую учётку CLOUD_USER_DESKTOP_REMOVE вместе с домашним каталогом
+    (userdel -r — необратимо: учётка и её файлы не восстанавливаются) и снимает автологин
+    gdm3 и LightDM, указывающий на неё; автологин другой учётки не трогается
 provides: [cloud-user-desktop]
 depends:
   - {name: desktop, version: ">=1.0.0 <3"}

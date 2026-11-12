@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # cream hook `install` of selkies: the AppImage by the pinned version and sha256,
 # extracted to /opt/selkies/<version>, the link /opt/selkies/current, and
-# x11-utils/xauth for the wrapper. Starts nothing and writes no settings: the
+# x11-utils/xauth/x11-xserver-utils for the wrapper. Starts nothing and writes no settings: the
 # domain is cream's (/etc/cream/selkies/{config,secrets}), the unit is laid out
 # by cream (files), the start and the Teleport declaration are configure's.
 #
@@ -17,6 +17,14 @@
 #
 # Idempotent: an extracted tree of the pinned version is kept, the link is
 # rewritten only when it points elsewhere.
+#
+# THE MACHINE (spec 2026-11-12-existing-desktop §4.4, ruling Р2). The graph of
+# cream may let selkies in without a real desktop (a failed record of a
+# provider still provides, §9), so on a live machine install checks itself
+# before anything is downloaded: an X server (/usr/lib/xorg/Xorg or
+# /usr/bin/Xorg) and an enabled display manager (the display-manager.service
+# link). Either missing — exit 20 (cream 68). At image build no check: the
+# desktop may come with the same build.
 set -euo pipefail
 
 log_info(){ >&2 echo "[INFO] selkies: $*"; }
@@ -31,6 +39,18 @@ declare -A APPIMAGE_SHA256=(
 )
 OPT="$R/opt/selkies"
 PREFIX="$OPT/${SELKIES_VERSION}"
+
+if [[ "${CREAM_PHASE:-live}" == live ]]; then
+    missing=()
+    [[ -e "$R/usr/lib/xorg/Xorg" || -e "$R/usr/bin/Xorg" ]] || missing+=("X-сервера (Xorg)")
+    [[ -L "$R/etc/systemd/system/display-manager.service" ]] \
+        || missing+=("включённого менеджера входа (display-manager.service)")
+    if (( ${#missing[@]} )); then
+        log_error "нет X-сервера / менеджера входа: поставьте стол или \`existing-desktop\`"
+        log_error "на машине нет: ${missing[*]} — Selkies не ставлю"
+        exit 20
+    fi
+fi
 
 arch="$(dpkg --print-architecture)"
 case "$arch" in
@@ -47,6 +67,15 @@ apt_retry(){
         sleep 10
     done
     return 1
+}
+
+# apt_update: `apt-get update` once per run — a ready Ubuntu may have stale
+# lists, and the packages of the wrapper come after curl (spec §4.4).
+updated=0
+apt_update(){
+    (( updated )) && return 0
+    apt_retry apt-get update -q || return 1
+    updated=1
 }
 
 [[ ! -L "$OPT" ]] || { log_error "/opt/selkies — символическая ссылка, не пишу через неё"; exit 1; }
@@ -67,7 +96,7 @@ if [[ -x "$PREFIX/usr/conda/bin/selkies" ]]; then
 else
     export DEBIAN_FRONTEND=noninteractive
     command -v curl >/dev/null 2>&1 \
-        || { apt_retry apt-get update -q && apt_retry apt-get install -y -q curl ca-certificates; } \
+        || { apt_update && apt_retry apt-get install -y -q curl ca-certificates; } \
         || { log_error "curl не установился"; exit 1; }
     ASSET="selkies-${SELKIES_VERSION}-${APPARCH}.AppImage"
     RELEASES="https://github.com/selkies-project/selkies/releases/download"
@@ -105,9 +134,12 @@ if [[ "$(readlink "$OPT/current" 2>/dev/null || true)" != "$PREFIX" ]]; then
 fi
 "$PREFIX/usr/conda/bin/selkies" --help >/dev/null 2>&1 || { log_error "selkies --help не запускается"; exit 1; }
 
-# xdpyinfo checks the X authority candidate (as x11vnc does).
+# xdpyinfo checks the X authority candidate (as x11vnc does); xhost — the
+# access control of a display lib/x-session.sh finds without logind (ruling
+# П15: without it no fallback display is taken).
 export DEBIAN_FRONTEND=noninteractive
-apt_retry apt-get install -y -q --no-install-recommends x11-utils xauth >/dev/null \
-    || { log_error "x11-utils и xauth не установились"; exit 1; }
+apt_update || { log_error "apt-get update не прошёл"; exit 1; }
+apt_retry apt-get install -y -q --no-install-recommends x11-utils xauth x11-xserver-utils >/dev/null \
+    || { log_error "x11-utils, xauth и x11-xserver-utils не установились"; exit 1; }
 
 log_info "Selkies $SELKIES_VERSION установлен ($APPARCH); пароль — echo <пароль> | sudo cream set selkies SELKIES_BASIC_AUTH_PASSWORD=-"
