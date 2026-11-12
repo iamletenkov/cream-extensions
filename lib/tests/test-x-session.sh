@@ -4,7 +4,7 @@
 # §4.2) on a substituted root with fake loginctl, pgrep, xdpyinfo and getent:
 # the seat0 session of a user (Seat=seat0, Class=user, Remote=no; active before
 # online; the columns of list-sessions never read), the active session of seat0,
-# the display (logind Display → the user's Xorg with :N first → :0 with a
+# the display (logind Display → the user's Xorg: :N in argv, its lock file or socket → :0 with a
 # passing authority; Wayland — no display looked for) and the authority
 # candidates. Every call runs in a fresh bash with `set -euo pipefail`, the way
 # a consumer's hook sources it: no failure of logind may kill the caller.
@@ -131,29 +131,116 @@ xs xs_find_display alice
 eq "дисплей :1" ":1" "$OUT"
 eq "дисплей :1 — код 0" 0 "$RC"
 
-echo "== Display пуст — Xorg пользователя с :N первым аргументом =="
+# gdm_auth <display>: alice's GDM authority, and it opens <display>.
+gdm_auth(){ mkdir -p "$ROOT/run/user/1000/gdm"; : > "$ROOT/run/user/1000/gdm/Xauthority"; echo "$ROOT/run/user/1000/gdm/Xauthority" > "$FAKE/x.$1"; }
+# xlock <N> <content>: /tmp/.X<N>-lock as Xorg writes it (printf "%10d\n").
+xlock(){ mkdir -p "$ROOT/tmp"; printf '%s' "$2" > "$ROOT/tmp/.X$1-lock"; }
+# xsock <pid> <inode> <path>: a listening unix socket of <pid> at <path>.
+xsock(){
+    mkdir -p "$ROOT/proc/$1/fd" "$ROOT/proc/net"
+    ln -s "socket:[$2]" "$ROOT/proc/$1/fd/$(( $(find "$ROOT/proc/$1/fd" -mindepth 1 | wc -l) + 3 ))"
+    [[ -s "$ROOT/proc/net/unix" ]] || echo "Num       RefCount Protocol Flags    Type St Inode Path" > "$ROOT/proc/net/unix"
+    printf '0000000000000000: 00000002 00000000 00010000 0001 01 %s %s\n' "$2" "$3" >> "$ROOT/proc/net/unix"
+}
+
+echo "== Display пуст — Xorg пользователя с :N первым аргументом (startx) =="
 new_root
 user_sessions alice c2
 session c2 seat0 user x11 "" active no
 echo 4242 > "$FAKE/pgrep.u1000"
 xorg 4242 :1 vt2 -keeptty -auth /tmp/serverauth.x
+gdm_auth :1
 xs xs_seat0_session alice
 eq "пустой Display — прочерк" "c2 x11 - active" "$OUT"
 xs xs_find_display alice
 eq "дисплей из Xorg пользователя" ":1" "$OUT"
 has "путь назван — Xorg" "Xorg" "$ERR"
+has "путь назван — argv" "argv" "$ERR"
 has "Xorg ищется по uid пользователя" "-u 1000 -x Xorg" "$(cat "$FAKE/pgrep.log")"
+has "найденный дисплей подтверждён authority" "-display :1" "$(cat "$FAKE/xdpyinfo.log")"
 
-echo "== Xorg пользователя без :N первым (GDM -displayfd) — запасной путь :0 =="
+echo "== :N не первым аргументом =="
+new_root
+echo 4242 > "$FAKE/pgrep.u1000"
+xorg 4242 -nolisten tcp :2 vt7
+gdm_auth :2
+xs xs_find_display alice
+eq ":N где угодно в argv" ":2" "$OUT"
+
+echo "== :N в argv, но authority его не открывает — не берётся =="
+new_root
+echo 4242 > "$FAKE/pgrep.u1000"
+xorg 4242 :1 vt2
+xs xs_find_display alice
+eq "без authority — код 1" 1 "$RC"
+eq "без authority — пусто" "" "$OUT"
+
+echo "== rootless GDM: экран входа на :0, alice на :1, logind Display пуст — lock-файл =="
+new_root
+user_sessions alice c2
+session c2 seat0 user x11 "" active no
+printf '1111\n4242\n' > "$FAKE/pgrep.all"
+echo 4242 > "$FAKE/pgrep.u1000"
+xorg 1111 vt1 -displayfd 3 -auth /run/user/120/gdm/Xauthority -nolisten tcp
+xorg 4242 vt2 -displayfd 3 -auth /run/user/1000/gdm/Xauthority -nolisten tcp -background none -noreset -keeptty -novtswitch -verbose 3
+xlock 0 "      1111"$'\n'
+xlock 1 "      4242"$'\n'
+gdm_auth :1
+# alice's authority would open :0 too (the fallback 2 must not be reached).
+echo "$ROOT/run/user/1000/gdm/Xauthority" > "$FAKE/x.:0"
+xs xs_find_display alice
+eq "rootless GDM — код 0" 0 "$RC"
+eq "rootless GDM — :1 по lock-файлу" ":1" "$OUT"
+has "путь назван — lock" "/tmp/.X1-lock" "$ERR"
+has "путь назван — pid" "4242" "$ERR"
+
+echo "== lock-файл с чужим pid или мусором — не берётся =="
+new_root
+echo 4242 > "$FAKE/pgrep.u1000"
+xorg 4242 vt2 -displayfd 3 -auth /run/user/1000/gdm/Xauthority
+xlock 0 "      1111"$'\n'
+xlock 5 "4242abc"$'\n'
+xlock 6 "  -4242"$'\n'
+xlock x "4242"$'\n'
+mkdir -p "$ROOT/tmp/.X7-lock"
+gdm_auth :0; gdm_auth :5; gdm_auth :6
+rm -f "$FAKE/x.:0"
+xs xs_find_display alice
+eq "чужой pid и мусор — код 1" 1 "$RC"
+eq "чужой pid и мусор — пусто" "" "$OUT"
+
+echo "== lock-файла нет — слушающий сокет /tmp/.X11-unix/X<N> этого pid =="
+new_root
+echo 4242 > "$FAKE/pgrep.u1000"
+xorg 4242 vt2 -displayfd 3 -auth /run/user/1000/gdm/Xauthority
+xsock 1111 50001 /tmp/.X11-unix/X0
+xsock 4242 50003 @/tmp/.X11-unix/X1
+xsock 4242 50002 /tmp/.X11-unix/X1
+gdm_auth :1
+xs xs_find_display alice
+eq "сокет — код 0" 0 "$RC"
+eq "сокет — :1" ":1" "$OUT"
+has "путь назван — сокет" "/tmp/.X11-unix/X1" "$ERR"
+# The socket of another pid (the login screen) is not this Xorg's display.
+new_root
+echo 4242 > "$FAKE/pgrep.u1000"
+xorg 4242 vt2 -displayfd 3
+xsock 1111 50001 /tmp/.X11-unix/X0
+mkdir -p "$ROOT/proc/4242/fd"; ln -s "socket:[777]" "$ROOT/proc/4242/fd/9"
+printf '0000000000000000: 00000003 00000000 00000000 0001 03 777 /tmp/.X11-unix/X3\n' >> "$ROOT/proc/net/unix"
+gdm_auth :3
+xs xs_find_display alice
+eq "сокет чужого pid или не слушающий — код 1" 1 "$RC"
+
+echo "== Xorg без :N, lock-файла и сокета — запасной путь :0 =="
 new_root
 user_sessions alice c2
 session c2 seat0 user x11 "" active no
 echo 4242 > "$FAKE/pgrep.u1000"
 xorg 4242 vt2 -displayfd 3 -auth /run/user/1000/gdm/Xauthority
-echo "$ROOT/run/user/1000/gdm/Xauthority" > "$FAKE/x.:0"
-mkdir -p "$ROOT/run/user/1000/gdm"; : > "$ROOT/run/user/1000/gdm/Xauthority"
+gdm_auth :0
 xs xs_find_display alice
-eq "без :N у Xorg — :0 с authority" ":0" "$OUT"
+eq "ничего у Xorg — :0 с authority" ":0" "$OUT"
 
 echo "== нет ни сеанса, ни Xorg — :0, если authority проходит =="
 new_root

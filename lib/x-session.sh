@@ -24,8 +24,12 @@
 #       ("bob is on the screen", "the greeter is"). 0 — found; 1 — none.
 #   xs_find_display USER
 #       The display of USER's X session: logind Display of an x11 session;
-#       empty — fallback 1, an Xorg owned by USER whose first argument is :N;
-#       nothing — fallback 2, :0 when an authority of USER opens it. The path
+#       empty — fallback 1, an Xorg owned by USER: :N anywhere in its argv
+#       (startx), else /tmp/.X<N>-lock holding its pid, else its listening
+#       socket /tmp/.X11-unix/X<N> (/proc/<pid>/fd against /proc/net/unix) —
+#       rootless GDM runs `Xorg vtN -displayfd 3` without :N (ruling П13); the
+#       display counts only when an authority of USER opens it; nothing —
+#       fallback 2, :0 when an authority of USER opens it. The path
 #       taken goes to stderr. 0 — printed; 1 — none (yet); 2 — USER's seat0
 #       session is Wayland (no display is looked for: it cannot be captured).
 #   xs_find_authority USER DISPLAY
@@ -62,21 +66,63 @@ _xs_passwd(){
     printf '%s %s\n' "$uid" "$home"
 }
 
-# _xs_cmdline_arg PID N: argument N (0 — the program) of a process.
-_xs_cmdline_arg(){
-    local f
-    f="$(_xs_root)/proc/$1/cmdline"
-    [[ -r "$f" ]] || return 1
-    tr '\0' '\n' < "$f" 2>/dev/null | sed -n "$(( $2 + 1 ))p"
+# _xs_xorg_display PID: "<:N> <how>" — the display an Xorg serves: a) :N anywhere
+# in its argv (startx, an explicit display); b) /tmp/.X<N>-lock holding PID
+# (Xorg writes "%10d\n"; GDM starts `Xorg vtN -displayfd 3`, no :N in argv);
+# c) no such lock — its listening socket /tmp/.X11-unix/X<N> (or the abstract
+# @/tmp/.X11-unix/X<N>): the socket inodes of /proc/PID/fd against
+# /proc/net/unix. Only files the owner of the process reads; 1 — none.
+_xs_xorg_display(){
+    local pid="$1" r arg f n c line inode path flags st
+    local -a fields=() inodes=()
+    r="$(_xs_root)"
+    [[ -r "$r/proc/$pid/cmdline" ]] || return 1
+    while IFS= read -r arg; do
+        if [[ "$arg" =~ ^:[0-9]+$ ]]; then
+            printf '%s argv\n' "$arg"
+            return 0
+        fi
+    done < <(tr '\0' '\n' < "$r/proc/$pid/cmdline" 2>/dev/null | tail -n +2)
+    for f in "$r"/tmp/.X*-lock; do
+        [[ -f "$f" && ! -L "$f" ]] || continue
+        n="${f##*/.X}"; n="${n%-lock}"
+        [[ "$n" =~ ^[0-9]+$ ]] || continue
+        c="$(head -c 32 -- "$f" 2>/dev/null | tr -d ' \n')" || continue
+        if [[ "$c" =~ ^[0-9]+$ && "$c" == "$pid" ]]; then
+            printf ':%s lock %s\n' "$n" "${f#"$r"}"
+            return 0
+        fi
+    done
+    [[ -r "$r/proc/net/unix" ]] || return 1
+    for f in "$r/proc/$pid/fd"/*; do
+        line="$(readlink -- "$f" 2>/dev/null)" || continue
+        [[ "$line" =~ ^socket:\[([0-9]+)\]$ ]] && inodes+=("${BASH_REMATCH[1]}")
+    done
+    (( ${#inodes[@]} )) || return 1
+    while read -r -a fields; do
+        (( ${#fields[@]} >= 8 )) || continue
+        flags="${fields[3]}"; st="${fields[5]}"; inode="${fields[6]}"; path="${fields[7]}"
+        # __SO_ACCEPTCON and SS_UNCONNECTED: a listening socket.
+        [[ "$flags" == 00010000 && "$st" == 01 ]] || continue
+        [[ "$path" =~ ^@?/tmp/\.X11-unix/X([0-9]+)$ ]] || continue
+        n="${BASH_REMATCH[1]}"
+        if [[ " ${inodes[*]} " == *" $inode "* ]]; then
+            printf ':%s socket %s\n' "$n" "$path"
+            return 0
+        fi
+    done < "$r/proc/net/unix"
+    return 1
 }
 
 xs_seat0_session(){
     local user="${1:-}" out sid line k v seat class type display state remote online=""
+    local -a sids=()
     _xs_name_ok "$user" || return 1
     command -v loginctl >/dev/null 2>&1 || return 1
     out="$(loginctl show-user -p Sessions -- "$user" 2>/dev/null)" || return 1
     out="$(sed -n 's/^Sessions=//p' <<< "$out")"
-    for sid in $out; do
+    read -r -a sids <<< "$out" || true
+    for sid in "${sids[@]}"; do
         [[ "$sid" =~ ^[A-Za-z0-9_-]+$ ]] || continue
         line="$(loginctl show-session -p Seat -p Class -p Type -p Display -p State -p Remote -- "$sid" 2>/dev/null)" \
             || continue
@@ -127,7 +173,8 @@ xs_seat0_active(){
 }
 
 xs_find_display(){
-    local user="${1:-}" s sid type display state pw uid pids pid arg
+    local user="${1:-}" s sid type display state pw uid pids pid found how
+    local -a pidv=()
     _xs_name_ok "$user" || return 1
     if s="$(xs_seat0_session "$user")"; then
         read -r sid type display state <<< "$s"
@@ -142,14 +189,18 @@ xs_find_display(){
     fi
     pw="$(_xs_passwd "$user")" || return 1
     uid="${pw%% *}"
-    # Fallback 1: an Xorg of the user (rootless GDM, startx) with :N first.
+    # Fallback 1: an Xorg owned by the user (rootless GDM, startx) — its display
+    # from argv, its lock file or its socket, confirmed by an authority.
     pids="$(pgrep -u "$uid" -x Xorg 2>/dev/null)" || pids=""
-    for pid in $pids; do
+    mapfile -t pidv <<< "$pids"
+    for pid in "${pidv[@]}"; do
         [[ "$pid" =~ ^[0-9]+$ ]] || continue
-        arg="$(_xs_cmdline_arg "$pid" 1)" || continue
-        if [[ "$arg" =~ ^:[0-9]+$ ]]; then
-            _xs_info "дисплей $arg: Xorg $pid пользователя $user (в logind Display пуст)"
-            printf '%s\n' "$arg"
+        found="$(_xs_xorg_display "$pid")" || continue
+        read -r display how <<< "$found"
+        _xs_display_ok "$display" || continue
+        if xs_find_authority "$user" "$display" >/dev/null; then
+            _xs_info "дисплей $display: Xorg $pid пользователя $user, $how (в logind Display пуст)"
+            printf '%s\n' "$display"
             return 0
         fi
     done
