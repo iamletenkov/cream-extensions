@@ -5,7 +5,8 @@
 # file goes away on `cream remove stvor-agent`).
 schema: cream/v1
 name: stvor-agent
-version: 4.6.0
+version: 4.6.1
+# 4.6.1: пин пакета stvor-agent 5.7.0.
 # 4.6.0: ключ STVOR_AGENT_DIST=https://<домен>/dist — раздача портала, файл
 #        <DIST>/stvor-agent/v<версия>/<.deb> по версии пары или пина (подъём пина не ломает
 #        адрес); только https, ключ /dist — тем же stdin curl. STVOR_AGENT_MIRROR устарел.

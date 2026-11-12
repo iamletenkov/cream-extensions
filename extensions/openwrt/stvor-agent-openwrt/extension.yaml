@@ -27,7 +27,8 @@
 #             machine-id, state, tokens, domain, last-good.json — Р4 revised 2026-10-23).
 schema: cream/v1
 name: stvor-agent-openwrt
-version: 1.7.0
+version: 1.7.1
+# 1.7.1: пин tar.gz stvor-agent 5.7.0.
 # 1.7.0: ключ STVOR_AGENT_DIST — как у debian/stvor-agent 4.6.0: файл
 #        <DIST>/stvor-agent/v<версия>/<tar.gz>; STVOR_AGENT_MIRROR устарел; curl с -q первым.
 # 1.6.3: ключ /dist — заголовок Authorization на stdin curl (-H @-), не файлом в рабочем
