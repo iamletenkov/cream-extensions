@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# cream hook `install` of gdm-xorg: WaylandEnable=false for gdm3, by consent
+# (live: confirm). Spec 2026-11-12-existing-desktop §4.5.
+#
+# No gdm3 config (/etc/gdm3/daemon.conf, /etc/gdm3/custom.conf) — 20, "not GDM".
+# The line already false — 0, nothing written; the record says "was false".
+# Otherwise lib/gdm-wayland.sh records the line as it was (no key, commented,
+# true) in $CREAM_STATE_DIR/wayland.before, then writes false. A link instead of
+# a file (or of /etc/gdm3) is refused before any write — exit 1.
+#
+# On a live machine a change is exit 10 (reboot required): gdm is NOT restarted
+# — that would end the owner's session; the login screen and every new GNOME
+# session are Xorg after the reboot. At image build (CREAM_PHASE=build) — 0.
+# A repeat finds false and the record in place: 0, the record is not rewritten.
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] gdm-xorg: $*"; }
+log_warn(){ >&2 echo "[WARN] gdm-xorg: $*"; }
+log_error(){ >&2 echo "[ERROR] gdm-xorg: $*"; }
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+STATE="${CREAM_STATE_DIR:?run by cream}/wayland.before"
+# shellcheck source=../../../../lib/gdm-wayland.sh
+source "${CREAM_EXT_DIR:?run by cream}/files/gdm-wayland.sh"
+
+if ! before="$(gw_read "$R")"; then
+    log_info "нет /etc/gdm3/daemon.conf и /etc/gdm3/custom.conf — не GDM, ставить нечего"
+    exit 20
+fi
+while read -r st path; do
+    log_info "$path: WaylandEnable — $st"
+done <<< "$before"
+
+res="$(gw_set_false "$R" "$STATE")" || exit 1
+if [[ "$res" != changed ]]; then
+    log_info "WaylandEnable=false уже стоит — ничего не меняю"
+    exit 0
+fi
+if [[ "${CREAM_PHASE:-live}" == live ]]; then
+    log_warn "WaylandEnable=false записан; gdm не перезапускаю (сеанс владельца оборвался бы) — Xorg после перезагрузки"
+    exit 10
+fi
+log_info "WaylandEnable=false записан"

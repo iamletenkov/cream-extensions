@@ -106,11 +106,11 @@ all_on='DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_LOCK=1 DESKTOP_DISABLE_SCREEN
 echo "== манифест и раскладка =="
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
 eq "name" desktop "$(mf 'm["name"]')"
-eq "версия 1.1.1 (every_boot)" 1.1.1 "$(mf 'm["version"]')"
+eq "версия 2.0.0 (автологин по ключу)" 2.0.0 "$(mf 'm["version"]')"
 eq "cream >=1.2.0 (every_boot, спека cream §10.9)" ">=1.2.0" "$(mf 'm["cream"]')"
 eq "configure на каждой загрузке (аудит 2026-10-21)" True "$(mf 'm["hooks"]["configure"].get("every_boot")')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"
-eq "хуки" "configure install remove" "$(mf '" ".join(sorted(m["hooks"]))')"
+eq "хуки (Р1: upgrade)" "configure install remove upgrade" "$(mf '" ".join(sorted(m["hooks"]))')"
 eq "Р5: стадия system, не graphical" system "$(mf 'm["hooks"]["configure"]["stage"]')"
 eq "Р5: after" "cloud-init.service guestfs-firstboot.service" "$(mf '" ".join(m["hooks"]["configure"]["after"])')"
 eq "Р5: before — менеджеры входа" "display-manager.service gdm.service gdm3.service lightdm.service" \
@@ -119,15 +119,17 @@ eq "Р5: без after cloud-final (цикл с multi-user)" False "$(mf '"cloud-
 eq "depends cloud-user" "cloud-user >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
 eq "ключи" "DESKTOP_AUTOLOGIN DESKTOP_AUTOLOGIN_USER DESKTOP_DISABLE_SCREEN_BLANK DESKTOP_DISABLE_SCREEN_LOCK" \
     "$(mf '" ".join(sorted(m["config"]["keys"]))')"
-eq "умолчания — всё выключено" "0 0 0" \
-    "$(mf '" ".join(m["config"]["keys"][k]["default"] for k in ("DESKTOP_AUTOLOGIN","DESKTOP_DISABLE_SCREEN_LOCK","DESKTOP_DISABLE_SCREEN_BLANK"))')"
+eq "умолчания: автологином не управляю, прочее выключено" "/0/0" \
+    "$(mf '"/".join(m["config"]["keys"][k]["default"] for k in ("DESKTOP_AUTOLOGIN","DESKTOP_DISABLE_SCREEN_LOCK","DESKTOP_DISABLE_SCREEN_BLANK"))')"
+eq "DESKTOP_AUTOLOGIN — bool, может быть пустым" "bool True" \
+    "$(mf 'm["config"]["keys"]["DESKTOP_AUTOLOGIN"]["type"] + " " + str(m["config"]["keys"]["DESKTOP_AUTOLOGIN"].get("empty"))')"
 eq "DESKTOP_AUTOLOGIN_USER может быть пустым" True "$(mf 'm["config"]["keys"]["DESKTOP_AUTOLOGIN_USER"]["empty"]')"
 eq "действия" "apply defaults status" "$(mf '" ".join(sorted(m["actions"]))')"
 eq "apply — lock exclusive" exclusive "$(mf 'm["actions"]["apply"]["lock"]')"
 eq "status — lock none" none "$(mf 'm["actions"]["status"]["lock"]')"
 eq "defaults — pairs по ключам домена" "DESKTOP_AUTOLOGIN DESKTOP_AUTOLOGIN_USER DESKTOP_DISABLE_SCREEN_BLANK DESKTOP_DISABLE_SCREEN_LOCK" \
     "$(mf '" ".join(sorted(m["actions"]["defaults"]["params"]))')"
-for f in hooks/install hooks/configure hooks/remove actions/apply actions/status actions/defaults files/desktop.sh; do
+for f in hooks/install hooks/upgrade hooks/configure hooks/remove actions/apply actions/status actions/defaults files/desktop.sh; do
     check "$f исполняемый" test -x "$EXT/$f"
 done
 for f in install.sh configure.sh knobs knobs.apply lib; do
@@ -400,5 +402,253 @@ check_not "remove: менеджер входа не перезапускаетс
 : > "$FAKE/calls"
 ht_hook remove; eq "повтор remove — 0" 0 "$?"
 check_not "повтор remove: dconf update не зовётся" ht_called '^dconf'
+
+
+echo "== 2.0.0: автологин по ключу, снимок, возврат, upgrade, SDDM (спека §4.3, Р1, П6, П7, П12) =="
+# Конфиг gdm3, как его кладёт пакет, побайтно: /etc/gdm3/custom.conf из gdm3
+# 46.2-1ubuntu1~24.04.9 (Ubuntu 24.04) и /etc/gdm3/daemon.conf из gdm3 43.0-3
+# (Debian 12) — одни и те же 554 байта (как в lib/tests/test-gdm-wayland.sh).
+package_gdm_conf(){
+    cat > "$1" <<'EOF'
+# GDM configuration storage
+#
+# See /usr/share/gdm/gdm.schemas for a list of available options.
+
+[daemon]
+# Uncomment the line below to force the login screen to use Xorg
+#WaylandEnable=false
+
+# Enabling automatic login
+#  AutomaticLoginEnable = true
+#  AutomaticLogin = user1
+
+# Enabling timed login
+#  TimedLoginEnable = true
+#  TimedLogin = user1
+#  TimedLoginDelay = 10
+
+[security]
+
+[xdmcp]
+
+[chooser]
+
+[debug]
+# Uncomment the line below to turn on debugging
+# More verbose logs
+# Additionally lets the X server dump core if it crashes
+#Enable=true
+
+EOF
+}
+# st_paths: запись прежнего (снимок или legacy) и отметка «автологин писали».
+st_paths(){ REC="$ROOT/var/lib/cream/ext/desktop/autologin.before"; WR="$ROOT/var/lib/cream/ext/desktop/autologin.written"; }
+gdm_pkg(){ mkdir -p "$ROOT/etc/gdm3"; package_gdm_conf "$ROOT/etc/gdm3/$1"; }
+with_sddm(){
+    mkdir -p "$ROOT/usr/bin" "$ROOT/etc/X11" "$ROOT/etc/systemd/system" "$ROOT/lib/systemd/system" "$ROOT/etc/sddm.conf.d"
+    printf '#!/bin/sh\n' > "$ROOT/usr/bin/sddm"; chmod 0755 "$ROOT/usr/bin/sddm"
+    echo /usr/bin/sddm > "$ROOT/etc/X11/default-display-manager"
+    : > "$ROOT/lib/systemd/system/sddm.service"
+    ln -s /lib/systemd/system/sddm.service "$ROOT/etc/systemd/system/display-manager.service"
+    printf '[Autologin]\nUser=bob\nSession=plasma\n' > "$ROOT/etc/sddm.conf.d/kde_settings.conf"
+}
+# dm_setup <dm>: gdm-ubuntu | gdm-debian | lightdm | sddm; CONF — файл автологина.
+dm_setup(){
+    case "$1" in
+        gdm-ubuntu) gdm_pkg custom.conf; CONF="$ROOT/etc/gdm3/custom.conf" ;;
+        gdm-debian) gdm_pkg daemon.conf; CONF="$ROOT/etc/gdm3/daemon.conf" ;;
+        lightdm) with_lightdm; CONF="$LDM" ;;
+        sddm) with_sddm; CONF="$ROOT/etc/sddm.conf.d/kde_settings.conf" ;;
+    esac
+    ORIG="$ROOT/orig.conf"; cp -p "$CONF" "$ORIG"
+}
+same(){ cmp -s -- "$1" "$2"; }
+
+for dm in gdm-ubuntu gdm-debian lightdm sddm; do
+    for key in "" 0 1; do
+        k="${key:-пусто}"
+        desk_root; st_paths; dm_setup "$dm"
+        ht_hook configure CREAM_REASON=install "DESKTOP_AUTOLOGIN=$key" DESKTOP_DISABLE_SCREEN_LOCK=1; rc=$?
+        if [[ "$dm" == sddm && -n "$key" ]]; then
+            eq "$dm $k: configure — 1 (автологин SDDM не поддержан)" 1 "$rc"
+            check "$dm $k: причина названа" grep -q 'автологин SDDM не поддержан: /etc/sddm.conf.d/, вручную' <<< "$(ht_out)"
+            check "$dm $k: прочие ручки применены" test -f "$LOCKF"
+        else
+            eq "$dm $k: configure install — 0" 0 "$rc"
+        fi
+        check "$dm $k: снимок при install" test -s "$REC"
+        case "$dm/$key" in
+            */ | sddm/*) check "$dm $k: файл не тронут" same "$CONF" "$ORIG" ;;
+            gdm-*/0) check "$dm $k: AutomaticLoginEnable=false" grep -qx 'AutomaticLoginEnable=false' "$CONF" ;;
+            gdm-*/1) check "$dm $k: AutomaticLogin=alice" grep -qx 'AutomaticLogin=alice' "$CONF"
+                     check "$dm $k: AutomaticLoginEnable=true" grep -qx 'AutomaticLoginEnable=true' "$CONF" ;;
+            lightdm/0) check_not "$dm $k: autologin-user снят" grep -q '^autologin-user=' "$CONF" ;;
+            lightdm/1) check "$dm $k: autologin-user=alice" grep -qx 'autologin-user=alice' "$CONF" ;;
+        esac
+        ht_hook remove; eq "$dm $k: remove — 0" 0 "$?"
+        check "$dm $k: после remove — исходный файл побайтно" same "$CONF" "$ORIG"
+        check_not "$dm $k: запись снята" test -e "$REC"
+    done
+done
+
+echo "== 2.0.0: снимок только при CREAM_REASON=install и не перезаписывается =="
+for reason in boot apply upgrade; do
+    desk_root; st_paths; gdm_pkg custom.conf
+    ht_hook configure "CREAM_REASON=$reason" DESKTOP_AUTOLOGIN=1; eq "$reason — 0" 0 "$?"
+    check_not "$reason: снимка нет" test -e "$REC"
+done
+desk_root; st_paths; gdm_pkg custom.conf
+ht_hook configure CREAM_REASON=install DESKTOP_AUTOLOGIN=; cp -p "$REC" "$ROOT/rec0"
+ht_hook configure CREAM_REASON=install DESKTOP_AUTOLOGIN=1; eq "повтор install с 1 — 0" 0 "$?"
+check "повтор: снимок не перезаписан" same "$REC" "$ROOT/rec0"
+
+echo "== 2.0.0 П6: install с пустым ключом, set 1, remove — исходный файл =="
+for f in custom.conf daemon.conf; do
+    desk_root; st_paths; gdm_pkg "$f"; CONF="$ROOT/etc/gdm3/$f"; cp -p "$CONF" "$ROOT/orig.conf"
+    ht_hook configure CREAM_REASON=install DESKTOP_AUTOLOGIN=; eq "$f: install пусто — 0" 0 "$?"
+    check "$f: пусто — файл не тронут" same "$CONF" "$ROOT/orig.conf"
+    check_not "$f: пусто — отметки «писали» нет" test -e "$WR"
+    ht_hook configure CREAM_REASON=apply DESKTOP_AUTOLOGIN=1; eq "$f: set 1 — 0" 0 "$?"
+    check "$f: set 1 — alice" grep -qx 'AutomaticLogin=alice' "$CONF"
+    ht_hook configure CREAM_REASON=boot DESKTOP_AUTOLOGIN=1; eq "$f: загрузка с 1 — 0" 0 "$?"
+    ht_hook remove; eq "$f: remove — 0" 0 "$?"
+    check "$f: remove вернул файл пакета побайтно" same "$CONF" "$ROOT/orig.conf"
+done
+desk_root; st_paths; gdm_pkg custom.conf; CONF="$ROOT/etc/gdm3/custom.conf"; cp -p "$CONF" "$ROOT/orig.conf"
+ht_hook configure CREAM_REASON=install DESKTOP_AUTOLOGIN=
+ht_hook configure CREAM_REASON=apply DESKTOP_AUTOLOGIN=1
+ht_hook configure CREAM_REASON=apply DESKTOP_AUTOLOGIN=; eq "set пусто — 0" 0 "$?"
+check "set пусто: файл пакета побайтно" same "$CONF" "$ROOT/orig.conf"
+check "set пусто: снимок остаётся до remove (рулинг П17)" test -s "$REC"
+check_not "set пусто: отметка «писали» снята" test -e "$WR"
+ht_hook configure CREAM_REASON=boot DESKTOP_AUTOLOGIN=; eq "загрузка пусто — 0" 0 "$?"
+check "загрузка пусто: файл тот же" same "$CONF" "$ROOT/orig.conf"
+ht_hook remove; check "remove после возврата: файл тот же" same "$CONF" "$ROOT/orig.conf"
+
+echo "== 2.0.0: автологин вендора включён — 0, затем remove возвращает его =="
+desk_root; st_paths; gdm_pkg custom.conf; CONF="$ROOT/etc/gdm3/custom.conf"
+sed -i 's/^#  AutomaticLoginEnable = true$/  AutomaticLoginEnable = true/; s/^#  AutomaticLogin = user1$/AutomaticLogin = jetson/' "$CONF"
+printf '# vendor, again\nAutomaticLogin=jetson\n' > "$ROOT/extra"; sed -i '/^\[security\]$/e cat '"$ROOT/extra" "$CONF"
+cp -p "$CONF" "$ROOT/orig.conf"
+ht_hook configure CREAM_REASON=install DESKTOP_AUTOLOGIN=0; eq "вендор, 0 — 0" 0 "$?"
+check "вендор, 0: выключен" grep -qx 'AutomaticLoginEnable=false' "$CONF"
+eq "вендор, 0: один AutomaticLogin* в [daemon]" 1 "$(grep -c '^AutomaticLoginEnable' "$CONF")"
+ht_hook remove; eq "вендор: remove — 0" 0 "$?"
+check "вендор: remove вернул обе строки jetson на их места" same "$CONF" "$ROOT/orig.conf"
+
+echo "== 2.0.0: LightDM — автологин вендора, без секции, conf.d =="
+desk_root; st_paths; mkdir -p "$ROOT/etc/lightdm/lightdm.conf.d"
+printf '%s\n' '[LightDM]' '' '[Seat:*]' 'autologin-user=carol' 'autologin-user-timeout=5' 'greeter-session=x' '' '[Seat:seat1]' 'autologin-user=dave' > "$LDM"
+printf '[Seat:*]\n# autologin-user = nobody\n' > "$ROOT/etc/lightdm/lightdm.conf.d/50-x.conf"
+cp -p "$LDM" "$ROOT/orig.conf"; cp -p "$ROOT/etc/lightdm/lightdm.conf.d/50-x.conf" "$ROOT/orig.d.conf"
+ht_hook configure CREAM_REASON=install DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_BLANK=1; eq "lightdm вендора, 1 — 0" 0 "$?"
+check "lightdm: alice" grep -qx 'autologin-user=alice' "$LDM"
+ht_hook configure CREAM_REASON=apply DESKTOP_AUTOLOGIN=0 DESKTOP_DISABLE_SCREEN_BLANK=1; eq "lightdm, 0 — 0" 0 "$?"
+check_not "lightdm, 0: dave из [Seat:seat1] тоже снят (как 1.x)" grep -q '^autologin-user=dave' "$LDM"
+ht_hook remove; eq "lightdm: remove — 0" 0 "$?"
+check "lightdm: lightdm.conf побайтно (carol, timeout, dave)" same "$LDM" "$ROOT/orig.conf"
+check "lightdm: conf.d побайтно" same "$ROOT/etc/lightdm/lightdm.conf.d/50-x.conf" "$ROOT/orig.d.conf"
+desk_root; st_paths; mkdir -p "$ROOT/etc/lightdm"; printf '[LightDM]\nstart-default-seat=true\n' > "$LDM"; cp -p "$LDM" "$ROOT/orig.conf"
+ht_hook configure CREAM_REASON=install DESKTOP_AUTOLOGIN=1; eq "lightdm без [Seat:*], 1 — 0" 0 "$?"
+check "lightdm без секции: секция дописана" grep -qx '\[Seat:\*\]' "$LDM"
+ht_hook remove; check "lightdm без секции: remove убрал дописанную секцию" same "$LDM" "$ROOT/orig.conf"
+desk_root; st_paths; mkdir -p "$ROOT/etc/gdm3"; printf '[security]\n' > "$ROOT/etc/gdm3/custom.conf"; cp -p "$ROOT/etc/gdm3/custom.conf" "$ROOT/orig.conf"
+ht_hook configure CREAM_REASON=install DESKTOP_AUTOLOGIN=1; eq "gdm без [daemon], 1 — 0" 0 "$?"
+ht_hook remove; check "gdm без [daemon]: remove убрал дописанную группу" same "$ROOT/etc/gdm3/custom.conf" "$ROOT/orig.conf"
+
+echo "== 2.0.0: пустой ключ — автологином не управляю =="
+desk_root; st_paths; gdm_pkg custom.conf; CONF="$ROOT/etc/gdm3/custom.conf"
+ht_hook configure CREAM_REASON=install DESKTOP_AUTOLOGIN=
+sed -i 's/^#  AutomaticLoginEnable = true$/AutomaticLoginEnable=true/; s/^#  AutomaticLogin = user1$/AutomaticLogin=owner/' "$CONF"
+cp -p "$CONF" "$ROOT/admin.conf"
+ht_hook configure CREAM_REASON=boot DESKTOP_AUTOLOGIN=; eq "пусто на загрузке — 0" 0 "$?"
+check "пусто: включённый владельцем автологин не тронут" same "$CONF" "$ROOT/admin.conf"
+
+echo "== 2.0.0: remove без записи — как 1.x, автологин выключен =="
+desk_root; st_paths; gdm_pkg custom.conf; CONF="$ROOT/etc/gdm3/custom.conf"
+ht_hook configure CREAM_REASON=boot DESKTOP_AUTOLOGIN=1
+check_not "загрузка: записи нет" test -e "$REC"
+ht_hook remove; eq "remove без записи — 0" 0 "$?"
+check "remove без записи: AutomaticLoginEnable=false" grep -qx 'AutomaticLoginEnable=false' "$CONF"
+
+echo "== 2.0.0 Р1: 1.x с DESKTOP_AUTOLOGIN=1 → upgrade (legacy) → загрузка → remove / пусто =="
+r1_root(){
+    desk_root; st_paths; gdm_pkg custom.conf; CONF="$ROOT/etc/gdm3/custom.conf"
+    # Как записала 1.x (set_ini_key на месте закомментированных строк).
+    sed -i 's/^#  AutomaticLoginEnable = true$/AutomaticLoginEnable=true/; s/^#  AutomaticLogin = user1$/AutomaticLogin=alice/' "$CONF"
+    ht_fake apt-get
+}
+r1_root
+ht_hook upgrade CREAM_PREV_VERSION=1.1.1 DESKTOP_AUTOLOGIN=1; eq "upgrade с 1.1.1 — 0" 0 "$?"
+check "upgrade: работа install — пакеты" ht_called '^apt-get .*install .*dconf-cli x11-xserver-utils'
+eq "upgrade: маркер legacy" legacy "$(cat "$REC" 2>/dev/null)"
+ht_hook configure CREAM_REASON=upgrade DESKTOP_AUTOLOGIN=1; eq "configure upgrade — 0" 0 "$?"
+ht_hook configure CREAM_REASON=boot DESKTOP_AUTOLOGIN=1; eq "configure boot — 0" 0 "$?"
+eq "legacy не заменён снимком" legacy "$(cat "$REC" 2>/dev/null)"
+check "автологин alice на месте" grep -qx 'AutomaticLoginEnable=true' "$CONF"
+ht_hook remove; eq "remove — 0" 0 "$?"
+check "Р1: после remove автологин выключен" grep -qx 'AutomaticLoginEnable=false' "$CONF"
+check_not "Р1: запись снята" test -e "$REC"
+r1_root
+ht_hook upgrade CREAM_PREV_VERSION=1.0.1 DESKTOP_AUTOLOGIN=1
+ht_hook configure CREAM_REASON=boot DESKTOP_AUTOLOGIN=1
+ht_hook configure CREAM_REASON=apply DESKTOP_AUTOLOGIN=; eq "Р1: set пусто — 0" 0 "$?"
+check "Р1: пусто после legacy — автологин выключен" grep -qx 'AutomaticLoginEnable=false' "$CONF"
+check_not "Р1: legacy снят — дальше пусто значит «не управляю»" test -e "$REC"
+sed -i 's/^AutomaticLoginEnable=false$/AutomaticLoginEnable=true/' "$CONF"; cp -p "$CONF" "$ROOT/admin.conf"
+ht_hook configure CREAM_REASON=boot DESKTOP_AUTOLOGIN=
+check "Р1: после возврата включённое владельцем не трогается" same "$CONF" "$ROOT/admin.conf"
+
+echo "== 2.0.0: обновление с 1.x при пустом ключе — отпечаток тот же, DM не перезапускается =="
+desk_root; st_paths; gdm_pkg custom.conf; CONF="$ROOT/etc/gdm3/custom.conf"
+sed -i 's/^#  AutomaticLoginEnable = true$/AutomaticLoginEnable=false/' "$CONF"
+cp -p "$CONF" "$ROOT/orig.conf"; : > "$FAKE/active-gdm3"; ht_fake apt-get
+ht_hook upgrade CREAM_PREV_VERSION=1.1.1; eq "upgrade — 0" 0 "$?"
+: > "$FAKE/calls"
+ht_hook configure CREAM_REASON=upgrade DESKTOP_AUTOLOGIN=; eq "configure upgrade пусто — 0" 0 "$?"
+check "файл gdm тот же" same "$CONF" "$ROOT/orig.conf"
+check_not "DM не перезапускается" ht_called 'restart'
+
+echo "== 2.0.0: upgrade 2.x → 2.y и upgrade поверх снимка =="
+desk_root; st_paths; gdm_pkg custom.conf; ht_fake apt-get
+ht_hook upgrade CREAM_PREV_VERSION=2.0.0; eq "upgrade с 2.0.0 — 0" 0 "$?"
+check_not "с 2.0.0 — маркера legacy нет" test -e "$REC"
+ht_hook configure CREAM_REASON=install DESKTOP_AUTOLOGIN=; cp -p "$REC" "$ROOT/rec0"
+ht_hook upgrade CREAM_PREV_VERSION=1.1.1; eq "upgrade поверх снимка — 0" 0 "$?"
+check "снимок не заменён на legacy" same "$REC" "$ROOT/rec0"
+desk_root; ht_fake apt-get 'exit 100'
+ht_hook upgrade CREAM_PREV_VERSION=1.1.1; eq "upgrade: apt-get отказал — 1" 1 "$?"
+
+echo "== 2.0.0: чужая запись — remove отказывает, файлы не тронуты =="
+desk_root; st_paths; gdm_pkg custom.conf; CONF="$ROOT/etc/gdm3/custom.conf"; cp -p "$CONF" "$ROOT/orig.conf"
+mkdir -p "$(dirname "$REC")"; printf 'garbage\n' > "$REC"
+ht_hook remove; eq "чужая запись: remove — 1" 1 "$?"
+check "чужая запись: файл не тронут" same "$CONF" "$ROOT/orig.conf"
+check "чужая запись: запись оставлена" test -e "$REC"
+
+echo "== 2.0.0: status знает sddm =="
+desk_root; with_sddm; : > "$FAKE/active-sddm"
+ht_action status; eq "status с sddm — 0" 0 "$?"
+check "status: менеджер входа sddm" grep -q 'менеджер входа: sddm' <<< "$(ht_out)"
+check "status: автологин SDDM — вручную" grep -q 'SDDM' <<< "$(ht_out)"
+desk_root; with_sddm
+ht_hook configure CREAM_REASON=boot DESKTOP_AUTOLOGIN=; eq "SDDM, пусто — 0" 0 "$?"
+desk_root; st_paths; gdm_pkg custom.conf
+ht_hook configure CREAM_REASON=install DESKTOP_AUTOLOGIN=
+ht_action status; check "status: запись установки названа" grep -q 'прежний автологин: записан при установке' <<< "$(ht_out)"
+mkdir -p "$(dirname "$REC")"; printf 'legacy\n' > "$REC"
+ht_action status; check "status: legacy назван" grep -q 'прежний автологин: неизвестен' <<< "$(ht_out)"
+
+echo "== 2.0.0: возврат побайтно — без перевода строки в конце, табуляция и повтор секции =="
+desk_root; st_paths; mkdir -p "$ROOT/etc/lightdm"
+printf '[Seat:*]\ngreeter=x\n\n[LightDM]\n\n[Seat:*]\n\tautologin-user =\tcarol\t\nautologin-user-timeout=3' > "$LDM"
+cp -p "$LDM" "$ROOT/orig.conf"
+ht_hook configure CREAM_REASON=install DESKTOP_AUTOLOGIN=1 DESKTOP_DISABLE_SCREEN_BLANK=1; eq "1 — 0" 0 "$?"
+ht_hook configure CREAM_REASON=apply DESKTOP_AUTOLOGIN=0 DESKTOP_DISABLE_SCREEN_BLANK=1; eq "0 — 0" 0 "$?"
+check_not "0: carol снята" grep -q 'carol' "$LDM"
+ht_hook configure CREAM_REASON=apply DESKTOP_AUTOLOGIN=; eq "пусто — 0" 0 "$?"
+check "пусто: файл как был — вторая [Seat:*], табуляции, нет \\n в конце" same "$LDM" "$ROOT/orig.conf"
+ht_hook remove; eq "remove — 0" 0 "$?"
+check "remove: файл как был" same "$LDM" "$ROOT/orig.conf"
 
 ht_done

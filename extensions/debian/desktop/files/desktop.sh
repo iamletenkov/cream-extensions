@@ -10,10 +10,14 @@
 #                             when the autologin changed and no graphical
 #                             session is open
 #   desktop.sh status         the keys and what of them is applied
-#   desktop.sh remove         takes away the files and the autologin
+#   desktop.sh remove         takes away the files; the autologin goes back to
+#                             what the record of install holds (or off)
+#   desktop.sh mark-legacy V  hooks/upgrade from version V: below 2.0.0 the
+#                             record becomes the marker legacy (if none is there)
 #
 # Keys:
-#   DESKTOP_AUTOLOGIN=0             1 — login without a password
+#   DESKTOP_AUTOLOGIN=              empty — the autologin is not ours to manage;
+#                                   0 — off; 1 — login without a password
 #   DESKTOP_AUTOLOGIN_USER=         empty — the cloud-init user
 #   DESKTOP_DISABLE_SCREEN_LOCK=0   1 — no auto-lock (manual lock stays)
 #   DESKTOP_DISABLE_SCREEN_BLANK=0  1 — no dimming, blanking, DPMS and sleep
@@ -22,10 +26,19 @@
 # not our "off". One code for gdm3 and lightdm, so gnome, xfce4, lxde and
 # cloud-user-desktop cannot diverge the way their copies of
 # disable_powersave.sh once did.
+#
+# The autologin lives in the configs of the display manager, which belong to the
+# packages and the owner (spec 2026-11-12-existing-desktop §4.3, rulings Р1,
+# П6, П12, П17). At CREAM_REASON=install, before any write, the lines of the
+# autologin keys are recorded in $CREAM_STATE_DIR/autologin.before (never
+# overwritten); an empty key or remove after a write of ours puts those lines
+# back byte for byte. The marker legacy (an upgrade from 1.x, what was there is
+# unknown) or no record — the autologin is turned off, as 1.x did. SDDM: key 0
+# or 1 is refused (exit 1 after the other knobs), its autologin is manual.
 set -euo pipefail
 
 R="${CREAM_ROOT:-}"; R="${R%/}"
-DESKTOP_AUTOLOGIN="${DESKTOP_AUTOLOGIN:-0}"
+DESKTOP_AUTOLOGIN="${DESKTOP_AUTOLOGIN-}"
 DESKTOP_AUTOLOGIN_USER="${DESKTOP_AUTOLOGIN_USER:-}"
 DESKTOP_DISABLE_SCREEN_LOCK="${DESKTOP_DISABLE_SCREEN_LOCK:-0}"
 DESKTOP_DISABLE_SCREEN_BLANK="${DESKTOP_DISABLE_SCREEN_BLANK:-0}"
@@ -187,31 +200,263 @@ lightdm_confs(){
 # ---------------------------------------------------------------------------
 # The three keys
 # ---------------------------------------------------------------------------
+# autologin_file <conf> <user> <on>: the autologin of one config of gdm3 or
+# lightdm (by its path) on or off.
+autologin_file(){
+    local conf="$1" user="$2" on="$3" section
+    case "${conf#"$R"}" in
+        /etc/gdm3/*)
+            if [[ "$on" == 1 ]]; then
+                { set_ini_key "$conf" daemon AutomaticLoginEnable true \
+                    && set_ini_key "$conf" daemon AutomaticLogin "$user"; } \
+                    || die "gdm: не записался автологин в ${conf#"$R"}"
+            else
+                set_ini_key "$conf" daemon AutomaticLoginEnable false \
+                    || die "gdm: не записался отказ от автологина в ${conf#"$R"}"
+            fi ;;
+        *)
+            section="$(lightdm_seat_section "$conf")"
+            if [[ "$on" == 1 ]]; then
+                { set_ini_key "$conf" "$section" autologin-user "$user" \
+                    && set_ini_key "$conf" "$section" autologin-user-timeout 0; } \
+                    || die "lightdm: не записался автологин в ${conf#"$R"}"
+            else
+                del_ini_key "$conf" autologin-user
+                del_ini_key "$conf" autologin-user-timeout
+            fi ;;
+    esac
+}
+
 apply_autologin(){
-    local user="$1" on="$2" conf section
+    local user="$1" on="$2" conf
     while read -r conf; do
         [[ -n "$conf" ]] || continue
-        if [[ "$on" == 1 ]]; then
-            { set_ini_key "$conf" daemon AutomaticLoginEnable true \
-                && set_ini_key "$conf" daemon AutomaticLogin "$user"; } \
-                || die "gdm: не записался автологин в ${conf#"$R"}"
-        else
-            set_ini_key "$conf" daemon AutomaticLoginEnable false \
-                || die "gdm: не записался отказ от автологина в ${conf#"$R"}"
+        autologin_file "$conf" "$user" "$on"
+    done < <(gdm_confs; lightdm_confs)
+}
+
+# ---------------------------------------------------------------------------
+# The record of the autologin as it was (spec §4.3, rulings Р1, П12, П17)
+#
+#   desktop-autologin 1                       head
+#   file /etc/gdm3/custom.conf                a config there was at install
+#   eol 1                                     1 — it ended with a newline
+#   absent daemon                             the section of the keys was not
+#                                             there (set_ini_key appends it)
+#   line<TAB>occ<TAB>idx<TAB>section<TAB>raw  every line of a tracked key, the
+#                                             commented ones included, in any
+#                                             section: the occ-th [section],
+#                                             after idx other lines of it
+#
+# or the single line "legacy" (hooks/upgrade from 1.x: what was there is
+# unknown). The marker autologin.written says "a key 0/1 of ours was written
+# since the record or the last return" — an empty key and remove put the lines
+# back only then, so what the owner changed meanwhile under an empty key stays.
+# ---------------------------------------------------------------------------
+STATE_DIR="${CREAM_STATE_DIR:-$R/var/lib/cream/ext/desktop}"
+AUTOLOGIN_REC="$STATE_DIR/autologin.before"
+AUTOLOGIN_WRITTEN="$STATE_DIR/autologin.written"
+REC_HEAD="desktop-autologin 1"
+REC_LEGACY=legacy
+GDM_KEYS="AutomaticLoginEnable|AutomaticLogin"
+LIGHTDM_KEYS="autologin-user|autologin-user-timeout"
+# The section name of a header line, as both the record and the return read it.
+AWK_SECNAME='function secname(l) { sub(/^[[:space:]]*\[/, "", l); sub(/\].*$/, "", l); gsub(/\t/, " ", l); return l }'
+
+# The regexp of set_ini_key: a key line, commented or not.
+key_re(){ printf '^[[:space:]]*#*[[:space:]]*(%s)[[:space:]]*=' "$1"; }
+
+conf_keys(){ case "$1" in /etc/gdm3/*) echo "$GDM_KEYS" ;; *) echo "$LIGHTDM_KEYS" ;; esac; }
+
+# known_conf <rel>: a path the record may name — a config of gdm3 or lightdm.
+known_conf(){
+    [[ "$1" =~ ^/etc/gdm3/(daemon|custom)\.conf$ || "$1" == /etc/lightdm/lightdm.conf \
+        || "$1" =~ ^/etc/lightdm/lightdm\.conf\.d/[^/]+\.conf$ ]]
+}
+
+has_section(){
+    W="$2" awk "$AWK_SECNAME"' /^[[:space:]]*\[/ && secname($0) == ENVIRON["W"] { f = 1 } END { exit !f }' "$1"
+}
+
+record_file(){
+    local conf="$1" rel="${1#"$R"}" sec eol=1
+    case "$rel" in
+        /etc/gdm3/*) sec=daemon ;;
+        *) sec="$(lightdm_seat_section "$conf")" ;;
+    esac
+    if [[ -s "$conf" && -n "$(tail -c 1 -- "$conf")" ]]; then eol=0; fi
+    printf 'file %s\neol %s\n' "$rel" "$eol"
+    has_section "$conf" "$sec" || printf 'absent %s\n' "$sec"
+    awk -v re="$(key_re "$(conf_keys "$rel")")" "$AWK_SECNAME"'
+        BEGIN { cur = ""; occ[""] = 1; o = 1; idx = 0 }
+        /^[[:space:]]*\[/ { s = secname($0); occ[s]++; cur = s; o = occ[s]; idx = 0; next }
+        $0 ~ re { printf "line\t%d\t%d\t%s\t%s\n", o, idx, cur, $0; next }
+        { idx++ }
+    ' "$conf"
+}
+
+# take_record: at CREAM_REASON=install, before any write; a record that is there
+# (of an earlier install, legacy, or not ours) is never overwritten.
+take_record(){
+    local conf tmp
+    [[ -e "$AUTOLOGIN_REC" || -L "$AUTOLOGIN_REC" ]] && return 0
+    install -d -m 0755 "$STATE_DIR"
+    tmp="$(mktemp "$STATE_DIR/.autologin.XXXXXX")" || die "запись автологина не создана"
+    if ! {
+        echo "$REC_HEAD"
+        while read -r conf; do
+            [[ -n "$conf" ]] || continue
+            known_conf "${conf#"$R"}" || continue
+            record_file "$conf"
+        done < <(gdm_confs; lightdm_confs)
+    } > "$tmp" || ! mv -f -T -- "$tmp" "$AUTOLOGIN_REC"; then
+        rm -f -- "$tmp"
+        die "запись прежнего автологина не сохранена — автологин не трогаю"
+    fi
+    log "прежний автологин записан (${AUTOLOGIN_REC#"$R"})"
+}
+
+# rec_kind: none | legacy | record | junk (a file that is not a record of ours).
+rec_kind(){
+    local head line cur=0 re_line=$'^line\t[0-9]+\t[0-9]+\t[^\t]*\t'
+    if [[ ! -e "$AUTOLOGIN_REC" && ! -L "$AUTOLOGIN_REC" ]]; then echo none; return 0; fi
+    if [[ -L "$AUTOLOGIN_REC" || ! -f "$AUTOLOGIN_REC" ]]; then echo junk; return 0; fi
+    {
+        IFS= read -r head || head=""
+        if [[ "$head" == "$REC_LEGACY" ]]; then
+            if IFS= read -r line || [[ -n "${line:-}" ]]; then echo junk; else echo legacy; fi
+            return 0
         fi
-    done < <(gdm_confs)
+        [[ "$head" == "$REC_HEAD" ]] || { echo junk; return 0; }
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            case "$line" in
+                "file "*) known_conf "${line#file }" || { echo junk; return 0; }; cur=1 ;;
+                "eol 0" | "eol 1" | "absent "*) (( cur )) || { echo junk; return 0; } ;;
+                *) { [[ "$line" =~ $re_line ]] && (( cur )); } || { echo junk; return 0; } ;;
+            esac
+        done
+    } < "$AUTOLOGIN_REC"
+    echo record
+}
+
+# return_file <rel>: the tracked lines of one config as the record holds them —
+# every tracked line now there goes, the recorded ones come back at their place
+# (the section, its occurrence, the other lines before them), a section that
+# set_ini_key appended goes, the final newline is as it was. Other lines stay;
+# an unchanged file is not rewritten (in place: mode and owner stay).
+return_file(){
+    local rel="$1" conf="$R$1" block tmp eol
+    if [[ ! -f "$conf" ]]; then
+        log "$rel нет — автологин возвращать некуда"
+        return 0
+    fi
+    block="$(mktemp)"
+    W="file $rel" awk '$0 == ENVIRON["W"] { on = 1; next } /^file / { on = 0 } on' "$AUTOLOGIN_REC" > "$block"
+    eol="$(awk '/^eol / { print $2; exit }' "$block")"
+    tmp="$(mktemp "${conf%/*}/.desktop.XXXXXX")" || { rm -f -- "$block"; die "$rel: автологин не вернулся"; }
+    if ! awk -v re="$(key_re "$(conf_keys "$rel")")" -v rel="$rel" "$AWK_SECNAME"'
+        function put(c, oc, at,   j) {
+            for (j = 1; j <= m; j++)
+                if (!used[j] && rs[j] == c && ro[j] == oc && (at < 0 || ri[j] == at)) { print rr[j]; used[j] = 1 }
+        }
+        FNR == NR {
+            if ($0 ~ /^absent /) { absent = substr($0, 8); has_absent = 1 }
+            else if ($0 ~ /^line\t/) {
+                r = substr($0, 6)
+                p = index(r, "\t"); ro[++m] = substr(r, 1, p - 1) + 0; r = substr(r, p + 1)
+                p = index(r, "\t"); ri[m] = substr(r, 1, p - 1) + 0; r = substr(r, p + 1)
+                p = index(r, "\t"); rs[m] = substr(r, 1, p - 1); rr[m] = substr(r, p + 1)
+            }
+            next
+        }
+        $0 ~ re { next }
+        { sk[++n] = $0 }
+        END {
+            if (has_absent && n && sk[n] ~ /^[[:space:]]*\[/ && secname(sk[n]) == absent) {
+                n--
+                if (n && sk[n] == "") n--
+            }
+            cur = ""; occ[""] = 1; o = 1; idx = 0
+            for (i = 1; i <= n; i++) {
+                if (sk[i] ~ /^[[:space:]]*\[/) {
+                    put(cur, o, -1)
+                    s = secname(sk[i]); occ[s]++; cur = s; o = occ[s]; idx = 0
+                    print sk[i]; continue
+                }
+                put(cur, o, idx)
+                print sk[i]; idx++
+            }
+            put(cur, o, -1)
+            for (j = 1; j <= m; j++) if (!used[j]) lost++
+            if (lost) printf "desktop: %s: %d строк автологина некуда вернуть — их секции больше нет\n", rel, lost > "/dev/stderr"
+        }
+    ' "$block" "$conf" > "$tmp"; then
+        rm -f -- "$block" "$tmp"
+        die "$rel: автологин не вернулся"
+    fi
+    rm -f -- "$block"
+    if [[ "$eol" == 0 && -s "$tmp" ]]; then truncate -s -1 -- "$tmp"; fi
+    cmp -s -- "$tmp" "$conf" || cat -- "$tmp" > "$conf"
+    rm -f -- "$tmp"
+}
+
+# return_record: every config of the record back; a config that appeared after
+# install — off, as 1.x.
+return_record(){
+    local line conf
+    local -A seen=()
+    while IFS= read -r line; do
+        [[ "$line" == "file "* ]] || continue
+        seen["${line#file }"]=1
+        return_file "${line#file }"
+    done < "$AUTOLOGIN_REC"
     while read -r conf; do
-        [[ -n "$conf" ]] || continue
-        section="$(lightdm_seat_section "$conf")"
-        if [[ "$on" == 1 ]]; then
-            { set_ini_key "$conf" "$section" autologin-user "$user" \
-                && set_ini_key "$conf" "$section" autologin-user-timeout 0; } \
-                || die "lightdm: не записался автологин в ${conf#"$R"}"
-        else
-            del_ini_key "$conf" autologin-user
-            del_ini_key "$conf" autologin-user-timeout
-        fi
-    done < <(lightdm_confs)
+        [[ -n "$conf" && -z "${seen[${conf#"$R"}]:-}" ]] || continue
+        autologin_file "$conf" "" 0
+    done < <(gdm_confs; lightdm_confs)
+    log "автологин возвращён, как был при установке"
+}
+
+# return_autologin <kind>: the autologin is no longer ours — back as recorded, or
+# off (legacy, no record). The record of install stays until remove (П17).
+return_autologin(){
+    case "$1" in
+        record) return_record ;;
+        *)
+            apply_autologin "" 0
+            log "прежний автологин неизвестен (${1/none/записи нет}) — выключен, как в 1.x" ;;
+    esac
+}
+
+# sddm_dm: the display manager is SDDM — by the files, like existing-desktop:
+# the link display-manager.service, else /etc/X11/default-display-manager.
+sddm_dm(){
+    local unit="$R/etc/systemd/system/display-manager.service" t
+    if [[ -L "$unit" ]]; then
+        t="$(readlink -- "$unit")"
+        [[ "${t##*/}" == sddm.service ]]
+        return
+    fi
+    [[ -f "$R/etc/X11/default-display-manager" ]] || return 1
+    t="$(head -n 1 -- "$R/etc/X11/default-display-manager")"
+    [[ "${t##*/}" == sddm ]]
+}
+
+cmd_mark_legacy(){
+    local prev="$1" major tmp
+    major="${prev%%.*}"
+    if [[ "$major" =~ ^[0-9]+$ ]] && (( 10#$major >= 2 )); then return 0; fi
+    if [[ -e "$AUTOLOGIN_REC" || -L "$AUTOLOGIN_REC" ]]; then
+        log "запись прежнего автологина уже есть — не трогаю"
+        return 0
+    fi
+    install -d -m 0755 "$STATE_DIR"
+    tmp="$(mktemp "$STATE_DIR/.autologin.XXXXXX")" || die "маркер legacy не записан"
+    if ! printf '%s\n' "$REC_LEGACY" > "$tmp" || ! mv -f -T -- "$tmp" "$AUTOLOGIN_REC"; then
+        rm -f -- "$tmp"
+        die "маркер legacy не записан"
+    fi
+    log "обновление с $(printf '%s' "$prev" | tr -cd '[:alnum:].~+-'): прежний автологин неизвестен (маркер legacy) — пустой DESKTOP_AUTOLOGIN и remove выключат его, как 1.x"
 }
 
 # The system dconf database + locks: the user database does not override these
@@ -534,7 +779,7 @@ graphical_user_session(){
 
 active_dm(){
     local dm
-    for dm in gdm3 gdm lightdm; do
+    for dm in gdm3 gdm lightdm sddm; do
         if systemctl is-active "$dm.service" >/dev/null 2>&1; then echo "$dm"; return 0; fi
     done
     return 1
@@ -543,7 +788,13 @@ active_dm(){
 dm_fingerprint(){ { gdm_confs; lightdm_confs; } | xargs -r cat 2>/dev/null | sha256sum | cut -c1-64; }
 
 cmd_apply(){
-    local mode="$1" user="" wait_s=0 autologin="$DESKTOP_AUTOLOGIN" before after dm
+    local mode="$1" user="" wait_s=0 autologin="$DESKTOP_AUTOLOGIN" before after dm sddm=0 kind
+    # 1 — on; empty — not ours to manage; anything else — off.
+    if [[ -n "$autologin" && "$autologin" != 1 ]]; then autologin=0; fi
+    # The record — before anything is written (Р1: only at install; at boot,
+    # apply and upgrade the files may hold what 1.x wrote).
+    if [[ "${CREAM_REASON:-}" == install ]]; then take_record; fi
+    if [[ -n "$autologin" ]] && sddm_dm; then sddm=1; fi
     if [[ "$autologin" == 1 ]]; then
         # The user is created by cloud-init.service, and configure is ordered
         # after it, so it usually exists already. A short wait is insurance
@@ -560,7 +811,22 @@ cmd_apply(){
     if [[ -n "$user" ]]; then ensure_groups "$user"; fi
 
     before="$(dm_fingerprint)"
-    apply_autologin "$user" "$autologin"
+    if (( sddm )); then
+        :
+    elif [[ -n "$autologin" ]]; then
+        # The mark first: a write that stops half-way is still returned.
+        install -d -m 0755 "$STATE_DIR"
+        : > "$AUTOLOGIN_WRITTEN"
+        apply_autologin "$user" "$autologin"
+    else
+        kind="$(rec_kind)"
+        if [[ "$kind" == legacy ]] || [[ -e "$AUTOLOGIN_WRITTEN" ]]; then
+            [[ "$kind" != junk ]] || die "${AUTOLOGIN_REC#"$R"} — не запись desktop; автологин не возвращаю"
+            return_autologin "$kind"
+            rm -f -- "$AUTOLOGIN_WRITTEN"
+            if [[ "$kind" == legacy ]]; then rm -f -- "$AUTOLOGIN_REC"; fi
+        fi
+    fi
     apply_screen_lock
     apply_screen_blank
     apply_xfce_screensaver
@@ -568,7 +834,11 @@ cmd_apply(){
     link_xfconf
     dconf_update
     after="$(dm_fingerprint)"
-    log "автологин=$autologin${user:+ ($user)} блокировка_выкл=$DESKTOP_DISABLE_SCREEN_LOCK затемнение_выкл=$DESKTOP_DISABLE_SCREEN_BLANK"
+    log "автологин=${autologin:-не управляю}${user:+ ($user)} блокировка_выкл=$DESKTOP_DISABLE_SCREEN_LOCK затемнение_выкл=$DESKTOP_DISABLE_SCREEN_BLANK"
+    # The other knobs are applied; the autologin of SDDM is refused (§4.3: it
+    # needs Session=, and the X11 session of Plasma is named differently in 5.27
+    # and 6 — not measured yet).
+    (( sddm == 0 )) || die "автологин SDDM не поддержан: /etc/sddm.conf.d/, вручную (DESKTOP_AUTOLOGIN= — не управлять)"
 
     [[ "$mode" == --now ]] || return 0
     [[ "$before" == "$after" ]] && return 0
@@ -593,18 +863,45 @@ cmd_status(){
     yn(){ if [[ -f "$1" ]]; then echo да; else echo нет; fi; }
     printf 'dconf блокировка: %s; dconf затемнение: %s; X DPMS: %s\n' \
         "$(yn "$DCONF_LOCK")" "$(yn "$DCONF_BLANK")" "$(yn "$XSESSION_BLANK")"
+    local dm
+    if dm="$(active_dm)"; then
+        if [[ "$dm" == sddm ]]; then
+            echo "менеджер входа: sddm — автологин SDDM не поддержан: /etc/sddm.conf.d/, вручную"
+        else
+            echo "менеджер входа: $dm"
+        fi
+    else
+        echo "менеджер входа: не запущен"
+    fi
+    case "$(rec_kind)" in
+        record) echo "прежний автологин: записан при установке — вернётся при пустом ключе и remove" ;;
+        legacy) echo "прежний автологин: неизвестен (обновление с 1.x) — пустой ключ и remove выключат его" ;;
+        none) echo "прежний автологин: записи нет — remove выключит его, как 1.x" ;;
+        junk) echo "прежний автологин: ${AUTOLOGIN_REC#"$R"} — не запись desktop" ;;
+    esac
 }
 
-# remove: everything this script owns; the autologin is turned off in the DM
-# configs (they belong to the packages). The groups stay: taking video away from
-# a session user is worse than an extra membership.
+# remove: everything this script owns; the autologin goes back to what the
+# record of install holds when a key of ours was written since (else it stays
+# as it is), off with the marker legacy or no record — the DM configs belong to
+# the packages and the owner. A record that is not ours — refused before any
+# write. The groups stay: taking video away from a session user is worse than
+# an extra membership.
 cmd_remove(){
-    apply_autologin "" 0
+    local kind
+    kind="$(rec_kind)"
+    [[ "$kind" != junk ]] || die "${AUTOLOGIN_REC#"$R"} — не запись desktop; ничего не снимаю (проверьте и удалите её вручную)"
     dconf_remove "$DCONF_LOCK" "$DCONF_LOCK_LOCKS" "$DCONF_BLANK" "$DCONF_BLANK_LOCKS" "$DCONF_GDM_BLANK"
     remove_files "$XSESSION_BLANK" "$XFCE_POWER" "$XFCE_SAVER" || true
     link_xfconf
     unset_lightdm_blank
     unset_lxsession_system
+    # After unset_lightdm_blank: the lines of lightdm are returned to the file
+    # without our xserver-command.
+    if [[ "$kind" != record || -e "$AUTOLOGIN_WRITTEN" ]]; then
+        return_autologin "$kind"
+    fi
+    rm -f -- "$AUTOLOGIN_REC" "$AUTOLOGIN_WRITTEN"
     if (( DCONF_CHANGED )) && command -v dconf >/dev/null 2>&1; then
         dconf update || die "dconf update не прошёл"
     fi
@@ -621,5 +918,6 @@ case "${1:-}" in
     status) cmd_status ;;
     remove) cmd_remove ;;
     lxsession-user) cmd_lxsession_user "${2:?}" ;;
-    *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
+    mark-legacy) cmd_mark_legacy "${2-}" ;;
+    *) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
 esac

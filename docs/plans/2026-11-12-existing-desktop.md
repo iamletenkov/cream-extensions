@@ -17,15 +17,15 @@
 - [x] Task 3: диапазон `desktop <3` у `gnome`, `xfce4`, `lxde`, `cloud-user-desktop`; ночной ubuntu-24.04 у `xfce4`, `lxde`, `wallpaper`
 - [x] Task 4: L-раннер — `LIVE_PREINSTALL`, `LIVE_PRESEED`, `LIVE_EXPECT_RESTORED`, принудительное снятие, варианты `live.<v>.env`
 - [x] Task 5: L-матрица — варианты и `LIVE_NIGHTLY_DISTROS`
-- [ ] Task 6: `existing-desktop` 1.0.0
-- [ ] Task 7: `desktop` 2.0.0 — автологин только по ключу, снимок и возврат, хук `upgrade`, отказ на SDDM
-- [ ] Task 8: `gdm-xorg` 1.0.0
+- [x] Task 6: `existing-desktop` 1.0.0
+- [x] Task 7: `desktop` 2.0.0 — автологин только по ключу, снимок и возврат, хук `upgrade`, отказ на SDDM
+- [x] Task 8: `gdm-xorg` 1.0.0
 - [ ] Task 9: `gnome` 5.1.0 — `WaylandEnable` через `lib/gdm-wayland.sh`, код 10, возврат при снятии
 - [ ] Task 10: `selkies` 7.0.0 — `SELKIES_USER`, `SELKIES_DISPLAY=auto`, проверка машины, uid-правило
 - [ ] Task 11: `x11vnc` 6.0.0 — `X11VNC_USER`, `X11VNC_DISPLAY=auto`, проверка машины, uid-правило
 - [ ] Task 12: `cloud-user-desktop` 6.0.0 — `live: confirm`, снятие автологина удалённой учётки
-- [ ] Task 13: `code-server` 5.3.0 — снятие пакета только своего, через apt-guard
-- [ ] Task 14: `docker` 4.2.0 — снятие только своего источника apt
+- [x] Task 13: `code-server` 5.3.0 — снятие пакета только своего, через apt-guard
+- [x] Task 14: `docker` 4.2.0 — снятие только своего источника apt
 - [ ] Task 15: `firefox` 2.1.0 — снятие только своего источника apt
 - [x] Task 16: issue в cream: неудачная запись даёт способности (§9)
 - [ ] Task 17: сверка потребителей — VMFILE и скрипты обновления bisquite, stvor-agent
@@ -83,6 +83,10 @@
 | П13 | `xs_find_display`, запасной путь 1: дисплей Xorg пользователя — `:N` в argv, иначе его слушающий сокет `/tmp/.X11-unix/X<N>` (`/proc/<pid>/fd` против `/proc/net/unix`), иначе `/tmp/.X<N>-lock` с его pid (владелец root или uid Xorg, без записи для группы и остальных, не ссылка); найденный дисплей (и `:0`) подтверждает только authority самого пользователя при включённом контроле доступа (`xhost`), спека §10; `ss -xlp` не используется. `xs_seat0_active` печатает `user type class`. В Task 20 (P1/P2) записать сработавший подпуть и заполнен ли `Display` | ревью волны 1: rootless GDM запускает `Xorg vtN -displayfd 3` без `:N`, а в S2 вход идёт на `:1` |
 | П14 | L `desktop` проверяет побайтный возврат после `remove` (`LIVE_EXPECT_RESTORED`); путь «`set 0` → `remove`» — в H | раннер не умеет `cream set` между шагами; заводить его ради одного теста — лишняя абстракция |
 | П15 | `x11-xserver-utils` (`xhost`) — зависимость каждого потребителя `lib/x-session.sh`: `existing-desktop` (Task 6), `selkies` (Task 10), `x11vnc` (Task 11). Пакет ставит `hooks/install` рядом с `x11-utils`/`xauth` (у `existing-desktop` — единственный пакет, который он ставит); README называет его, H проверяет вызов apt, L — `command -v xhost` после install | без `xhost` `_xs_confirm` не проверяет контроль доступа и не принимает дисплей запасных путей (П13): без пакета безопасного запасного пути нет; пакет маленький и есть в Debian и Ubuntu |
+| П16 | Рулинг исполнителя волны 2: L `gdm-xorg` гоняет debian-12 и ubuntu-24.04 **в PR** (`LIVE_DISTROS`), `LIVE_NIGHTLY_DISTROS` не заводится; gdm3 не ставится — файлы пакета (554 байта) ложатся `LIVE_PRESEED=live-root`: `custom.conf` закомментирован, `daemon.conf` с `true`. Код 10 раннер принимает без отметок (cream — rc 0, «нужна перезагрузка»). Ссылка вместо файла gdm3 — `install` 1 (отказ), не 20 | пакетов нет — прогон короткий, ночная добавка ничего не даёт; 20 скрыл бы от владельца, что gdm3 есть, а файл — чужая ссылка |
+| П17 | Рулинг исполнителя волны 2 (`desktop` 2.0.0): рядом с записью `autologin.before` — отметка `autologin.written` («после записи или возврата писали `0`/`1`», ставится до записи). Возврат по пустому ключу и в `remove` — только при отметке; запись установки живёт до `remove` (возврат по пустому ключу её не удаляет, повторный `1` → пусто снова возвращает к ней). `legacy` или записи нет — выключить, как 1.x; после выключения по пустому ключу маркер `legacy` снимается, дальше пусто — «не управляю», а `remove` без записи выключает (§4.3). Конфиг, появившийся после записи, при возврате выключается. Чужой файл на месте записи — `remove` 1 до любой записи. Вариант L `gdm3` — в PR (пакет gdm3 не ставится, `custom.conf` preseed'ом) | спека §4.3 говорит «пустой ключ или `remove` → значения из записи», но без отметки `remove` откатил бы то, что владелец включил сам при пустом ключе, — анти-цель §2; запись установки — единственный источник прежнего, удалять её до `remove` значит потерять его при следующем `1` |
+| П18 | Рулинг исполнителя волны 2 (`existing-desktop`): `check` спеки §4.1 — **действие** `check` (`lock: none`, `phases: [build, live]`), не `hooks.check` | cream 1.4.0 (пин) отвергает `hooks.check`: «зарезервировано в cream/v1, не реализовано» (`manifest.reserved`, 65) — каталог не проходит `cream validate`, а `cream check` всех потребителей `x11-server` падает каскадом; смысл (0/1 по файлам) тот же |
+| П19 | Рулинг исполнителя волны 2 по ревью (`existing-desktop`): `install` ставит `x11-xserver-utils` с `-o DPkg::Lock::Timeout=120` и тремя попытками (`apt_retry`, как `desktop/hooks/install`), таймаут хука — **10m**, а не 2m спеки §4.1; ожидание 120 с на попытку, чтобы 2 команды × 3 попытки укладывались в 10m и таймаут хука не обрывал dpkg посреди повторов | на готовом Ubuntu Desktop блокировку dpkg часто держат unattended-upgrades или packagekit: сразу «Could not get lock» — 1, а неудачная запись держит конфликт `desktop-session`; обрыв по 2m посреди dpkg оставил бы на чужой машине «dpkg was interrupted» |
 
 ## Версии
 | Расширение | Было (после П1) | Станет | Мажор? | Задача |
@@ -234,7 +238,7 @@ H-тесты задач 6–15 можно писать до слияния за�
   `xs_seat0_active`; без logind — строка «нет logind»); `install` ставит `x11-xserver-utils` (П15); `remove` пустой. Подсказка в тексте отказа — «сначала
   `cream remove existing-desktop`» (S5). `lib/x-session.consumers` с `debian/existing-desktop`.
   Создавать через `tools/new-extension.sh`.
-- **Файлы:** `extensions/debian/existing-desktop/{extension.yaml,hooks/install,hooks/check,hooks/remove,actions/status,README.md}`,
+- **Файлы:** `extensions/debian/existing-desktop/{extension.yaml,hooks/install,hooks/remove,actions/check,actions/status,README.md}`,
   `tests/test-existing-desktop.sh`, `tests/live.env` (debian-12 и ubuntu-24.04, `LIVE_PREINSTALL="xserver-xorg-core lightdm"`,
   `LIVE_PRESEED` с `usr/share/xsessions/*.desktop`, `LIVE_EXPECT_RESTORED="/etc/lightdm /etc/X11"`),
   `tests/live.gdm3.env`, `tests/live.sddm.env` (ubuntu-24.04, `LIVE_NIGHTLY_ONLY=1`),
@@ -446,7 +450,14 @@ H-тесты задач 6–15 можно писать до слияния за�
   конфликт `gnome` ↔ `gdm-xorg`; `layout.md` — `x-session.sh`, `gdm-wayland.sh` и их потребители; `known-issues.md` —
   Wayland не захватывается (78, `gdm-xorg`), автологин SDDM — отказ, обои Plasma, запись `failed` в графе cream
   (ссылка на issue из Task 16), `gnome` 5.0.x → 5.1.0 не возвращает `WaylandEnable`.
-- **Файлы:** `docs/reference/capabilities.md`, `docs/reference/layout.md`, `docs/known-issues.md`.
+- **Хвосты ревью волны 2:**
+  - `desktop`: записи автологина нет, если `desktop` ставился при сборке образа (configure при сборке не идёт), —
+    `remove` выключит автологин, включённый владельцем при пустом ключе; кандидат — брать запись в `hooks/install`
+    при `CREAM_PHASE=build` (в `known-issues.md`, решение — отдельной задачей);
+  - спека §4.1 (строки 166, 184): `check` — действие, а не хук (ссылка на П18); «DM включён» свести с тем, что
+    `find_dm` принимает и `/etc/X11/default-display-manager`.
+- **Файлы:** `docs/reference/capabilities.md`, `docs/reference/layout.md`, `docs/known-issues.md`,
+  `docs/specs/2026-11-12-existing-desktop.md` (§4.1).
 - **Тесты:** `make test` (`check-links`, таблицы), `make lint`.
 - **Готово когда:** `make ci` зелёный.
 

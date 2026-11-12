@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # cream hook `remove` of docker: removes the packages `install` put on (the
 # record in $CREAM_STATE_DIR/packages; a Docker that was there before cream
-# stays), then the Docker source and key and our NVIDIA source and key, and
-# refreshes the apt lists. cream itself takes away the `files` (iptables-raw
-# check and drop-in) and cream-configure@docker.
+# stays), then the Docker source and key (only those the record
+# $CREAM_STATE_DIR/apt-source calls ours; no record — both, as 4.1.x) and our
+# NVIDIA source and key, and refreshes the apt lists. cream itself takes away
+# the `files` (iptables-raw check and drop-in) and cream-configure@docker.
 #
 # apt-get remove, not purge: /var/lib/docker (images, volumes) and
 # /etc/docker/daemon.json stay. What is NOT undone, on purpose: the competing
@@ -36,14 +37,33 @@ else
     log_info "своих пакетов нет — Docker не трогаю"
 fi
 
+# The Docker source and key: only those the record (install 4.2.0+) calls ours;
+# no record (installed by 4.1.x) — both, as 4.1.x did. A record line naming
+# anything but the two paths is ignored. The NVIDIA source and key are ours by
+# name (the vendor's is nvidia-l4t-apt-source.list) and always go.
+DOCKER_FILES=(/etc/apt/sources.list.d/docker.sources /etc/apt/keyrings/docker.asc)
+drop=()
+if [[ -f "$STATE/apt-source" ]]; then
+    while read -r owner path _; do
+        [[ " ${DOCKER_FILES[*]} " == *" $path "* ]] || continue
+        if [[ "$owner" == ours ]]; then
+            drop+=("$path")
+        else
+            log_info "$path был до cream — не снимаю"
+        fi
+    done < "$STATE/apt-source"
+else
+    drop=("${DOCKER_FILES[@]}")
+fi
+drop+=(/etc/apt/sources.list.d/nvidia-jetson.sources /etc/apt/keyrings/nvidia-jetson.asc)
+
 had_source=""
-for f in "$R/etc/apt/sources.list.d/docker.sources" "$R/etc/apt/sources.list.d/nvidia-jetson.sources"; do
-    [[ -e "$f" ]] && had_source=1
+for f in "${drop[@]}"; do
+    [[ "$f" == *.sources && -e "$R$f" ]] && had_source=1
+    rm -f -- "$R$f"
 done
-rm -f -- "$R/etc/apt/sources.list.d/docker.sources" "$R/etc/apt/keyrings/docker.asc" \
-    "$R/etc/apt/sources.list.d/nvidia-jetson.sources" "$R/etc/apt/keyrings/nvidia-jetson.asc"
 # Lists of the removed sources stay until the next update; refresh now.
 if [[ -n "$had_source" ]]; then
     apt-get -q update || log_error "apt-get update после снятия источника не прошёл (не критично)"
 fi
-rm -f -- "$STATE/packages" "$STATE/daemon-json.sha256"
+rm -f -- "$STATE/packages" "$STATE/daemon-json.sha256" "$STATE/apt-source"

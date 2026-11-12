@@ -29,7 +29,8 @@
 # running JetPack 6. Branching on ID would miss both.
 #
 # The packages this hook installed (not there before) are added to
-# $CREAM_STATE_DIR/packages: `remove` takes away only those. The iptables-raw
+# $CREAM_STATE_DIR/packages, and whether the Docker source and key were there
+# before it goes to $CREAM_STATE_DIR/apt-source: `remove` takes away only ours. The iptables-raw
 # check and its drop-in for docker.service are `files` of the manifest — cream
 # lays them out before this hook; configure (group docker, Pi cmdline.txt,
 # Jetson restart) is cream-configure@docker, not a unit of this extension.
@@ -110,6 +111,26 @@ done
 # --- ключ и репозиторий ------------------------------------------------------
 apt_retry apt-get "${APT_OPTS[@]}" update
 apt_retry apt-get "${APT_OPTS[@]}" install ca-certificates curl
+
+# --- чьи источник и ключ -------------------------------------------------------
+# Before the first write: was the source or the key there before cream (Docker's
+# own instructions use the same two paths)? `remove` takes away only what the
+# record calls ours. Written once — a repeat finds our own files and would call
+# them foreign. An upgrade from 4.1.x (CREAM_PREV_VERSION, no record) writes
+# none: the files are 4.1.x's own, and remove without a record does what 4.1.x did.
+SRC_REC="${CREAM_STATE_DIR:?run by cream}/apt-source"
+if [[ ! -e "$SRC_REC" && -z "${CREAM_PREV_VERSION:-}" ]]; then
+    install -d -m 0755 "$(dirname "$SRC_REC")"
+    for f in /etc/apt/sources.list.d/docker.sources /etc/apt/keyrings/docker.asc; do
+        if [[ -e "$R$f" || -L "$R$f" ]]; then
+            printf 'kept %s\n' "$f"
+            log_info "$f был до cream — remove его не снимет"
+        else
+            printf 'ours %s\n' "$f"
+        fi
+    done > "$SRC_REC.new"
+    mv -f "$SRC_REC.new" "$SRC_REC"
+fi
 
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT

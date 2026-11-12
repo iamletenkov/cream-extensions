@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# cream hook `install` of existing-desktop: checks that the machine already has
+# a desktop — Xorg, a display manager, an X session — as files, the same at
+# image build and on a live machine; changes nothing of it. Spec
+# 2026-11-12-existing-desktop §4.1.
+#
+# Exit codes: 1 — a part is missing (named in the log, with the hint "сначала
+# `cream remove existing-desktop`": a failed record keeps the desktop-session
+# conflict); 0 — all three are there. No 10 and no 20: nothing is changed, and a
+# skipped record would hide what is missing.
+#
+# The only thing installed: x11-xserver-utils (xhost) when /usr/bin/xhost is
+# absent — lib/x-session.sh confirms a display found without logind only with
+# it (plan ruling П15). On a live machine the diagnosis of `status` ends the log.
+#
+# apt waits for the dpkg lock up to 2 minutes and is retried 3 times (plan
+# ruling П19): a ready Ubuntu Desktop often has unattended-upgrades or
+# packagekit holding it, and an immediate "Could not get lock" would fail the
+# record, which keeps the desktop-session conflict.
+set -euo pipefail
+
+log_info(){ >&2 echo "[INFO] existing-desktop: $*"; }
+log_warn(){ >&2 echo "[WARN] existing-desktop: $*"; }
+log_error(){ >&2 echo "[ERROR] existing-desktop: $*"; }
+
+APT_LOCK=(-o DPkg::Lock::Timeout=120)
+
+apt_retry(){
+    local i
+    for i in 1 2 3; do
+        "$@" && return 0
+        (( i < 3 )) || break
+        log_warn "попытка $i: $* — не удалась, повтор через 10 с"
+        sleep 10
+    done
+    return 1
+}
+
+R="${CREAM_ROOT:-}"; R="${R%/}"
+ED="${CREAM_EXT_DIR:?run by cream}/files/existing-desktop.sh"
+
+"$ED" verify || exit 1
+
+if [[ ! -x "$R/usr/bin/xhost" ]]; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt_retry apt-get update -q "${APT_LOCK[@]}" \
+        || { log_error "apt-get update не прошёл — x11-xserver-utils (xhost) не поставить"; exit 1; }
+    apt_retry apt-get install "${APT_LOCK[@]}" -y -q --no-install-recommends x11-xserver-utils \
+        || { log_error "x11-xserver-utils (xhost) не установился"; exit 1; }
+    log_info "поставлен x11-xserver-utils (xhost) — remove его не снимает"
+fi
+
+if [[ "${CREAM_PHASE:-live}" == live ]]; then
+    while IFS= read -r line; do
+        log_info "$line"
+    done < <("$ED" status || true)
+fi
+log_info "готово: стол машины на месте, в нём ничего не менялось"

@@ -1,0 +1,6 @@
+# Consumers of lib/x-session.sh (xs_seat0_session, xs_seat0_active, xs_find_display,
+# xs_find_authority): <family>/<name> under extensions/, one per line. tools/stage-catalog.sh
+# and tools/catalog-snapshot.sh lay it into their files/x-session.sh; a hook or a wrapper sources
+# "${CREAM_EXT_DIR}/files/x-session.sh" — no `depends`, nothing to install first.
+# tools/check-shared-libs.sh and tools/check-version-bump.sh read this list.
+debian/existing-desktop

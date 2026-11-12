@@ -14,15 +14,21 @@
 #             On a working machine (install, `cream set desktop …`) it also
 #             restarts the display manager when the autologin changed and no
 #             graphical session is open.
-# remove    — takes away the dconf, X and xfconf files and the autologin; the
-#             groups stay.
+# upgrade   — instead of install on `cream upgrade`: the packages of install;
+#             from 1.x — the marker legacy in the record of the autologin.
+# remove    — takes away the dconf, X and xfconf files; the autologin goes back
+#             to the record of install (legacy or none — off); the groups stay.
 # Actions   — apply (now or as at boot), status, defaults (write without applying).
 #
 # 1.1.0: hooks.configure.every_boot — configure runs every boot (cream 1.2.0
 #        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: desktop
-version: 1.1.1
+version: 2.0.0
+# 2.0.0: DESKTOP_AUTOLOGIN пусто по умолчанию — автологином не управляю; прежние
+#        строки автологина записываются при install и возвращаются при пустом
+#        ключе и remove; хук upgrade (маркер legacy с 1.x); SDDM + 0/1 — отказ
+#        (спека 2026-11-12-existing-desktop §4.3, Р1).
 # 1.1.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
 # 1.0.1: только README (выпуск 5.1.1 изменил дерево без подъёма версии —
 #        cream отвергал обновление с 1.0.0: version.same_digest).
@@ -46,13 +52,15 @@ hooks:
     after: [cloud-init.service, guestfs-firstboot.service]
     before: [display-manager.service, gdm.service, gdm3.service, lightdm.service]
     timeout: 2m
+  upgrade: {timeout: 10m}
   remove: {timeout: 2m}
 config:
   keys:
     DESKTOP_AUTOLOGIN:
       type: bool
-      default: "0"
-      description: "1 — вход без пароля (gdm3, lightdm)"
+      default: ""
+      empty: true
+      description: "пусто — автологином не управляю; 0 — выключить; 1 — вход без пароля (gdm3, lightdm; SDDM — отказ)"
     DESKTOP_AUTOLOGIN_USER:
       type: "re:^[a-z_][a-z0-9_-]{0,31}$"
       default: ""

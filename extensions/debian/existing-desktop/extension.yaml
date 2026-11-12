@@ -1,0 +1,48 @@
+# existing-desktop — the desktop a machine already has (installed by the OS
+# installer, not by cream: Ubuntu Desktop with gdm3, Xubuntu with LightDM,
+# Kubuntu with SDDM) declared as the capabilities x11-server, display-manager and
+# desktop-session, so that selkies, x11vnc, wallpaper and the rest resolve on it
+# without gnome/xfce4/lxde rebuilding the desktop.
+#
+# install — checks FILES, the same at build and live (the model is
+#           l4t-vendor-desktop without the R32 condition): Xorg, a display
+#           manager (display-manager.service resolving inside the root, or
+#           /etc/X11/default-display-manager naming an existing binary), an X
+#           session in /usr/share/xsessions — or 1 with the missing part named
+#           (only Wayland sessions — a text of its own). Installs
+#           x11-xserver-utils (xhost) when absent — lib/x-session.sh needs it
+#           (plan ruling П15); nothing of the desktop itself is changed. Live:
+#           the diagnosis of `status` at the end.
+# check   — action (build, live): 0 — Xorg and the display manager are there;
+#           1 — not. Not hooks.check: cream 1.4.0 refuses it as reserved
+#           (manifest.reserved; plan ruling П18).
+# remove  — nothing: the desktop belongs to the machine (x11-xserver-utils stays).
+# status  — read only: the display manager and is-active, WaylandEnable of gdm3,
+#           the autologin (gdm3, LightDM, SDDM), the session of seat0.
+# Mutually exclusive with gnome, xfce4, lxde, l4t-vendor-desktop by capability.
+schema: cream/v1
+name: existing-desktop
+version: 1.0.0
+summary: Готовый рабочий стол машины (не через cream) как x11-server, display-manager, desktop-session
+cream: ">=1.2.0"
+platform:
+  family: deb
+  arch: [amd64, arm64]
+  os: [{id: debian}, {id: ubuntu}]
+targets: {build: exec, live: "yes"}
+provides: [x11-server, display-manager, desktop-session]
+conflicts:
+  capabilities: [desktop-session]
+hooks:
+  # 10m, not 2m of the spec (plan ruling П19): apt waits for the dpkg lock.
+  install: {timeout: 10m}
+  remove: {}
+actions:
+  check:
+    summary: "Xorg и менеджер входа на месте — 0, нет — 1 (только файлы)"
+    lock: none
+    phases: [build, live]
+  status:
+    summary: "DM, Wayland, автологин, сеанс seat0"
+    lock: none
+    phases: [live]

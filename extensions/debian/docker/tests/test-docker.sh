@@ -353,4 +353,85 @@ check_not "ничего не снято" ht_called '^apt-get -q -y remove'
 check "docker-ce на месте" installed docker-ce
 check "запись осталась" test -s "$STATE/packages"
 
+echo "== 4.2.0: источник и ключ — снимаются только свои =="
+KEY="$ROOT/etc/apt/keyrings/docker.asc"
+# Fresh machine: install records both as its own; remove takes both away.
+docker_root
+KEY="$ROOT/etc/apt/keyrings/docker.asc"
+ht_hook install; eq "свежая машина: install — 0" 0 "$?"
+check "запись источника есть" test -f "$STATE/apt-source"
+eq "запись: оба файла свои" "ours /etc/apt/keyrings/docker.asc
+ours /etc/apt/sources.list.d/docker.sources" "$(LC_ALL=C sort "$STATE/apt-source" 2>/dev/null)"
+rec="$(cat "$STATE/apt-source" 2>/dev/null)"
+ht_hook install; eq "повтор install — 0" 0 "$?"
+eq "повтор не перезаписывает запись (файлы уже есть, но они свои)" "$rec" "$(cat "$STATE/apt-source" 2>/dev/null)"
+: > "$FAKE/calls"
+ht_hook remove; eq "свои: remove — 0" 0 "$?"
+check_not "свои: источник снят" test -e "$SRC"
+check_not "свои: ключ снят" test -e "$KEY"
+check "свои: списки apt обновлены" ht_called '^apt-get .*update'
+check_not "свои: запись снята" test -e "$STATE/apt-source"
+# Source and key there before cream (Docker's own instructions): they survive.
+docker_root
+KEY="$ROOT/etc/apt/keyrings/docker.asc"
+mkdir -p "$(dirname "$SRC")" "$(dirname "$KEY")"
+printf 'Types: deb\nURIs: https://download.docker.com/linux/debian\n' > "$SRC"
+echo 'THEIR KEY' > "$KEY"
+ht_hook install; eq "чужие источник и ключ: install — 0" 0 "$?"
+eq "запись: оба файла чужие" "kept /etc/apt/keyrings/docker.asc
+kept /etc/apt/sources.list.d/docker.sources" "$(LC_ALL=C sort "$STATE/apt-source" 2>/dev/null)"
+: > "$FAKE/calls"
+ht_hook remove; eq "чужие: remove — 0" 0 "$?"
+check "чужие: источник пережил remove" test -f "$SRC"
+check "чужие: ключ пережил remove" test -f "$KEY"
+check_not "чужие: apt-get update не нужен (ничего не снято)" ht_called '^apt-get .*update'
+check_not "чужие: запись снята" test -e "$STATE/apt-source"
+check "чужие: сказано, что оставлено" grep -q 'не снимаю' "$ROOT/out"
+# Only the key was there: the source goes, the key stays.
+docker_root
+KEY="$ROOT/etc/apt/keyrings/docker.asc"
+mkdir -p "$(dirname "$KEY")"
+echo 'THEIR KEY' > "$KEY"
+ht_hook install; eq "чужой ключ: install — 0" 0 "$?"
+ht_hook remove; eq "чужой ключ: remove — 0" 0 "$?"
+check_not "чужой ключ: свой источник снят" test -e "$SRC"
+check "чужой ключ: ключ остался" test -f "$KEY"
+# 4.1.x installed it, no record: remove as before — both go.
+docker_root
+KEY="$ROOT/etc/apt/keyrings/docker.asc"
+mkdir -p "$(dirname "$SRC")" "$(dirname "$KEY")" "$STATE"
+echo 'Types: deb' > "$SRC"; echo KEY > "$KEY"
+ht_hook remove; eq "без записи (4.1.x): remove — 0" 0 "$?"
+check_not "без записи: источник снят, как в 4.1.x" test -e "$SRC"
+check_not "без записи: ключ снят, как в 4.1.x" test -e "$KEY"
+# Upgrade from 4.1.x: the files are 4.1.x's own — install does not call them foreign.
+docker_root
+KEY="$ROOT/etc/apt/keyrings/docker.asc"
+mkdir -p "$(dirname "$SRC")" "$(dirname "$KEY")"
+echo 'Types: deb' > "$SRC"; echo KEY > "$KEY"
+ht_hook install CREAM_PREV_VERSION=4.1.1; eq "обновление с 4.1.1: install — 0" 0 "$?"
+check_not "обновление с 4.1.1: записи нет (прежнее неизвестно)" test -e "$STATE/apt-source"
+ht_hook remove; eq "обновление с 4.1.1: remove — 0" 0 "$?"
+check_not "обновление с 4.1.1: источник снят, как в 4.1.x" test -e "$SRC"
+check_not "обновление с 4.1.1: ключ снят, как в 4.1.x" test -e "$KEY"
+# Upgrade 4.2.x → later with a record: the record stays as it is.
+docker_root
+KEY="$ROOT/etc/apt/keyrings/docker.asc"
+mkdir -p "$(dirname "$SRC")" "$(dirname "$KEY")" "$STATE"
+echo 'Types: deb' > "$SRC"; echo KEY > "$KEY"
+printf 'kept /etc/apt/sources.list.d/docker.sources\nours /etc/apt/keyrings/docker.asc\n' > "$STATE/apt-source"
+rec="$(cat "$STATE/apt-source")"
+ht_hook install CREAM_PREV_VERSION=4.2.0; eq "обновление с записью: install — 0" 0 "$?"
+eq "обновление с записью: запись та же" "$rec" "$(cat "$STATE/apt-source")"
+ht_hook remove; eq "обновление с записью: remove — 0" 0 "$?"
+check "обновление с записью: чужой источник остался" test -f "$SRC"
+check_not "обновление с записью: свой ключ снят" test -e "$KEY"
+# A record line outside the two paths is ignored, never removed.
+docker_root
+mkdir -p "$STATE" "$ROOT/etc"
+echo keep > "$ROOT/etc/passwd-like"
+printf 'ours /etc/passwd-like\nours /etc/apt/sources.list.d/../../passwd-like\n' > "$STATE/apt-source"
+ht_hook remove; eq "чужой путь в записи: remove — 0" 0 "$?"
+check "чужой путь в записи не удалён" test -f "$ROOT/etc/passwd-like"
+
 ht_done

@@ -1,0 +1,6 @@
+# Consumers of lib/gdm-wayland.sh (gw_read, gw_set_false, gw_restore): <family>/<name> under
+# extensions/, one per line. tools/stage-catalog.sh and tools/catalog-snapshot.sh lay it into
+# their files/gdm-wayland.sh; a hook sources "${CREAM_EXT_DIR}/files/gdm-wayland.sh" — no
+# `depends`, nothing to install first. tools/check-shared-libs.sh and
+# tools/check-version-bump.sh read this list.
+debian/gdm-xorg
