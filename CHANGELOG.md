@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.26.0](https://github.com/iamletenkov/cream-extensions/compare/v5.25.1...v5.26.0) (2026-11-13)
+
+
+### Добавлено
+
+* **existing-desktop:** волна 5 — сборка в образе, приёмка P1–P7, unix:N ([#139](https://github.com/iamletenkov/cream-extensions/issues/139) п. 2) ([#140](https://github.com/iamletenkov/cream-extensions/issues/140)) ([adf34ed](https://github.com/iamletenkov/cream-extensions/commit/adf34edd0ee1520ea734759ed4faf3964a69d1fd))
+
 ## [5.25.1](https://github.com/iamletenkov/cream-extensions/compare/v5.25.0...v5.25.1) (2026-11-12)
 
 
