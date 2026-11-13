@@ -28,7 +28,12 @@
 #        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: code-server
-version: 5.3.0
+version: 5.4.0
+# 5.4.0: объявление для Teleport начинается строкой привязки
+#        «# stvor: source=extension:code-server» — источник для раздела apps инвентаря
+#        stvor-agent (план Stvor 2026-11-12, Task C1), в том же виде, что пишет агент;
+#        teleport её пропускает как комментарий (любая версия). Существующее объявление
+#        переписывается при следующем configure.
 # 5.3.0: remove takes the package away only when install put it on (record
 #        $CREAM_STATE_DIR/package), through library apt-guard (depends); a package
 #        there before cream stays. Installed by 5.2.x, no record — removed as before.

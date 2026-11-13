@@ -37,6 +37,8 @@
 #
 # Teleport declaration /etc/cream/teleport/apps.d/code-server.conf (the contract
 # of the teleport extension, files/teleport.sh: NAME, URI on the loopback, ICON;
+# first the binding line «# stvor: source=extension:code-server» — the source
+# for the apps section of the stvor-agent inventory, a comment to teleport;
 # root's, 0644): written only when the service may run and listens on the
 # loopback (or on all addresses); atomically through a temporary file in apps.d
 # and rename — never through a symlink, and not at all when /etc/cream,
@@ -246,7 +248,9 @@ decl_write(){
     local uri content tmp d
     uri="$(decl_uri)" || { decl_remove; return 0; }
     no_symlink_chain || return 0
-    content="$(printf 'NAME=code-server\nURI=%s\nICON=laptop' "$uri")"
+    # The source rides on the binding line, as the agent writes it: teleport
+    # skips a comment but drops a file with a key other than NAME, URI, ICON.
+    content="$(printf '# stvor: source=extension:code-server\nNAME=code-server\nURI=%s\nICON=laptop' "$uri")"
     if [[ -f "$DECL" && ! -L "$DECL" ]] && [[ "$(cat -- "$DECL")" == "$content" ]]; then
         return 0
     fi

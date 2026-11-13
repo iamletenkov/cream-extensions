@@ -172,10 +172,15 @@ RUN_COMMAND cream install --with-deps code-server CODE_SERVER_PORT=9002
 `read_decl`; H-тест прогоняет настоящий `teleport.sh render` по этому файлу):
 
 ```
+# stvor: source=extension:code-server
 NAME=code-server
 URI=https://127.0.0.1:9001     # порт — CODE_SERVER_PORT; ::1 — https://[::1]:…
 ICON=laptop
 ```
+
+Первая строка — привязка в том виде, что пишет stvor-agent: источник
+`extension:code-server` для раздела apps его инвентаря. Для `teleport` это
+комментарий — на публикацию не влияет.
 
 Объявление есть, только когда служба может работать (аутентификация есть) и
 слушает петлю (`127.0.0.1`, `localhost`, `0.0.0.0`, `::1`, `::`); пишется атомарно
