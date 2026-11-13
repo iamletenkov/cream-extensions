@@ -22,7 +22,11 @@
 # Mutually exclusive with gnome, xfce4, lxde, l4t-vendor-desktop by capability.
 schema: cream/v1
 name: existing-desktop
-version: 1.0.0
+version: 1.0.1
+# 1.0.1: its copy of lib/x-session.sh (plan ruling П27б): a GDM session without a
+#        lock file — :N from the listening sockets of the user's own Xorg; the
+#        SDDM authority /tmp/xauth_* (regular file of the session uid, 0600).
+#        Hooks and status behave as before (status uses only the seat0 part).
 summary: Готовый рабочий стол машины (не через cream) как x11-server, display-manager, desktop-session
 cream: ">=1.2.0"
 platform:

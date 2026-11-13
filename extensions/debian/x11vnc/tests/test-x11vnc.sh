@@ -130,7 +130,7 @@ mode_of() { stat -c %a "$1"; }
 echo "== манифест =="
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "версия 6.0.0 (X11VNC_USER, X11VNC_DISPLAY=auto)" 6.0.0 "$(mf 'm["version"]')"
+eq "версия 6.0.1 (сеанс GDM без lock-файла, authority SDDM — П27б)" 6.0.1 "$(mf 'm["version"]')"
 eq "X11VNC_USER: имя, пусто — cloud-user" "re:^[a-z_][a-z0-9_-]{0,31}\$||True" \
     "$(mf 'm["config"]["keys"]["X11VNC_USER"]["type"] + "|" + m["config"]["keys"]["X11VNC_USER"]["default"] + "|" + str(m["config"]["keys"]["X11VNC_USER"].get("empty"))')"
 eq "X11VNC_DISPLAY: auto или :N, умолчание auto" "re:^(auto|:[0-9]+(\\.[0-9]+)?)\$|auto" \
@@ -532,7 +532,7 @@ arg_after() { awk -v f="$1" 'p { print; exit } $0 == f { p = 1 }' "$FAKE/x11vnc.
 echo "== обёртка: X11VNC_DISPLAY — auto по logind, :N жёстко, без ключа — auto (Р4) =="
 wr_root; seat0 2 alice x11 :1
 run_wrapper; eq "ключ не задан — 0" 0 "$?"
-eq "ключ не задан: дисплей из logind — :1" :1 "$(arg_after -display)"
+eq "ключ не задан: дисплей из logind — :1" unix:1 "$(arg_after -display)"
 eq "authority — ~/.Xauthority alice" "$ROOT/home/alice/.Xauthority" "$(arg_after -auth)"
 check "путь назван в журнале (logind)" grep -q 'logind' "$ROOT/out"
 check "пароль — -rfbauth" grep -qx -- '-rfbauth' "$FAKE/x11vnc.args"
@@ -540,10 +540,10 @@ check "только петля" grep -qx -- '-localhost' "$FAKE/x11vnc.args"
 check_not "-loop нет: пропажу X ловит юнит (Restart=always), обёртка найдёт новый сеанс" grep -qx -- '-loop' "$FAKE/x11vnc.args"
 wr_root; seat0 2 alice x11 :1
 run_wrapper X11VNC_DISPLAY=auto
-eq "auto: дисплей :1" :1 "$(arg_after -display)"
+eq "auto: дисплей :1" unix:1 "$(arg_after -display)"
 wr_root; seat0 2 alice x11 :1
 run_wrapper X11VNC_DISPLAY=:0
-eq "сохранённое :0 не меняется" :0 "$(arg_after -display)"
+eq "сохранённое :0 не меняется" unix:0 "$(arg_after -display)"
 wr_root
 run_wrapper 'X11VNC_DISPLAY=:0;x'; eq "негодный X11VNC_DISPLAY — 78" 78 "$?"
 check_not "x11vnc не запущен" test -e "$FAKE/x11vnc.args"
@@ -555,7 +555,7 @@ ht_fake stat 'echo "1000 600"'
 ht_fake xhost 'echo "access control enabled, only authorized clients can connect"'
 x0srv
 run_wrapper; eq "запасной путь — 0" 0 "$?"
-eq "дисплей :0 (как 5.x)" :0 "$(arg_after -display)"
+eq "дисплей :0 (как 5.x)" unix:0 "$(arg_after -display)"
 check "путь назван: запасной" grep -q 'запасной путь' "$ROOT/out"
 
 echo "== обёртка: сессия на Wayland — 78, юнит не крутит перезапуски =="
@@ -608,6 +608,22 @@ check "x11vnc запущен, когда alice вошла" test -e "$FAKE/x11vnc
 eq "строка ожидания — на 0, 5 и 10 минуте" 3 "$(grep -c 'жду X-сессию' "$ROOT/out")"
 check "диагноз: на seat0 bob" grep -q 'на seat0 сеанс bob (x11)' "$ROOT/out"
 check "подсказка: X11VNC_USER=bob" grep -q 'X11VNC_USER=bob' "$ROOT/out"
+
+echo "== обёртка: дисплей есть, authority нет — журнал раз в 5 минут (П27б) =="
+# SDDM before the fix: logind gives :0, no authority opens it — the library
+# spoke on every try, a line every 5 s. One try in 5 minutes speaks now, and
+# the path is named once when the display is found.
+wr_root
+ht_fake xdpyinfo '[[ -e "$FAKE/x-up" ]]'
+ht_fake sleep 'n=$(( $(cat "$FAKE/sleeps" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/sleeps"
+(( n == 130 )) && : > "$FAKE/x-up"
+(( n < 2000 )) || kill -TERM "$PPID"
+exit 0'
+run_wrapper
+check "x11vnc запущен, когда authority открылась" test -e "$FAKE/x11vnc.args"
+eq "authority не открывает — на 0, 5 и 10 минуте" 3 "$(grep -c 'ни одна authority' "$ROOT/out")"
+eq "путь logind — на 0, 5, 10 минуте и раз при находке" 4 "$(grep -c 'logind Display' "$ROOT/out")"
+eq "строка ожидания — на 0, 5 и 10 минуте" 3 "$(grep -c 'жду X-сессию' "$ROOT/out")"
 
 echo "== remove: симуляция снимает чужой пакет — отказ =="
 fresh

@@ -128,10 +128,11 @@ user_sessions(){ local u="$1"; shift; printf 'UID=%s\nName=%s\nSessions=%s\nStat
 xorg(){ local pid="$1"; shift; mkdir -p "$ROOT/proc/$pid"; printf '%s\0' /usr/lib/xorg/Xorg "$@" > "$ROOT/proc/$pid/cmdline"; }
 
 # xs <function> <args>…: the function in a fresh `bash -euo pipefail` that sourced
-# the library; stdout to $OUT, stderr to $ERR, code to $RC.
+# the library; stdout to $OUT, stderr to $ERR, code to $RC. XS_QUIET of the
+# caller (XS_QUIET=1 xs …) goes through.
 xs(){
     local errf="$TMP/err"
-    OUT="$(env -i PATH="$ROOT/bin:/usr/bin:/bin" FAKE="$FAKE" CREAM_ROOT="$ROOT" \
+    OUT="$(env -i PATH="$ROOT/bin:/usr/bin:/bin" FAKE="$FAKE" CREAM_ROOT="$ROOT" ${XS_QUIET:+"XS_QUIET=$XS_QUIET"} \
         bash -euo pipefail -c '. "$1"; shift; "$@"' xs "$LIB" "$@" 2>"$errf")"
     RC=$?
     ERR="$(cat "$errf")"
@@ -274,27 +275,128 @@ xs xs_find_display alice
 eq "чужой pid и мусор — код 1" 1 "$RC"
 eq "чужой pid и мусор — пусто" "" "$OUT"
 
-echo "== без lock-файла дисплея нет: argv и сокет :N не доказывают =="
-# The lock binds N to the process: nobody but root or the user writes it,
-# while /proc/net/unix prints any name as it is — a forged line is a listener.
+echo "== без lock-файла: N — из собственных слушающих сокетов Xorg пользователя (П27б) =="
+# GDM starts Xorg with -displayfd and writes no /tmp/.X<N>-lock (measured on
+# Ubuntu 24.04, both the greeter and the user's Xorg). N comes from the
+# listening sockets among the fds of the user's own Xorg: an inode of
+# /proc/<pid>/fd against /proc/net/unix. Exactly one N; a second N or an inode
+# on two lines (a forged line) — refused; then _xs_x_held and _xs_confirm.
 new_root
+user_sessions alice c2
+session c2 seat0 user x11 "" active no
 echo 4242 > "$FAKE/pgrep.u$ME"
 xorg 4242 vt2 -displayfd 3 -auth "/run/user/$ME/gdm/Xauthority"
-xsock 4242 50003 @/tmp/.X11-unix/X1
 xsock 4242 50002 /tmp/.X11-unix/X1
+xsock 4242 50003 @/tmp/.X11-unix/X1
 gdm_auth :1
 xs xs_find_display alice
-eq "сокеты без lock — код 1" 1 "$RC"
-eq "сокеты без lock — cookie не отдана" "" "$(xshown :1)"
+eq "GDM без lock — код 0" 0 "$RC"
+eq "GDM без lock — :1 по сокетам Xorg" ":1" "$OUT"
+has "путь назван — сокеты" "сокеты" "$ERR"
+has "путь назван — pid" "4242" "$ERR"
+# argv names :1, no lock — the sockets decide, and they agree.
 new_root
 echo 4242 > "$FAKE/pgrep.u$ME"
 xorg 4242 :1 vt2
-xsock 4242 50003 @/tmp/.X11-unix/X1
 xsock 4242 50002 /tmp/.X11-unix/X1
+xsock 4242 50003 @/tmp/.X11-unix/X1
 gdm_auth :1
 xs xs_find_display alice
-eq "argv :1 без lock — код 1" 1 "$RC"
-eq "argv :1 без lock — cookie не отдана" "" "$(xshown :1)"
+eq "argv :1 без lock, сокеты X1 — :1" ":1" "$OUT"
+# argv names :2, the sockets of the Xorg are X1 — argv is not proof.
+new_root
+echo 4242 > "$FAKE/pgrep.u$ME"
+xorg 4242 :2 vt2
+xsock 4242 50002 /tmp/.X11-unix/X1
+xsock 4242 50003 @/tmp/.X11-unix/X1
+gdm_auth :1; gdm_auth :2
+xs xs_find_display alice
+eq "argv :2, сокеты X1 — :1" ":1" "$OUT"
+eq "argv :2, сокеты X1 — :2 не проверялся" "" "$(xshown :2)"
+# Two N among the Xorg's own sockets — which one is the session is unknown.
+new_root
+echo 4242 > "$FAKE/pgrep.u$ME"
+xorg 4242 vt2 -displayfd 3
+xsock 4242 50002 /tmp/.X11-unix/X1
+xsock 4242 50003 @/tmp/.X11-unix/X1
+xsock 4242 50004 /tmp/.X11-unix/X2
+xsock 4242 50005 @/tmp/.X11-unix/X2
+gdm_auth :1; gdm_auth :2
+xs xs_find_display alice
+eq "второй N у Xorg — код 1" 1 "$RC"
+eq "второй N у Xorg — :1 не проверялся" "" "$(xshown :1)"
+eq "второй N у Xorg — :2 не проверялся" "" "$(xshown :2)"
+xs _xs_xorg_display 4242 "$ME"
+eq "второй N — дисплея нет" 1 "$RC"
+# A forged line: an abstract name with a newline repeats the inode of the
+# Xorg's listener under X7 — the inode is on two lines.
+new_root
+echo 4242 > "$FAKE/pgrep.u$ME"
+xorg 4242 vt2 -displayfd 3
+xsock 4242 50002 /tmp/.X11-unix/X1
+xsock 4242 50003 @/tmp/.X11-unix/X1
+printf '0000000000000000: 00000002 00000000 00010000 0001 01 777001 @zz\n' >> "$ROOT/proc/net/unix"
+printf '0: 0 0 00010000 0 01 50002 /tmp/.X11-unix/X7\n' >> "$ROOT/proc/net/unix"
+gdm_auth :1; gdm_auth :7
+xs xs_find_display alice
+eq "дубль inode — код 1" 1 "$RC"
+eq "дубль inode — :7 не проверялся" "" "$(xshown :7)"
+eq "дубль inode — :1 не проверялся" "" "$(xshown :1)"
+# A forged line with the inode of a socket the Xorg holds that is not in
+# /proc/net/unix (netlink, udev): once on the list, but a second N — refused.
+new_root
+echo 4242 > "$FAKE/pgrep.u$ME"
+xorg 4242 vt2 -displayfd 3
+xsock 4242 50002 /tmp/.X11-unix/X1
+xsock 4242 50003 @/tmp/.X11-unix/X1
+ln -s "socket:[60009]" "$ROOT/proc/4242/fd/40"
+printf '0: 0 0 00010000 0 01 60009 @/tmp/.X11-unix/X7\n' >> "$ROOT/proc/net/unix"
+gdm_auth :1; gdm_auth :7
+xs xs_find_display alice
+eq "подделка с inode не-unix сокета Xorg — код 1" 1 "$RC"
+eq "подделка с inode не-unix сокета Xorg — :7 не проверялся" "" "$(xshown :7)"
+# The Xorg holds the file socket of X1, another process the abstract name.
+new_root
+echo 4242 > "$FAKE/pgrep.u$ME"
+xorg 4242 vt2 -displayfd 3
+xsock 4242 50002 /tmp/.X11-unix/X1
+xsock 4444 50003 @/tmp/.X11-unix/X1
+gdm_auth :1
+xs xs_find_display alice
+eq "без lock: абстрактное имя X1 чужое — код 1" 1 "$RC"
+eq "без lock: абстрактное имя X1 чужое — cookie не отдана" "" "$(xshown :1)"
+# Only bob's Xorg serves X1: alice's search does not look at it.
+new_root
+echo 5151 > "$FAKE/pgrep.u$BOB"
+xorg 5151 vt3 -displayfd 3
+xsock 5151 50002 /tmp/.X11-unix/X1
+xsock 5151 50003 @/tmp/.X11-unix/X1
+gdm_auth :1
+xs xs_find_display alice
+eq "Xorg чужого uid — код 1" 1 "$RC"
+eq "Xorg чужого uid — cookie не отдана" "" "$(xshown :1)"
+# The fds of the Xorg are not readable — nothing to take N from.
+new_root
+echo 4242 > "$FAKE/pgrep.u$ME"
+xorg 4242 vt2 -displayfd 3
+xsock 4242 50002 /tmp/.X11-unix/X1
+xsock 4242 50003 @/tmp/.X11-unix/X1
+gdm_auth :1
+rm -r -f "$ROOT/proc/4242/fd"
+xs xs_find_display alice
+eq "fd Xorg не читаются, lock нет — код 1" 1 "$RC"
+# A lock that holds the pid still decides: lock :2, sockets X1 — :2 is taken
+# and refused by _xs_x_held (its listeners are not the Xorg's).
+new_root
+echo 4242 > "$FAKE/pgrep.u$ME"
+xorg 4242 vt2 -displayfd 3
+xlock 2 "      4242"$'\n'
+xsock 4242 50002 /tmp/.X11-unix/X1
+xsock 4242 50003 @/tmp/.X11-unix/X1
+gdm_auth :1; gdm_auth :2
+xs xs_find_display alice
+eq "lock :2 есть — сокеты X1 не решают" 1 "$RC"
+eq "lock :2 есть — :1 не проверялся" "" "$(xshown :1)"
 # argv names :1, the lock of the process is .X2: the lock decides.
 new_root
 echo 4242 > "$FAKE/pgrep.u$ME"
@@ -468,6 +570,89 @@ mkdir -p "$ROOT/run/user/$ME"; : > "$ROOT/run/user/$ME/xauth_AbC123"
 echo "$ROOT/run/user/$ME/xauth_AbC123" > "$FAKE/x.:1"
 xs xs_find_display alice
 eq "xauth_* в runtime-dir — :1" ":1" "$OUT"
+
+echo "== SDDM: authority сеанса — /tmp/xauth_* пользователя (П27б) =="
+# SDDM 0.20 (Kubuntu 24.04) starts a root Xorg with -auth /var/run/sddm/…
+# (not readable by the user) and gives the session XAUTHORITY=/tmp/xauth_XXXXXX,
+# 0600, owned by the user. /tmp is everyone's: the file counts only when it is
+# a regular file (not a link) of the session's uid, readable by nobody else,
+# and it opens the display over unix:N.
+# sddm_auth <name> <display>: alice's /tmp/xauth_<name>, 0600; it opens <display>.
+sddm_auth(){ mkdir -p "$ROOT/tmp"; : > "$ROOT/tmp/xauth_$1"; chmod 600 "$ROOT/tmp/xauth_$1"; echo "$ROOT/tmp/xauth_$1" > "$FAKE/x.$2"; }
+new_root
+echo 900 > "$FAKE/pgrep.all"
+xorg 900 :0 -seat seat0 -auth /var/run/sddm/abc -nolisten tcp -displayfd 16
+sddm_auth AbC123 :0
+xs xs_find_authority alice :0
+eq "SDDM /tmp/xauth_* — код 0" 0 "$RC"
+eq "SDDM /tmp/xauth_*" "$ROOT/tmp/xauth_AbC123" "$OUT"
+has "SDDM: проверено по unix:0" "$ROOT/tmp/xauth_AbC123 -display unix:0" "$(cat "$FAKE/xdpyinfo.log")"
+for c in symlink foreign 644 640 604 dir noopen; do
+    new_root
+    sddm_auth AbC123 :0
+    case "$c" in
+        symlink)
+            mkdir -p "$ROOT/elsewhere"; mv "$ROOT/tmp/xauth_AbC123" "$ROOT/elsewhere/a"
+            ln -s "$ROOT/elsewhere/a" "$ROOT/tmp/xauth_AbC123" ;;
+        foreign) owner /tmp/xauth_AbC123 "$BOB" ;;
+        644|640|604) chmod "$c" "$ROOT/tmp/xauth_AbC123" ;;
+        dir) rm -f "$ROOT/tmp/xauth_AbC123"; mkdir "$ROOT/tmp/xauth_AbC123" ;;
+        noopen) rm -f "$FAKE/x.:0" ;;
+    esac
+    xs xs_find_authority alice :0
+    eq "/tmp/xauth_* ($c) — код 1" 1 "$RC"
+    eq "/tmp/xauth_* ($c) — не отдан" "" "$OUT"
+    if [[ "$c" != noopen ]]; then
+        eq "/tmp/xauth_* ($c) — xdpyinfo с ним не звался" "" "$(grep -F "xauth_AbC123 " "$FAKE/xdpyinfo.log" 2>/dev/null)"
+    fi
+done
+# Root owns it — not the session's uid either.
+new_root
+sddm_auth AbC123 :0
+owner /tmp/xauth_AbC123 0
+xs xs_find_authority alice :0
+eq "/tmp/xauth_* root — код 1" 1 "$RC"
+# Confirmation of a display found without logind takes it the same way.
+new_root
+echo 4242 > "$FAKE/pgrep.u$ME"
+xorg 4242 vt2 -displayfd 3
+xsock 4242 50002 /tmp/.X11-unix/X1
+xsock 4242 50003 @/tmp/.X11-unix/X1
+sddm_auth Zz9 :1
+xs xs_find_display alice
+eq "подтверждение по /tmp/xauth_* — :1" ":1" "$OUT"
+new_root
+echo 4242 > "$FAKE/pgrep.u$ME"
+xorg 4242 vt2 -displayfd 3
+xsock 4242 50002 /tmp/.X11-unix/X1
+xsock 4242 50003 @/tmp/.X11-unix/X1
+sddm_auth Zz9 :1; chmod 644 "$ROOT/tmp/xauth_Zz9"
+xs xs_find_display alice
+eq "подтверждение по /tmp/xauth_* 644 — код 1" 1 "$RC"
+new_root
+echo 4242 > "$FAKE/pgrep.u$ME"
+xorg 4242 vt2 -displayfd 3
+xsock 4242 50002 /tmp/.X11-unix/X1
+xsock 4242 50003 @/tmp/.X11-unix/X1
+sddm_auth Zz9 :1; owner /tmp/xauth_Zz9 "$BOB"
+xs xs_find_display alice
+eq "подтверждение по /tmp/xauth_* чужого uid — код 1" 1 "$RC"
+
+echo "== журнал: XS_QUIET молчит, неудача authority названа =="
+new_root
+user_sessions alice 3
+session 3 seat0 user x11 :0 active no
+XS_QUIET=1 xs xs_find_display alice
+eq "XS_QUIET — дисплей тот же" ":0" "$OUT"
+eq "XS_QUIET — в журнале пусто" "" "$ERR"
+xs xs_find_display alice
+has "без XS_QUIET — путь назван" "logind Display" "$ERR"
+xs xs_find_authority alice :0
+eq "authority нет — код 1" 1 "$RC"
+has "authority нет — сказано" "authority" "$ERR"
+has "authority нет — дисплей назван" ":0" "$ERR"
+XS_QUIET=1 xs xs_find_authority alice :0
+eq "XS_QUIET: authority нет — молча" "" "$ERR"
 
 echo "== Xorg без :N, lock-файла и сокета — запасной путь :0 =="
 new_root

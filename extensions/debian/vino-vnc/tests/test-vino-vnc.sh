@@ -81,7 +81,8 @@ leaked() {
 echo "== манифест =="
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "версия 5.1.1 (every_boot)" 5.1.1 "$(mf 'm["version"]')"
+eq "версия 5.1.2 (ночь на ubuntu-24.04, П10)" 5.1.2 "$(mf 'm["version"]')"
+eq "ночь: ubuntu-24.04 (П10)" 'LIVE_NIGHTLY_DISTROS="ubuntu-24.04"' "$(grep '^LIVE_NIGHTLY_DISTROS=' "$EXT/tests/live.env")"
 eq "cream >=1.2.0 (every_boot, спека cream §10.9)" ">=1.2.0" "$(mf 'm["cream"]')"
 eq "configure на каждой загрузке (аудит 2026-10-21)" True "$(mf 'm["hooks"]["configure"].get("every_boot")')"
 eq "live: yes" yes "$(mf 'm["targets"]["live"]')"

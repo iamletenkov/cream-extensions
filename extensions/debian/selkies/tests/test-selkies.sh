@@ -127,7 +127,7 @@ x0srv() {
 echo "== манифест и раскладка =="
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
 eq "name" selkies "$(mf 'm["name"]')"
-eq "версия 7.0.0 (SELKIES_USER, SELKIES_DISPLAY=auto, проверка машины)" 7.0.0 "$(mf 'm["version"]')"
+eq "версия 7.0.1 (сеанс GDM без lock-файла, authority SDDM — П27б)" 7.0.1 "$(mf 'm["version"]')"
 eq "SELKIES_USER: имя, пусто — cloud-user" "re:^[a-z_][a-z0-9_-]{0,31}\$||True" \
     "$(mf '(lambda k: k["type"] + "|" + k["default"] + "|" + str(k.get("empty")))(m["config"]["keys"]["SELKIES_USER"])')"
 eq "SELKIES_DISPLAY: auto или :N, умолчание auto" "re:^(auto|:[0-9]+(\.[0-9]+)?)\$|auto|True" \
@@ -905,18 +905,18 @@ check_not "SELKIES_USER нет в окружении Selkies" grep -q '^SELKIES_
 echo "== run-selkies.sh: SELKIES_DISPLAY — auto по logind, :N жёстко, без ключа — auto (Р4) =="
 wr_root; seat0 2 alice x11 :1
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"
-check "ключ не задан: дисплей из logind — :1" grep -qx 'DISPLAY=:1' "$FAKE/selkies.env"
+check "ключ не задан: дисплей из logind — :1" grep -qx 'DISPLAY=unix:1' "$FAKE/selkies.env"
 check "Selkies получает найденный дисплей, не auto" grep -qx 'SELKIES_DISPLAY=:1' "$FAKE/selkies.env"
 check "путь назван в журнале (logind)" grep -q 'logind' "$ROOT/out"
 wr_root; seat0 2 alice x11 :1
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_DISPLAY=auto
-check "auto: дисплей :1" grep -qx 'DISPLAY=:1' "$FAKE/selkies.env"
+check "auto: дисплей :1" grep -qx 'DISPLAY=unix:1' "$FAKE/selkies.env"
 wr_root; seat0 2 alice x11 :1
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_DISPLAY=
-check "пусто — как auto: :1" grep -qx 'DISPLAY=:1' "$FAKE/selkies.env"
+check "пусто — как auto: :1" grep -qx 'DISPLAY=unix:1' "$FAKE/selkies.env"
 wr_root; seat0 2 alice x11 :1
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_DISPLAY=:0
-check "сохранённое :0 не меняется" grep -qx 'DISPLAY=:0' "$FAKE/selkies.env"
+check "сохранённое :0 не меняется" grep -qx 'DISPLAY=unix:0' "$FAKE/selkies.env"
 wr_root
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" 'SELKIES_DISPLAY=:0;x'; eq "негодный SELKIES_DISPLAY — 78" 78 "$?"
 check_not "selkies не запущен" test -e "$FAKE/selkies.env"
@@ -929,7 +929,7 @@ ht_fake xhost 'echo "access control enabled, only authorized clients can connect
 x0srv
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"
 check "selkies запущен" test -e "$FAKE/selkies.env"
-check "дисплей :0 (как 6.x)" grep -qx 'DISPLAY=:0' "$FAKE/selkies.env"
+check "дисплей :0 (как 6.x)" grep -qx 'DISPLAY=unix:0' "$FAKE/selkies.env"
 check "путь назван: запасной" grep -q 'запасной путь' "$ROOT/out"
 
 echo "== run-selkies.sh: ожидание сеанса — диагноз раз в 5 минут =="
@@ -949,6 +949,22 @@ check "selkies запущен, когда alice вошла" test -e "$FAKE/selki
 eq "строка ожидания — на 0, 5 и 10 минуте" 3 "$(grep -c 'жду X-сессию' "$ROOT/out")"
 check "диагноз: на seat0 bob" grep -q 'на seat0 сеанс bob (x11)' "$ROOT/out"
 check "подсказка: SELKIES_USER=bob" grep -q 'SELKIES_USER=bob' "$ROOT/out"
+
+echo "== run-selkies.sh: дисплей есть, authority нет — журнал раз в 5 минут (П27б) =="
+# SDDM before the fix: logind gives :0, no authority opens it — the library
+# spoke on every try, a line every 5 s. One try in 5 minutes speaks now, and
+# the path is named once when the display is found.
+wr_root
+ht_fake xdpyinfo '[[ -e "$FAKE/x-up" ]]'
+ht_fake sleep 'n=$(( $(cat "$FAKE/sleeps" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/sleeps"
+(( n == 130 )) && : > "$FAKE/x-up"
+(( n < 2000 )) || kill -TERM "$PPID"
+exit 0'
+run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"
+check "selkies запущен, когда authority открылась" test -e "$FAKE/selkies.env"
+eq "authority не открывает — на 0, 5 и 10 минуте" 3 "$(grep -c 'ни одна authority' "$ROOT/out")"
+eq "путь logind — на 0, 5, 10 минуте и раз при находке" 4 "$(grep -c 'logind Display' "$ROOT/out")"
+eq "строка ожидания — на 0, 5 и 10 минуте" 3 "$(grep -c 'жду X-сессию' "$ROOT/out")"
 
 echo "== run-selkies.sh: xdpyinfo — только unix:N, без отката на TCP 6000+N =="
 # With no unix listener libxcb goes to 127.0.0.1:6000+N, where anyone may

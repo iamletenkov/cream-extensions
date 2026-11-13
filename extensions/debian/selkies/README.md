@@ -32,10 +32,13 @@ X-сессия, которая на мониторе, — в браузере, �
 входа). Дисплей — `SELKIES_DISPLAY=auto` (умолчание): X11-сеанс пользователя на
 seat0 по logind, иначе его Xorg, иначе `:0`. Найденный без logind дисплей `:N` —
 только X-сервера, который доказан: доверенный lock-файл `/tmp/.X<N>-lock` хранит pid
-Xorg, оба слушателя `X<N>` (файл и абстрактный — xcb идёт к нему первым) — fd этого
-Xorg, у `:0` ещё процесс и сокет — root или пользователя; fd Xorg root обёртке не
-видны — такой дисплей только через logind (см. «Известные ограничения»). Дисплей ещё подтверждает собственная
-authority пользователя — по `unix:N`, без отката на TCP ([`lib/x-session.sh`](../../../lib/x-session.sh)); `:N` — жёстко. Стол,
+Xorg, а без lock-файла (GDM его не пишет) `N` — единственный среди собственных слушающих
+сокетов Xorg пользователя; оба слушателя `X<N>` (файл и абстрактный — xcb идёт к нему
+первым) — fd этого Xorg, у `:0` ещё процесс и сокет — root или пользователя; fd Xorg root
+обёртке не видны — такой дисплей только через logind (см. «Известные ограничения»).
+Дисплей ещё подтверждает собственная authority пользователя (у SDDM — `/tmp/xauth_*`,
+только его uid и права `0600`) — по `unix:N`, без отката на TCP ([`lib/x-session.sh`](../../../lib/x-session.sh)); Selkies получает
+`DISPLAY=unix:N` ([#139](https://github.com/iamletenkov/cream-extensions/issues/139), п. 2). `:N` — жёстко. Стол,
 поставленный не через cream (готовая Ubuntu, GDM/LightDM/SDDM), —
 [`existing-desktop`](../existing-desktop/README.md); сеанс на Wayland не
 транслируется — [`gdm-xorg`](../gdm-xorg/README.md).
@@ -265,7 +268,7 @@ sudo cream set selkies SELKIES_USER=<кто входит на экран>  # е�
   Xorg обёртке, работающей от пользователя, не видны, дисплей не доказать. Обход —
   сознательно `sudo cream set selkies SELKIES_DISPLAY=:N`.
 - **Жёсткий `SELKIES_DISPLAY=:N` и `Display` из logind — без привязки к Xorg** (как в
-  5.x; authority проверяется по `unix:N`): на `:N` без X-сервера wild-cookie GDM получит тот, кто
+  5.x; authority и подключение — по `unix:N`): на `:N` без X-сервера wild-cookie GDM получит тот, кто
   займёт `@/tmp/.X11-unix/X<N>`. Жёсткий `:N` — только там, где на нём гарантированно
   X-сервер пользователя. Оба пункта —
   [#139](https://github.com/iamletenkov/cream-extensions/issues/139),

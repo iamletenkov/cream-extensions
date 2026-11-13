@@ -237,10 +237,15 @@ seat0_note(){
 }
 
 # find_session: sets DISPLAY_NUM and AUTH; 1 — not (yet); exits 78 on Wayland.
+# The library journals its path and why an authority is missing; a try every
+# 5 s would put a line there every 5 s, so one try in 5 minutes speaks and the
+# rest are XS_QUIET (ruling П27б). QUIET_TRY — the last try was silent.
 find_session(){
     local s rc=0
+    QUIET_TRY=1
+    if (( waited % 300 == 0 )); then QUIET_TRY=""; fi
     if [[ "$WANT_DISPLAY" == auto ]]; then
-        DISPLAY_NUM="$(xs_find_display "$USERNAME")" || rc=$?
+        DISPLAY_NUM="$(XS_QUIET="$QUIET_TRY" xs_find_display "$USERNAME")" || rc=$?
         (( rc != 2 )) || wayland_exit
         (( rc == 0 )) || return 1
     else
@@ -249,10 +254,10 @@ find_session(){
         fi
         DISPLAY_NUM="$WANT_DISPLAY"
     fi
-    AUTH="$(xs_find_authority "$USERNAME" "$DISPLAY_NUM")"
+    AUTH="$(XS_QUIET="$QUIET_TRY" xs_find_authority "$USERNAME" "$DISPLAY_NUM")"
 }
 
-DISPLAY_NUM=""; AUTH=""; waited=0
+DISPLAY_NUM=""; AUTH=""; waited=0; QUIET_TRY=""
 until find_session; do
     if (( waited % 300 == 0 )); then
         log_info "жду X-сессию '$USERNAME' (дисплей $WANT_DISPLAY; без DESKTOP_AUTOLOGIN=1 она появится после входа человека)"
@@ -260,10 +265,19 @@ until find_session; do
     fi
     sleep 5; waited=$((waited + 5))
 done
+# Found on a silent try: the path the library took goes to the journal once.
+if [[ -n "$QUIET_TRY" && "$WANT_DISPLAY" == auto ]]; then
+    xs_find_display "$USERNAME" > /dev/null || true
+fi
 log_info "дисплей $DISPLAY_NUM, authority $AUTH"
 
 # Selkies gets the display found, never "auto".
-export DISPLAY="$DISPLAY_NUM" XAUTHORITY="$AUTH" SELKIES_DISPLAY="$DISPLAY_NUM"
+# DISPLAY is unix:N, not :N: Xlib clients with ":N" fall back to TCP 6000+N
+# when the unix socket is missing, and someone else's listener there would get
+# our cookie (issue #139 item 2, defence in depth). Selkies 2.0.0 parses
+# "unix:N" (x_display_socket) and its python-xlib uses only the unix socket
+# for host "unix". SELKIES_DISPLAY stays ":N" — Selkies does not read it.
+export DISPLAY="unix$DISPLAY_NUM" XAUTHORITY="$AUTH" SELKIES_DISPLAY="$DISPLAY_NUM"
 export HOME="$HOME_OF_USER" USER="$USERNAME"
 export XDG_RUNTIME_DIR="/run/user/${UID_OF_USER}"
 export PULSE_RUNTIME_PATH="$XDG_RUNTIME_DIR/pulse"
