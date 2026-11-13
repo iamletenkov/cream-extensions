@@ -3,7 +3,7 @@
 # catalog (spec cream 2026-10-20-openwrt §4.2, rulings Р3, Р11): the knobs, the
 # render of /etc/teleport.yaml, join with its retry and refusal, labels, apps.d,
 # command labels, bound_keypair, the managed labels of stvor-agent (set-managed,
-# managed-status — contract schema 1), apps-status (the result of apps.d, schema 1),
+# managed-status — contract schema 1), the node name (set-nodename), apps-status (the result of apps.d, schema 1),
 # status and the dispatch of the actions.
 #
 # ONE COPY IN GIT: lib/teleport-core.sh. tools/catalog-snapshot.sh (the release
@@ -1501,6 +1501,148 @@ cmd_set_managed(){
     return 0
 }
 
+# ---------------------------------------------------------------------------
+# Имя ноды: set-nodename (переименование робота в Stvor, план 2026-11-12 Task C2)
+# ---------------------------------------------------------------------------
+# A node name the action takes: a host label of RFC 1123 (letters, digits and
+# inner hyphens, at most 63) that is also of the type of TELEPORT_NODENAME (at
+# least 2 — the knob and RE_NODENAME). Stricter than the knob: no hyphen at the
+# end either.
+RE_NODENAME_RFC1123='^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
+
+# The object of schema 1: nodename — the name in effect after the action (the
+# knob of C or the hostname), requested — the argument. Both are printed only
+# after the check (their alphabet needs no escaping).
+NN_REQUESTED=""
+emit_nodename(){ # emit_nodename <result>
+    local reg=false act=false
+    joined && reg=true
+    agent_active && act=true
+    printf '{"schema":1,"nodename":"%s","requested":"%s","joined":%s,"active":%s,"result":"%s"}\n' \
+        "$(app_node)" "$NN_REQUESTED" "$reg" "$act" "$1"
+}
+# A failure: an object without the state (it may be what failed).
+nodename_die_json(){ printf '{"schema":1,"error":%s}\n' "$(json_str "$1")"; }
+# nodename_input <reason> <message> [app…] — a refused input: the object with
+# the reason (invalid_name | apps_too_long) and the apps (checked names), code
+# 2, nothing touched.
+nodename_input(){
+    local reason="$1" msg="$2" a list=""
+    shift 2
+    for a in "$@"; do list+="${list:+,}\"$a\""; done
+    log "ОШИБКА: set-nodename: $msg"
+    printf '{"schema":1,"error":%s,"reason":"%s","apps":[%s]}\n' "$(json_str "$msg")" "$reason" "$list"
+    exit 2
+}
+
+# apps_lost <current> <new> — the apps published under the current node name
+# (apps_resolve, then app_line_ok as render takes them) whose address
+# <app>-<new> would be longer than a DNS label: one name per line. An app that
+# does not fit the current name is not published now — the rename loses
+# nothing of it and is not refused for it.
+apps_lost(){
+    local cur="$1" new="$2" line rest name
+    while IFS= read -r line; do
+        [[ "$line" == app$'\t'* ]] || continue
+        rest="${line#app$'\t'}"
+        app_line_ok "$rest" "$cur" 2>/dev/null || continue
+        name="${rest%%$'\t'*}"
+        if (( ${#name} + 1 + ${#new} > APP_LABEL_MAX )); then printf '%s\n' "$name"; fi
+    done < <(apps_resolve 2>/dev/null)
+    return 0
+}
+
+# set-nodename <name> — TELEPORT_NODENAME = name; the apps are renamed with the
+# node (<app>-<name>). The name is checked before anything is read: exactly one
+# argument, RFC 1123 and the type of the knob. Every app published now must fit
+# a DNS label under the new name, otherwise nothing is written. The agent is
+# restarted only when the name in effect changes; an unconfirmed restart rolls
+# the knob and teleport.yaml back to the previous name and restarts again.
+# Exit 0 — applied | unchanged | deferred, 1 — rolled_back (the previous name
+# runs again) | unconfirmed (the previous name is written, its restart is not
+# confirmed either), 2 — refused input, 3 — another failure; one JSON object in
+# stdout on each of them. cream holds lock/teleport; the knob is written by the
+# nested `cream set --no-apply` (no apply hook: its HUP is not the restart).
+cmd_set_nodename(){
+    DIE_JSON=nodename_die_json; DIE_CODE=3
+    need_root
+    local new prev_knob cur cand lost a msg=""
+    local -a apps=()
+    # The argument is not echoed until it is checked: it is external input.
+    (( $# == 1 )) || nodename_input invalid_name "нужно ровно одно имя ноды"
+    new="$1"
+    if [[ "$new" == *[[:cntrl:]]* || ! "$new" =~ $RE_NODENAME_RFC1123 || ! "$new" =~ $RE_NODENAME ]]; then
+        nodename_input invalid_name "имя ноды не метка DNS по RFC 1123: ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\$, от 2 знаков"
+    fi
+    NN_REQUESTED="$new"
+
+    load_conf
+    conf_check || die "в $CONF неверные значения — cream show $TELEPORT_EXT"
+    prev_knob="${C[TELEPORT_NODENAME]}"
+    cur="$(app_node)"
+    lost="$(apps_lost "$cur" "$new")"
+    if [[ -n "$lost" ]]; then
+        mapfile -t apps <<< "$lost"
+        for a in "${apps[@]}"; do msg+="${msg:+ }$a-$new"; done
+        log "адреса длиннее $APP_LABEL_MAX знаков: $msg"
+        nodename_input apps_too_long "приложения не влезут в метку DNS ($APP_LABEL_MAX знаков) под новым именем ноды" "${apps[@]}"
+    fi
+
+    # The name in effect stays (the knob may change: the hostname was the name).
+    if [[ "$new" == "$cur" ]]; then
+        if [[ "$prev_knob" == "$new" ]]; then
+            log "имя ноды уже $new — ничего не меняется"
+            emit_nodename unchanged
+            return 0
+        fi
+        save_conf "TELEPORT_NODENAME=$new"
+        C[TELEPORT_NODENAME]="$new"
+        log "имя ноды $new записано в TELEPORT_NODENAME — оно уже действует, перезапуск не нужен"
+        emit_nodename applied
+        return 0
+    fi
+
+    # Not registered (or no init running — an image): the knob only; join renders it.
+    if ! init_running || ! joined || [[ -z "${C[TELEPORT_PROXY]}" ]]; then
+        save_conf "TELEPORT_NODENAME=$new"
+        C[TELEPORT_NODENAME]="$new"
+        log "имя ноды $new записано — применится при регистрации или старте агента"
+        emit_nodename deferred
+        return 0
+    fi
+
+    # The candidate first: a render that refuses leaves the knob as it was.
+    C[TELEPORT_NODENAME]="$new"
+    cand="$(dirname "$YAML")/.teleport.yaml.candidate"
+    render_file "$cand"
+    if ! cream set --no-apply --allow-readonly "$TELEPORT_EXT" "TELEPORT_NODENAME=$new" >&2; then
+        rm -f -- "$cand"
+        C[TELEPORT_NODENAME]="$prev_knob"
+        die "не записано в домен $TELEPORT_EXT (cream set)"
+    fi
+    mv -f -- "$cand" "$YAML"
+    log "перезапуск агента: имя ноды ${cur:-?} → $new"
+    if restart_agent; then
+        log "агент перезапущен: нода и приложения — под именем $new"
+        emit_nodename applied
+        return 0
+    fi
+
+    # Rollback: the previous knob and teleport.yaml, and a restart with them.
+    log "ОШИБКА: агент не подтвердил перезапуск за ${RESTART_TIMEOUT} с под именем $new — возвращаю прежнее; $AGENT_LOG_HINT"
+    C[TELEPORT_NODENAME]="$prev_knob"
+    save_conf "TELEPORT_NODENAME=$prev_knob"
+    render_file "$YAML"
+    if restart_agent; then
+        log "возвращено прежнее имя ${cur:-?}: агент перезапущен с ним"
+        emit_nodename rolled_back
+    else
+        log "ОШИБКА: возвращено прежнее имя ${cur:-?}, но и этот перезапуск не подтверждён — $AGENT_LOG_HINT"
+        emit_nodename unconfirmed
+    fi
+    return 1
+}
+
 # managed-status — reads only (lock: none): the knob, the marker, the
 # registration and the unit. A knob out of type is an error (code 3), not a
 # state: the agent must not act on it.
@@ -2044,6 +2186,7 @@ case "${1:-}" in
     leave) cmd_leave ;;
     status) cmd_status ;;
     set-managed) shift; cmd_set_managed "$@" ;;
+    set-nodename) shift; cmd_set_nodename "$@" ;;
     managed-status) cmd_managed_status ;;
     apps-status) cmd_apps_status ;;
     render) cmd_render ;;
@@ -2058,6 +2201,6 @@ case "${1:-}" in
     hook-upgrade) hook_install upgrade ;;
     hook-remove) hook_remove ;;
     hook-apply) cmd_apply ;;
-    *) die "неизвестная команда '${1:-}' (join|join-retry|leave|status|set-managed|managed-status|apps-status|render|reload-apps|hup|scrub-token|hook-*)" ;;
+    *) die "неизвестная команда '${1:-}' (join|join-retry|leave|status|set-managed|set-nodename|managed-status|apps-status|render|reload-apps|hup|scrub-token|hook-*)" ;;
 esac
 }

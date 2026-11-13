@@ -18,7 +18,8 @@
 # configure нет: на загрузке узел поднимает procd (START=95), не cream (А1–А6 не про него).
 schema: cream/v1
 name: teleport-openwrt
-version: 1.5.6
+version: 1.6.0
+# 1.6.0: действие set-nodename — то же, что у debian/teleport 4.7.0 (общее ядро).
 # 1.5.6: прокси раздачи портала и токен доступа — в конфиге curl на stdin (-K -), не
 #        --proxy в argv; curl с -q первым (как teleport 4.6.6).
 # 1.5.5: токен доступа агента к раздаче портала — на stdin curl (-H @-), не файлом
@@ -166,6 +167,15 @@ actions:
     args: free
     lock: exclusive
     # ожидание блокировки у вызывающего + restart с подтверждением <= 30 с
+    timeout: 3m
+    output: json
+    phases: [live]
+  set-nodename:
+    summary: "имя ноды (RFC 1123); приложения <app>-<имя> должны влезать в 63; restart с подтверждением, откат при сбое; JSON схемы 1"
+    args: free
+    lock: exclusive
+    # ожидание блокировки у вызывающего + restart с подтверждением <= 30 с + откат с
+    # ещё одним restart <= 30 с
     timeout: 3m
     output: json
     phases: [live]

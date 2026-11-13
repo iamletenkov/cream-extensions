@@ -19,7 +19,7 @@ systemd и набор Teleport с glibc рядом (вариант A
 | Конфликтует с | способность `teleport-node` |
 | Хуки | `install`, `upgrade`, `remove`, `apply` |
 | Настройка на загрузке | — |
-| Действия | `cream run teleport-openwrt join`, `cream run teleport-openwrt join-retry`, `cream run teleport-openwrt leave`, `cream run teleport-openwrt set-managed`, `cream run teleport-openwrt managed-status`, `cream run teleport-openwrt apps-status`, `cream run teleport-openwrt status`, `cream run teleport-openwrt render`, `cream run teleport-openwrt reload-apps`, `cream run teleport-openwrt hup`, `cream run teleport-openwrt scrub-token` |
+| Действия | `cream run teleport-openwrt join`, `cream run teleport-openwrt join-retry`, `cream run teleport-openwrt leave`, `cream run teleport-openwrt set-managed`, `cream run teleport-openwrt set-nodename`, `cream run teleport-openwrt managed-status`, `cream run teleport-openwrt apps-status`, `cream run teleport-openwrt status`, `cream run teleport-openwrt render`, `cream run teleport-openwrt reload-apps`, `cream run teleport-openwrt hup`, `cream run teleport-openwrt scrub-token` |
 | Живая машина | да |
 <!-- /catalog:facts -->
 
@@ -137,7 +137,7 @@ Stvor из того же тарбола `linux-<arch>` (рулинг Р7); на 
 /opt/teleport/lib`) и `teleport/lib/` (рантайм). `tsh` в нём нет.
 
 Ручки (`cream set teleport-openwrt KEY=…`), управляемые метки (`set-managed`,
-`managed-status` — контракт stvor-agent, схема 1), `apps.d` и `command-labels.d` —
+`managed-status` — контракт stvor-agent, схема 1), имя ноды (`set-nodename`), `apps.d` и `command-labels.d` —
 те же, что у [teleport](../../debian/teleport/README.md#параметры); каталоги —
 `/etc/cream/teleport-openwrt/{apps.d,command-labels.d}`.
 
