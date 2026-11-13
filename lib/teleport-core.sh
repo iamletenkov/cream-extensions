@@ -1560,7 +1560,7 @@ apps_lost(){
 # the knob and teleport.yaml back to the previous name and restarts again.
 # Exit 0 — applied | unchanged | deferred, 1 — rolled_back (the previous name
 # runs again) | unconfirmed (the previous name is written, its restart is not
-# confirmed either), 2 — refused input, 3 — another failure; one JSON object in
+# confirmed either; or there was no name in effect to go back to), 2 — refused input, 3 — another failure; one JSON object in
 # stdout on each of them. cream holds lock/teleport; the knob is written by the
 # nested `cream set --no-apply` (no apply hook: its HUP is not the restart).
 cmd_set_nodename(){
@@ -1628,6 +1628,13 @@ cmd_set_nodename(){
         return 0
     fi
 
+    # No name was in effect (an empty knob and a hostname that is not a DNS
+    # label — render refused it): nothing to roll back to, the new name stays.
+    if [[ -z "$cur" ]]; then
+        log "ОШИБКА: агент не подтвердил перезапуск за ${RESTART_TIMEOUT} с под именем $new; прежнего действующего имени не было — откатывать не к чему; $AGENT_LOG_HINT"
+        emit_nodename unconfirmed
+        return 1
+    fi
     # Rollback: the previous knob and teleport.yaml, and a restart with them.
     log "ОШИБКА: агент не подтвердил перезапуск за ${RESTART_TIMEOUT} с под именем $new — возвращаю прежнее; $AGENT_LOG_HINT"
     C[TELEPORT_NODENAME]="$prev_knob"

@@ -1415,6 +1415,19 @@ eq "имя хоста в ручку — applied" "0 applied" "$rc $(json_get "$o
 eq "имя хоста в ручку — записано" lab-host "$(get TELEPORT_NODENAME)"
 eq "имя хоста в ручку — restart нет" 0 "$(restarts)"
 
+# No name in effect before (empty knob, the hostname is not a DNS label —
+# render refused it): nothing to roll back to — the new name stays.
+registered
+printf '#!/bin/sh\necho bad_host\n' > "$ROOT/bin/hostname"; chmod +x "$ROOT/bin/hostname"
+conf TELEPORT_NODENAME=
+echo dead > "$FAKE/restart"
+out="$(tp set-nodename lab-2 2>"$TMP/err")"; rc=$?
+eq "прежнего имени нет — код 1, unconfirmed" "1 unconfirmed" "$rc $(json_get "$out" result)"
+eq "прежнего имени нет — ручка новая" lab-2 "$(get TELEPORT_NODENAME)"
+eq "прежнего имени нет — teleport.yaml с новым" lab-2 "$(node_of)"
+eq "прежнего имени нет — один restart" 1 "$(restarts)"
+check "прежнего имени нет — журнал" grep -q 'откатывать не к чему' "$TMP/err"
+
 echo "== set-nodename: не зарегистрирован — только запись, deferred =="
 new_root
 conf TELEPORT_PROXY=teleport.example.org:443 TELEPORT_ENV=prod TELEPORT_NODENAME=lab-1
