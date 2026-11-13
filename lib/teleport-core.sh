@@ -1510,28 +1510,13 @@ cmd_set_managed(){
 # end either.
 RE_NODENAME_RFC1123='^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
 
-# The object of schema 1: nodename — the name in effect after the action (the
-# knob of C or the hostname), requested — the argument. Both are printed only
-# after the check (their alphabet needs no escaping).
-NN_REQUESTED=""
-emit_nodename(){ # emit_nodename <result>
-    local reg=false act=false
-    joined && reg=true
-    agent_active && act=true
-    printf '{"schema":1,"nodename":"%s","requested":"%s","joined":%s,"active":%s,"result":"%s"}\n' \
-        "$(app_node)" "$NN_REQUESTED" "$reg" "$act" "$1"
-}
-# A failure: an object without the state (it may be what failed).
-nodename_die_json(){ printf '{"schema":1,"error":%s}\n' "$(json_str "$1")"; }
-# nodename_input <reason> <message> [app…] — a refused input: the object with
-# the reason (invalid_name | apps_too_long) and the apps (checked names), code
-# 2, nothing touched.
+# The answer is that of set-managed (emit_managed: schema 1, managed, pending,
+# joined, active, result; the agent parses both strictly); a failure — the
+# object with error only (managed_die_json).
+# nodename_input <message> — a refused input: code 2, nothing touched.
 nodename_input(){
-    local reason="$1" msg="$2" a list=""
-    shift 2
-    for a in "$@"; do list+="${list:+,}\"$a\""; done
-    log "ОШИБКА: set-nodename: $msg"
-    printf '{"schema":1,"error":%s,"reason":"%s","apps":[%s]}\n' "$(json_str "$msg")" "$reason" "$list"
+    log "ОШИБКА: set-nodename: $1"
+    managed_die_json "$1"
     exit 2
 }
 
@@ -1552,29 +1537,29 @@ apps_lost(){
     return 0
 }
 
-# set-nodename <name> — TELEPORT_NODENAME = name; the apps are renamed with the
-# node (<app>-<name>). The name is checked before anything is read: exactly one
-# argument, RFC 1123 and the type of the knob. Every app published now must fit
-# a DNS label under the new name, otherwise nothing is written. The agent is
-# restarted only when the name in effect changes; an unconfirmed restart rolls
-# the knob and teleport.yaml back to the previous name and restarts again.
-# Exit 0 — applied | unchanged | deferred, 1 — rolled_back (the previous name
-# runs again) | unconfirmed (the previous name is written, its restart is not
-# confirmed either; or there was no name in effect to go back to), 2 — refused input, 3 — another failure; one JSON object in
-# stdout on each of them. cream holds lock/teleport; the knob is written by the
-# nested `cream set --no-apply` (no apply hook: its HUP is not the restart).
+# set-nodename nodename=<name> — TELEPORT_NODENAME = name; the apps are
+# renamed with the node (<app>-<name>). The argument is checked before anything
+# is read: exactly one, nodename=, RFC 1123 and the type of the knob. Every app
+# published now must fit a DNS label under the new name, otherwise nothing is
+# written. The agent is restarted only when the name in effect changes; an
+# unconfirmed restart rolls the knob and teleport.yaml back to the previous
+# name and restarts again. Exit 0 — applied | unchanged | deferred, 1 —
+# unconfirmed (the new name did not come up: rolled back to the previous one,
+# whether that restart came up or not — the journal tells; or there was no
+# name in effect to go back to), 2 — refused input, 3 — another failure; one
+# JSON object in stdout on each of them (that of set-managed). cream holds
+# lock/teleport; the knob is written by the nested `cream set --no-apply` (no
+# apply hook: its HUP is not the restart).
 cmd_set_nodename(){
-    DIE_JSON=nodename_die_json; DIE_CODE=3
+    DIE_JSON=managed_die_json; DIE_CODE=3
     need_root
     local new prev_knob cur cand lost a msg=""
-    local -a apps=()
     # The argument is not echoed until it is checked: it is external input.
-    (( $# == 1 )) || nodename_input invalid_name "нужно ровно одно имя ноды"
-    new="$1"
+    (( $# == 1 )) && [[ "$1" == nodename=* ]] || nodename_input "нужен ровно один аргумент nodename=<имя>"
+    new="${1#nodename=}"
     if [[ "$new" == *[[:cntrl:]]* || ! "$new" =~ $RE_NODENAME_RFC1123 || ! "$new" =~ $RE_NODENAME ]]; then
-        nodename_input invalid_name "имя ноды не метка DNS по RFC 1123: ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\$, от 2 знаков"
+        nodename_input "имя ноды не метка DNS по RFC 1123: ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\$, от 2 знаков"
     fi
-    NN_REQUESTED="$new"
 
     load_conf
     conf_check || die "в $CONF неверные значения — cream show $TELEPORT_EXT"
@@ -1582,23 +1567,22 @@ cmd_set_nodename(){
     cur="$(app_node)"
     lost="$(apps_lost "$cur" "$new")"
     if [[ -n "$lost" ]]; then
-        mapfile -t apps <<< "$lost"
-        for a in "${apps[@]}"; do msg+="${msg:+ }$a-$new"; done
-        log "адреса длиннее $APP_LABEL_MAX знаков: $msg"
-        nodename_input apps_too_long "приложения не влезут в метку DNS ($APP_LABEL_MAX знаков) под новым именем ноды" "${apps[@]}"
+        # The app names passed app_line_ok: their alphabet needs no escaping.
+        while IFS= read -r a; do msg+="${msg:+, }$a-$new"; done <<< "$lost"
+        nodename_input "приложения не влезут в метку DNS ($APP_LABEL_MAX знаков) под новым именем ноды: $msg"
     fi
 
     # The name in effect stays (the knob may change: the hostname was the name).
     if [[ "$new" == "$cur" ]]; then
         if [[ "$prev_knob" == "$new" ]]; then
             log "имя ноды уже $new — ничего не меняется"
-            emit_nodename unchanged
+            emit_managed unchanged
             return 0
         fi
         save_conf "TELEPORT_NODENAME=$new"
         C[TELEPORT_NODENAME]="$new"
         log "имя ноды $new записано в TELEPORT_NODENAME — оно уже действует, перезапуск не нужен"
-        emit_nodename applied
+        emit_managed applied
         return 0
     fi
 
@@ -1607,7 +1591,7 @@ cmd_set_nodename(){
         save_conf "TELEPORT_NODENAME=$new"
         C[TELEPORT_NODENAME]="$new"
         log "имя ноды $new записано — применится при регистрации или старте агента"
-        emit_nodename deferred
+        emit_managed deferred
         return 0
     fi
 
@@ -1624,7 +1608,7 @@ cmd_set_nodename(){
     log "перезапуск агента: имя ноды ${cur:-?} → $new"
     if restart_agent; then
         log "агент перезапущен: нода и приложения — под именем $new"
-        emit_nodename applied
+        emit_managed applied
         return 0
     fi
 
@@ -1632,7 +1616,7 @@ cmd_set_nodename(){
     # label — render refused it): nothing to roll back to, the new name stays.
     if [[ -z "$cur" ]]; then
         log "ОШИБКА: агент не подтвердил перезапуск за ${RESTART_TIMEOUT} с под именем $new; прежнего действующего имени не было — откатывать не к чему; $AGENT_LOG_HINT"
-        emit_nodename unconfirmed
+        emit_managed unconfirmed
         return 1
     fi
     # Rollback: the previous knob and teleport.yaml, and a restart with them.
@@ -1641,12 +1625,11 @@ cmd_set_nodename(){
     save_conf "TELEPORT_NODENAME=$prev_knob"
     render_file "$YAML"
     if restart_agent; then
-        log "возвращено прежнее имя ${cur:-?}: агент перезапущен с ним"
-        emit_nodename rolled_back
+        log "возвращено прежнее имя ${cur:-?}: агент перезапущен с ним; новое имя $new не применено"
     else
         log "ОШИБКА: возвращено прежнее имя ${cur:-?}, но и этот перезапуск не подтверждён — $AGENT_LOG_HINT"
-        emit_nodename unconfirmed
     fi
+    emit_managed unconfirmed
     return 1
 }
 

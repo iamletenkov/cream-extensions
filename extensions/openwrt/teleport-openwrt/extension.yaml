@@ -171,7 +171,7 @@ actions:
     output: json
     phases: [live]
   set-nodename:
-    summary: "имя ноды (RFC 1123); приложения <app>-<имя> должны влезать в 63; restart с подтверждением, откат при сбое; JSON схемы 1"
+    summary: "nodename=<имя> (RFC 1123); приложения <app>-<имя> должны влезать в 63; restart с подтверждением, откат при сбое; JSON как у set-managed"
     args: free
     lock: exclusive
     # ожидание блокировки у вызывающего + restart с подтверждением <= 30 с + откат с
