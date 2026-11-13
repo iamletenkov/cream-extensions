@@ -114,7 +114,9 @@ PY
     done
     while IFS= read -r d; do
         [[ -n "$d" ]] || continue
-        if ! printf '%s\n' "${consumers[@]}" | grep -qxF "$d"; then
+        # A here-string, not `printf | grep -q`: under pipefail grep stopping at
+        # the first line gives printf SIGPIPE, and 141 read as «not listed» (#146).
+        if ! grep -qxF "$d" <<< "$(printf '%s\n' "${consumers[@]}")"; then
             echo "$d: берёт files/$lib.sh, но его нет в lib/$lib.consumers — библиотеку ему не положат" >&2
             rc=1
         fi

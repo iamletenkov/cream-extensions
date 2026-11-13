@@ -5,8 +5,8 @@
 `extensions/openwrt` (`amneziawg`, `podkop`, `luci-apps`), следующий минор каталога.
 
 ## Сделано
-- 52 расширения (из них 4 библиотеки) — cream/v1, из них 5 семейства `openwrt` (`make test-openwrt`
-  на корневой ФС openwrt-builder v0.3.1, CI-job `test-openwrt`); 13 с `every_boot` (`amneziawg` — стадия
+- 54 расширения (из них 4 библиотеки) — cream/v1, из них 5 семейства `openwrt` (`make test-openwrt`
+  на корневой ФС openwrt-builder v0.3.1, CI-job `test-openwrt`); 14 с `every_boot` (`amneziawg` — стадия
   `system` после `S47wrt.cloudinit`, восстанавливает стёртый интерфейс) и `cream: ">=1.2.0"`;
   `cream check` по каталогу и правило `every-boot` ошибкой — в CI.
 - Документация по задачам: README с таблицей расширений, [первые шаги](getting-started.md),
@@ -24,6 +24,14 @@
   `teleport-openwrt` 1.0.1 и `stvor-agent-openwrt` 1.1.2 — `keep.d` с идентичностью, флагом,
   доменами и токенами; права после восстановления чинят `install`/`configure`; L-сценарий
   `sysupgrade -b` → свежий образ → повторная установка. Службу восстановления кладёт Stvor.
+- Удалённый стол на готовом столе машины (план
+  [2026-11-12-existing-desktop](plans/2026-11-12-existing-desktop.md), выпуск v5.26.0): `existing-desktop`
+  1.0.1 — стол и DM не из cream как `x11-server`/`display-manager`/`desktop-session`; `selkies` 7.0.1,
+  `x11vnc` 6.0.1 находят сеанс пользователя через `lib/x-session.sh` (logind `Display`, свой Xorg —
+  lock-файл или его слушающие сокеты, authority GDM/LightDM/SDDM). Ручная приёмка P1–P7 —
+  [runbook 05](runbooks/05_existing-desktop-acceptance.md); сборка в образе — workflow
+  `build-graphical.yml` в PR (`tools/build-graphical.sh`, appliance libguestfs на slirp, П31).
+- Гейт версий не требует подъёма за правку одного `tests/` расширения — то же исключение, что у снимка.
 
 ## Дальше
 1. Bisquite 3.0.0 (Task 24–26 плана cream): примеры VMFILE на `RUN_COMMAND cream install`.
@@ -31,6 +39,8 @@
 3. Бэклог после 5.0.0 — раздел «Бэклог после 5.0.0» плана
    [2026-10-19-cream-v1-migration](plans/2026-10-19-cream-v1-migration.md).
 4. Разгрести предупреждения shellcheck вне расширений (планка `make lint` — error).
+5. Хвосты existing-desktop: issue #139 (привязка к Xorg для жёсткого `:N`, остаток П26), issue #144
+   (`kiosk` и `wallpaper` на Xfce делят `xfce4-desktop.xml`; `KIOSK_URL` по умолчанию — 404).
 
 ## Ждут живой проверки (P: платы и bisquite)
 V и H пройдены у всех; живой проверки на железе или в сборке ещё не было.

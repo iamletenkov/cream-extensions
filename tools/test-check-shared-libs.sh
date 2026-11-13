@@ -131,6 +131,21 @@ rm "$R/lib/fetch.sh"
 run
 eq "нет lib/fetch.sh при fetch.consumers — код 2" 2 "$rc"
 
+# Issue #146: a consumer on the first line of a list larger than a pipe buffer.
+# Fed to `grep -q` through a pipe under pipefail, the writer gets SIGPIPE when
+# grep stops at the first line, and 141 read as «not in the list». The list
+# here is ~84 KB, past the 64 KB buffer, so the race always loses.
+fresh sigpipe
+long="$(printf 'x%.0s' {1..200})"
+for i in $(seq 1 400); do
+    ext "debian/c$i$long" 0; hook "debian/c$i$long" 1
+    echo "debian/c$i$long" >> "$R/lib/fetch.consumers"
+done
+g add -A; g commit -q -m many
+run
+eq "первый потребитель длинного списка — код 0 (#146)" 0 "$rc"
+[[ "$rc" == 0 ]] || echo "$out" | head -n 3 >&2
+
 out="$("$HERE/check-shared-libs.sh" 2>&1)"; rc=$?
 eq "этот репозиторий — код 0" 0 "$rc"
 [[ "$rc" == 0 ]] || echo "$out" >&2
