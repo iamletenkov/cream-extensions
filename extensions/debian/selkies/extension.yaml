@@ -40,7 +40,10 @@
 #        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: selkies
-version: 7.0.1
+version: 7.0.2
+# 7.0.2: remove resets the failed state of every selkies@ (acceptance 2026-11-13:
+#        an instance that exited 78 on Wayland stayed "not-found failed" after
+#        remove and the machine degraded until a reboot).
 # 7.0.1: lib/x-session.sh (plan ruling П27б): a GDM session without a lock file —
 #        :N from the listening sockets of the user's own Xorg (exactly one N, else
 #        a refusal); the SDDM authority /tmp/xauth_* — a regular file of the

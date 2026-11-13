@@ -23,6 +23,11 @@ ExecStart=/bin/bash /opt/cream/ext/x11vnc/files/run-x11vnc.sh %i
 # the new session — after a logout and login it may be on another display.
 Restart=always
 RestartSec=5
+# x11vnc 0.9.16 exits 2 on SIGTERM and SIGHUP (its errors are 1; measured on
+# noble 2026-11-13): without this every `systemctl stop` — a new X11VNC_USER,
+# remove — left the instance failed and the machine degraded. Restart=always
+# restarts on any exit, so this changes the verdict only, not the restarts.
+SuccessExitStatus=2
 # 78 (EX_CONFIG) — a setting to fix, a restart would not change it: the session
 # is on Wayland; a uid outside 1000..65533 (root, a system account) or an
 # X11VNC_DISPLAY that is neither auto nor :N; no password beyond the loopback;

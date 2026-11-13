@@ -32,7 +32,12 @@
 #        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: x11vnc
-version: 6.0.1
+version: 6.0.2
+# 6.0.2: remove leaves no failed x11vnc@ behind (acceptance 2026-11-13: after
+#        remove the machine stayed degraded): the instances are stopped and waited
+#        for, the failed state of every x11vnc@ reset; the unit takes exit 2 — what
+#        x11vnc 0.9.16 returns on SIGTERM — as success, so a stop on a new
+#        X11VNC_USER does not fail the instance either.
 # 6.0.1: lib/x-session.sh (plan ruling П27б): a GDM session without a lock file —
 #        :N from the listening sockets of the user's own Xorg (exactly one N, else
 #        a refusal); the SDDM authority /tmp/xauth_* — a regular file of the
