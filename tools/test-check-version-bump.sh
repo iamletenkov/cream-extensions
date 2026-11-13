@@ -143,5 +143,35 @@ ext beta 2.0.1 readme; commit bump-beta
 out="$("$GATE" "$R" 2>&1)"; rc=$?
 eq "подъём потребителя fetch — код 0" 0 "$rc"
 
+# tests/ of an extension does not reach the snapshot (catalog-snapshot.sh), so
+# the digest cream compares stays the same: an edit there needs no bump; an
+# edit next to it — a file named tests*, a tests/ deeper in files/ — does.
+fresh tests-only
+mkdir -p "$R/extensions/debian/alpha/tests"; printf 'A=1\n' > "$R/extensions/debian/alpha/tests/live.env"; commit tests-new
+out="$("$GATE" "$R" 2>&1)"; rc=$?
+eq "новый tests/ без подъёма — код 0" 0 "$rc"
+g tag v1.0.1
+printf 'A=2\n' > "$R/extensions/debian/alpha/tests/live.env"; commit tests-edit
+out="$("$GATE" "$R" 2>&1)"; rc=$?
+eq "правка только tests/ — код 0" 0 "$rc"
+hasnt "правка только tests/ — расширение не названо" "extensions/debian/alpha" "$out"
+fresh tests-near
+printf 'x\n' > "$R/extensions/debian/alpha/tests.md"; commit near-file
+out="$("$GATE" "$R" 2>&1)"; rc=$?
+eq "файл tests.md рядом с tests/ — код 1" 1 "$rc"
+fresh tests-deep
+mkdir -p "$R/extensions/debian/alpha/files/tests"; printf 'x\n' > "$R/extensions/debian/alpha/files/tests/data"; commit deep
+out="$("$GATE" "$R" 2>&1)"; rc=$?
+eq "files/tests/ — в снимке, код 1" 1 "$rc"
+fresh tests-mixed
+mkdir -p "$R/extensions/debian/alpha/tests"; printf 'A=1\n' > "$R/extensions/debian/alpha/tests/live.env"
+ext alpha 1.0.0 "другой текст"; commit mixed
+out="$("$GATE" "$R" 2>&1)"; rc=$?
+eq "tests/ и README вместе — код 1" 1 "$rc"
+# One rule for both: the gate excludes exactly what the snapshot excludes.
+pat="':(exclude,glob)extensions/*/*/tests/**'"
+has "снимок исключает tests/ этим правилом" "$pat" "$(cat "$HERE/catalog-snapshot.sh")"
+has "гейт исключает tests/ тем же правилом" "$pat" "$(cat "$GATE")"
+
 echo "test-check-version-bump: ok $pass, fail $fail"
 (( fail == 0 ))

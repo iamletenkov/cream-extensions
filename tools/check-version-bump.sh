@@ -7,6 +7,9 @@
 # же номером и другим отпечатком он отвергает (`version.same_digest`). В 5.1.1
 # правка README у teleport и stvor-agent без подъёма версий сломала обновление
 # роботам с 5.1.0. Любая правка дерева — даже README — меняет отпечаток.
+# Кроме tests/ расширения: в снимок он не попадает (то же правило
+# ':(exclude,glob)extensions/*/*/tests/**', что в tools/catalog-snapshot.sh;
+# совпадение проверяет tools/test-check-version-bump.sh).
 #
 # Общая библиотека lib/<lib>.sh (ядро Teleport teleport-core.sh, загрузчик
 # fetch.sh) лежит в снимке в каждом своём потребителе (lib/<lib>.consumers): её
@@ -88,7 +91,9 @@ for manifest in "$REPO"/extensions/*/*/extension.yaml; do
     old_yaml="$(gitr show "$base:$rel/extension.yaml" 2>/dev/null)" || continue  # новое после тега
     checked=$((checked + 1))
     why="дерево изменилось"
-    if gitr diff --quiet "$base" -- "$rel/"; then
+    # tests/ of an extension never reaches the snapshot (the same rule as in
+    # tools/catalog-snapshot.sh), so the digest cream compares does not change.
+    if gitr diff --quiet "$base" -- "$rel/" ':(exclude,glob)extensions/*/*/tests/**'; then
         libs=""
         for w in $lib_changed; do [[ "${w%%=*}" == "$rel" ]] && libs+="${libs:+, }lib/${w#*=}.sh"; done
         [[ -n "$libs" ]] || continue
