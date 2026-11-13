@@ -130,7 +130,7 @@ mode_of() { stat -c %a "$1"; }
 echo "== манифест =="
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "версия 6.0.1 (сеанс GDM без lock-файла, authority SDDM — П27б)" 6.0.1 "$(mf 'm["version"]')"
+eq "версия 6.0.2 (remove без failed x11vnc@, SuccessExitStatus=2 — приёмка 2026-11-13)" 6.0.2 "$(mf 'm["version"]')"
 eq "X11VNC_USER: имя, пусто — cloud-user" "re:^[a-z_][a-z0-9_-]{0,31}\$||True" \
     "$(mf 'm["config"]["keys"]["X11VNC_USER"]["type"] + "|" + m["config"]["keys"]["X11VNC_USER"]["default"] + "|" + str(m["config"]["keys"]["X11VNC_USER"].get("empty"))')"
 eq "X11VNC_DISPLAY: auto или :N, умолчание auto" "re:^(auto|:[0-9]+(\\.[0-9]+)?)\$|auto" \
@@ -159,6 +159,9 @@ check "юнит читает config домена" grep -qx 'EnvironmentFile=-/et
 check_not "юнит НЕ читает secrets (пароль не в окружении сервера)" grep -qE '^EnvironmentFile=.*secrets' "$unit"
 check "юнит: 78 (Wayland) не перезапускается" grep -qx 'RestartPreventExitStatus=78' "$unit"
 check "юнит: перезапуск всегда (x11vnc выходит с X — обёртка найдёт новый сеанс)" grep -qx 'Restart=always' "$unit"
+# x11vnc 0.9.16 на SIGTERM/SIGHUP выходит с кодом 2 (замер 2026-11-13): без этого любой
+# systemctl stop (смена X11VNC_USER, remove) оставлял экземпляр failed, машину — degraded.
+check "юнит: код 2 (SIGTERM у x11vnc) — не сбой" grep -qx 'SuccessExitStatus=2' "$unit"
 check_not "юнит: DISPLAY не зашит" grep -q 'DISPLAY=' "$unit"
 check_not "юнит: не ждёт сокет X0 (дисплей ищет обёртка)" grep -q 'X11-unix/X0' "$unit"
 check "юнит: NoNewPrivileges (как selkies@)" grep -qx 'NoNewPrivileges=yes' "$unit"
@@ -462,6 +465,10 @@ check_not "пароль не утёк" leaked
 echo "== remove =="
 ht_hook remove; eq "remove — 0" 0 "$?"
 check "экземпляр выключен" ht_called '^systemctl disable x11vnc@alice.service'
+# Приёмка 2026-11-13 (P1–P4, P7): после remove экземпляр оставался «not-found failed», машина —
+# degraded. remove ждёт конца службы и сбрасывает сбой всех x11vnc@ (и выключенных, и с 78).
+check "remove ждёт останова экземпляра" ht_called '^systemctl stop x11vnc@alice\.service$'
+check "remove сбрасывает сбой экземпляров" ht_called '^systemctl reset-failed x11vnc@\*\.service$'
 check_not "файла пароля нет" test -e "$PF"
 check_not "каталога /etc/x11vnc нет" test -e "$ROOT/etc/x11vnc"
 ht_hook remove; eq "повтор remove — 0" 0 "$?"

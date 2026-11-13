@@ -454,12 +454,17 @@ run(){
     log "selkies@${user}: $verb поставлен в очередь — journalctl -u selkies@${user}"
 }
 
+# cmd_remove: the unit file goes next (cream, `files`). An instance that exited 78
+# (Wayland, no password) stays failed after its stop — with the unit gone it is
+# "not-found failed" and keeps the machine degraded until a reboot (P1 of the
+# acceptance 2026-11-13), so the failed state of every selkies@ is reset.
 cmd_remove(){
     local u
     while IFS= read -r u; do
         [[ -n "$u" ]] || continue
         systemctl stop "$u" || warn "не остановить $u"
     done < <(instances)
+    systemctl reset-failed 'selkies@*.service' 2>/dev/null || true
     decl_remove
     effective_remove
     if [[ -L "$OPT" ]]; then

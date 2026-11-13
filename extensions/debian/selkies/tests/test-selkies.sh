@@ -127,7 +127,7 @@ x0srv() {
 echo "== манифест и раскладка =="
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
 eq "name" selkies "$(mf 'm["name"]')"
-eq "версия 7.0.1 (сеанс GDM без lock-файла, authority SDDM — П27б)" 7.0.1 "$(mf 'm["version"]')"
+eq "версия 7.0.2 (remove сбрасывает сбой selkies@ — приёмка 2026-11-13)" 7.0.2 "$(mf 'm["version"]')"
 eq "SELKIES_USER: имя, пусто — cloud-user" "re:^[a-z_][a-z0-9_-]{0,31}\$||True" \
     "$(mf '(lambda k: k["type"] + "|" + k["default"] + "|" + str(k.get("empty")))(m["config"]["keys"]["SELKIES_USER"])')"
 eq "SELKIES_DISPLAY: auto или :N, умолчание auto" "re:^(auto|:[0-9]+(\.[0-9]+)?)\$|auto|True" \
@@ -660,6 +660,9 @@ echo 'SELKIES_ENABLE_RESIZE=false' > "$ROOT/var/lib/cream/ext/selkies/env"
 printf '%s\n' 'selkies@alice.service loaded active running Selkies' > "$FAKE/units"
 ht_hook remove; eq "remove — 0" 0 "$?"
 check "экземпляры остановлены" ht_called '^systemctl stop .*selkies@alice\.service'
+# Приёмка 2026-11-13 (P1): экземпляр, вышедший с 78 (Wayland), после remove оставался
+# «not-found failed», машина — degraded. remove сбрасывает сбой всех selkies@.
+check "remove сбрасывает сбой экземпляров" ht_called '^systemctl reset-failed selkies@\*\.service$'
 check_not "объявление снято" test -e "$DECL"
 check "чужое объявление на месте" test -f "$APPS/other.conf"
 check_not "AppImage удалён" test -e "$ROOT/opt/selkies/$VER"

@@ -342,8 +342,20 @@ configure(){
     log "x11vnc@$user.service: перезапуск поставлен в очередь (journalctl -u x11vnc@$user)"
 }
 
+# remove: the unit file goes next (cream, `files`), so every instance is stopped and
+# waited for here, not queued; then the failed state of every x11vnc@ is reset. A unit
+# gone from disk but failed (78 on Wayland, a stop by an x11vnc@.service before 6.0.2)
+# stays "not-found failed" and keeps the machine degraded until a reboot (P1–P4, P7
+# of the acceptance 2026-11-13).
 remove(){
-    stop_instances
+    local u
+    while read -r u; do
+        [[ -n "$u" ]] || continue
+        log "гашу экземпляр x11vnc@$u.service"
+        systemctl disable "x11vnc@$u.service" || log "x11vnc@$u.service не выключился"
+        systemctl stop "x11vnc@$u.service" || log "x11vnc@$u.service не остановился"
+    done < <(instances)
+    systemctl reset-failed 'x11vnc@*.service' 2>/dev/null || true
     if [[ ! -L "$DIR" ]]; then
         rm -f -- "$NOPW"
         # Only the file this configure built; one left by an older version stays.

@@ -241,3 +241,26 @@
 
 P1(а) (Xorg от root без KMS) не менялся. Это известное ограничение: fd Xorg от root
 обёртке не видны, нужен явный `:N`, см. `docs/known-issues.md`.
+
+## Приёмка выпуска v5.26.0 (2026-11-13)
+
+Повтор P1–P5, P7 на **выпущенном** каталоге: `cream source add` архива v5.26.0 (подпись
+`SHA256SUMS` проверена, sha256 `2f2a5574…4003`), cream 1.4.0, те же образы и ядра, что выше.
+Версии: `existing-desktop` 1.0.1, `selkies` 7.0.1, `x11vnc` 6.0.1, `gdm-xorg` 1.0.0, `desktop` 2.0.0.
+
+| # | Итог |
+|---|---|
+| P1 | Wayland → обе службы 78 без цикла; `gdm-xorg` → X11, дисплей `:0` по сокетам Xorg, `x11vnc -display unix:0`, Selkies `DISPLAY=unix:0`, 401/200, снимок стола; `remove gdm-xorg` — `custom.conf` побайтно исходный |
+| P2 | до входа — ожидание greeter; вход — `:1` по сокетам за ~7 с; выход/вход — `NRestarts=1`; вход `bob` — диагноз с подсказкой `X11VNC_USER=bob`; `SELKIES_USER=gdm` → 78 (cream 79) |
+| P3 | без автологина — logind Display `:0` через 1 с после входа, authority `~/.Xauthority`; `desktop` с пустым ключом не трогает `/etc/lightdm`; с автологином — на 16-й секунде загрузки |
+| P4 | X11 по умолчанию; authority `/tmp/xauth_*` через 1 с после входа; `desktop DESKTOP_AUTOLOGIN=1` — отказ, `/etc/sddm.conf.d` не тронут |
+| P5 | коды 79 / 68 / 67 `deps.dependents` / 0,0 / 67 `deps.requires` — как выше |
+| P6 | не замерено |
+| P7 | автологин `desktop`, обои, `kiosk` после снятия `wallpaper`; `kiosk` после `wallpaper` — 67, #144 |
+
+Полное снятие во всех машинах возвращает конфиги DM, `/etc/X11`, юниты и цель по умолчанию.
+**Расхождение:** после `cream remove x11vnc` (P1–P4, P7) и `selkies` (P1, экземпляр с 78) в
+`systemctl --failed` оставался `x11vnc@<u>`/`selkies@<u>` в состоянии `not-found failed`, машина —
+`degraded` до перезагрузки. x11vnc 0.9.16 на SIGTERM выходит с кодом 2 (замер: SIGTERM 2, SIGHUP 2,
+SIGINT 0, ошибки 1). Исправлено в `x11vnc` 6.0.2 (`SuccessExitStatus=2`, `remove` ждёт останова и
+сбрасывает сбой `x11vnc@*`) и `selkies` 7.0.2 (`remove` сбрасывает сбой `selkies@*`).
