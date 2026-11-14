@@ -18,7 +18,7 @@ Chromium в режиме киоска поверх работающего гра
 | Настройка на загрузке | стадия `graphical`, на каждой загрузке (`every_boot`) |
 | Живая машина | с `--accept-risk` |
 
-> **Живая машина — с `--accept-risk`.** Захватывает экран: браузер Chromium на весь экран поверх сеанса пользователя (KIOSK_USER или пользователь cloud-init), без панели и рабочего стола Xfce4 — системные умолчания xfconf для всех пользователей машины; перезапускается сам при закрытии; ставит chromium; снимается cream remove kiosk
+> **Живая машина — с `--accept-risk`.** Захватывает экран: браузер Chromium на весь экран поверх сеанса пользователя (KIOSK_USER или пользователь cloud-init), без панели Xfce4 — системные умолчания xfconf для всех пользователей машины; перезапускается сам при закрытии; ставит chromium; снимается cream remove kiosk
 <!-- /catalog:facts -->
 
 ## Что делает
@@ -29,7 +29,8 @@ Chromium в режиме киоска поверх работающего гра
   `lxde` (`requires`). cream раскладывает файлы расширения: юнит
   `/etc/systemd/system/kiosk-chromium@.service`, обёртку
   `/usr/local/lib/kiosk/run-kiosk.sh`, системные умолчания xfconf
-  `xfce4-panel.xml` и `xfce4-desktop.xml` в `/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/`.
+  `xfce4-panel.xml` в `/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/`, локальную
+  страницу `/usr/local/share/kiosk/index.html`.
 - **`configure`** (стадия `graphical`, на каждой загрузке после менеджера входа,
   после установки и после `cream set`):
   1. нет менеджера входа (`display-manager.service`) — предупреждение и 0,
@@ -48,7 +49,7 @@ Chromium в режиме киоска поверх работающего гра
 
 Настройки — домен cream `/etc/cream/kiosk/config`; юнит читает его как
 `EnvironmentFile`. В домашний каталог пользователя расширение не пишет: панель
-и рабочий стол Xfce4 — системные умолчания xfconf в `/etc/xdg`, экранная
+Xfce4 — системное умолчание xfconf в `/etc/xdg`, экранная
 клавиатура GNOME — системный ключ dconf.
 
 ## Параметры
@@ -57,7 +58,7 @@ Chromium в режиме киоска поверх работающего гра
 | Ключ | Тип | Умолчание | Что задаёт |
 |---|---|---|---|
 | `KIOSK_USER` | строка `^[a-z_][a-z0-9_-]{0,31}$` | пусто | пользователь киоска; пусто — пользователь cloud-init (библиотека cloud-user) |
-| `KIOSK_URL` | строка `^(https?\|file)://[A-Za-z0-9._~:/?#@!&()*+,;=%-]+$` | `https://github.com/iamletenkov/bisquite` | страница киоска: http(s):// или file://, без пробелов, кавычек и $ |
+| `KIOSK_URL` | строка `^(https?\|file)://[A-Za-z0-9._~:/?#@!&()*+,;=%-]+$` | `file:///usr/local/share/kiosk/index.html` | страница киоска: http(s):// или file://, без пробелов, кавычек и $ |
 | `KIOSK_DISPLAY` | строка `^:[0-9]{1,3}(\.[0-9]{1,2})?$` | `:0` | X-дисплей браузера |
 | `KIOSK_KEYBOARD_ENABLED` | `true` \| `false` | `true` | экранная клавиатура — только под GNOME (системный dconf) |
 | `KIOSK_CHROMIUM_FLAGS` | список через пробел, элемент `^--[a-z0-9][a-z0-9-]*(=[A-Za-z0-9._,:/=+-]*)?$` | `--disable-pinch --overscroll-history-navigation=0` | флаги Chromium через пробел, к базовому набору; заменяют умолчание |
@@ -132,9 +133,25 @@ RUN_COMMAND cream install --with-deps kiosk KIOSK_URL=https://dashboard.example.
 ### Рабочий стол
 
 Окно киоска полноэкранное поверх всего. Под Xfce4 системные умолчания прячут
-панель и иконки и делают фон чёрным — для **всех** пользователей машины, у
-которых нет своего канала xfconf (свой `~/.config/xfce4/xfconf/…` их
-перекрывает). Под GNOME и LXDE эти файлы никто не читает.
+панель для пользователей без своего канала панели xfconf. Канал рабочего стола
+`xfce4-desktop.xml` kiosk не создаёт: обои задаёт [`wallpaper`](../wallpaper/README.md).
+Оба порядка установки поддержаны. Снятие kiosk сохраняет обои; снятие wallpaper
+не меняет настройки и службу kiosk. Обои под полноэкранным окном не видны —
+проверяйте их после снятия kiosk и нового входа в сеанс.
+
+Умолчание `KIOSK_URL=file:///usr/local/share/kiosk/index.html` открывает локальную
+страницу «Киоск настроен» с командой задания адреса; сеть для неё не нужна.
+
+### Переход с kiosk 4.x
+
+kiosk 5.0.0 больше не задаёт чёрный фон и скрытые иконки Xfce. Перед переходом
+снимите **старую** версию (`sudo cream remove kiosk`), затем установите новую
+(`sudo cream install --accept-risk --with-deps kiosk`). Это освобождает прежний
+канал через учёт файлов cream, без ручного удаления чужой конфигурации. Если
+wallpaper уже установлен, примените его повторно: `sudo cream configure --force wallpaper`.
+Явно заданный старый `KIOSK_URL` проверьте через `cream show kiosk` и при необходимости
+замените командой `cream set kiosk KIOSK_URL=file:///usr/local/share/kiosk/index.html`.
+Прямое обновление без снятия старой версии здесь не подтверждено; его проверка — в P7.
 
 ### Диагностика
 

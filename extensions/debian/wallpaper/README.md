@@ -37,7 +37,7 @@ Xfce (xfconf) и LXDE (pcmanfm) из картинки, которая лежит
 | Стол | Файл | Как |
 |---|---|---|
 | GNOME | `/etc/dconf/db/local.d/50-wallpaper`, `locks/50-wallpaper`; профиль `/etc/dconf/profile/user` (`system-db:local`, правило общее с `desktop` и `locale`) | `picture-uri`, `picture-uri-dark` (GNOME 42+; старшему ключ не мешает), `picture-options` — **под замком** |
-| Xfce | `/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml` | раскладка Xubuntu: `monitor0…3/image-path`, `image-style` — xfdesktop переносит её на монитор с любым именем; чужой файл не перезаписывается (предупреждение) |
+| Xfce | `/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml` | раскладка Xubuntu: `monitor0…3/image-path`, `image-style` — xfdesktop переносит её на монитор с любым именем; чужой файл не перезаписывается (отказ configure до любых записей) |
 | LXDE | `/etc/xdg/pcmanfm/LXDE/pcmanfm.conf` (`lxde-common`), секция `[desktop]` | `wallpaper`, `wallpaper_mode`; прежние значения — в `/var/lib/cream/ext/wallpaper/pcmanfm.orig`, `remove` их возвращает |
 
 Запись — во временный файл рядом и `rename`: ссылка на месте нашего файла
@@ -116,3 +116,13 @@ RUN_COMMAND cream install --with-deps wallpaper WALLPAPER_IMAGE=dst_1080.jpg WAL
 - **L** — `make test-live EXT=wallpaper` поверх `xfce4` (`tests/live.env`).
 - **P** — что картинка видна на экране (GNOME на Jetson с `nvbackground.sh`, Xfce,
   LXDE) — глазами на машине с монитором; в контейнере экрана нет.
+
+### Xfce и kiosk
+
+С kiosk ≥ 5.0.0 wallpaper единолично задаёт системный канал `xfce4-desktop.xml`: порядок
+установки и снятия расширений произволен. Снятие kiosk сохраняет обои, снятие wallpaper
+не трогает kiosk. Полноэкранное окно скрывает обои — для проверки снимите kiosk и войдите
+заново. Личные настройки Xfce пользователя по-прежнему сильнее системного умолчания.
+Чужой канал (в том числе от kiosk 4.x) даёт отказ configure с кодом 1 до любых записей,
+вместо успешного пропуска; чужой файл сохраняется. Для kiosk 4.x сначала снимите старую
+версию и установите новую, затем повторите `cream configure --force wallpaper`.

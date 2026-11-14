@@ -148,10 +148,6 @@ xfconf_ours(){ [[ -f "$XFCONF" && ! -L "$XFCONF" ]] && grep -qxF "$XFCONF_MARK" 
 
 apply_xfconf(){
     local uri="$1" style="$2" n
-    if [[ -e "$XFCONF" || -L "$XFCONF" ]] && ! xfconf_ours; then
-        log_warn "${XFCONF#"$R"} уже есть и не наш — обои Xfce не задаю"
-        return 0
-    fi
     {
         printf '<?xml version="1.0" encoding="UTF-8"?>\n%s\n' "$XFCONF_MARK"
         printf '<channel name="xfce4-desktop" version="1.0">\n'
@@ -284,6 +280,9 @@ cmd_apply(){
     uri="$(image)"
     m="$(mode)"
     read -r gnome style pmode <<< "$m"
+    if [[ -e "$XFCONF" || -L "$XFCONF" ]] && ! xfconf_ours; then
+        die "${XFCONF#"$R"} уже есть и не наш — сохранён; освободите канал перед configure wallpaper"
+    fi
     if [[ -x "$DCONF_BIN" ]]; then apply_dconf "$uri" "$gnome"; any=1; fi
     if [[ -d "$XFCONF_DIR" || -x "$R/usr/bin/xfdesktop" ]]; then apply_xfconf "$uri" "$style"; any=1; fi
     if [[ -e "$PCMANFM" || -L "$PCMANFM" ]]; then apply_pcmanfm "$uri" "$pmode"; any=1; fi
