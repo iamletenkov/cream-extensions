@@ -39,10 +39,12 @@ fresh() {
     printf '#!/bin/sh\necho alice\n' > "$ROOT/opt/cream/ext/cloud-user/get_cloud_user.sh"
     chmod +x "$ROOT/opt/cream/ext/cloud-user/get_cloud_user.sh"
     printf '%s\n' "alice:x:1000:1000::/home/alice:/bin/bash" > "$FAKE/passwd"
-    ht_fake getent '[[ "$1" == passwd ]] || exit 2; grep -E "^${2}:" "$FAKE/passwd" || exit 2'
+    ht_fake getent '[[ "$1" == passwd ]] || exit 2; if [[ -z "${2:-}" ]]; then cat "$FAKE/passwd"; else grep -E "^${2}:" "$FAKE/passwd" || exit 2; fi'
     ht_fake runuser 'exit 0'
+    ht_fake loginctl 'exit 0'
     ht_fake sleep
     mkdir -p "$ROOT/usr/bin"
+    : > "$ROOT/usr/bin/python3"; chmod +x "$ROOT/usr/bin/python3"
     ht_fake apt-get '[[ " $* " == *" install "* && " $* " == *" dconf-cli "* ]] && { : > "'"$ROOT"'/usr/bin/dconf"; chmod +x "'"$ROOT"'/usr/bin/dconf"; }; exit 0'
     ht_fake dconf '[[ "$1" == update ]] && : > "'"$ROOT"'/etc/dconf/db/local"; exit 0'
     local d
@@ -64,7 +66,7 @@ ini_get() { awk -F= -v s="$2" -v k="$3" '/^\[/{c=($0=="["s"]")} c && $1==k {prin
 echo "== манифест =="
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "версия 3.0.4" 3.0.4 "$(mf 'm["version"]')"
+eq "версия 3.1.0" 3.1.0 "$(mf 'm["version"]')"
 eq "configure по отметке — every_boot нет (аудит 2026-10-21)" None "$(mf 'm["hooks"]["configure"].get("every_boot")')"
 check "исключение every-boot в хуке" grep -q "^# cream-lint: every-boot-not-needed " "$EXT/hooks/configure"
 eq "cream >= 1.1.1 (стадия cloud-user, Р14)" '>=1.1.1' "$(mf 'm["cream"]')"
@@ -83,7 +85,7 @@ check "картинка — форма имени без /" grep -q '^re:' <<< "
 check "картинка в дереве: images/dst_1080.jpg" test -f "$EXT/images/dst_1080.jpg"
 for old in install.sh configure.sh configure-wallpaper.service lib; do check_not "layout 2: $old убран" test -e "$EXT/$old"; done
 check_not "без eval в хуках и файлах" grep -rqwE 'eval' "$EXT/hooks" "$EXT/files"
-check_not "без runuser: в дом не ходим" grep -rqw 'runuser' "$EXT/hooks" "$EXT/files"
+check "помощник отказывает root при личных изменениях" grep -q 'os.geteuid() == 0' "$EXT/files/user-wallpaper.py"
 
 echo "== install: dconf нет — ставится dconf-cli =="
 fresh
@@ -293,5 +295,54 @@ ht_hook configure; eq "configure — 0" 0 "$?"
 sed -i 's|^wallpaper=.*|wallpaper=/srv/admin.png|' "$PC"
 ht_hook remove; eq "remove — 0" 0 "$?"
 eq "обои администратора целы" /srv/admin.png "$(ini_get "$PC" desktop wallpaper)"
+
+echo "== #156: Xubuntu — отдельный XDG-слой перед xdg-xubuntu =="
+fresh xfce
+VENDOR="$ROOT/etc/xdg/xdg-xubuntu/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
+mkdir -p "${VENDOR%/*}"
+printf '<channel name="xfce4-desktop" version="1.0"/>\n' > "$VENDOR"
+cp "$VENDOR" "$ROOT/vendor.orig"
+ht_hook configure; eq "Xubuntu configure — 0" 0 "$?"
+OVERLAY="$ROOT/etc/xdg/cream-wallpaper/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
+XSESSION="$ROOT/etc/X11/Xsession.d/99cream-wallpaper"
+check "отдельный системный канал" test -f "$OVERLAY"
+check "вендорский канал цел" cmp -s "$VENDOR" "$ROOT/vendor.orig"
+eq "наш XDG-слой первый" /etc/xdg/cream-wallpaper:/etc/xdg/xdg-xubuntu:/etc/xdg "$(XDG_CONFIG_DIRS=/etc/xdg/xdg-xubuntu:/etc/xdg bash -c '. "$1"; echo "$XDG_CONFIG_DIRS"' _ "$XSESSION")"
+ht_hook remove; eq "Xubuntu remove — 0" 0 "$?"
+check_not "слой снят" test -e "$OVERLAY"
+check_not "Xsession снят" test -e "$XSESSION"
+check "вендор после remove цел" cmp -s "$VENDOR" "$ROOT/vendor.orig"
+
+echo "== #156: личные изменения только с явным флагом; активный сеанс — отказ =="
+fresh xfce
+ht_hook configure WALLPAPER_OVERRIDE_USER=1; eq "явный флаг — 0" 0 "$?"
+check "помощник запускается от пользователя" ht_called '^runuser -u alice -- env -i '
+check "метка управляемых пользователей" test -f "$STATE/users-managed"
+ht_hook remove; eq "remove после личного применения — 0" 0 "$?"
+check_not "метка снята" test -e "$STATE/users-managed"
+fresh gnome xfce lxde
+ht_fake loginctl 'if [[ "$1" == list-sessions ]]; then echo "2 1000 alice seat0 tty2"; else echo x11; fi'
+before="$(sum_etc)"
+ht_hook configure WALLPAPER_OVERRIDE_USER=1; eq "активный сеанс — отказ 1" 1 "$?"
+eq "отказ до записей в /etc" "$before" "$(sum_etc)"
+check_not "до выхода личные файлы не правятся" ht_called '^runuser'
+
+echo "== #156: remove с активным сеансом сохраняет и откат, и системные файлы =="
+fresh xfce
+ht_hook configure WALLPAPER_OVERRIDE_USER=1; eq "configure — 0" 0 "$?"
+before="$(sum_etc)"
+ht_fake loginctl 'if [[ "$1" == list-sessions ]]; then echo "2 1000 alice seat0 tty2"; else echo wayland; fi'
+ht_hook remove; eq "remove до выхода — отказ 1" 1 "$?"
+eq "системные файлы сохранены" "$before" "$(sum_etc)"
+check "метка отката сохранена" test -f "$STATE/users-managed"
+
+echo "== #156: чужой файл нашего XDG-слоя — отказ до записей =="
+fresh xfce
+FOREIGN="$ROOT/etc/X11/Xsession.d/99cream-wallpaper"
+mkdir -p "${FOREIGN%/*}"
+printf '# administrator session hook\n' > "$FOREIGN"
+before="$(sum_etc)"
+ht_hook configure; eq "чужой Xsession — отказ 1" 1 "$?"
+eq "чужой файл и остальные настройки целы" "$before" "$(sum_etc)"
 
 ht_done

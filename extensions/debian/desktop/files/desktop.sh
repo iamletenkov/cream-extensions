@@ -221,14 +221,28 @@ autologin_file(){
                     && set_ini_key "$conf" "$section" autologin-user-timeout 0; } \
                     || die "lightdm: не записался автологин в ${conf#"$R"}"
             else
-                del_ini_key "$conf" autologin-user
+                if [[ "$conf" == "$LIGHTDM_AUTO" ]] && grep -qxF "$LIGHTDM_AUTO_MARK" "$conf"; then
+                    set_ini_key "$conf" "$section" autologin-user "" \
+                        || die "lightdm: не записался отказ от автологина"
+                else
+                    del_ini_key "$conf" autologin-user
+                fi
                 del_ini_key "$conf" autologin-user-timeout
             fi ;;
     esac
 }
 
+# Xubuntu can ship only /usr/share/lightdm/lightdm.conf.d, with no local
+# config at all. Create our own layer only in that case; never edit /usr/share.
+LIGHTDM_AUTO="$R/etc/lightdm/lightdm.conf.d/90-cream-desktop-autologin.conf"
+LIGHTDM_AUTO_MARK='# cream desktop: generated autologin layer'
 apply_autologin(){
     local user="$1" on="$2" conf
+    if [[ -z "$(lightdm_confs)" ]] && {
+        [[ -d "$R/usr/share/lightdm/lightdm.conf.d" || -x "$R/usr/sbin/lightdm" ]]
+    }; then
+        printf '%s\n[Seat:*]\n' "$LIGHTDM_AUTO_MARK" | write_if_changed "$LIGHTDM_AUTO" || true
+    fi
     while read -r conf; do
         [[ -n "$conf" ]] || continue
         autologin_file "$conf" "$user" "$on"
@@ -426,6 +440,17 @@ return_autologin(){
             apply_autologin "" 0
             log "прежний автологин неизвестен (${1/none/записи нет}) — выключен, как в 1.x" ;;
     esac
+    if [[ -f "$LIGHTDM_AUTO" ]] && grep -qxF "$LIGHTDM_AUTO_MARK" "$LIGHTDM_AUTO"; then
+        # Preserve any unrelated administrator additions, if there are any.
+        local extra
+        extra="$(grep -vE '^(# cream desktop: generated autologin layer|\[Seat:\*\]|autologin-user(-timeout)?=.*|[[:space:]]*)$' "$LIGHTDM_AUTO" || true)"
+        if [[ -z "$extra" ]]; then
+            rm -f -- "$LIGHTDM_AUTO"
+        else
+            del_ini_key "$LIGHTDM_AUTO" autologin-user
+            del_ini_key "$LIGHTDM_AUTO" autologin-user-timeout
+        fi
+    fi
 }
 
 # sddm_dm: the display manager is SDDM — by the files, like existing-desktop:
