@@ -26,4 +26,10 @@ if [[ ! -x "$R/usr/bin/dconf" ]]; then
     apt_retry apt-get install -y -q --no-install-recommends dconf-cli \
         || { log_error "dconf-cli не установился"; exit 1; }
 fi
+if [[ ! -x "$R/usr/bin/python3" ]]; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt_retry apt-get update -q || { log_error "apt-get update не прошёл"; exit 1; }
+    apt_retry apt-get install -y -q --no-install-recommends python3 \
+        || { log_error "python3 не установился"; exit 1; }
+fi
 >&2 echo "[INFO] wallpaper: готово; картинка и режим — sudo cream set wallpaper WALLPAPER_IMAGE=… WALLPAPER_MODE=…"

@@ -1,8 +1,8 @@
 # wallpaper
 
-Обои рабочего стола — **системным умолчанием** в `/etc` для GNOME (dconf),
-Xfce (xfconf) и LXDE (pcmanfm) из картинки, которая лежит в дереве расширения
-(`/opt/cream/ext/wallpaper/images/`). В домашний каталог root не пишет.
+Обои GNOME, Xfce, Xubuntu, LXDE (pcmanfm) и LXQt (pcmanfm-qt) из
+`/opt/cream/ext/wallpaper/images/`. Системные умолчания; обратимое изменение личных
+wallpaper-свойств — только с явным `WALLPAPER_OVERRIDE_USER=1`.
 
 <!-- catalog:facts -->
 | | |
@@ -19,31 +19,45 @@ Xfce (xfconf) и LXDE (pcmanfm) из картинки, которая лежит
 | Живая машина | да |
 <!-- /catalog:facts -->
 
+## Дизайн #156
+
+1. GNOME: системная база dconf с замками; личная база не меняется.
+2. Xfce: системный канал плюс отдельный XDG-слой `/etc/xdg/cream-wallpaper`.
+3. Xsession ставит этот слой перед `xdg-xubuntu`; пакетные файлы Xubuntu не правятся.
+4. `WALLPAPER_OVERRIDE_USER=1` разрешает менять только wallpaper-свойства Xfce/pcmanfm.
+5. Помощник работает от имени каждого обычного пользователя, root в его дом не пишет.
+6. Снимок исходных свойств и метка — `~/.config/cream-wallpaper/state.json`, режим 0600.
+7. Первый снимок сохраняется при повторе и смене картинки; Xsession охватывает новых пользователей.
+8. Configure/remove с личными изменениями требуют выхода из графических сеансов.
+9. Remove возвращает исходные свойства, убирает наши добавленные, сохраняет прочие настройки.
+10. Последующая личная правка управляемого значения сохраняется, если оно уже не наше.
+11. LXDE: `desktop-items-*.conf` `[ * ]` (без пробелов); LXQt: `settings.conf` `[Desktop]`.
+12. **Рулинг, проверить владельцу:** явный флаг и выход из сеансов вместо замка всего
+    канала Xfce; выбор флага подтверждён владельцем, экранная приёмка ещё обязательна.
+
 ## Что делает
 
-- **`install`** — ставит `dconf-cli`, если dconf нет; отказ (код 1), если
-  выбранной картинки нет в `images/`.
-- **`configure`** (стадия `cloud-user` — после `cloud-final`; без порядка
-  относительно менеджера входа) — пишет три системных умолчания (таблица ниже) и
-  предупреждает, если у пользователя cloud-init есть свои настройки Xfce/LXDE,
-  которые их перекрывают; стола нет — предупреждение и 0. Пользователь
-  cloud-init (библиотека [`cloud-user`](../cloud-user/README.md)) нужен только
-  для этого предупреждения. Своей службы первой загрузки нет.
-- **`remove`** — снимает наши файлы и возвращает `pcmanfm.conf` прежние значения.
+- `install`: проверяет картинку, при необходимости ставит `dconf-cli` и `python3`.
+- `configure`: стадия `cloud-user`; системные умолчания dconf, xfconf и pcmanfm,
+  XDG-слой и Xsession-хук. При явном флаге — личные wallpaper-свойства пользователей
+  с UID 1000–65533 и обычной оболочкой, затем тех, кто впервые входит в X11.
+- `remove`: сначала восстанавливает личные свойства (если ими управляли), затем
+  снимает наши системные файлы и возвращает исходные значения `pcmanfm.conf`.
+  Без выхода из графических сеансов — отказ до изменений, снимки остаются для повтора.
 
-Без рабочего стола (`requires: desktop-session`) ключи читать некому — отказ
-приходит на сборке.
-
-| Стол | Файл | Как |
+| Стол | Системный файл | Личные свойства под флагом |
 |---|---|---|
-| GNOME | `/etc/dconf/db/local.d/50-wallpaper`, `locks/50-wallpaper`; профиль `/etc/dconf/profile/user` (`system-db:local`, правило общее с `desktop` и `locale`) | `picture-uri`, `picture-uri-dark` (GNOME 42+; старшему ключ не мешает), `picture-options` — **под замком** |
-| Xfce | `/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml` | раскладка Xubuntu: `monitor0…3/image-path`, `image-style` — xfdesktop переносит её на монитор с любым именем; чужой файл не перезаписывается (отказ configure до любых записей) |
-| LXDE | `/etc/xdg/pcmanfm/LXDE/pcmanfm.conf` (`lxde-common`), секция `[desktop]` | `wallpaper`, `wallpaper_mode`; прежние значения — в `/var/lib/cream/ext/wallpaper/pcmanfm.orig`, `remove` их возвращает |
+| GNOME | `/etc/dconf/db/local.d/50-wallpaper`, `locks/50-wallpaper` | не меняются; `picture-uri`, `picture-uri-dark`, `picture-options` блокируются в системе |
+| Xfce / Xubuntu | `/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml` и копия в XDG-слое | только `backdrop`: `image-path`, `last-image`, `image-style`, `image-show`, `backdrop-cycle-enable` |
+| LXDE | `/etc/xdg/pcmanfm/LXDE/pcmanfm.conf` | `wallpaper`, `wallpaper_mode`, `wallpaper_common` в `[ * ]` (без пробелов) |
+| LXQt | `/etc/xdg/cream-wallpaper/pcmanfm-qt/lxqt/settings.conf` | `Wallpaper`, `WallpaperMode`, `WallpaperCommon`, `PerScreenWallpaper`, `SlideShowInterval` в `[Desktop]` |
 
-Запись — во временный файл рядом и `rename`: ссылка на месте нашего файла
-заменяется, а не проходится; `pcmanfm.conf`, который сам ссылка, не правится
-(предупреждение). Режим и владелец `pcmanfm.conf` сохраняются. Повтор не меняет
-ни одного файла и не зовёт `dconf update`.
+Ссылки в личном пути отвергаются; помощник от root отказывается работать.
+Пользовательские процессы не получают окружение и файловые дескрипторы cream,
+включая его блокировку; время ограничено. Прочие XML/INI-свойства сохраняются.
+Если других изменений не было, remove возвращает исходный личный файл побайтно;
+при посторонних изменениях возвращаются только управляемые свойства.
+Исходно отсутствующий файл удаляется, если в нём не появилось чужих настроек.
 
 ## Параметры
 
@@ -52,83 +66,50 @@ Xfce (xfconf) и LXDE (pcmanfm) из картинки, которая лежит
 |---|---|---|---|
 | `WALLPAPER_IMAGE` | строка `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.(jpg\|jpeg\|png\|svg)$` | `dst_1080.jpg` | картинка — имя файла в /opt/cream/ext/wallpaper/images (без каталогов) |
 | `WALLPAPER_MODE` | `zoom` \| `scaled` \| `centered` \| `stretched` \| `spanned` \| `wallpaper` | `zoom` | как вписать: zoom — заполнить с обрезкой, scaled — целиком, centered, stretched, spanned, wallpaper — плиткой |
+| `WALLPAPER_OVERRIDE_USER` | `bool` | `0` | явно разрешить обратимое изменение только wallpaper-свойств Xfce/LXDE/LXQt; перед configure/remove выйти из графических сеансов |
 <!-- /catalog:params -->
 
-`WALLPAPER_IMAGE` — имя файла в `/opt/cream/ext/wallpaper/images/`: буквы,
-цифры, `.` `_` `-`, расширение `.jpg` `.jpeg` `.png` `.svg`; каталогов,
-абсолютных путей и ссылок нет. Картинки — в `images/` дерева расширения: cream
-кладёт его в `/opt/cream/ext/wallpaper/` целиком, и обои ссылаются туда же, без
-копии.
+Картинка — обычный файл непосредственно в `images/`: без путей, ссылок и пробелов.
+Без файла install/configure отказывают. `zoom`, `scaled`, `centered`, `stretched`,
+`spanned`, `wallpaper` соответствуют режимам DE; LXQt для spanned использует stretch.
 
 ## Установка
 
-На машине с подключённым каталогом ([как подключить](../../../docs/getting-started.md)):
+Сначала завершите графические сеансы пользователей, чьи настройки меняются.
+Из терминала SSH/TTY машины с подключённым каталогом:
 
 ```bash
-sudo cream install --with-deps wallpaper WALLPAPER_IMAGE=dst_1080.jpg WALLPAPER_MODE=zoom
-sudo cream set wallpaper WALLPAPER_MODE=scaled   # configure перезапускается сам
-cream show wallpaper
+sudo cream install --with-deps wallpaper WALLPAPER_OVERRIDE_USER=1
+# Войдите в графический сеанс: обои применены.
+# Для смены/снятия снова завершите графические сеансы.
+sudo cream set wallpaper WALLPAPER_IMAGE=dst_1080.jpg WALLPAPER_MODE=scaled
+sudo cream remove wallpaper
 ```
 
-В образе bisquite (VMFILE):
+`cream set wallpaper WALLPAPER_OVERRIDE_USER=0` после выхода восстанавливает
+личные свойства и оставляет только системные умолчания. Повторная установка
+создаёт новый снимок актуальных исходных настроек.
 
-```dockerfile
-RUN_COMMAND cream install --with-deps wallpaper WALLPAPER_IMAGE=dst_1080.jpg WALLPAPER_MODE=zoom
-```
+## Ограничения
 
-## Этапы
-
-| Когда | Что происходит |
-|---|---|
-| сборка образа / `cream install` | `dconf-cli` при необходимости; проверка, что картинка есть |
-| загрузка (`cream-configure@wallpaper`, стадия `cloud-user`) | системные умолчания трёх столов, предупреждение о пользовательских настройках |
-| `cream set` | cream перезапускает `configure` |
-| `cream remove` | наши файлы сняты, замок GNOME снят, `pcmanfm.conf` возвращён |
-
-## Известные ограничения
-
-- В GNOME пользователь не сменит обои сам, пока расширение стоит (замок; см.
-  ниже). `cream remove wallpaper` снимает замок.
-- В Xfce и LXDE замка нет: это умолчание, и **собственные настройки пользователя
-  побеждают**. `configure` смотрит (только наличие файла, ничего не читая и не
-  правя), есть ли у пользователя cloud-init свой `xfce4-desktop.xml` или
-  `desktop-items-0.conf`, и предупреждает.
-- **Xfce 4.18 пишет личный канал сам** при первом входе пользователя (замер P7,
-  runbook 05, Debian 12): обои видны тем, чей первый вход был уже после `configure`.
-  Остальным — сбросить личный канал (выйти, удалить
-  `~/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml`, войти заново).
-- **Нет файла картинки — отказ `install`** (и `configure`): слой ставят затем,
-  чтобы на столе была заданная картинка, и молча собрать образ без неё значит
-  отдать роботу не то, что просили.
-
-## Подробности
-
-### Почему замок в GNOME
-
-На L4T пакет `nvidia-l4t-configs` кладёт `/etc/xdg/autostart/nvbackground.sh`, и тот
-на **каждом** старте сессии делает `gsettings set … NVIDIA_Wallpaper.jpg`. Замеры на
-платах 2026-09-12 и 2026-09-15: наши значения переписывались через минуту-другую.
-Замок системной базы делает ключ незаписываемым для любого `gsettings` сеанса —
-и для вендорского скрипта, и для старого значения в базе пользователя.
+- Без явного флага личные настройки Xfce/LXDE/LXQt сильнее системного умолчания;
+  configure предупреждает об известных личных каналах cloud-init пользователя.
+- GNOME блокирует смену обоев до remove (так он также побеждает L4T nvbackground.sh).
+- X11: эффект XDG-слоя и личных правок — после следующего входа, без рестарта DM.
+  Wayland GNOME обслуживает dconf; личные настройки других Wayland-композиторов не поддержаны.
+- Если после выхода остался `xfconfd`, `pcmanfm` или `pcmanfm-qt`, личный помощник
+  откажет до правки: пользователь должен остановить свой оставшийся процесс и повторить.
+- Пользовательские `XDG_CONFIG_HOME` вне `~/.config` и нестандартные профили DE
+  требуют отдельной приёмки; стандартные существующие профили pcmanfm перебираются.
+- Чужой системный канал Xfce или файл нашего XDG-слоя — отказ до записей.
+  С kiosk 4.x сначала обновите kiosk до 5.0.0; с kiosk 5.x канал принадлежит wallpaper.
+  Полноэкранный kiosk скрывает обои; для приёмки нужен обычный сеанс.
 
 ## Проверки
 
-- **V** — `make cream-validate` (с пином cream ≥ 1.1.1), `tools/lint-hooks.sh`, `tools/check-names.sh`.
-- **H** — `tests/test-wallpaper.sh`: три стола, режимы, повтор без изменений, отказ
-  на имени картинки чужой формы, на ссылке и на отсутствующем файле, ссылки на
-  месте наших файлов и `pcmanfm.conf`, дом пользователя не тронут, `remove` и повтор.
-- **L** — `make test-live EXT=wallpaper` поверх `xfce4` (`tests/live.env`).
-- **P** — что картинка видна на экране (GNOME на Jetson с `nvbackground.sh`, Xfce,
-  LXDE) — глазами на машине с монитором; в контейнере экрана нет.
-
-### Xfce и kiosk
-
-С kiosk ≥ 5.0.0 wallpaper единолично задаёт системный канал `xfce4-desktop.xml`: порядок
-установки и снятия расширений произволен. Снятие kiosk сохраняет обои, снятие wallpaper
-не трогает kiosk. Полноэкранное окно скрывает обои — для проверки снимите kiosk и войдите
-заново. Личные настройки Xfce пользователя по-прежнему сильнее системного умолчания
-(см. «Известные ограничения»). Чужой канал (в том числе от kiosk 4.x) даёт отказ
-configure с кодом 1 до любых записей, вместо успешного пропуска; чужой файл сохраняется.
-С kiosk 4.x обновляйте kiosk вместе с wallpaper или раньше него
-(`cream upgrade -y --accept-risk kiosk --all`); если wallpaper уже отказал —
-`cream configure --wait --force wallpaper` после обновления kiosk.
+H: `tests/test-wallpaper.sh` и `tests/test-user-wallpaper.sh` — порядок XDG,
+личные настройки каждой DE, первый вход, remove, reinstall, сохранность других
+свойств, ссылки и активные сеансы. Полный гейт — `make ci`.
+L: `make test-live EXT=wallpaper` проверяет системные умолчания в контейнере.
+Экранная приёмка четырёх DE и её текущие ограничения —
+[runbook 05, #156](../../../docs/runbooks/05_existing-desktop-acceptance.md#156).
