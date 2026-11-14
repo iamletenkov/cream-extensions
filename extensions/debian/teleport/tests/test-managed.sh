@@ -2,7 +2,8 @@
 # shellcheck disable=SC2016  # literal $… in fakes is the test data
 # Тесты расширения teleport (cream/v1): управляемые метки (TELEPORT_MANAGED_LABELS,
 # действия set-managed и managed-status — контракт stvor-agent, схема 1) и
-# командные метки command-labels.d (спека stvor-agent §10.3, §10.5, §10.7).
+# командные метки command-labels.d (спека stvor-agent §10.3, §10.5, §10.7), имя
+# ноды — действие set-nodename (план Stvor 2026-11-12, Task C2).
 # Проверки «переехало в T» из docs/test-map.md stvor-agent (раздел «Для CE»)
 # помечены его номерами (№N); строки №215–217 (join) — в test-join.sh.
 #
@@ -148,6 +149,9 @@ case "${1:-}" in
         n=$(( $(cat "$CREAM_ROOT/run/teleport.pid") + 1 ))
         mkdir -p "$CREAM_ROOT/proc/$n"; echo "$n" > "$CREAM_ROOT/run/teleport.pid"; exit 0 ;;
     restart)
+        # restart.seq: the outcomes of successive restarts, one per line (the
+        # first is used and removed; then $FAKE/restart stays as the last).
+        if [[ -s "$FAKE/restart.seq" ]]; then head -n 1 "$FAKE/restart.seq" > "$FAKE/restart"; sed -i 1d "$FAKE/restart.seq"; fi
         case "$(cat "$FAKE/restart")" in
             fail) exit 1 ;;
             noop) ;;
@@ -225,7 +229,7 @@ tp(){
         CREAM_ETC_DIR="$ROOT/etc/cream/teleport" CREAM_STATE_DIR="$STATE" CREAM_ROOT="$ROOT"
         CREAM_CONFIG_FILE="$CONF" CREAM_SECRETS_FILE="$ROOT/etc/cream/teleport/secrets" CREAM_ACTION="$a")
     case "$a" in
-        set-managed|leave) env+=(CREAM_LOCK_FD=9 CREAM_LOCK_MODE=exclusive CREAM_OUTPUT=json) ;;
+        set-managed|set-nodename|leave) env+=(CREAM_LOCK_FD=9 CREAM_LOCK_MODE=exclusive CREAM_OUTPUT=json) ;;
         managed-status|apps-status) env+=(CREAM_OUTPUT=json) ;;
     esac
     env "${env[@]}" "$STAGED/actions/$a" "$@" 9>"$TMP/lock"
@@ -1245,6 +1249,203 @@ out="$(tp apps-status 2>/dev/null)"; rc=$?
 eq "ручка не по типу — 3" 3 "$rc"
 check "ручка не по типу — объект с error" json_ok "$out"
 check "ручка не по типу — error" grep -q '"error":' <<< "$out"
+
+echo "== set-nodename: манифест =="
+check "set-nodename: args free" grep -qx '    args: free' <<< "$(manifest_action set-nodename)"
+check "set-nodename: lock exclusive" grep -qx '    lock: exclusive' <<< "$(manifest_action set-nodename)"
+check "set-nodename: output json" grep -qx '    output: json' <<< "$(manifest_action set-nodename)"
+check "set-nodename: phases live" grep -qx '    phases: \[live\]' <<< "$(manifest_action set-nodename)"
+check "set-nodename: вход исполняемый" test -x "$EXT/actions/set-nodename"
+node_of(){ yq 'y["teleport"]["nodename"]'; }
+addrs(){ yq "sorted(a['public_addr'] for a in y['app_service']['apps'])"; }
+
+echo "== set-nodename: новое имя — запись, один restart, адреса приложений =="
+registered
+out="$(tp set-nodename nodename=lab-2 2>"$TMP/err")"; rc=$?
+eq "set-nodename — код 0" 0 "$rc"
+check "set-nodename: stdout — один JSON-объект" json_ok "$out"
+eq "set-nodename: result" applied "$(json_get "$out" result)"
+eq "set-nodename: ключи — как у set-managed" "['active', 'joined', 'managed', 'pending', 'result', 'schema']" "$(jx "$out" 'sorted(o)')"
+eq "set-nodename: schema 1" 1 "$(json_get "$out" schema)"
+eq "set-nodename: ручка записана" lab-2 "$(get TELEPORT_NODENAME)"
+check "вложенный cream set — --no-apply --allow-readonly, одно значение" \
+    grep -q '^cream set --no-apply --allow-readonly teleport TELEPORT_NODENAME=lab-2 lock_fd=9 ' <<< "$(clog)"
+eq "ровно один restart" 1 "$(restarts)"
+check_not "без reload" grep -q 'reload' <<< "$(slog)"
+eq "teleport.yaml: nodename" lab-2 "$(node_of)"
+eq "адреса приложений — под новым именем" \
+    "['api-lab-2.teleport.example.org', 'web-lab-2.teleport.example.org']" "$(addrs)"
+eq "teleport.yaml 0600" 600 "$(stat -c %a "$Y")"
+check_not "кандидат не остался" compgen -G "$ROOT/etc/.teleport.yaml*"
+check "журнал: имя сменено" grep -q 'lab-1 → lab-2' "$TMP/err"
+
+echo "== set-nodename: то же имя — unchanged, без restart и записи =="
+cp "$CONF" "$TMP/conf.before"; cp "$Y" "$TMP/yaml.before"
+: > "$FAKE/systemctl.log"; : > "$FAKE/cream.log"
+out="$(tp set-nodename nodename=lab-2 2>/dev/null)"; rc=$?
+eq "то же имя — код 0" 0 "$rc"
+eq "то же имя — unchanged" unchanged "$(json_get "$out" result)"
+eq "то же имя — restart нет" 0 "$(restarts)"
+check_not "то же имя — cream set не зовётся" test -s "$FAKE/cream.log"
+check "то же имя — config тот же" cmp -s "$CONF" "$TMP/conf.before"
+check "то же имя — teleport.yaml не тронут" cmp -s "$Y" "$TMP/yaml.before"
+
+echo "== set-nodename: имя не по RFC 1123 — код 2, ничего не тронуто =="
+registered
+cp "$CONF" "$TMP/conf.before"; cp "$Y" "$TMP/yaml.before"
+nrefuse(){ # nrefuse <name of check> <args…>
+    local what="$1" out rc; shift
+    out="$(tp set-nodename "$@" 2>"$TMP/err")"; rc=$?
+    eq "$what — код 2" 2 "$rc"
+    check "$what — JSON в stdout" json_ok "$out"
+    eq "$what — отказ: только schema и error" "['error', 'schema']" "$(jx "$out" 'sorted(o)')"
+    check_not "$what — ввод не в выводе" grep -qF 'EVIL' <<< "$out$(cat "$TMP/err")"
+}
+nrefuse "без аргумента"
+nrefuse "имя без ключа" lab-2
+nrefuse "другой ключ" name=lab-2
+nrefuse "ключ заглавными" NODENAME=lab-2
+nrefuse "два аргумента" nodename=lab-2 nodename=lab-3
+nrefuse "пустое имя" nodename=
+nrefuse "заглавные" nodename=Lab-EVIL
+nrefuse "дефис в начале" nodename=-evil
+nrefuse "дефис в конце" nodename=evil-
+nrefuse "один знак (тип ручки — от 2)" nodename=e
+nrefuse "64 знака" "nodename=$(printf 'e%.0s' $(seq 64))"
+nrefuse "подчёркивание" nodename=ev_il
+nrefuse "точка" nodename=evil.example
+nrefuse "пробел" 'nodename=ev il'
+nrefuse "перевод строки" $'nodename=lab-2\nEVIL'
+nrefuse "подстановка shell" 'nodename=$(touch EVIL)'
+nrefuse "путь" 'nodename=../EVIL'
+nrefuse "кириллица" 'nodename=лаб'
+nrefuse "второй знак равенства" 'nodename=lab=EVIL'
+check "после отказов config не тронут" cmp -s "$CONF" "$TMP/conf.before"
+check "после отказов teleport.yaml не тронут" cmp -s "$Y" "$TMP/yaml.before"
+check_not "после отказов systemctl не вызывался" test -s "$FAKE/systemctl.log"
+check_not "после отказов cream set не вызывался" test -s "$FAKE/cream.log"
+check_not "подстановка не выполнена" compgen -G "$ROOT/*EVIL*"
+N63="$(printf 'n%.0s' $(seq 63))"
+conf TELEPORT_APPS=
+out="$(tp set-nodename "nodename=$N63" 2>/dev/null)"; rc=$?
+eq "63 знака без приложений — код 0" "0 applied" "$rc $(json_get "$out" result)"
+eq "63 знака — в teleport.yaml" "$N63" "$(node_of)"
+
+echo "== set-nodename: приложение не влезает в метку DNS — код 2 до записи =="
+registered
+# One more app of 21: with a node of 41 the label is 63 (fits), with 42 it is
+# 64 — the rename would lose the app.
+A21="$(printf 'a%.0s' $(seq 21))"
+conf "TELEPORT_APPS=web=8080 $A21=8081"
+tp render 2>/dev/null
+cp "$CONF" "$TMP/conf.before"; cp "$Y" "$TMP/yaml.before"
+: > "$FAKE/systemctl.log"; : > "$FAKE/cream.log"
+N42="$(printf 'm%.0s' $(seq 42))"; N41="$(printf 'k%.0s' $(seq 41))"
+out="$(tp set-nodename "nodename=$N42" 2>"$TMP/err")"; rc=$?
+eq "приложение не влезает — код 2" 2 "$rc"
+eq "приложение не влезает — отказ: только schema и error" "['error', 'schema']" "$(jx "$out" 'sorted(o)')"
+check "приложение не влезает — error называет приложение" grep -qF "$A21" <<< "$(json_get "$out" error)"
+check "журнал называет приложение" grep -qF "$A21-$N42" "$TMP/err"
+check "не влезает — config не тронут" cmp -s "$CONF" "$TMP/conf.before"
+check "не влезает — teleport.yaml не тронут" cmp -s "$Y" "$TMP/yaml.before"
+eq "не влезает — restart нет" 0 "$(restarts)"
+check_not "не влезает — cream set не вызывался" test -s "$FAKE/cream.log"
+printf 'NAME=%s\nURI=http://127.0.0.1:9001\n' "$A21" > "$ROOT/etc/cream/teleport/apps.d/a21.conf"
+chmod 0644 "$ROOT/etc/cream/teleport/apps.d/a21.conf"
+conf "TELEPORT_APPS=web=8080"
+out="$(tp set-nodename "nodename=$N42" 2>/dev/null)"; rc=$?
+eq "объявление apps.d не влезает — тоже код 2" 2 "$rc"
+check "объявление apps.d не влезает — error называет приложение" grep -qF "$A21" <<< "$(json_get "$out" error)"
+out="$(tp set-nodename "nodename=$N41" 2>/dev/null)"; rc=$?
+eq "ровно 63 — можно" "0 applied" "$rc $(json_get "$out" result)"
+check "ровно 63 — опубликовано" grep -qF "$A21-$N41.teleport.example.org" "$Y"
+# Already too long under the current name: not published now, nothing to lose —
+# the rename is not refused because of it.
+registered
+A60="$(printf 'z%.0s' $(seq 60))"
+conf "TELEPORT_APPS=web=8080 $A60=8081"
+tp render 2>/dev/null
+out="$(tp set-nodename nodename=lab-22 2>/dev/null)"; rc=$?
+eq "уже не влезавшее приложение не мешает — код 0" "0 applied" "$rc $(json_get "$out" result)"
+# Disabled by the operator: not published, not counted.
+registered
+conf "TELEPORT_APPS=web=8080 $A21=8081" "TELEPORT_APPS_DISABLE=$A21"
+tp render 2>/dev/null
+out="$(tp set-nodename "nodename=$N42" 2>/dev/null)"; rc=$?
+eq "выключенное приложение не мешает — код 0" "0 applied" "$rc $(json_get "$out" result)"
+
+echo "== set-nodename: restart не подтверждён — откат имени =="
+registered
+printf 'dead\nok\n' > "$FAKE/restart.seq"
+out="$(tp set-nodename nodename=lab-2 2>"$TMP/err")"; rc=$?
+eq "откат — код 1" 1 "$rc"
+eq "откат — result unconfirmed" unconfirmed "$(json_get "$out" result)"
+eq "откат — ключи как у set-managed" "['active', 'joined', 'managed', 'pending', 'result', 'schema']" "$(jx "$out" 'sorted(o)')"
+eq "откат — ручка прежняя" lab-1 "$(get TELEPORT_NODENAME)"
+eq "откат — teleport.yaml с прежним именем" lab-1 "$(node_of)"
+eq "откат — адреса прежние" \
+    "['api-lab-1.teleport.example.org', 'web-lab-1.teleport.example.org']" "$(addrs)"
+eq "откат — два restart (новое имя, прежнее)" 2 "$(restarts)"
+check "откат — журнал" grep -q 'не подтвердил перезапуск' "$TMP/err"
+check "откат — журнал: возвращено прежнее имя" grep -q 'возвращено прежнее имя lab-1' "$TMP/err"
+check_not "откат — кандидат не остался" compgen -G "$ROOT/etc/.teleport.yaml*"
+registered
+echo fail > "$FAKE/restart"
+out="$(tp set-nodename nodename=lab-2 2>"$TMP/err")"; rc=$?
+eq "откат не подтверждён — код 1" 1 "$rc"
+eq "откат не подтверждён — unconfirmed" unconfirmed "$(json_get "$out" result)"
+eq "откат не подтверждён — ручка всё равно прежняя" lab-1 "$(get TELEPORT_NODENAME)"
+eq "откат не подтверждён — teleport.yaml прежний" lab-1 "$(node_of)"
+# Without a knob (the node was the hostname): the rollback empties the knob again.
+fake_hostname(){ printf '#!/bin/sh\necho Lab-Host\n' > "$ROOT/bin/hostname"; chmod +x "$ROOT/bin/hostname"; }
+registered
+fake_hostname
+conf TELEPORT_NODENAME=
+printf 'dead\nok\n' > "$FAKE/restart.seq"
+out="$(tp set-nodename nodename=lab-2 2>/dev/null)"; rc=$?
+eq "откат к имени хоста — unconfirmed" "1 unconfirmed" "$rc $(json_get "$out" result)"
+eq "откат к имени хоста — ручка снова пустая" "" "$(get TELEPORT_NODENAME)"
+eq "откат к имени хоста — teleport.yaml" lab-host "$(node_of)"
+# The hostname is the name in effect, the knob is empty: the knob is written,
+# the name does not change — no restart.
+registered
+fake_hostname
+conf TELEPORT_NODENAME=
+tp render 2>/dev/null; : > "$FAKE/systemctl.log"
+out="$(tp set-nodename nodename=lab-host 2>/dev/null)"; rc=$?
+eq "имя хоста в ручку — applied" "0 applied" "$rc $(json_get "$out" result)"
+eq "имя хоста в ручку — записано" lab-host "$(get TELEPORT_NODENAME)"
+eq "имя хоста в ручку — restart нет" 0 "$(restarts)"
+
+# No name in effect before (empty knob, the hostname is not a DNS label —
+# render refused it): nothing to roll back to — the new name stays.
+registered
+printf '#!/bin/sh\necho bad_host\n' > "$ROOT/bin/hostname"; chmod +x "$ROOT/bin/hostname"
+conf TELEPORT_NODENAME=
+echo dead > "$FAKE/restart"
+out="$(tp set-nodename nodename=lab-2 2>"$TMP/err")"; rc=$?
+eq "прежнего имени нет — код 1, unconfirmed" "1 unconfirmed" "$rc $(json_get "$out" result)"
+eq "прежнего имени нет — ручка новая" lab-2 "$(get TELEPORT_NODENAME)"
+eq "прежнего имени нет — teleport.yaml с новым" lab-2 "$(node_of)"
+eq "прежнего имени нет — один restart" 1 "$(restarts)"
+check "прежнего имени нет — журнал" grep -q 'откатывать не к чему' "$TMP/err"
+
+echo "== set-nodename: не зарегистрирован — только запись, deferred =="
+new_root
+conf TELEPORT_PROXY=teleport.example.org:443 TELEPORT_ENV=prod TELEPORT_NODENAME=lab-1
+out="$(tp set-nodename nodename=lab-2 2>/dev/null)"; rc=$?
+eq "deferred — код 0" 0 "$rc"
+eq "deferred — result" deferred "$(json_get "$out" result)"
+eq "deferred — ручка записана" lab-2 "$(get TELEPORT_NODENAME)"
+eq "deferred — restart нет" 0 "$(restarts)"
+check_not "deferred — teleport.yaml не создан" test -e "$Y"
+
+echo "== set-nodename: неверный домен — код 3 с JSON =="
+registered
+echo 'TELEPORT_LABELS="app=x"' >> "$CONF"
+out="$(tp set-nodename nodename=lab-2 2>/dev/null)"; rc=$?
+eq "неверный домен — код 3" 3 "$rc"
+check "неверный домен — JSON с error" grep -q '"error":' <<< "$out"
 
 echo
 echo "проверок: $((pass + fail)), не прошло: $fail"

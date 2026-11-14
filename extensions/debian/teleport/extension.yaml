@@ -1,6 +1,12 @@
 schema: cream/v1
 name: teleport
-version: 4.6.6
+version: 4.7.0
+# 4.7.0: действие set-nodename nodename=<имя> (Stvor, переименование робота): имя — метка DNS по
+#        RFC 1123 от 2 знаков; каждое опубликованное приложение должно влезать в
+#        <app>-<имя> ≤ 63, иначе отказ (код 2) без записи; TELEPORT_NODENAME через
+#        cream set, перезапуск только при смене действующего имени, с подтверждением;
+#        не подтвердился — откат ручки и teleport.yaml к прежнему имени, restart и код 1
+#        (unconfirmed); ответ — JSON как у set-managed.
 # 4.6.6: прокси раздачи портала (proxy= агента, в нём бывает user:пароль@) и токен
 #        доступа — в конфиге curl на его stdin (-K -), не --proxy в argv: /proc/*/cmdline
 #        читают все. curl скачивания — с -q первым: ~/.curlrc не вмешивается.
@@ -184,6 +190,15 @@ actions:
     args: free
     lock: exclusive
     # ожидание блокировки у вызывающего + restart с подтверждением <= 30 с
+    timeout: 3m
+    output: json
+    phases: [live]
+  set-nodename:
+    summary: "nodename=<имя> (RFC 1123); приложения <app>-<имя> ≤ 63; restart с подтверждением, откат; JSON как у set-managed"
+    args: free
+    lock: exclusive
+    # ожидание блокировки у вызывающего + restart с подтверждением <= 30 с + откат с
+    # ещё одним restart <= 30 с
     timeout: 3m
     output: json
     phases: [live]

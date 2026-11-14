@@ -758,6 +758,29 @@ act set-managed env=prod space=sp-2; eq "не подтвердился — 1" 1 
 check "не подтвердился — unconfirmed" grep -q '"result":"unconfirmed"' <<< "$(json)"
 check "маркер managed-pending" test -e "$S/managed-pending"
 
+echo "== set-nodename: перезапуск с подтверждением, откат при сбое =="
+setup; installed; procd_up
+echo up > "$FAKE/net"; join_line
+: > "$FAKE/calls"
+act set-nodename nodename=owrt-lab-2; eq "set-nodename — 0" 0 "$?"
+check "set-nodename — applied" grep -q '"result":"applied"' <<< "$(json)"
+check "set-nodename — restart службы" grep -qx 'init restart' "$FAKE/calls"
+check "имя ноды в teleport.yaml" grep -qx '  nodename: "owrt-lab-2"' "$Y"
+check "ручка записана" grep -qx 'TELEPORT_NODENAME="owrt-lab-2"' "$ROOT/etc/cream/teleport-openwrt/config"
+: > "$FAKE/calls"
+act set-nodename nodename=owrt-lab-2; eq "то же имя — 0" 0 "$?"
+check "то же имя — unchanged" grep -q '"result":"unchanged"' <<< "$(json)"
+check_not "то же имя — без перезапуска" grep -qx 'init restart' "$FAKE/calls"
+act set-nodename 'nodename=Owrt_EVIL'; eq "имя не по RFC 1123 — 2" 2 "$?"
+check "имя не по RFC 1123 — объект с error" grep -q '^{"schema":1,"error":' <<< "$(json)"
+act set-nodename owrt-lab-4; eq "имя без ключа nodename= — 2" 2 "$?"
+: > "$FAKE/restart.stuck"
+act set-nodename nodename=owrt-lab-3; eq "не подтвердился — 1" 1 "$?"
+check "не подтвердился, откат тоже — unconfirmed" grep -q '"result":"unconfirmed"' <<< "$(json)"
+check "откат — прежнее имя в teleport.yaml" grep -qx '  nodename: "owrt-lab-2"' "$Y"
+check "откат — прежняя ручка" grep -qx 'TELEPORT_NODENAME="owrt-lab-2"' "$ROOT/etc/cream/teleport-openwrt/config"
+rm -f "$FAKE/restart.stuck"
+
 echo "== reload-apps, apply, hup =="
 setup; installed; procd_up
 echo up > "$FAKE/net"; join_line
@@ -847,6 +870,8 @@ rm -f "$ROOT/etc/cream/teleport-openwrt/apps.d/x55.conf" "$ROOT/etc/cream/telepo
 sed -i '/^TELEPORT_APPS=/d' "$ROOT/etc/cream/teleport-openwrt/config"
 bbrun set-managed space=sp-2 env=dev; eq "set-managed без paste — 0" 0 "$?"
 check "set-managed — без init: deferred" grep -q '"result":"deferred"' "$ROOT/out"
+bbrun set-nodename nodename=bb-node-2; eq "set-nodename без init — 0" 0 "$?"
+check "set-nodename — без init: deferred" grep -q '"result":"deferred"' "$ROOT/out"
 eq "отсортированный набор в домене" 'TELEPORT_MANAGED_LABELS="env=dev space=sp-2"' "$(grep '^TELEPORT_MANAGED_LABELS=' "$ROOT/etc/cream/teleport-openwrt/config")"
 sed -i '/^TELEPORT_NODENAME=/d' "$ROOT/etc/cream/teleport-openwrt/config"
 bbrun render

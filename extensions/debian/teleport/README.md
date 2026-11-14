@@ -16,7 +16,7 @@
 | Конфликтует с | способность `teleport-node` |
 | Хуки | `install`, `upgrade`, `remove`, `apply` |
 | Настройка на загрузке | — |
-| Действия | `cream run teleport join`, `cream run teleport join-retry`, `cream run teleport leave`, `cream run teleport set-managed`, `cream run teleport managed-status`, `cream run teleport apps-status`, `cream run teleport status`, `cream run teleport render`, `cream run teleport reload-apps`, `cream run teleport hup`, `cream run teleport scrub-token` |
+| Действия | `cream run teleport join`, `cream run teleport join-retry`, `cream run teleport leave`, `cream run teleport set-managed`, `cream run teleport set-nodename`, `cream run teleport managed-status`, `cream run teleport apps-status`, `cream run teleport status`, `cream run teleport render`, `cream run teleport reload-apps`, `cream run teleport hup`, `cream run teleport scrub-token` |
 | Живая машина | да |
 <!-- /catalog:facts -->
 
@@ -186,6 +186,7 @@ RUN_COMMAND cream install --with-deps teleport
 | `join-retry` | exclusive | тик `teleport-join.timer`; ручная регистрация после `TELEPORT_DEFER=1` |
 | `leave` | exclusive | агент выключен, `/var/lib/teleport`, `teleport.yaml`, секрет, ожидание, управляемые метки и `managed-pending` стёрты; JSON `{"result":"left"}` |
 | `set-managed k=v…` | exclusive | полный набор управляемых меток; JSON схемы 1 |
+| `set-nodename nodename=<имя>` | exclusive | имя ноды (переименование робота Stvor), restart с подтверждением, откат при сбое; JSON как у `set-managed` |
 | `managed-status` | none | управляемые метки, маркер, регистрация, агент; JSON схемы 1 |
 | `apps-status` | none | итог публикации приложений: опубликованные, отброшенные объявления с причиной; JSON схемы 1 |
 | `status` | none | регистрация, служба, ручки, приложения, управляемые и командные метки — текстом |
@@ -377,6 +378,49 @@ stdout — один JSON-объект схемы 1 (эталон — `tests/fixt
 
 `managed-status` (`lock: none`) — тот же объект без `result`, только читает;
 домен не по типу — код 3. `leave` стирает управляемые метки и маркер.
+
+### Имя ноды — `set-nodename`
+
+Переименование робота в Stvor доходит до узла этим действием (stvor-agent — по полю `nodename`
+ответа меток, план «модель доступа» Task A4; без такого агента — вручную, командой ниже). Признак
+«расширение умеет» — наличие действия.
+
+```bash
+sudo cream run --lock-timeout 20s teleport set-nodename nodename=<новое-имя>
+```
+
+Порядок, до первой записи — проверки:
+
+1. Ровно один аргумент `nodename=<имя>`; имя — метка DNS по RFC 1123
+   (`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`) и тип `TELEPORT_NODENAME` (от 2 знаков). Иначе код 2;
+   ввод в ответ и журнал не попадает.
+2. Каждое приложение, опубликованное сейчас (`apps.d` и `TELEPORT_APPS`, кроме выключенных), должно
+   влезать в `<app>-<имя>` ≤ 63 знаков. Иначе код 2, в `error` — адреса, которые не влезли; ничего
+   не записано. Приложение, которое не влезает и под нынешним именем, не публикуется и отказа
+   не вызывает.
+3. Действующее имя (ручка или имя хоста) то же — без restart: `unchanged`, а если имя хоста теперь
+   записано в ручку — `applied`.
+4. Узел не зарегистрирован или systemd не запущен — только ручка, `deferred`.
+5. Иначе: кандидат `teleport.yaml` с новым именем (адреса приложений `<app>-<имя>.<прокси>`), ручка
+   (`cream set --no-apply --allow-readonly`), restart с подтверждением нового запуска за 30 с. Не
+   подтвердился — **откат**: прежняя ручка (пустая, если имя было именем хоста), `teleport.yaml` с
+   прежним именем и ещё один restart.
+
+stdout — один JSON-объект, как у `set-managed` (агент разбирает оба одним строгим разбором);
+действующее имя после вызова — `cream get teleport TELEPORT_NODENAME`:
+
+```
+{"schema":1,"managed":{"env":"prod"},"pending":false,"joined":true,"active":true,"result":"applied"}
+```
+
+| Код | `result` | Когда |
+|---|---|---|
+| 0 | `applied` | имя записано и действует (restart подтверждён или не нужен) |
+| 0 | `unchanged` | имя то же — ничего не тронуто |
+| 0 | `deferred` | узел не зарегистрирован или systemd не запущен — только ручка |
+| 1 | `unconfirmed` | restart с новым именем не подтверждён — прежнее имя возвращено (подтвердился ли его restart — в журнале); или прежнего действующего имени не было (пустая ручка и имя хоста не метка DNS) — новое остаётся |
+| 2 | — | отказ: `{"schema":1,"error":"…"}` (имя не по правилу, приложения не влезают); ничего не тронуто |
+| 3 | — | прочая ошибка (домен не по типу, cream set), `{"schema":1,"error":"…"}` |
 
 ### Командные метки — `command-labels.d`
 
