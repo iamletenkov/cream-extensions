@@ -6,8 +6,8 @@
 # systemctl, dconf, sleep, xdpyinfo, pgrep and chromium are fakes, the
 # cloud-user library is a stub. No root, systemd, X or display manager.
 #
-# Held here: nothing is written into the user's home (the panel and the desktop
-# of Xfce4 are system defaults — `files`; the on-screen keyboard of GNOME is a
+# Held here: nothing is written into the user's home (the Xfce4 panel is a
+# system default — `files`; the on-screen keyboard of GNOME is a
 # system dconf keyfile); the browser runs as the session user, never as root;
 # configuration values reach the browser only after a form check, and the unit
 # runs the wrapper without a shell.
@@ -65,7 +65,7 @@ echo "== манифест =="
 # eval: test-only literal expressions over our own manifest, as in nvidia-jetpack.
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "версия 4.1.1 (every_boot)" 4.1.1 "$(mf 'm["version"]')"
+eq "версия 5.0.0" 5.0.0 "$(mf 'm["version"]')"
 eq "cream >=1.2.0 (every_boot, спека cream §10.9)" ">=1.2.0" "$(mf 'm["cream"]')"
 eq "configure на каждой загрузке (аудит 2026-10-21)" True "$(mf 'm["hooks"]["configure"].get("every_boot")')"
 eq "live: confirm" confirm "$(mf 'm["targets"]["live"]')"
@@ -75,7 +75,7 @@ eq "хуки" "['configure', 'install', 'remove']" "$(mf 'sorted(m["hooks"])')"
 eq "depends cloud-user, apt-guard" "cloud-user >=1.0.0 <2 apt-guard >=1.0.0 <2" "$(mf '" ".join(d["name"]+" "+d["version"] for d in m["depends"])')"
 eq "конфликт с chromium-kiosk" "['chromium-kiosk']" "$(mf 'm["conflicts"]["extensions"]')"
 eq "requires" "['x11-server', 'display-manager']" "$(mf 'm["requires"]')"
-eq "files" "files/kiosk-chromium@.service:/etc/systemd/system/kiosk-chromium@.service files/run-kiosk.sh:/usr/local/lib/kiosk/run-kiosk.sh files/xfce4-desktop.xml:/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml files/xfce4-panel.xml:/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml" \
+eq "files" "files/index.html:/usr/local/share/kiosk/index.html files/kiosk-chromium@.service:/etc/systemd/system/kiosk-chromium@.service files/run-kiosk.sh:/usr/local/lib/kiosk/run-kiosk.sh files/xfce4-panel.xml:/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml" \
     "$(mf '" ".join(sorted(f["src"]+":"+f["dst"] for f in m["files"]))')"
 eq "run-kiosk.sh исполняемый (files)" 0755 "$(mf '[f["mode"] for f in m["files"] if f["src"].endswith("run-kiosk.sh")][0]')"
 for f in install.sh configure.sh knobs knobs.apply configure-kiosk.service run-kiosk.sh kiosk-chromium@.service; do
@@ -184,7 +184,7 @@ rk() {
         "$@" "$W" alice) > "$ROOT/out" 2>&1
 }
 rk; eq "умолчания — 0" 0 "$?"
-eq "адрес — последний аргумент" "https://github.com/iamletenkov/bisquite" "$(tail -1 "$FAKE/chromium.args")"
+eq "адрес — последний аргумент" "file:///usr/local/share/kiosk/index.html" "$(tail -1 "$FAKE/chromium.args")"
 check "--kiosk" grep -qx -- '--kiosk' "$FAKE/chromium.args"
 check "флаги по умолчанию" grep -qx -- '--disable-pinch' "$FAKE/chromium.args"
 rk 'KIOSK_URL=https://example.org/a?b=1&c=$(id)'; eq "\$ в адресе — отказ 1" 1 "$?"
@@ -217,5 +217,70 @@ check_not "ничего не снято" ht_called '^apt-get -q -y remove'
 check "экземпляр не выключен" test -e "$WANTS/kiosk-chromium@alice.service"
 check_not "systemctl не звали" ht_called '^systemctl '
 check "запись пакетов осталась" test -s "$STATE/packages"
+
+
+echo "== Xfce: kiosk и wallpaper в обоих порядках установки и снятия =="
+# Model only cream's declarative file deployment/removal, not its dependency
+# resolver. Hooks are real; all external commands still use hooktest fakes.
+kfiles() {
+    python3 - "$EXT" "$ROOT" "$1" <<'PYFILES'
+import os, shutil, sys, yaml
+ext, root, action = sys.argv[1:]
+for f in yaml.safe_load(open(ext + '/extension.yaml'))['files']:
+    target = root + f['dst']
+    if action == 'install':
+        if os.path.lexists(target):
+            sys.exit(67)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        shutil.copyfile(ext + '/' + f['src'], target)
+        os.chmod(target, int(f['mode'], 8))
+    elif os.path.lexists(target):
+        os.unlink(target)
+PYFILES
+}
+pwhook() {
+    env -i PATH="$ROOT/bin:$HT_PATH_TAIL" LANG=C.UTF-8 TMPDIR="$ROOT/tmp" CREAM_ROOT="$ROOT" \
+        CREAM_EXT_DIR="$ROOT/opt/cream/ext/wallpaper" \
+        CREAM_STATE_DIR="$ROOT/var/lib/cream/ext/wallpaper" \
+        "$ROOT/opt/cream/ext/wallpaper/hooks/$1" > "$ROOT/out" 2>&1
+}
+for order in kiosk-first wallpaper-first; do
+    for remove_first in kiosk wallpaper; do
+        kroot
+        # kroot preinstalls the unit for other tests; here files are deployed
+        # from the manifest with conflict detection before hooks run.
+        rm -f "$SD/$UNIT"
+        "$EXT/../../../tools/stage-catalog.sh" --ext "$EXT/../wallpaper" "$ROOT/opt/cream/ext" > /dev/null
+        XF="$ROOT/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
+        mkdir -p "${XF%/*}"
+        if [[ "$order" == wallpaper-first ]]; then
+            pwhook configure; eq "$order: обои до kiosk" 0 "$?"
+        fi
+        kfiles install; eq "$order: нет конфликта files (67)" 0 "$?"
+        ht_hook install; eq "$order: install kiosk" 0 "$?"
+        ht_hook configure; eq "$order: configure kiosk" 0 "$?"
+        pwhook configure; eq "$order: configure wallpaper" 0 "$?"
+        check "$order: обои заданы" grep -q 'name="image-path".*dst_1080.jpg' "$XF"
+        cp "$XF" "$ROOT/wallpaper.before"
+        if [[ "$remove_first" == kiosk ]]; then
+            ht_hook remove; eq "$order: remove kiosk" 0 "$?"
+            kfiles remove; eq "$order: сняты files kiosk" 0 "$?"
+            check "$order: обои сохранены" cmp -s "$XF" "$ROOT/wallpaper.before"
+            pwhook remove; eq "$order: remove wallpaper после kiosk" 0 "$?"
+        else
+            pwhook remove; eq "$order: remove wallpaper" 0 "$?"
+            eq "$order: kiosk продолжает работать" "/etc/systemd/system/$UNIT" "$(link_of alice)"
+            check "$order: обёртка kiosk сохранена" test -x "$ROOT/usr/local/lib/kiosk/run-kiosk.sh"
+            ht_hook remove; eq "$order: remove kiosk после wallpaper" 0 "$?"
+            kfiles remove
+        fi
+        check_not "$order: канал снят wallpaper" test -e "$XF"
+    done
+done
+check "локальная заглушка объясняет настройку URL" grep -q KIOSK_URL "$EXT/files/index.html"
+# Chromium offers to translate a page in another language than its UI (the
+# bubble covers the corner of a full-screen kiosk): the page forbids it.
+check "локальная заглушка без перевода (html translate=no)" grep -q '<html lang="ru" translate="no">' "$EXT/files/index.html"
+check "локальная заглушка без перевода (meta google notranslate)" grep -q '<meta name="google" content="notranslate">' "$EXT/files/index.html"
 
 ht_done

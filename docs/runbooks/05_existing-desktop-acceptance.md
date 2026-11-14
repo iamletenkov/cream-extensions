@@ -44,7 +44,7 @@
 | P4 | Kubuntu 24.04, SDDM | по плану после П27б: authority `/tmp/xauth_*` находится, журнал ожидания — раз в 5 минут |
 | P5 | Ubuntu 24.04 Server без DM | по плану, с замечанием о порядке снятия |
 | P6 | железо с DM без монитора | **не замерено**: железа нет |
-| P7 | Debian 12, Xfce + LightDM | `kiosk` и `wallpaper` работают по отдельности. Вместе на Xfce не сочетаются (см. ниже) |
+| P7 | Debian 12, Xfce + LightDM | после #144 (kiosk 5.0.0, wallpaper 3.0.4) сочетаются в обоих порядках, см. «Повтор P7 после исправления #144» |
 
 ## P1. Ubuntu 24.04, GDM, автологин
 
@@ -264,3 +264,55 @@ P1(а) (Xorg от root без KMS) не менялся. Это известно�
 `degraded` до перезагрузки. x11vnc 0.9.16 на SIGTERM выходит с кодом 2 (замер: SIGTERM 2, SIGHUP 2,
 SIGINT 0, ошибки 1). Исправлено в `x11vnc` 6.0.2 (`SuccessExitStatus=2`, `remove` ждёт останова и
 сбрасывает сбой `x11vnc@*`) и `selkies` 7.0.2 (`remove` сбрасывает сбой `selkies@*`).
+
+## Повтор P7 после исправления #144 (2026-11-14)
+
+Стенд: ВМ Debian 12 genericcloud + `xfce4 lightdm xserver-xorg`, ядро `6.1.0-54-amd64`
+(cloud-init-диск — на `scsi1`: на `ide2` при q35 облачное ядро его не видит), cream 1.4.0.
+Каталоги — снимки `5.27.0` из веток: PR `36f59dd` (sha256 `bc79ea80…1913`), `main`
+`acc8532` с kiosk 4.1.1 (`1bc5356d…7f88`), исправление ревью `a0770fa` (`a58e3349…776f`).
+Снимок ВМ `ed`: `existing-desktop` → 0, автологина ещё нет, пользователь не входил.
+
+| Проверка | Результат |
+|---|---|
+| kiosk → wallpaper → `desktop DESKTOP_AUTOLOGIN=1` | 0, 0, 0; `conflict.file_unowned` нет; apt-guard ставится вместе с kiosk, частичного результата нет |
+| wallpaper → kiosk → `desktop` | 0, 0, 0; канал wallpaper побайтно тот же до и после kiosk |
+| Экран после входа | Chromium на весь экран, локальная страница «Киоск настроен», `NRestarts=0`; сеть не нужна (`file://`) |
+| remove kiosk (порядок kiosk → wallpaper) | 0; канал побайтно цел; после перезагрузки и нового входа на экране `dst_1080.jpg` |
+| remove wallpaper первым (порядок wallpaper → kiosk) | 0; системный канал снят; служба, обёртка, юнит и страница kiosk на месте, active; после нового входа — страница киоска; затем remove kiosk → 0, `systemctl --failed` пуст |
+| Повторная установка wallpaper и kiosk | 0, 0 |
+| `cream set kiosk KIOSK_URL=https://example.org/` | 0; Chromium открыл example.org, `NRestarts=0` |
+| Чужой системный `xfce4-desktop.xml` | `install wallpaper` → cream 79 `hook.failed`, «… уже есть и не наш — сохранён; освободите канал…»; `/etc/dconf`, `/etc/xdg` побайтно прежние; `remove wallpaper` → 0, чужой файл цел |
+| Миграция remove/install с kiosk 4.1.1 | remove 4.1.1 → 0, его канал снят; install 5.0.0 → 0, явный `KIOSK_URL` сохранён; `configure --force wallpaper` → канал wallpaper |
+| Прямой upgrade с kiosk 4.1.1 | `cream upgrade -y --accept-risk kiosk --all` → 0: kiosk 5.0.0 и wallpaper 3.0.4 одним планом, старый канал снят, wallpaper записал свой, URL сохранён (повторено на `a0770fa`) |
+| upgrade wallpaper раньше kiosk | `cream upgrade -y wallpaper` → 79, ничего не записано; `upgrade --accept-risk kiosk kiosk` → 0; `configure --wait --force wallpaper` → 0 |
+
+**Личный канал Xfce.** xfdesktop 4.18 при первом старте сеанса сам пишет
+`~/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml` (`monitorVirtual-1/workspace*/last-image`).
+Если канал wallpaper на первом входе уже был, туда попадает `dst_1080.jpg`. Если нет —
+картинка Debian, и дальше системное умолчание wallpaper на экран не попадает (WARN
+`configure` об этом есть). Это от порядка kiosk/wallpaper не зависит; так же ведёт себя
+пользователь, входивший под kiosk 4.x. Сброс: выйти, удалить личный файл, войти — замерено, после
+входа `dst_1080.jpg`. Снятие wallpaper не убирает обои из уже записанного личного канала.
+
+**Исправлено по ревью (`a0770fa`).** Chromium показывал поверх локальной страницы пузырь
+«перевести с русского» (`lang="ru"`, интерфейс en-US). Страница теперь с `translate="no"` и
+`<meta name="google" content="notranslate">`; на экране пузыря нет. README kiosk и wallpaper
+описывают переход через `cream upgrade` и личный канал Xfce.
+
+**Мелочи, не дефект:** после `remove kiosk` остаются пустые `/usr/local/share/kiosk` и
+`/usr/local/lib/kiosk` (cream снимает файлы, не каталоги); `cream list` показывает wallpaper
+`installed` при упавшем `configure` — семантика cream.
+
+### P1–P6 в этом повторе
+
+- **P3** (Ubuntu 24.04 + `xubuntu-desktop-minimal`, ядро `6.8.0-149` с `bochs`): wallpaper → 0,
+  системный канал записан до первого входа. **Расхождение (не регрессия #144):** в сеансе
+  `xubuntu` `XDG_CONFIG_DIRS=/etc/xdg/xdg-xubuntu:/etc/xdg`, и канал пакета
+  `xubuntu-default-settings` сильнее нашего — на экране и в личном канале `xubuntu-wallpaper.png`.
+  Автологин `desktop DESKTOP_AUTOLOGIN=1` на этой машине не записался (задан руками, как в P3 выше).
+- **P1** — только уровень dconf на той же машине: `50-wallpaper` и замок на месте,
+  `gsettings` отдаёт `dst_1080.jpg`, ключ не записываем. Экран GNOME не повторялся.
+- **P2, P4, P5** не повторялись: дифф #144 не трогает `lib/x-session.sh`, обёртки
+  `selkies`/`x11vnc`, `existing-desktop`, `gdm-xorg`; последний прогон — приёмка v5.26.0 выше.
+- **P6** — не замерено: железа нет.

@@ -64,7 +64,7 @@ ini_get() { awk -F= -v s="$2" -v k="$3" '/^\[/{c=($0=="["s"]")} c && $1==k {prin
 echo "== манифест =="
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "версия 3.0.3" 3.0.3 "$(mf 'm["version"]')"
+eq "версия 3.0.4" 3.0.4 "$(mf 'm["version"]')"
 eq "configure по отметке — every_boot нет (аудит 2026-10-21)" None "$(mf 'm["hooks"]["configure"].get("every_boot")')"
 check "исключение every-boot в хуке" grep -q "^# cream-lint: every-boot-not-needed " "$EXT/hooks/configure"
 eq "cream >= 1.1.1 (стадия cloud-user, Р14)" '>=1.1.1' "$(mf 'm["cream"]')"
@@ -155,12 +155,25 @@ check "XML разбирается" python3 -c 'import sys, xml.dom.minidom as d;
 check "дом не тронут" home_empty
 
 echo "== configure: чужой xfce4-desktop.xml не перезаписывается =="
-fresh xfce
+fresh gnome xfce lxde
 printf '<?xml version="1.0"?>\n<channel name="xfce4-desktop" version="1.0"/>\n' > "$XF"
 foreign="$(cat "$XF")"
-ht_hook configure; eq "configure — 0" 0 "$?"
+before="$(sum_etc)"
+ht_hook configure; eq "чужой канал — отказ 1" 1 "$?"
+eq "отказ до любых записей" "$before" "$(sum_etc)"
 eq "чужой канал цел" "$foreign" "$(cat "$XF")"
 check "предупреждение о чужом канале" grep -q 'xfce4-desktop.xml' <<< "$(ht_out)"
+
+echo "== configure/remove: чужой канал-ссылка сохранён =="
+fresh gnome xfce
+printf 'foreign XML\n' > "$ROOT/foreign.xml"
+ln -s "$ROOT/foreign.xml" "$XF"
+before="$(sum_etc)"
+ht_hook configure; eq "ссылка — отказ 1" 1 "$?"
+eq "отказ до записей" "$before" "$(sum_etc)"
+ht_hook remove; eq "remove после отказа — 0" 0 "$?"
+check "чужая ссылка сохранена" test -L "$XF"
+eq "цель ссылки сохранена" 'foreign XML' "$(cat "$ROOT/foreign.xml")"
 
 echo "== configure: LXDE — pcmanfm.conf правится через rename, режим файла сохранён =="
 fresh lxde

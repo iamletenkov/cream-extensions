@@ -39,7 +39,7 @@ log_info(){ >&2 echo -e "${GREEN}[INFO]${NC} kiosk: $*"; }
 log_warn(){ >&2 echo -e "${YELLOW}[WARN]${NC} kiosk: $*"; }
 log_error(){ >&2 echo -e "${RED}[ERROR]${NC} kiosk: $*"; }
 
-DEFAULT_URL="https://github.com/iamletenkov/bisquite"
+DEFAULT_URL="file:///usr/local/share/kiosk/index.html"
 DEFAULT_DISPLAY=":0"
 DEFAULT_FLAGS="--disable-pinch --overscroll-history-navigation=0"
 URL_RE='^(https?|file)://[A-Za-z0-9._~:/?#@!&()*+,;=%-]+$'

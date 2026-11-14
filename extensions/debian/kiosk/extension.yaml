@@ -14,7 +14,7 @@
 # remove    — every instance off, the keyfile and our packages away.
 # files     — the unit template (EnvironmentFile=/etc/cream/kiosk/config, the
 #             wrapper without a shell, User=%i), the wrapper run-kiosk.sh and
-#             the system xfconf defaults of the Xfce4 panel and desktop.
+#             the system xfconf defaults of the Xfce4 panel.
 #
 # 4.0.0: cream/v1; stage graphical instead of configure-kiosk.service; the
 #        wrapper reads the domain from EnvironmentFile and checks the form of
@@ -24,8 +24,8 @@
 #        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: kiosk
-version: 4.1.1
-# 4.1.1: только README — единый шаблон README каталога (Task 23 плана bundled-cream).
+version: 5.0.0
+# 5.0.0: канал рабочего стола принадлежит wallpaper; локальная страница по умолчанию (#144).
 summary: Chromium в режиме киоска поверх графического сеанса — от пользователя сеанса, на весь экран
 cream: ">=1.2.0"
 platform:
@@ -39,7 +39,7 @@ targets:
   live: confirm
   live_note: >-
     захватывает экран: браузер Chromium на весь экран поверх сеанса пользователя
-    (KIOSK_USER или пользователь cloud-init), без панели и рабочего стола Xfce4 —
+    (KIOSK_USER или пользователь cloud-init), без панели Xfce4 —
     системные умолчания xfconf для всех пользователей машины; перезапускается
     сам при закрытии; ставит chromium; снимается cream remove kiosk
 provides: [kiosk-browser]
@@ -65,7 +65,7 @@ config:
       description: "пользователь киоска; пусто — пользователь cloud-init (библиотека cloud-user)"
     KIOSK_URL:
       type: "re:^(https?|file)://[A-Za-z0-9._~:/?#@!&()*+,;=%-]+$"
-      default: "https://github.com/iamletenkov/bisquite"
+      default: "file:///usr/local/share/kiosk/index.html"
       description: "страница киоска: http(s):// или file://, без пробелов, кавычек и $"
     KIOSK_DISPLAY:
       type: "re:^:[0-9]{1,3}(\\.[0-9]{1,2})?$"
@@ -84,4 +84,4 @@ files:
   - {src: files/kiosk-chromium@.service, dst: /etc/systemd/system/kiosk-chromium@.service, mode: "0644"}
   - {src: files/run-kiosk.sh, dst: /usr/local/lib/kiosk/run-kiosk.sh, mode: "0755"}
   - {src: files/xfce4-panel.xml, dst: /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml, mode: "0644"}
-  - {src: files/xfce4-desktop.xml, dst: /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml, mode: "0644"}
+  - {src: files/index.html, dst: /usr/local/share/kiosk/index.html, mode: "0644"}

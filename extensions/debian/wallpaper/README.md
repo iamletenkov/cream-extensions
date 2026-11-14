@@ -37,7 +37,7 @@ Xfce (xfconf) и LXDE (pcmanfm) из картинки, которая лежит
 | Стол | Файл | Как |
 |---|---|---|
 | GNOME | `/etc/dconf/db/local.d/50-wallpaper`, `locks/50-wallpaper`; профиль `/etc/dconf/profile/user` (`system-db:local`, правило общее с `desktop` и `locale`) | `picture-uri`, `picture-uri-dark` (GNOME 42+; старшему ключ не мешает), `picture-options` — **под замком** |
-| Xfce | `/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml` | раскладка Xubuntu: `monitor0…3/image-path`, `image-style` — xfdesktop переносит её на монитор с любым именем; чужой файл не перезаписывается (предупреждение) |
+| Xfce | `/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml` | раскладка Xubuntu: `monitor0…3/image-path`, `image-style` — xfdesktop переносит её на монитор с любым именем; чужой файл не перезаписывается (отказ configure до любых записей) |
 | LXDE | `/etc/xdg/pcmanfm/LXDE/pcmanfm.conf` (`lxde-common`), секция `[desktop]` | `wallpaper`, `wallpaper_mode`; прежние значения — в `/var/lib/cream/ext/wallpaper/pcmanfm.orig`, `remove` их возвращает |
 
 Запись — во временный файл рядом и `rename`: ссылка на месте нашего файла
@@ -93,6 +93,10 @@ RUN_COMMAND cream install --with-deps wallpaper WALLPAPER_IMAGE=dst_1080.jpg WAL
   побеждают**. `configure` смотрит (только наличие файла, ничего не читая и не
   правя), есть ли у пользователя cloud-init свой `xfce4-desktop.xml` или
   `desktop-items-0.conf`, и предупреждает.
+- **Xfce 4.18 пишет личный канал сам** при первом входе пользователя (замер P7,
+  runbook 05, Debian 12): обои видны тем, чей первый вход был уже после `configure`.
+  Остальным — сбросить личный канал (выйти, удалить
+  `~/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml`, войти заново).
 - **Нет файла картинки — отказ `install`** (и `configure`): слой ставят затем,
   чтобы на столе была заданная картинка, и молча собрать образ без неё значит
   отдать роботу не то, что просили.
@@ -116,3 +120,15 @@ RUN_COMMAND cream install --with-deps wallpaper WALLPAPER_IMAGE=dst_1080.jpg WAL
 - **L** — `make test-live EXT=wallpaper` поверх `xfce4` (`tests/live.env`).
 - **P** — что картинка видна на экране (GNOME на Jetson с `nvbackground.sh`, Xfce,
   LXDE) — глазами на машине с монитором; в контейнере экрана нет.
+
+### Xfce и kiosk
+
+С kiosk ≥ 5.0.0 wallpaper единолично задаёт системный канал `xfce4-desktop.xml`: порядок
+установки и снятия расширений произволен. Снятие kiosk сохраняет обои, снятие wallpaper
+не трогает kiosk. Полноэкранное окно скрывает обои — для проверки снимите kiosk и войдите
+заново. Личные настройки Xfce пользователя по-прежнему сильнее системного умолчания
+(см. «Известные ограничения»). Чужой канал (в том числе от kiosk 4.x) даёт отказ
+configure с кодом 1 до любых записей, вместо успешного пропуска; чужой файл сохраняется.
+С kiosk 4.x обновляйте kiosk вместе с wallpaper или раньше него
+(`cream upgrade -y --accept-risk kiosk --all`); если wallpaper уже отказал —
+`cream configure --wait --force wallpaper` после обновления kiosk.

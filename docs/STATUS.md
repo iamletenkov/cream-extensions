@@ -39,8 +39,10 @@
 3. Бэклог после 5.0.0 — раздел «Бэклог после 5.0.0» плана
    [2026-10-19-cream-v1-migration](plans/2026-10-19-cream-v1-migration.md).
 4. Разгрести предупреждения shellcheck вне расширений (планка `make lint` — error).
-5. Хвосты existing-desktop: issue #139 (привязка к Xorg для жёсткого `:N`, остаток П26), issue #144
-   (`kiosk` и `wallpaper` на Xfce делят `xfce4-desktop.xml`; `KIOSK_URL` по умолчанию — 404).
+5. Хвост existing-desktop: #139 (привязка к Xorg для жёсткого `:N`, остаток П26).
+6. #144: kiosk 5.0.0 уступает канал wallpaper 3.0.4, URL — локальная страница; повтор P7
+   пройден (runbook 05). Открыто: wallpaper в сеансе Xubuntu перекрыт каналом
+   `xubuntu-default-settings` (P3), обои Xfce не видны пользователю с личным каналом.
 
 ## Ждут живой проверки (P: платы и bisquite)
 V и H пройдены у всех; живой проверки на железе или в сборке ещё не было.
