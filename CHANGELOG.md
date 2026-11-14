@@ -1,5 +1,27 @@
 # Changelog
 
+## [5.28.0](https://github.com/iamletenkov/cream-extensions/compare/v5.27.0...v5.28.0) (2026-11-14)
+
+
+### Добавлено
+
+* **code-server:** объявление apps.d несёт источник в строке # stvor: ([21b1bc1](https://github.com/iamletenkov/cream-extensions/commit/21b1bc16ec7b8f73984fc33f02850aff2e96e5a3))
+* **code-server:** объявление apps.d несёт источник в строке # stvor: ([1b06496](https://github.com/iamletenkov/cream-extensions/commit/1b06496a1603ee12599f82b9b9db1bd32d19f654))
+* **teleport:** действие set-nodename — смена имени ноды с откатом ([eb52302](https://github.com/iamletenkov/cream-extensions/commit/eb523022e53994f1faf59d4c48532c2e26ca89e9))
+* **teleport:** действие set-nodename — смена имени ноды с откатом ([5ef55ea](https://github.com/iamletenkov/cream-extensions/commit/5ef55ead137ac231416d37e277003af38579d7ec))
+
+
+### Исправлено
+
+* **kiosk:** локальная страница без перевода, переход с 4.x через upgrade ([a0770fa](https://github.com/iamletenkov/cream-extensions/commit/a0770fa30de1b142e8c02bcf1716c3c3bbdfb406))
+* **kiosk:** согласовать обои Xfce и локальную страницу киоска ([0d90341](https://github.com/iamletenkov/cream-extensions/commit/0d90341019be7bc9859c6a278c383af7b11b5bbf))
+* **kiosk:** согласовать обои Xfce и локальную страницу киоска ([36f59dd](https://github.com/iamletenkov/cream-extensions/commit/36f59dd74d042654a7453e65e1cdafcad82f4db2))
+* **teleport:** set-nodename без прежнего имени не откатывает в неисправимое ([6adf377](https://github.com/iamletenkov/cream-extensions/commit/6adf3773f111fcca9a3d478391edc1bc62275b92))
+* **teleport:** set-nodename принимает nodename=&lt;имя&gt; и отвечает как set-managed ([0ed19c5](https://github.com/iamletenkov/cream-extensions/commit/0ed19c5aef0621477202a20c85e0073dc68a7fbc))
+* **teleport:** краткое описание set-nodename проходит cream validate ([54b602d](https://github.com/iamletenkov/cream-extensions/commit/54b602dd728d6a9544dd00917915537d6045b5aa))
+* **x11vnc,selkies:** после remove машина не остаётся degraded ([b330539](https://github.com/iamletenkov/cream-extensions/commit/b330539bc274c64d7145247e8c35b31a0ad0b323))
+* **x11vnc,selkies:** после remove машина не остаётся degraded ([f64abb1](https://github.com/iamletenkov/cream-extensions/commit/f64abb1dc540a791a6b113b9fe52d0a488301752))
+
 ## [5.27.0](https://github.com/iamletenkov/cream-extensions/compare/v5.26.0...v5.27.0) (2026-11-13)
 
 
