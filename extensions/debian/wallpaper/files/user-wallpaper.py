@@ -5,6 +5,7 @@ import base64
 import json
 import os
 from pathlib import Path
+import pwd
 import re
 import subprocess
 import sys
@@ -274,6 +275,13 @@ def manage(home, action, image, mode, kinds):
         state_path.unlink()
 
 
+def eligible_account(name, uid, home, shell):
+    return (1000 <= int(uid) < 65534
+            and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_.@+-]{0,127}\$?', name) is not None
+            and home.startswith('/')
+            and not shell.endswith(('/nologin', '/false')))
+
+
 def dispatch(args):
     # getent also works with NSS; CREAM_ROOT is used only by the H fixtures.
     rows = subprocess.check_output(['getent', 'passwd'], text=True).splitlines()
@@ -283,7 +291,7 @@ def dispatch(args):
         if len(fields) != 7:
             continue
         name, _, uid, _, _, home, _ = fields
-        if uid.isdecimal() and 1000 <= int(uid) < 65534 and re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', name) and home.startswith('/') and not fields[6].endswith(('/nologin', '/false')):
+        if uid.isdecimal() and eligible_account(name, uid, home, fields[6]):
             users.append((name, uid, home))
     if args.dispatch == 'check':
         sessions = subprocess.run(['loginctl', 'list-sessions', '--no-legend'], capture_output=True, text=True, check=False)
@@ -325,6 +333,11 @@ def main():
             raise ValueError('personal settings must be edited as the user')
         if not args.home or not args.action:
             raise ValueError('home and action required')
+        account = pwd.getpwuid(os.geteuid())
+        if not eligible_account(account.pw_name, account.pw_uid, account.pw_dir, account.pw_shell):
+            return  # Xsession must never edit an account that dispatch cannot restore.
+        if Path(args.home).resolve() != Path(account.pw_dir).resolve():
+            raise ValueError('home differs from the account home used by dispatch')
         for process in ('xfconfd', 'pcmanfm', 'pcmanfm-qt'):
             if subprocess.run(['pgrep', '-u', str(os.geteuid()), '-x', process],
                               stdout=subprocess.DEVNULL, check=False).returncode == 0:

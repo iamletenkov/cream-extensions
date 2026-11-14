@@ -9,6 +9,8 @@ import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 import sys
+from types import SimpleNamespace
+from unittest import mock
 sys.dont_write_bytecode = True
 
 spec = importlib.util.spec_from_file_location('wallpaper_user', sys.argv.pop())
@@ -155,6 +157,34 @@ class Wallpaper(unittest.TestCase):
         self.remove()
         self.assertIn('<!-- personal comment -->', p.read_text())
         self.assertIn('name="desktop-menu" type="bool" value="false"', p.read_text())
+
+    def test_dispatch_restores_dotted_account(self):
+        args = SimpleNamespace(dispatch='remove', root='', image='', mode='zoom', kinds='xfce')
+        with mock.patch.object(wp.subprocess, 'check_output', return_value='alice.test:x:1000:1000::/home/alice.test:/bin/bash\n'), mock.patch.object(wp.subprocess, 'run', return_value=SimpleNamespace(returncode=0)) as run:
+            wp.dispatch(args)
+        run.assert_called_once()
+        self.assertIn('alice.test', run.call_args.args[0])
+        self.assertTrue(run.call_args.kwargs['close_fds'])
+
+    def test_session_skips_account_outside_dispatch_scope(self):
+        account = SimpleNamespace(pw_name='service', pw_uid=999, pw_dir=str(self.home), pw_shell='/bin/bash')
+        argv = ['user-wallpaper.py', 'apply', '--home', str(self.home), '--kinds', 'xfce']
+        with mock.patch.object(sys, 'argv', argv), mock.patch.object(wp.os, 'geteuid', return_value=999), mock.patch.object(wp.pwd, 'getpwuid', return_value=account), mock.patch.object(wp, 'manage') as manage:
+            wp.main()
+        manage.assert_not_called()
+
+    def test_session_and_dispatch_accept_dotted_account(self):
+        account = SimpleNamespace(pw_name='alice.test', pw_uid=1000, pw_dir=str(self.home), pw_shell='/bin/bash')
+        argv = ['user-wallpaper.py', 'apply', '--home', str(self.home), '--kinds', 'xfce']
+        with mock.patch.object(sys, 'argv', argv), mock.patch.object(wp.os, 'geteuid', return_value=1000), mock.patch.object(wp.pwd, 'getpwuid', return_value=account), mock.patch.object(wp.subprocess, 'run', return_value=SimpleNamespace(returncode=1)), mock.patch.object(wp, 'manage') as manage:
+            wp.main()
+        manage.assert_called_once()
+
+    def test_session_refuses_home_not_used_by_dispatch(self):
+        account = SimpleNamespace(pw_name='tester', pw_uid=1000, pw_dir=str(self.home), pw_shell='/bin/bash')
+        argv = ['user-wallpaper.py', 'apply', '--home', str(self.home / 'alternate'), '--kinds', 'xfce']
+        with mock.patch.object(sys, 'argv', argv), mock.patch.object(wp.os, 'geteuid', return_value=1000), mock.patch.object(wp.pwd, 'getpwuid', return_value=account), self.assertRaises(ValueError):
+            wp.main()
 
 unittest.main()
 PY
