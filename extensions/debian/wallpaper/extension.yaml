@@ -13,7 +13,9 @@
 # configure — stage cloud-user (after cloud-final, as the firstboot service
 #             before; no order against the display manager): writes the three
 #             defaults, warns when the cloud-init user has own Xfce/LXDE
-#             settings that override them; no desktop — a warning and 0.
+#             settings that override them; no desktop — a warning and 0; a
+#             foreign xfce4-desktop.xml (file or link without our mark) —
+#             exit 1 before any write, the file kept (3.0.4, #144).
 # remove    — takes our files away and gives pcmanfm.conf back its values.
 #
 # 3.0.0: cream/v1; configure-wallpaper.service → stage cloud-user (cream

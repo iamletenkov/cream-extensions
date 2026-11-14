@@ -137,21 +137,29 @@ RUN_COMMAND cream install --with-deps kiosk KIOSK_URL=https://dashboard.example.
 `xfce4-desktop.xml` kiosk не создаёт: обои задаёт [`wallpaper`](../wallpaper/README.md).
 Оба порядка установки поддержаны. Снятие kiosk сохраняет обои; снятие wallpaper
 не меняет настройки и службу kiosk. Обои под полноэкранным окном не видны —
-проверяйте их после снятия kiosk и нового входа в сеанс.
+проверяйте их после снятия kiosk и нового входа в сеанс. На экран они попадают,
+только если канал wallpaper уже был на первом входе пользователя: xfdesktop при
+первом старте сам пишет личный `~/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml`,
+и дальше этот файл сильнее системного умолчания (замер P7, runbook 05).
 
 Умолчание `KIOSK_URL=file:///usr/local/share/kiosk/index.html` открывает локальную
 страницу «Киоск настроен» с командой задания адреса; сеть для неё не нужна.
 
 ### Переход с kiosk 4.x
 
-kiosk 5.0.0 больше не задаёт чёрный фон и скрытые иконки Xfce. Перед переходом
-снимите **старую** версию (`sudo cream remove kiosk`), затем установите новую
-(`sudo cream install --accept-risk --with-deps kiosk`). Это освобождает прежний
-канал через учёт файлов cream, без ручного удаления чужой конфигурации. Если
-wallpaper уже установлен, примените его повторно: `sudo cream configure --force wallpaper`.
-Явно заданный старый `KIOSK_URL` проверьте через `cream show kiosk` и при необходимости
-замените командой `cream set kiosk KIOSK_URL=file:///usr/local/share/kiosk/index.html`.
-Прямое обновление без снятия старой версии здесь не подтверждено; его проверка — в P7.
+kiosk 5.0.0 больше не задаёт чёрный фон и скрытые иконки Xfce. Обновляйте kiosk
+вместе с wallpaper или раньше него:
+`sudo cream upgrade -y --accept-risk kiosk --all` или по очереди
+`sudo cream upgrade -y --accept-risk kiosk kiosk`, затем `sudo cream upgrade -y wallpaper`. cream снимает прежний канал kiosk 4.x по учёту
+файлов, без ручного удаления, и wallpaper сразу записывает свой. Обновлённый первым
+wallpaper 3.0.4 видит канал kiosk 4.x чужим и отказывает (cream 79, ничего не записано).
+После обновления kiosk повторите `sudo cream configure --wait --force wallpaper`.
+Путь через `sudo cream remove kiosk` и установку 5.0.0 тоже работает.
+Явно заданный `KIOSK_URL` сохраняется. Проверьте его через `cream show kiosk` и при
+необходимости замените: `cream set kiosk KIOSK_URL=file:///usr/local/share/kiosk/index.html`.
+У пользователя, который входил под kiosk 4.x, xfdesktop уже записал личный канал.
+Новые обои он увидит после сброса этого канала: выйти из сеанса, удалить
+`~/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml`, войти заново.
 
 ### Диагностика
 

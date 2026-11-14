@@ -278,5 +278,9 @@ for order in kiosk-first wallpaper-first; do
     done
 done
 check "локальная заглушка объясняет настройку URL" grep -q KIOSK_URL "$EXT/files/index.html"
+# Chromium offers to translate a page in another language than its UI (the
+# bubble covers the corner of a full-screen kiosk): the page forbids it.
+check "локальная заглушка без перевода (html translate=no)" grep -q '<html lang="ru" translate="no">' "$EXT/files/index.html"
+check "локальная заглушка без перевода (meta google notranslate)" grep -q '<meta name="google" content="notranslate">' "$EXT/files/index.html"
 
 ht_done
