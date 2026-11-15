@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# wallpaper.sh — the wallpaper as a system default. Run by the hooks from the
+# wallpaper.sh — system defaults and explicit reversible per-user wallpaper.
+# Run by the hooks from the
 # tree of the extension (/opt/cream/ext/wallpaper/files/wallpaper.sh); the keys
 # come from the hook environment (config.keys of the manifest, checked by cream
 # and checked again here before any write).
@@ -20,9 +21,11 @@
 #     same lock keeps an older value in the user's database from winning.
 #   Xfce — the system xfconf channel xfce4-desktop in the layout Xubuntu ships
 #     (monitor0…3/image-path): xfdesktop takes it over for whatever the monitor
-#     is called. A default, not a lock: the user's own channel wins.
+#     is called. A separate XDG layer wins over Xubuntu system defaults;
+#     personal properties are changed only with WALLPAPER_OVERRIDE_USER=1.
 #   LXDE — [desktop] wallpaper/wallpaper_mode of the pcmanfm.conf of lxde-common
 #     (lxsession does not hold the wallpaper; pcmanfm draws the desktop).
+#   LXQt — pcmanfm-qt [Desktop] settings in our XDG layer.
 #
 # Every write goes to a temporary file in the same directory and is renamed
 # over the target: a symlink planted at the target is replaced, never followed;
@@ -36,6 +39,7 @@ CLOUD_USER_LIB="$R/opt/cream/ext/cloud-user/get_cloud_user.sh"
 # ${…-…}, not ${…:-…}: an empty value passed in is refused, not defaulted.
 WALLPAPER_IMAGE="${WALLPAPER_IMAGE-dst_1080.jpg}"
 WALLPAPER_MODE="${WALLPAPER_MODE-zoom}"
+WALLPAPER_OVERRIDE_USER="${WALLPAPER_OVERRIDE_USER:-0}"
 IMAGE_RE='^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.(jpg|jpeg|png|svg)$'
 
 DCONF_BIN="$R/usr/bin/dconf"
@@ -47,6 +51,11 @@ XFCONF="$XFCONF_DIR/xfce4-desktop.xml"
 XFCONF_MARK='<!-- cream extension wallpaper: system default, removed by `cream remove wallpaper` -->'
 PCMANFM="$R/etc/xdg/pcmanfm/LXDE/pcmanfm.conf"
 PCMANFM_ORIG="$STATE/pcmanfm.orig"
+XDG_LAYER="$R/etc/xdg/cream-wallpaper"
+XSESSION="$R/etc/X11/Xsession.d/99cream-wallpaper"
+USER_HELPER="${BASH_SOURCE[0]%/*}/user-wallpaper.py"
+USER_MARK="$STATE/users-managed"
+XDG_MARK='# cream wallpaper: private XDG layer, removed with the extension'
 
 DCONF_CHANGED=0
 
@@ -280,29 +289,116 @@ cmd_apply(){
     uri="$(image)"
     m="$(mode)"
     read -r gnome style pmode <<< "$m"
+    check_xdg_layer
     if [[ -e "$XFCONF" || -L "$XFCONF" ]] && ! xfconf_ours; then
         die "${XFCONF#"$R"} уже есть и не наш — сохранён; освободите канал перед configure wallpaper"
+    fi
+    if [[ "$WALLPAPER_OVERRIDE_USER" == 1 || "$WALLPAPER_OVERRIDE_USER" == true || -e "$USER_MARK" ]]; then
+        user_settings check "$uri"
     fi
     if [[ -x "$DCONF_BIN" ]]; then apply_dconf "$uri" "$gnome"; any=1; fi
     if [[ -d "$XFCONF_DIR" || -x "$R/usr/bin/xfdesktop" ]]; then apply_xfconf "$uri" "$style"; any=1; fi
     if [[ -e "$PCMANFM" || -L "$PCMANFM" ]]; then apply_pcmanfm "$uri" "$pmode"; any=1; fi
+    apply_xdg_layer "$uri" "$pmode"
+    if [[ "$WALLPAPER_OVERRIDE_USER" == 1 || "$WALLPAPER_OVERRIDE_USER" == true ]]; then
+        install -d -m 0755 "$STATE"
+        : > "$USER_MARK"
+        user_settings apply "$uri"
+    elif [[ -e "$USER_MARK" ]]; then
+        user_settings remove
+        rm -f -- "$USER_MARK"
+    fi
     dconf_update
     if (( ! any )); then
         log_warn "рабочего стола не нашлось (dconf, xfconf, pcmanfm) — обои задавать некому"
         return 0
     fi
-    warn_user_overrides
+    if [[ "$WALLPAPER_OVERRIDE_USER" != 1 && "$WALLPAPER_OVERRIDE_USER" != true ]]; then
+        warn_user_overrides
+    fi
     log_info "обои: $uri ($WALLPAPER_MODE)"
 }
 
+check_xdg_layer(){
+    local target mark
+    for target in "$XSESSION" \
+        "$XDG_LAYER/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml" \
+        "$XDG_LAYER/pcmanfm-qt/lxqt/settings.conf"; do
+        [[ -e "$target" || -L "$target" ]] || continue
+        mark="$XDG_MARK"
+        [[ "$target" == *.xml ]] && mark="$XFCONF_MARK"
+        if [[ ! -f "$target" || -L "$target" ]] || ! grep -qxF "$mark" "$target"; then
+            die "${target#"$R"} уже есть и не наш — сохранён"
+        fi
+    done
+}
+
 cmd_remove(){
+    if [[ -e "$USER_MARK" ]]; then
+        user_settings check
+        user_settings remove
+        rm -f -- "$USER_MARK"
+    fi
     if remove_files "$DCONF_KF" "$DCONF_LK"; then DCONF_CHANGED=1; fi
     if xfconf_ours; then rm -f -- "$XFCONF"; fi
     remove_pcmanfm
+    local target mark
+    for target in "$XSESSION" \
+        "$XDG_LAYER/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml" \
+        "$XDG_LAYER/pcmanfm-qt/lxqt/settings.conf"; do
+        mark="$XDG_MARK"
+        [[ "$target" == *.xml ]] && mark="$XFCONF_MARK"
+        if [[ -f "$target" && ! -L "$target" ]] && grep -qxF "$mark" "$target"; then
+            rm -f -- "$target"
+        fi
+    done
     if (( DCONF_CHANGED )) && [[ -x "$DCONF_BIN" ]]; then
         dconf update || die "dconf update не прошёл"
     fi
     log_info "обои сняты"
+}
+
+# A separate XDG layer wins over xubuntu-default-settings without changing it.
+# Xsession runs the optional user helper before xfconfd/pcmanfm can cache files.
+desktop_kinds(){
+    local kinds=()
+    [[ -d "$XFCONF_DIR" || -x "$R/usr/bin/xfdesktop" ]] && kinds+=(xfce)
+    [[ -e "$PCMANFM" || -x "$R/usr/bin/pcmanfm" ]] && kinds+=(lxde)
+    [[ -x "$R/usr/bin/pcmanfm-qt" || -d "$R/etc/xdg/pcmanfm-qt" ]] && kinds+=(lxqt)
+    local IFS=,
+    echo "${kinds[*]}"
+}
+
+user_settings(){
+    python3 "$USER_HELPER" --dispatch "$1" --root "$R" \
+        --image "${2:-}" --mode "$WALLPAPER_MODE" --kinds "$(desktop_kinds)" \
+        || die "личные обои: операция $1 не выполнена; выйдите из графических сеансов"
+}
+
+apply_xdg_layer(){
+    local uri="$1" pmode="$2" kinds
+    kinds="$(desktop_kinds)"
+    if xfconf_ours; then
+        write_if_changed "$XDG_LAYER/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml" < "$XFCONF" || true
+    fi
+    if [[ ",$kinds," == *,lxqt,* ]]; then
+        [[ "$WALLPAPER_MODE" == zoom ]] && pmode=zoom
+        [[ "$WALLPAPER_MODE" == spanned ]] && pmode=stretch
+        printf '%s\n[Desktop]\nWallpaper=%s\nWallpaperMode=%s\n' "$XDG_MARK" "$uri" "$pmode" \
+            | write_if_changed "$XDG_LAYER/pcmanfm-qt/lxqt/settings.conf" || true
+    fi
+    {
+        printf '%s\n' "$XDG_MARK"
+        printf 'case ":${XDG_CONFIG_DIRS:-/etc/xdg}:" in\n'
+        printf '  *:/etc/xdg/cream-wallpaper:*) ;;\n'
+        printf '  *) XDG_CONFIG_DIRS="/etc/xdg/cream-wallpaper:${XDG_CONFIG_DIRS:-/etc/xdg}" ;;\n'
+        printf 'esac\nexport XDG_CONFIG_DIRS\n'
+        if [[ "$WALLPAPER_OVERRIDE_USER" == 1 || "$WALLPAPER_OVERRIDE_USER" == true ]]; then
+            printf 'if [ "$(id -u)" -ne 0 ]; then\n'
+            printf '  /usr/bin/python3 /opt/cream/ext/wallpaper/files/user-wallpaper.py apply --home "$HOME" --image "%s" --mode "%s" --kinds "%s" || logger -t cream-wallpaper "personal wallpaper not applied"\n' "$uri" "$WALLPAPER_MODE" "$kinds"
+            printf 'fi\n'
+        fi
+    } | write_if_changed "$XSESSION" || true
 }
 
 case "${1:-}" in

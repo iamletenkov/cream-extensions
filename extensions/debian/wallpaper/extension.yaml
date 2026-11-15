@@ -5,7 +5,8 @@
 #   Xfce  — the system xfconf channel xfce4-desktop (a default: the user's own
 #           channel, once there, wins);
 #   LXDE  — [desktop] of /etc/xdg/pcmanfm/LXDE/pcmanfm.conf (lxde-common).
-# Root writes nothing into a home directory and runs nothing as the user.
+# Root writes nothing into a home directory; the opt-in helper runs as the user.
+# 3.1.0: explicit reversible personal wallpaper edits; private XDG layer for Xubuntu/LXQt.
 #
 # install   — dconf-cli when dconf is absent; refuses (exit 1) when the chosen
 #             picture is not in images/ — an image without it is not what was
@@ -25,7 +26,7 @@
 #        (every-boot-not-needed, audit 2026-10-21) — only its comments.
 schema: cream/v1
 name: wallpaper
-version: 3.0.4
+version: 3.1.0
 # 3.0.4: чужой канал Xfce — отказ до записей вместо успешного пропуска (#144).
 summary: Обои рабочего стола — системное умолчание GNOME (dconf), Xfce (xfconf) и LXDE (pcmanfm) из картинок расширения
 cream: ">=1.1.1"
@@ -55,3 +56,7 @@ config:
       type: "enum:zoom,scaled,centered,stretched,spanned,wallpaper"
       default: "zoom"
       description: "как вписать: zoom — заполнить с обрезкой, scaled — целиком, centered, stretched, spanned, wallpaper — плиткой"
+    WALLPAPER_OVERRIDE_USER:
+      type: bool
+      default: "0"
+      description: "явно разрешить обратимое изменение только wallpaper-свойств Xfce/LXDE/LXQt; перед configure/remove выйти из графических сеансов"

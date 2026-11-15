@@ -24,7 +24,7 @@
 #        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: desktop
-version: 2.0.0
+version: 2.0.1
 # 2.0.0: DESKTOP_AUTOLOGIN пусто по умолчанию — автологином не управляю; прежние
 #        строки автологина записываются при install и возвращаются при пустом
 #        ключе и remove; хук upgrade (маркер legacy с 1.x); SDDM + 0/1 — отказ

@@ -233,3 +233,11 @@ initialize the NVIDIA graphics device», AGX Orin 2026-09-14), а `systemd --use
 - Порядок загрузки с gdm3 и cloud-init (стадия `system` до менеджера входа, без `ordering
   cycle`) — интеграция cream `test/integration/desktop`. Автологин на настоящем рабочем
   столе — L `xfce4` и сборка через bisquite.
+
+
+### Xubuntu: LightDM без локального конфига (#156)
+
+С 2.0.1, если LightDM имеет только вендорский `/usr/share/lightdm/lightdm.conf.d`,
+`DESKTOP_AUTOLOGIN=1` создаёт `/etc/lightdm/lightdm.conf.d/90-cream-desktop-autologin.conf`.
+Пакетный слой не меняется. `0` задаёт явно пустой `autologin-user`, пустой ключ и
+remove снимают созданный файл; посторонние добавленные настройки сохраняются.

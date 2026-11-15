@@ -55,3 +55,5 @@
 | [plans/2026-10-19-cream-v1-migration.md](plans/2026-10-19-cream-v1-migration.md) | план перевода каталога на cream/v1: 29 задач в 10 волнах, выпуск 5.0.0 (закрыт) |
 | [research/2026-10-21-configure-audit.md](research/2026-10-21-configure-audit.md) | аудит 14 хуков configure по признакам А1–А6: кому нужен `every_boot` |
 | [../CHANGELOG.md](../CHANGELOG.md) | изменения по версиям (ведёт release-please) |
+| [specs/2026-11-14-wallpaper-all-desktops.md](specs/2026-11-14-wallpaper-all-desktops.md) | спека обоев всех DE и обратимого применения личных свойств (#156) |
+| [plans/2026-11-14-wallpaper-all-desktops.md](plans/2026-11-14-wallpaper-all-desktops.md) | план TDD и живой приёмки #156 |

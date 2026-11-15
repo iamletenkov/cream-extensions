@@ -316,3 +316,78 @@ SIGINT 0, ошибки 1). Исправлено в `x11vnc` 6.0.2 (`SuccessExitS
 - **P2, P4, P5** не повторялись: дифф #144 не трогает `lib/x-session.sh`, обёртки
   `selkies`/`x11vnc`, `existing-desktop`, `gdm-xorg`; последний прогон — приёмка v5.26.0 выше.
 - **P6** — не замерено: железа нет.
+
+## #156
+
+Приёмка 2026-11-14, PR [#157](https://github.com/iamletenkov/cream-extensions/pull/157),
+ветка `fix/wallpaper-all-desktops` от main после #155. Проверен коммит `2cb3c6a`,
+cream 1.4.0, снимок каталога 5.27.0 с sha256
+`8d0e42092063ebd115bf795b6cccabe4ab3a3887fadbe8864cc049bc8bc61ef6`.
+Версии: wallpaper **3.1.0**, desktop **2.0.1**. Дизайн — README wallpaper, «Дизайн #156».
+Владелец выбрал только wallpaper-свойства под явным `WALLPAPER_OVERRIDE_USER=1`;
+configure/remove требуют полного выхода из графических сеансов.
+
+Стенд PVE `192.168.202.206`: сначала `qm list`, 990001 занята и не менялась.
+Созданы 990002 GNOME, 990003 Xfce, 990004 Xubuntu, 990005 LXQt, параллельно;
+по 2 CPU, 2048 MiB RAM, 24 GiB, q35, VGA std. Официальные Debian 12 generic и
+Ubuntu 24.04 cloud проверены по опубликованным SHA512/SHA256; столы поставлены apt.
+Seed ISO подключены как scsi1 через LVM; файлы, JSON-замеры и снимки — только
+`/root/projects/wp156/`. Во всех `qm guest exec` аргументы ASCII.
+
+| DE / сеанс | До первого входа | После первого входа | Remove: исходные обои | Reinstall |
+|---|---|---|---|---|
+| Debian 12 GNOME 43.9, GDM 43.0, Wayland | ✓ | ✓ | ✓, оба URI | ✓, на экране |
+| Debian 12 Xfce 4.18.1, LightDM 1.26, X11 | ✓ | ✓ | ✓, четыре workspace | ✓, на экране |
+| Xubuntu 24.04.5, Xfce 4.18.3, LightDM 1.30, X11 | ✓ | ✓ | ✓, обои Xubuntu | ✓, на экране |
+| Debian 12 LXQt 1.2, pcmanfm-qt 1.2.1, SDDM, X11 | ✓ | ✓ | ✓, waves-logo.png | ✓, на экране |
+
+Ядра: Debian `6.1.0-54-amd64`, Xubuntu `6.8.0-149-generic`.
+До первого входа — отдельный чистый снимок `wp156-clean`; для сценария существующего
+пользователя сначала обычный вход без wallpaper, сохранение исходных значений,
+полный выход, установка, новый вход. Remove проверен после обоих вариантов установки.
+После remove значения сравнивались с исходными, затем повторная установка и новый вход.
+
+- GNOME: `gsettings get picture-uri` и `picture-uri-dark` в реальной D-Bus-шине
+  пользователя — `file:///opt/cream/ext/wallpaper/images/dst_1080.jpg`. После remove:
+  `file:///usr/share/images/desktop-base/desktop-background.xml` и
+  `file:///usr/share/backgrounds/gnome/adwaita-d.webp`.
+- Xfce: `xfconf-query -c xfce4-desktop -lv` в шине сеанса — наши `last-image` во всех
+  workspace; после remove — `/usr/share/backgrounds/xfce/xfce-shapes.svg`.
+- Xubuntu: фактический `XDG_CONFIG_DIRS` сеанса:
+  `/etc/xdg/cream-wallpaper:/etc/xdg/xdg-xubuntu:/etc/xdg`. Личный канал показывает
+  `dst_1080.jpg`; remove возвращает `/usr/share/xfce4/backdrops/xubuntu-wallpaper.png`.
+  **Автологин:** `cream install --with-deps desktop DESKTOP_AUTOLOGIN=1` создал
+  `90-cream-desktop-autologin.conf`, `lightdm --show-config` видит `autologin-user=tester`,
+  logind подтвердил вход tester; вендорский слой не правился.
+- LXQt: личный `settings.conf` `[Desktop] Wallpaper` — наш файл, `WallpaperMode=zoom`;
+  remove возвращает `/usr/share/lxqt/wallpapers/waves-logo.png`. Исходный конфиг находится
+  в `/usr/share/pcmanfm-qt/lxqt/settings.conf`. Автологин SDDM на стенде задан вручную:
+  расширение desktop намеренно не управляет им. GTK LXDE проверен H-тестами; живая
+  четвёртая ВМ по заданию — LXQt.
+
+По одному финальному QMP `screendump` на DE, 1280×800:
+`/root/projects/wp156/results/{gnome,xfce,xubuntu,lxqt}/final.ppm`.
+Снимки скопированы в `.scratchpad/wp156/results/`, преобразованы без изменения RGB в PNG
+и просмотрены: во всех четырёх видны обои CYBERDST. Промежуточных скриншотов не было.
+
+Особенности стенда: Xfce использовал отдельную D-Bus-шину, её адрес взят из окружения
+реального сеанса. Xubuntu с исходным облачным ядром `6.8.0-147` получал Xorg «no screens
+found»; после установки полного ядра и перезагрузки графика работает. В минимальном
+GNOME при маскировании DM пакет не записал выбранный DM: стенд получил обычный
+`/etc/X11/default-display-manager` до регистрации existing-desktop. После выхода LXQt
+зависали panel/runner и logind `closing`; в выделенной ВМ завершены процессы tester,
+затем продолжена приёмка. Расширение само сеансы или процессы не завершает.
+
+H: desktop 375/375, wallpaper 181/181 и 17/17 тестов личных файлов (включая исправление отбора после ревью).
+`STVOR_AGENT_DIR=.scratchpad/no-agent make ci` — код 0; повтор pre-push на main — код 0.
+Хуки gitleaks, shellcheck и commitlint пройдены, обходов и force-push не было.
+
+**Очистка подтверждена:** `qm stop` + `qm destroy --purge` выполнены для
+990002, 990003, 990004, 990005. Итоговый `qm list` содержит только исходные ВМ;
+990001 не менялась. `/root/projects/wp156/cleanup.json` и `cleanup.log` сохраняют результат.
+
+Независимое read-only ревью выполнено через `codex review`: найден P2 — Xsession
+допускал аккаунты вне отбора remove. Исправлено общей проверкой аккаунта; поддержаны
+имена с точкой, Xsession отказывается от HOME, отличного от домашнего каталога NSS.
+Четыре новых H-теста написаны до исправления; графическая матрица выше проверяла
+обычный аккаунт tester UID 1000, для которого новая проверка сохраняет поведение.
