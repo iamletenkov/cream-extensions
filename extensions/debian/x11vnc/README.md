@@ -16,8 +16,10 @@ Xorg, а без lock-файла (GDM его не пишет) `N` — единс�
 root (GDM через `Xorg.wrap`: Jetson L4T, машина без KMS) берётся, только если он потомок
 Leader X11-сеанса пользователя на seat0 по logind, а его `-auth` — файл пользователя, который
 больше никто не пишет; его fd обёртке не видны, поэтому принадлежность обоих слушателей
-`X<N>` доказывает ядро — `SO_PEERCRED` подключения даёт pid этого Xorg (зонд на `perl`
-ничего не пишет в сокет; `perl-base` в Debian и Ubuntu есть всегда).
+`X<N>` доказывает ядро — `SO_PEERCRED` подключения даёт pid этого Xorg и uid владельца
+его `/proc/<pid>`, а файл сокета `X<N>` — root или пользователя (чужой не зондируется;
+зонд на `perl` ничего не пишет в сокет; `perl-base` в Debian и Ubuntu есть всегда).
+Без сеанса пользователя (запасной путь `:0`) Xorg от root не берётся.
 Дисплей ещё подтверждает собственная authority пользователя (у SDDM — `/tmp/xauth_*`,
 только его uid и права `0600`) — по `unix:N`, без отката на TCP ([`lib/x-session.sh`](../../../lib/x-session.sh)); x11vnc и сам
 подключается как `-display unix:N` ([#139](https://github.com/iamletenkov/cream-extensions/issues/139), п. 2). `:N` — жёстко, сохранённое
@@ -161,10 +163,10 @@ RUN_COMMAND cream install --with-deps x11vnc X11VNC_PORT=5901
 
 ## Известные ограничения
 
-- **Xorg от root без logind-сеанса и без lock-файла — обёртка ждёт.** Xorg от root
-  находится через сеанс пользователя в logind (Leader, `-auth`, `SO_PEERCRED`) или через
-  доверенный lock-файл; root-Xorg вне сеанса пользователя, без lock-файла, или машина
-  без `perl` — дисплей не доказать. Обход — сознательно
+- **Xorg от root вне logind-сеанса пользователя — обёртка ждёт.** Xorg от root
+  находится только через сеанс пользователя в logind (Leader, `-auth`, `SO_PEERCRED`);
+  root-Xorg вне сеанса пользователя (с lock-файлом или без — так выглядит и `startx`
+  другого консольного пользователя) или машина без `perl` — дисплей не доказать. Обход — сознательно
   `sudo cream set x11vnc X11VNC_DISPLAY=:N`.
 - **Жёсткий `X11VNC_DISPLAY=:N` и `Display` из logind — без привязки к Xorg** (как в
   5.x; authority и подключение — по `unix:N`): на `:N` без X-сервера wild-cookie GDM получит тот, кто

@@ -361,6 +361,9 @@ log_info "${scheme}://${addr}:${SELKIES_PORT:-8080}/ файлы=${SELKIES_FILE_T
 # к новому X он не подключился бы. Поэтому Selkies — дочерний процесс, а
 # обёртка раз в 10 с проверяет дисплей и при двух неудачах подряд гасит его
 # и выходит с ошибкой: юнит перезапустит, обёртка дождётся новой сессии.
+# Файла сокета X<N> уже нет (Xorg снимает его при выходе) — сессия точно
+# кончилась, гасим на первой неудаче: Selkies с DISPLAY=:N без unix-слушателя
+# ушёл бы на TCP 6000+N, окно отката — короче.
 # The secrets are exported in the subshell that becomes Selkies, and only there.
 (
     for k in "${SECRET_KEYS[@]}"; do
@@ -371,6 +374,7 @@ log_info "${scheme}://${addr}:${SELKIES_PORT:-8080}/ файлы=${SELKIES_FILE_T
 child=$!
 trap 'kill -TERM "$child" 2>/dev/null; wait "$child"; exit 0' TERM INT
 misses=0
+x_sock="${DISPLAY_NUM#:}"; x_sock="$R/tmp/.X11-unix/X${x_sock%%.*}"
 while kill -0 "$child" 2>/dev/null; do
     sleep 10 & wait $!
     # unix:N: with the session gone libxcb would fall back to TCP 6000+N, where
@@ -379,6 +383,7 @@ while kill -0 "$child" 2>/dev/null; do
         misses=0
     else
         misses=$((misses + 1))
+        [[ -S "$x_sock" ]] || misses=2
         if (( misses >= 2 )); then
             log_warn "X-сессия '$USERNAME' на $DISPLAY_NUM пропала — останавливаю Selkies, дождусь новой"
             kill -TERM "$child" 2>/dev/null

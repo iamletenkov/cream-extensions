@@ -978,8 +978,12 @@ echo "$XPID (Xorg) S 2269 $XPID 0 0 -1" > "$ROOT/proc/$XPID/stat"
 ht_fake pgrep "[[ \"\$*\" == '-u 0 -x Xorg' ]] && { echo $XPID; exit 0; }; exit 1"
 ht_fake stat 'case "${!#}" in */proc/*) echo "0 555" ;; *) echo "1000 600" ;; esac'
 ht_fake xhost 'echo "access control enabled, only authorized clients can connect"'
+# perl: the real probe (SO_PEERCRED), the uid of the listener as root's — the
+# owner of /proc/<pid> (the tests cannot listen as root).
+ht_fake perl 'out="$(/usr/bin/perl "$@")" || exit; printf "%s 0\n" "${out%% *}"'
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"
 kill "$XPID" 2>/dev/null; wait "$XPID" 2>/dev/null
+check "Jetson: perl спросил ядро о слушателях X0" grep -q 'X11-unix/X0' "$FAKE/perl.argv"
 check "Jetson: selkies запущен" test -e "$FAKE/selkies.env"
 check "Jetson: DISPLAY=:0" grep -qx 'DISPLAY=:0' "$FAKE/selkies.env"
 check "Jetson: путь назван — Xorg root сеанса" grep -q "Xorg $XPID (root) сеанса 2" "$ROOT/out"
@@ -1031,6 +1035,27 @@ run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"
 check "сторож сеанса спросил xdpyinfo при живом Selkies" test -e "$FAKE/stop"
 check "xdpyinfo — unix:0" grep -qx -- '-display unix:0' "$FAKE/xdpyinfo.args"
 check_not "xdpyinfo без :N (TCP-откат)" grep -qE -- '-display :' "$FAKE/xdpyinfo.args"
+
+echo "== run-selkies.sh: сторож — файла сокета X<N> нет, Selkies гаснет сразу =="
+# Selkies gets DISPLAY=:N: with the server gone x11rb falls back to TCP
+# 6000+N. The socket file of X<N> gone too (the Xorg removed it on exit) — the
+# session is surely over, the first miss stops Selkies; the file still there —
+# one miss may be a slow server, the second stops it.
+for wd in nosocket socket; do
+    wr_root
+    ht_fake xdpyinfo '[[ -e "$FAKE/selkies.env" ]] || exit 0; echo miss >> "$FAKE/misses"; exit 1'
+    printf '#!/usr/bin/env bash\n[[ "${1-}" == --help ]] && exit 0\nenv > %q\nfor _ in $(seq 400); do /usr/bin/sleep 0.05; done\nexit 0\n' \
+        "$FAKE/selkies.env" > "$ROOT/opt/selkies/$VER/usr/conda/bin/selkies"
+    mkdir -p "$ROOT/tmp/.X11-unix"
+    if [[ "$wd" == socket ]]; then
+        python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$ROOT/tmp/.X11-unix/X0"
+    fi
+    run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"; rc=$?
+    eq "сторож ($wd): обёртка вышла с 1" 1 "$rc"
+    check "сторож ($wd): сказано, что сессия пропала" grep -q 'пропала — останавливаю Selkies' "$ROOT/out"
+    want=2; [[ "$wd" == nosocket ]] && want=1
+    eq "сторож ($wd): неудачных проверок до остановки" "$want" "$(wc -l < "$FAKE/misses")"
+done
 
 echo "== имена layout 2 =="
 # check-names: off
