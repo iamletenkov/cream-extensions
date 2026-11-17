@@ -270,12 +270,59 @@ sg8a_root() {
 }
 sg8a_bind() { ln -s "$ROOT/sys/bus/i2c/drivers/pca954x" "$CLIENT/driver"; }
 sg8a_channels() { local n; for n in "$@"; do mkdir -p "$CLIENT/i2c-$n"; done; }
+# The layout of kernel 5.15 on the Orin (2026-11-17): the channel buses sit NEXT TO
+# the client (…/i2c-2/2-0070 and …/i2c-2/i2c-9) and the client keeps relative
+# links channel-N -> ../i2c-M. Bus numbers are given in channel order.
+sg8a_sibling_channels() {
+    local i=0 n
+    for n in "$@"; do
+        mkdir -p "$(dirname "$CLIENT")/i2c-$n"
+        ln -sfn "../i2c-$n" "$CLIENT/channel-$i"
+        i=$((i + 1))
+    done
+}
 SG8A_MSG='SG8A не отвечает: i2c-2/0x70 без драйвера, камер нет — проверьте питание и шлейф'
 
 sg8a_root; sg8a_bind; sg8a_channels 9 10
 ht_action adapter-check SENSING_ADAPTER_WAIT=0; eq "драйвер и оба канала — 0" 0 "$?"
 check "…назван адаптер и каналы" bash -c 'grep -q "i2c-2/0x70" "$1" && grep -q "i2c-9" "$1" && grep -q "i2c-10" "$1"' _ "$ROOT/out"
 check_not "…без ошибки" grep -q 'не отвечает' "$ROOT/out"
+
+# Kernel 5.15 layout: sibling buses behind relative channel-N links (issue #161).
+sg8a_root; sg8a_bind; sg8a_sibling_channels 9 10
+ht_action adapter-check SENSING_ADAPTER_WAIT=0; eq "шины рядом с клиентом, ссылки channel-0/1 — 0" 0 "$?"
+check "…названы адаптер и обе шины" bash -c 'grep -q "i2c-2/0x70" "$1" && grep -q "i2c-9" "$1" && grep -q "i2c-10" "$1"' _ "$ROOT/out"
+check_not "…без ошибки" grep -q 'не отвечает' "$ROOT/out"
+eq "…в I2C не пишет: bind пуст" "" "$(cat "$ROOT/sys/bus/i2c/drivers/pca954x/bind")"
+eq "…и unbind пуст" "" "$(cat "$ROOT/sys/bus/i2c/drivers/pca954x/unbind")"
+
+sg8a_root; sg8a_bind; sg8a_sibling_channels 9
+ht_action adapter-check SENSING_ADAPTER_WAIT=0; eq "соседние шины: ссылка одна из двух — 1" 1 "$?"
+check "…каналы названы" grep -qF 'SG8A не отвечает: i2c-2/0x70 — каналов мультиплексора 1 из 2' "$ROOT/out"
+
+sg8a_root; sg8a_bind; sg8a_sibling_channels 9 10; rm -r "$(dirname "$CLIENT")/i2c-10"
+ht_action adapter-check SENSING_ADAPTER_WAIT=0; eq "ссылка channel-1 висит в пустоту — 1" 1 "$?"
+check "…обрыв не засчитан: 1 из 2" grep -qF 'каналов мультиплексора 1 из 2' "$ROOT/out"
+
+sg8a_root; sg8a_bind; sg8a_sibling_channels 9; mkdir -p "$(dirname "$CLIENT")/other"
+ln -s ../other "$CLIENT/channel-1"
+ht_action adapter-check SENSING_ADAPTER_WAIT=0; eq "channel-1 ведёт не на шину i2c-N — 1" 1 "$?"
+check "…чужая цель не засчитана: 1 из 2" grep -qF 'каналов мультиплексора 1 из 2' "$ROOT/out"
+
+sg8a_root; sg8a_bind; sg8a_channels 9; ln -s i2c-9 "$CLIENT/channel-0"
+ht_action adapter-check SENSING_ADAPTER_WAIT=0; eq "шина и во вложенном каталоге, и по ссылке — считается один раз — 1" 1 "$?"
+check "…1 из 2" grep -qF 'каналов мультиплексора 1 из 2' "$ROOT/out"
+
+sg8a_root; sg8a_bind; sg8a_channels 9; sg8a_sibling_channels 10
+ht_action adapter-check SENSING_ADAPTER_WAIT=0; eq "вложенная шина и соседняя по ссылке вместе — 0" 0 "$?"
+
+sg8a_root; sg8a_sibling_channels 9 10
+ht_action adapter-check SENSING_ADAPTER_WAIT=0; eq "шины рядом, но драйвера нет — 1" 1 "$?"
+check "…явная ошибка про драйвер" grep -qxF "$SG8A_MSG" "$ROOT/out"
+
+sg8a_root; sg8a_bind; sg8a_sibling_channels 9 10; rm "$ROOT/sys/bus/i2c/devices/2-0070"
+ht_action adapter-check SENSING_ADAPTER_WAIT=0; eq "шины рядом, но клиента i2c нет — 1" 1 "$?"
+check "…узел дерева назван" grep -qF 'i2c@3180000/tca9543@70' "$ROOT/out"
 
 sg8a_root
 ht_action adapter-check SENSING_ADAPTER_WAIT=0; eq "клиент 2-0070 без драйвера — 1" 1 "$?"
@@ -315,6 +362,12 @@ check "…та же ошибка" grep -qxF "$SG8A_MSG" "$ROOT/out"
 sg8a_root
 ( sleep 1; sg8a_bind; sg8a_channels 9 10 ) &
 ht_action adapter-check SENSING_ADAPTER_WAIT=10; eq "адаптер поднялся во время ожидания — 0" 0 "$?"
+wait
+check_not "…без ошибки" grep -q 'не отвечает' "$ROOT/out"
+
+sg8a_root
+( sleep 1; sg8a_bind; sg8a_sibling_channels 9 10 ) &
+ht_action adapter-check SENSING_ADAPTER_WAIT=10; eq "соседние шины появились во время ожидания — 0" 0 "$?"
 wait
 check_not "…без ошибки" grep -q 'не отвечает' "$ROOT/out"
 
