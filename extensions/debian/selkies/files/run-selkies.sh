@@ -271,13 +271,23 @@ if [[ -n "$QUIET_TRY" && "$WANT_DISPLAY" == auto ]]; then
 fi
 log_info "дисплей $DISPLAY_NUM, authority $AUTH"
 
-# Selkies gets the display found, never "auto".
-# DISPLAY is unix:N, not :N: Xlib clients with ":N" fall back to TCP 6000+N
-# when the unix socket is missing, and someone else's listener there would get
-# our cookie (issue #139 item 2, defence in depth). Selkies 2.0.0 parses
-# "unix:N" (x_display_socket) and its python-xlib uses only the unix socket
-# for host "unix". SELKIES_DISPLAY stays ":N" — Selkies does not read it.
-export DISPLAY="unix$DISPLAY_NUM" XAUTHORITY="$AUTH" SELKIES_DISPLAY="$DISPLAY_NUM"
+# Selkies gets the display found, never "auto", and as ":N", auto or not.
+# Not "unix:N" (5.25.0–5.28.0): the X11 capture of pixelflux (Rust, x11rb)
+# does not parse it — «X11 connect failed: Failed to parse value '0'», no
+# video, while Selkies' Python reads both (x_display_socket, (?:unix)?:(\d+);
+# Jetson AGX Orin 2026-11-16). What unix:N defended (issue #139 item 2): a
+# client of ":N" falls back to TCP 127.0.0.1:6000+N only when no unix listener
+# of X<N> answers. Here one does: auto proved both listeners (file and
+# abstract) to be the Xorg's (lib/x-session.sh), an explicit :N was opened
+# over unix:N by xs_find_authority; while that Xorg lives nobody else can bind
+# its abstract name, and its socket file in the sticky /tmp/.X11-unix is not
+# anyone's to replace. The fallback is left for the window after the server
+# has gone — the watcher below stops Selkies within ~20 s, and the cookie of a
+# display manager's (or startx's) server is made anew for every server. Whether
+# the Xorg runs -nolisten tcp changes nothing: the fallback goes to a port it
+# does not hold either way once it is gone. The search and the watcher still
+# ask over unix:N. SELKIES_DISPLAY is ":N" — Selkies does not read it.
+export DISPLAY="$DISPLAY_NUM" XAUTHORITY="$AUTH" SELKIES_DISPLAY="$DISPLAY_NUM"
 export HOME="$HOME_OF_USER" USER="$USERNAME"
 export XDG_RUNTIME_DIR="/run/user/${UID_OF_USER}"
 export PULSE_RUNTIME_PATH="$XDG_RUNTIME_DIR/pulse"
@@ -351,6 +361,9 @@ log_info "${scheme}://${addr}:${SELKIES_PORT:-8080}/ файлы=${SELKIES_FILE_T
 # к новому X он не подключился бы. Поэтому Selkies — дочерний процесс, а
 # обёртка раз в 10 с проверяет дисплей и при двух неудачах подряд гасит его
 # и выходит с ошибкой: юнит перезапустит, обёртка дождётся новой сессии.
+# Файла сокета X<N> уже нет (Xorg снимает его при выходе) — сессия точно
+# кончилась, гасим на первой неудаче: Selkies с DISPLAY=:N без unix-слушателя
+# ушёл бы на TCP 6000+N, окно отката — короче.
 # The secrets are exported in the subshell that becomes Selkies, and only there.
 (
     for k in "${SECRET_KEYS[@]}"; do
@@ -361,6 +374,7 @@ log_info "${scheme}://${addr}:${SELKIES_PORT:-8080}/ файлы=${SELKIES_FILE_T
 child=$!
 trap 'kill -TERM "$child" 2>/dev/null; wait "$child"; exit 0' TERM INT
 misses=0
+x_sock="${DISPLAY_NUM#:}"; x_sock="$R/tmp/.X11-unix/X${x_sock%%.*}"
 while kill -0 "$child" 2>/dev/null; do
     sleep 10 & wait $!
     # unix:N: with the session gone libxcb would fall back to TCP 6000+N, where
@@ -369,6 +383,7 @@ while kill -0 "$child" 2>/dev/null; do
         misses=0
     else
         misses=$((misses + 1))
+        [[ -S "$x_sock" ]] || misses=2
         if (( misses >= 2 )); then
             log_warn "X-сессия '$USERNAME' на $DISPLAY_NUM пропала — останавливаю Selkies, дождусь новой"
             kill -TERM "$child" 2>/dev/null

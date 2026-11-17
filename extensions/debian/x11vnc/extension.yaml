@@ -32,7 +32,12 @@
 #        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: x11vnc
-version: 6.0.2
+version: 6.0.3
+# 6.0.3: its copy of
+#        lib/x-session.sh: an Xorg of root under the user's x11 session on seat0
+#        (GDM through Xorg.wrap: Jetson L4T, no KMS) is found — a descendant of
+#        the session Leader, -auth a file of the user, both listeners of X<N>
+#        its pid by SO_PEERCRED (its fds are not readable by the user).
 # 6.0.2: remove leaves no failed x11vnc@ behind (acceptance 2026-11-13: after
 #        remove the machine stayed degraded): the instances are stopped and waited
 #        for, the failed state of every x11vnc@ reset; the unit takes exit 2 — what

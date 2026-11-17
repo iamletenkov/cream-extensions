@@ -15,7 +15,10 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB="$(dirname "$HERE")/x-session.sh"
 
 TMP="$(mktemp -d)"
-trap 'rm -r -f -- "$TMP"' EXIT
+# Real listeners (xlisten) live in the background until the end.
+LPIDS=()
+cleanup(){ local p; for p in "${LPIDS[@]}"; do kill "$p" 2>/dev/null; done; rm -r -f -- "$TMP"; }
+trap cleanup EXIT
 ME="$(id -u)"
 BOB=$((ME + 1))
 
@@ -82,6 +85,18 @@ else
     echo "access control enabled, only authorized clients can connect"
     echo "SI:localuser:alice"
 fi
+EOF
+    # perl is the real one (the probe asks the kernel, SO_PEERCRED), with a uid
+    # override like stat's: fake/peeruid.<pid> holds the uid a listener of
+    # root (or of another user) would have — the tests cannot listen as root.
+    # Every probe is logged in fake/perl.log (its last argument, the name).
+    cat > "$ROOT/bin/perl" <<'EOF'
+#!/usr/bin/env bash
+echo "${!#}" >> "$FAKE/perl.log"
+out="$(/usr/bin/perl "$@")" || exit
+read -r pid uid <<< "$out"
+[[ -f "$FAKE/peeruid.$pid" ]] && uid="$(cat "$FAKE/peeruid.$pid")"
+printf '%s %s\n' "$pid" "$uid"
 EOF
     # stat with owner overrides: fake/owner<path, / as _> holds the uid a file
     # of another user (or root) would have — the tests cannot chown.
@@ -199,6 +214,70 @@ xsock(){
     ln -s "socket:[$2]" "$ROOT/proc/$1/fd/$(( $(find "$ROOT/proc/$1/fd" -mindepth 1 | wc -l) + 3 ))"
     [[ -s "$ROOT/proc/net/unix" ]] || echo "Num       RefCount Protocol Flags    Type St Inode Path" > "$ROOT/proc/net/unix"
     printf '0000000000000000: 00000002 00000000 00010000 0001 01 %s %s\n' "$2" "$3" >> "$ROOT/proc/net/unix"
+}
+
+# xlisten <N…> <file|abstract|both>: a real process listening on X<N> under
+# $ROOT — the socket file $ROOT/tmp/.X11-unix/X<N>, the abstract
+# @$ROOT/tmp/.X11-unix/X<N> (the library puts abstract names under CREAM_ROOT
+# as well), or both; every N of the list. Its pid → LPID. Whatever a client
+# writes to it goes to $FAKE/written — the probe must write nothing.
+xlisten(){
+    local fifo="$TMP/fifo.$RANDOM$RANDOM"
+    mkdir -p "$ROOT/tmp/.X11-unix"
+    mkfifo "$fifo"
+    python3 -c '
+import select, socket, sys, time
+root, ns, kinds, fifo, log = sys.argv[1:6]
+ls = []
+for n in ns.split():
+    names = []
+    if kinds in ("both", "file"):
+        names.append(root + "/tmp/.X11-unix/X" + n)
+    if kinds in ("both", "abstract"):
+        names.append("\0" + root + "/tmp/.X11-unix/X" + n)
+    for name in names:
+        s = socket.socket(socket.AF_UNIX)
+        s.bind(name)
+        s.listen(8)
+        ls.append(s)
+with open(fifo, "w") as f:
+    f.write("ok\n")
+conns = []
+end = time.time() + 300
+while time.time() < end:
+    r, _, _ = select.select(ls + conns, [], [], 1)
+    for s in r:
+        if s in ls:
+            conns.append(s.accept()[0])
+            continue
+        d = s.recv(4096)
+        if d:
+            with open(log, "ab") as f:
+                f.write(d)
+        else:
+            conns.remove(s)
+            s.close()
+' "$ROOT" "$1" "$2" "$fifo" "$FAKE/written" &
+    LPID=$!
+    LPIDS+=("$LPID")
+    read -r _ < "$fifo"
+    rm -f "$fifo"
+}
+# pstat <pid> <ppid> [comm]: /proc/<pid>/stat — the parent of <pid>.
+pstat(){ mkdir -p "$ROOT/proc/$1"; printf '%s (%s) S %s %s 0 0 -1\n' "$1" "${3:-proc}" "$2" "$1" > "$ROOT/proc/$1/stat"; }
+# rootxorg <pid> <ppid> <arg>…: an Xorg of root (GDM through Xorg.wrap, startx
+# with a root Xorg) — cmdline, comm Xorg, its parent <ppid>, /proc/<pid> owned
+# by root and no /proc/<pid>/fd: USER cannot read the fds of a root process;
+# `pgrep -u 0 -x Xorg` lists it; its listeners answer SO_PEERCRED with uid 0
+# (fake/peeruid, the fake perl).
+rootxorg(){
+    local pid="$1" ppid="$2"; shift 2
+    xorg "$pid" "$@"
+    echo Xorg > "$ROOT/proc/$pid/comm"
+    pstat "$pid" "$ppid" Xorg
+    owner "/proc/$pid" 0
+    echo 0 > "$FAKE/peeruid.$pid"
+    echo "$pid" >> "$FAKE/pgrep.u0"
 }
 
 echo "== Display пуст — Xorg пользователя с :N первым аргументом (startx) =="
@@ -524,6 +603,200 @@ gdm_auth :1
 rm -r -f "$ROOT/proc/4242/fd"
 xs xs_find_display alice
 eq "fd Xorg не читаются, а слушатель X1 есть — код 1" 1 "$RC"
+
+echo "== Xorg от root под сеансом пользователя (GDM через Xorg.wrap, L4T): без lock, fd не читаются =="
+# Jetson AGX Orin, Ubuntu 22.04 L4T, GDM autologin (2026-11-16): Xwrapper.config
+# needs_root_rights=yes, the Xorg of the session is root's — `Xorg vt2
+# -displayfd 3 -auth /run/user/1000/gdm/Xauthority -nolisten tcp …`, a child of
+# gdm-x-session of the user, the Leader of the user's x11 session on seat0
+# (logind Display empty); no /tmp/.X0-lock; its fds are not readable by the
+# user. The display is proven by the kernel: SO_PEERCRED of both listeners of
+# X<N> (file and abstract) is the pid of this Xorg.
+# jetson [kinds]: alice's x11 session c2, Leader 2269 (gdm-x-session); the root
+# Xorg (a real listener on X0, <kinds> — both by default) is its child.
+jetson(){
+    new_root
+    user_sessions alice c2
+    session c2 seat0 user x11 "" active no
+    echo "Leader=2269" >> "$FAKE/session.c2"
+    pstat 2269 1 gdm-x-session
+    xlisten 0 "${1:-both}"
+    XPID="$LPID"
+    rootxorg "$XPID" 2269 vt2 -displayfd 3 -auth "/run/user/$ME/gdm/Xauthority" -nolisten tcp \
+        -background none -noreset -keeptty -novtswitch -verbose 3
+    gdm_auth :0
+}
+jetson
+xs xs_find_display alice
+eq "Xorg root сеанса — код 0" 0 "$RC"
+eq "Xorg root сеанса — :0" ":0" "$OUT"
+has "путь назван — Xorg root" "Xorg $XPID (root)" "$ERR"
+has "путь назван — сеанс" "c2" "$ERR"
+has "Leader спрошен у logind" "show-session -p Leader -- c2" "$(cat "$FAKE/loginctl.log")"
+has "Xorg root ищется по uid 0" "-u 0 -x Xorg" "$(cat "$FAKE/pgrep.log")"
+has "подтверждение authority — по unix:0" "-display unix:0" "$(cat "$FAKE/xdpyinfo.log")"
+eq "зонд SO_PEERCRED ничего не пишет в сокет X" "" "$(cat "$FAKE/written" 2>/dev/null)"
+xs _xs_peer_held 0 "$XPID" "$ME"
+eq "_xs_peer_held: оба слушателя X0 — у Xorg" 0 "$RC"
+xs _xs_peer_held 0 "$XPID"
+eq "_xs_peer_held без uid пользователя — отказ" 1 "$RC"
+xs _xs_peer "$ROOT/tmp/.X11-unix/X0"
+eq "_xs_peer: pid и uid слушателя файла (uid 0 — подмена теста)" "$XPID 0" "$OUT"
+xs _xs_peer "@$ROOT/tmp/.X11-unix/X0"
+eq "_xs_peer: pid и uid абстрактного слушателя" "$XPID 0" "$OUT"
+# Without the override — what the kernel says: the real uid of the listener.
+OUT="$(env -i PATH=/usr/bin:/bin CREAM_ROOT="$ROOT" /bin/bash -euo pipefail -c '. "$1"; _xs_peer "$2"' xs "$LIB" "$ROOT/tmp/.X11-unix/X0" 2>/dev/null)"
+eq "_xs_peer, настоящий perl: pid и настоящий uid" "$XPID $ME" "$OUT"
+# The Xorg is a grandchild of the Leader (startx under login: xinit between).
+new_root
+user_sessions alice c2
+session c2 seat0 user x11 "" active no
+echo "Leader=700" >> "$FAKE/session.c2"
+pstat 700 1 login; pstat 701 700 bash; pstat 702 701 xinit
+xlisten 0 both
+rootxorg "$LPID" 702 :0 vt1 -keeptty -auth "/home/alice/.serverauth.1234"
+: > "$ROOT/home/alice/.serverauth.1234"
+echo "$ROOT/home/alice/.Xauthority" > "$FAKE/x.:0"; : > "$ROOT/home/alice/.Xauthority"
+xs xs_find_display alice
+eq "Xorg root — потомок Leader через xinit — :0" ":0" "$OUT"
+
+# Each case breaks one proof — the cookie of alice is not offered to anyone.
+for c in abstractforeign fileforeign bothforeign twodisplays notunderleader noleader \
+        authforeign authwritable authlink noauth notroot nosockfile socklink peeruidforeign \
+        peeruiduser sockforeign; do
+    [[ "$c" =~ ^(abstractforeign|fileforeign|bothforeign|twodisplays)$ ]] || jetson
+    case "$c" in
+        # SO_PEERCRED keeps the pid of listen() after the listener is gone: a
+        # stranger's listeners carry a recycled pid of the Xorg (pid_max wrap)
+        # — the uid of the listener is not the owner of /proc/<pid>.
+        peeruidforeign) echo "$BOB" > "$FAKE/peeruid.$XPID" ;;
+        # The listener is alice's while /proc/<pid> is root's — not the same process.
+        peeruiduser) echo "$ME" > "$FAKE/peeruid.$XPID" ;;
+        # The socket file of X0 is bob's: not probed at all.
+        sockforeign) owner /tmp/.X11-unix/X0 "$BOB" ;;
+        # xcb tries the abstract name first: another process holds it.
+        abstractforeign)
+            jetson file; xlisten 0 abstract ;;
+        fileforeign)
+            jetson abstract; xlisten 0 file ;;
+        # Both listeners of X0 are another process's; the root Xorg holds none.
+        bothforeign)
+            new_root
+            user_sessions alice c2
+            session c2 seat0 user x11 "" active no
+            echo "Leader=2269" >> "$FAKE/session.c2"
+            pstat 2269 1 gdm-x-session
+            xlisten 0 both
+            rootxorg 2280 2269 vt2 -displayfd 3 -auth "/run/user/$ME/gdm/Xauthority" -nolisten tcp
+            gdm_auth :0 ;;
+        # Two displays of one Xorg — which one is the session is not known.
+        twodisplays)
+            new_root
+            user_sessions alice c2
+            session c2 seat0 user x11 "" active no
+            echo "Leader=2269" >> "$FAKE/session.c2"
+            pstat 2269 1 gdm-x-session
+            xlisten "0 1" both
+            rootxorg "$LPID" 2269 vt2 -displayfd 3 -auth "/run/user/$ME/gdm/Xauthority" -nolisten tcp
+            gdm_auth :0; gdm_auth :1 ;;
+        # A root Xorg of another session (the greeter, another seat).
+        notunderleader) pstat 2269 1 gdm-x-session; pstat "$XPID" 999 Xorg; pstat 999 1 gdm-session-worker ;;
+        noleader) session c2 seat0 user x11 "" active no ;;
+        # -auth is not alice's own file: the server was not started for her.
+        authforeign) owner "/run/user/$ME/gdm/Xauthority" "$BOB" ;;
+        authwritable) chmod 666 "$ROOT/run/user/$ME/gdm/Xauthority" ;;
+        authlink)
+            mkdir -p "$ROOT/elsewhere"; mv "$ROOT/run/user/$ME/gdm/Xauthority" "$ROOT/elsewhere/a"
+            ln -s "$ROOT/elsewhere/a" "$ROOT/run/user/$ME/gdm/Xauthority" ;;
+        noauth) xorg "$XPID" vt2 -displayfd 3 -nolisten tcp ;;
+        # pgrep -u 0 lists it, /proc says bob: not root's.
+        notroot) owner "/proc/$XPID" "$BOB" ;;
+        # The socket file is gone (or is a link): what xcb would reach is unknown.
+        nosockfile) rm -f "$ROOT/tmp/.X11-unix/X0" ;;
+        socklink)
+            mv "$ROOT/tmp/.X11-unix/X0" "$ROOT/tmp/.X11-unix/real0"
+            ln -s real0 "$ROOT/tmp/.X11-unix/X0" ;;
+    esac
+    xs xs_find_display alice
+    eq "Xorg root ($c) — код 1" 1 "$RC"
+    eq "Xorg root ($c) — cookie не отдана (xdpyinfo не звался на :0)" "" "$(xshown :0)"
+done
+# A socket file of another owner is not probed (nor are hundreds of them —
+# two perl runs a socket every 5 s otherwise).
+jetson
+owner /tmp/.X11-unix/X0 "$BOB"
+xs xs_find_display alice
+eq "сокет X0 чужого владельца — perl не звался" "" "$(cat "$FAKE/perl.log" 2>/dev/null)"
+jetson
+python3 -c 'import socket, sys; [socket.socket(socket.AF_UNIX).bind(sys.argv[1] + "/X%d" % i) for i in range(1, 41)]' \
+    "$ROOT/tmp/.X11-unix"
+for i in $(seq 1 40); do owner "/tmp/.X11-unix/X$i" "$BOB"; done
+xs xs_find_display alice
+eq "40 чужих сокетов X<N> — :0 находится" ":0" "$OUT"
+eq "40 чужих сокетов X<N> — зонд только у X0" "" "$(grep -v '/X0$' "$FAKE/perl.log")"
+
+# No perl (perl-base is Essential on Debian and Ubuntu, but): nothing to ask
+# the kernel with — refused, not vacuously true. The PATH holds every tool the
+# library uses but perl; the same PATH with perl passes — perl is the only
+# difference, and the refusal says so.
+jetson
+mkdir -p "$ROOT/noperl"
+for t in bash env cat head tr sed cut awk; do ln -s "$(command -v "$t")" "$ROOT/noperl/$t"; done
+ln -s "$ROOT/bin/stat" "$ROOT/noperl/stat"
+noperl(){
+    OUT="$(env -i PATH="$ROOT/noperl" FAKE="$FAKE" CREAM_ROOT="$ROOT" /bin/bash -euo pipefail \
+        -c '. "$1"; _xs_peer_held 0 "$2" "$3" && echo yes || echo "rc=$?"' xs "$LIB" "$XPID" "$ME" 2>"$TMP/err")"
+    ERR="$(cat "$TMP/err")"
+}
+noperl
+eq "нет perl — отказ" "rc=1" "$OUT"
+has "нет perl — сказано" "нет perl" "$ERR"
+ln -s "$ROOT/bin/perl" "$ROOT/noperl/perl"
+noperl
+eq "тот же PATH с perl — принят" "yes" "$OUT"
+
+echo "== запасной путь 2: Xorg root на :0 — только по fd, не по SO_PEERCRED =="
+# Jetson has needs_root_rights=yes: another console user B runs `startx -- :0`
+# — a root Xorg, a root lock with its pid, both listeners its pid — and
+# `xhost +si:localuser:alice`; alice's cookie opens it. The wrapper must not
+# show B's screen (and pass B the operator's input): a root Xorg is taken only
+# under alice's own session (fallback 1, _xs_root_xorgs), never by fallback 2.
+for c in nosession foreignsession; do
+    new_root
+    : > "$ROOT/home/alice/.Xauthority"
+    echo "$ROOT/home/alice/.Xauthority" > "$FAKE/x.:0"
+    xlisten 0 both
+    XPID="$LPID"
+    xlock 0 "$(printf '%10d' "$XPID")"$'\n'
+    owner /tmp/.X0-lock 0
+    if [[ "$c" == foreignsession ]]; then
+        user_sessions alice c2
+        session c2 seat0 user x11 "" online no
+        echo "Leader=2269" >> "$FAKE/session.c2"
+        pstat 2269 1 gdm-x-session
+        pstat 800 1 login; pstat 801 800 xinit
+        rootxorg "$XPID" 801 :0 vt3 -auth /home/bob/.serverauth.1
+        : > "$ROOT/home/bob/.serverauth.1"; owner /home/bob/.serverauth.1 "$BOB"
+    else
+        mkdir -p "$ROOT/proc/$XPID"; echo Xorg > "$ROOT/proc/$XPID/comm"
+        owner "/proc/$XPID" 0; echo 0 > "$FAKE/peeruid.$XPID"
+    fi
+    xs xs_find_display alice
+    eq "Xorg root чужого консольного сеанса на :0 ($c) — код 1" 1 "$RC"
+    eq "Xorg root чужого консольного сеанса на :0 ($c) — xdpyinfo не звался" "" "$(xshown :0)"
+done
+new_root
+: > "$ROOT/home/alice/.Xauthority"
+echo "$ROOT/home/alice/.Xauthority" > "$FAKE/x.:0"
+xlisten 0 file
+XPID="$LPID"
+xlisten 0 abstract
+xlock 0 "$(printf '%10d' "$XPID")"$'\n'
+mkdir -p "$ROOT/proc/$XPID"; echo Xorg > "$ROOT/proc/$XPID/comm"
+owner /tmp/.X0-lock 0; owner "/proc/$XPID" 0
+xs xs_find_display alice
+eq "Xorg root на :0, абстрактное имя чужое — код 1" 1 "$RC"
+eq "Xorg root на :0, абстрактное имя чужое — cookie не отдана" "" "$(xshown :0)"
 
 echo "== подтверждение — только authority самого пользователя и с контролем доступа =="
 # Only the -auth of an Xorg opens :1 — xs_find_authority finds it, the

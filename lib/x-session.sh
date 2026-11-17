@@ -33,12 +33,19 @@
 #       both listeners of X<N>, the file and the abstract name xcb tries
 #       first, its fds and nobody else's (_xs_x_held; a socket name alone
 #       proves nothing — /proc/net/unix prints any abstract name, newlines
-#       included);
+#       included). Then an Xorg of ROOT under USER's x11 session on seat0
+#       (GDM through Xorg.wrap: L4T, no KMS — _xs_root_xorgs): /proc/<pid>
+#       root's, a descendant of the session's Leader (logind), its -auth a
+#       file of USER nobody else writes. Its fds are not readable by USER: the
+#       proof that binds X<N> to it is the kernel's — the socket file of X<N>
+#       is root's or USER's, both listeners answer and SO_PEERCRED of each is
+#       its pid with the uid owning /proc/<pid> (_xs_peer_held, perl Socket;
+#       the probe writes nothing), N the one display it serves so (lock-file
+#       first, as above);
 #       nothing — fallback 2, :0, only when a real X server of root or USER
 #       serves it (_xs_served: lock, live Xorg, socket, both listeners its
-#       fds — no cookie for a fake server on a free :0 or a taken abstract
-#       name; the fds of a root Xorg are not readable by USER, so the wrapper,
-#       running as USER, never takes it this way — docs/known-issues.md).
+#       fds — only by fds: no cookie for a fake server on a free :0, a taken
+#       abstract name, or a root Xorg of another console session).
 #       A display of either fallback counts only when USER's own authority
 #       opens it over unix:N (no TCP fallback) and it has access control
 #       (_xs_confirm). The path taken goes to stderr. 0 — printed; 1 — none
@@ -156,16 +163,105 @@ _xs_x_listeners(){
     return 0
 }
 
-# _xs_x_held N PID: PID serves X<N> by its sockets — X<N> has listeners, every
-# one is among PID's fds (inode in /proc/net/unix against /proc/PID/fd), and
-# they are both: the socket file and the abstract @/tmp/.X11-unix/X<N>. xcb
-# connects to the abstract name first, and with no unix listener at all it
+# _xs_peer NAME: "<pid> <uid>" of the process that listens on the unix socket
+# NAME (a path, or @name — abstract), as the kernel tells (SO_PEERCRED of a
+# connection: the credentials the listener had at listen()). Readable by
+# anyone, unlike the fds of a root process. The probe connects and closes —
+# it writes nothing, so no cookie and no request goes anywhere. perl: perl-base
+# is Essential on Debian and Ubuntu, its Socket has SO_PEERCRED; PERL5LIB and
+# PERL5OPT are dropped. An abstract name goes under $CREAM_ROOT like a path
+# (tests on a substituted root; on a machine the root is empty). 1 — no
+# perl, nobody listens, no answer in 3 s, or pid 0 (another pid namespace).
+_xs_peer(){
+    local name="$1" out
+    [[ "$name" == /* || "$name" == @/* ]] || return 1
+    if ! command -v perl >/dev/null 2>&1; then
+        _xs_info "нет perl — слушателя ${name##*/} не спросить (SO_PEERCRED), Xorg root не принимаю"
+        return 1
+    fi
+    # shellcheck disable=SC2016  # perl code, not shell
+    out="$(env -u PERL5LIB -u PERL5OPT -u PERLLIB perl -e '
+        use strict; use warnings;
+        use Socket qw(PF_UNIX SOCK_STREAM SOL_SOCKET SO_PEERCRED pack_sockaddr_un);
+        my $n = $ARGV[0];
+        $n =~ s/^\@/\0/;
+        $SIG{ALRM} = sub { exit 1 };
+        alarm 3;
+        socket(my $s, PF_UNIX, SOCK_STREAM, 0) or exit 1;
+        connect($s, pack_sockaddr_un($n)) or exit 1;
+        my $c = getsockopt($s, SOL_SOCKET, SO_PEERCRED) or exit 1;
+        my ($pid, $uid) = unpack("l L", $c);
+        close($s);
+        print "$pid $uid\n";
+    ' -- "$name" 2>/dev/null)" || return 1
+    [[ "$out" =~ ^[1-9][0-9]*\ [0-9]+$ ]] || return 1
+    printf '%s\n' "$out"
+}
+
+# _xs_peer_held N PID UID: PID serves X<N>, proven by the kernel — the socket
+# file /tmp/.X11-unix/X<N> (a socket, not a link, of root or UID) and the
+# abstract @/tmp/.X11-unix/X<N> both answer, and SO_PEERCRED of each is PID
+# with the uid that owns /proc/PID (root or UID) (_xs_peer). For a root Xorg
+# whose fds USER cannot read. SO_PEERCRED keeps the pid of listen() after the
+# listener is gone: a stranger's listeners may carry the pid of the Xorg
+# (pid_max wrap) — but not its uid, and the file of X<N> is not root's or
+# UID's. The owner is checked before any probe: a socket file of another user
+# is not even connected to (nor are hundreds of them). While PID lives, nobody
+# else can bind its abstract name, and its socket file lies in the sticky
+# /tmp/.X11-unix, where only its owner or root may remove it. 1 — a listener
+# missing, one of another process or uid, a foreign socket file, no UID, no
+# perl.
+_xs_peer_held(){
+    local n="$1" pid="$2" uid="${3:-}" r sock out owner who
+    r="$(_xs_root)"
+    [[ "$n" =~ ^[0-9]+$ && "$pid" =~ ^[1-9][0-9]*$ && "$uid" =~ ^[0-9]+$ ]] || return 1
+    sock="$r/tmp/.X11-unix/X$n"
+    [[ -S "$sock" && ! -L "$sock" ]] || return 1
+    read -r owner _ < <(stat -c '%u %a' -- "$sock" 2>/dev/null) || return 1
+    [[ "$owner" == 0 || "$owner" == "$uid" ]] || return 1
+    read -r who _ < <(stat -c '%u %a' -- "$r/proc/$pid" 2>/dev/null) || return 1
+    [[ "$who" == 0 || "$who" == "$uid" ]] || return 1
+    out="$(_xs_peer "$sock")" || return 1
+    [[ "$out" == "$pid $who" ]] || return 1
+    out="$(_xs_peer "@$sock")" || return 1
+    [[ "$out" == "$pid $who" ]]
+}
+
+# _xs_peer_display PID UID: ":<N>" — the one display PID serves by both its
+# listeners, by SO_PEERCRED (_xs_peer_held), N from the socket files of
+# /tmp/.X11-unix (a name there proves nothing, the kernel's answer does). 1 —
+# none, or two (which one is the session is not known).
+_xs_peer_display(){
+    local pid="$1" uid="${2:-}" r f n found=""
+    r="$(_xs_root)"
+    for f in "$r"/tmp/.X11-unix/X*; do
+        n="${f##*/X}"
+        [[ "$n" =~ ^[0-9]{1,4}$ ]] || continue
+        _xs_peer_held "$n" "$pid" "$uid" || continue
+        [[ -z "$found" ]] || return 1
+        found="$n"
+    done
+    [[ -n "$found" ]] || return 1
+    printf ':%s\n' "$found"
+}
+
+# _xs_x_held N PID [UID]: PID serves X<N> by its sockets — X<N> has listeners,
+# every one is among PID's fds (inode in /proc/net/unix against /proc/PID/fd),
+# and they are both: the socket file and the abstract @/tmp/.X11-unix/X<N>.
+# xcb connects to the abstract name first, and with no unix listener at all it
 # would go to TCP 127.0.0.1:6000+N — whoever listens there gets the cookie.
-# 1 — no listener, one of another process, one kind missing, or nothing to
-# check them against (fds not readable, no /proc/net/unix, a forged line).
+# The fds of PID not readable (a root Xorg, USER's wrapper) — the kernel is
+# asked instead (_xs_peer_held, SO_PEERCRED), only when UID is given: the
+# caller has already bound PID to USER's session (_xs_root_xorgs). 1 — no
+# listener, one of another process, one kind missing, or nothing to check them
+# against (no /proc/net/unix, a forged line, no UID, no perl).
 _xs_x_held(){
-    local n="$1" pid="$2" out ln inode path file="" abstract=""
+    local n="$1" pid="$2" uid="${3:-}" out ln inode path file="" abstract=""
     local -a mine=() listeners=()
+    if ! _xs_pid_sockets "$pid" >/dev/null; then
+        _xs_peer_held "$n" "$pid" "$uid"
+        return
+    fi
     out="$(_xs_x_listeners "$n")" || return 1
     [[ -n "$out" ]] || return 1
     mapfile -t listeners <<< "$out"
@@ -239,8 +335,11 @@ _xs_own_display(){
 # display) when its lock holds PID; b) else the lock that holds PID. c) No lock
 # holds PID — GDM starts `Xorg vtN -displayfd 3` and writes no lock (measured
 # on Ubuntu 24.04, ruling П27б): the one N of its own listening sockets
-# (_xs_own_display). A socket name alone proves nothing: /proc/net/unix prints
-# whatever an abstract name holds. 1 — none.
+# (_xs_own_display). d) The fds of PID not readable (a root Xorg, USER's
+# wrapper; GDM through Xorg.wrap on L4T, no lock either — measured on Jetson
+# AGX Orin 2026-11-16): the one N whose both listeners are PID's by
+# SO_PEERCRED (_xs_peer_display). A socket name alone proves nothing:
+# /proc/net/unix prints whatever an abstract name holds. 1 — none.
 _xs_xorg_display(){
     local pid="$1" uid="$2" r arg f n
     r="$(_xs_root)"
@@ -259,11 +358,80 @@ _xs_xorg_display(){
             return 0
         fi
     done
-    if n="$(_xs_own_display "$pid")"; then
-        printf '%s сокеты Xorg (lock-файла нет)\n' "$n"
+    if _xs_pid_sockets "$pid" >/dev/null; then
+        if n="$(_xs_own_display "$pid")"; then
+            printf '%s сокеты Xorg (lock-файла нет)\n' "$n"
+            return 0
+        fi
+    elif n="$(_xs_peer_display "$pid" "$uid")"; then
+        printf '%s слушатели X по SO_PEERCRED (lock-файла нет, fd Xorg не читаются)\n' "$n"
         return 0
     fi
     return 1
+}
+
+# _xs_session_leader SID: the pid of the Leader of a logind session (GDM:
+# gdm-x-session of the user; a console login: login). 1 — none.
+_xs_session_leader(){
+    local out pid
+    [[ "${1:-}" =~ ^[A-Za-z0-9_-]+$ ]] || return 1
+    out="$(loginctl show-session -p Leader -- "$1" 2>/dev/null)" || return 1
+    pid="$(sed -n 's/^Leader=//p' <<< "$out")"
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+    printf '%s\n' "$pid"
+}
+
+# _xs_ppid PID: the parent of PID by /proc/PID/stat — the fields after the
+# last ")" (comm may hold spaces and parentheses). 1 — none.
+_xs_ppid(){
+    local r line ppid
+    r="$(_xs_root)"
+    [[ "${1:-}" =~ ^[0-9]+$ ]] || return 1
+    line="$(head -c 4096 -- "$r/proc/$1/stat" 2>/dev/null)" || return 1
+    [[ "$line" == *")"* ]] || return 1
+    read -r _ ppid _ <<< "${line##*)}"
+    [[ "$ppid" =~ ^[0-9]+$ ]] || return 1
+    printf '%s\n' "$ppid"
+}
+
+# _xs_descends PID ANCESTOR: ANCESTOR is the parent of PID, or its parent's…
+# (16 steps at most; pid 1 ends the walk).
+_xs_descends(){
+    local p="$1" i
+    [[ "${2:-}" =~ ^[1-9][0-9]*$ ]] || return 1
+    for (( i = 0; i < 16; i++ )); do
+        p="$(_xs_ppid "$p")" || return 1
+        [[ "$p" == "$2" ]] && return 0
+        (( p > 1 )) || return 1
+    done
+    return 1
+}
+
+# _xs_root_xorgs SID UID: the Xorg processes of root that serve the session
+# SID of UID, one pid per line: /proc/<pid> owned by root, a descendant of the
+# Leader of SID (logind — GDM: gdm-x-session of the user, needs_root_rights of
+# Xorg.wrap), and its -auth a file of UID nobody else writes (_xs_trusted: the
+# server was started for this user — GDM's /run/user/<uid>/gdm/Xauthority,
+# startx's ~/.serverauth.*). Which display it serves — _xs_xorg_display.
+_xs_root_xorgs(){
+    local sid="$1" uid="$2" r leader pids pid owner auth
+    local -a pidv=()
+    r="$(_xs_root)"
+    [[ "$uid" =~ ^[0-9]+$ ]] || return 1
+    leader="$(_xs_session_leader "$sid")" || return 1
+    pids="$(pgrep -u 0 -x Xorg 2>/dev/null)" || return 1
+    mapfile -t pidv <<< "$pids"
+    for pid in "${pidv[@]}"; do
+        [[ "$pid" =~ ^[1-9][0-9]*$ ]] || continue
+        read -r owner _ < <(stat -c '%u %a' -- "$r/proc/$pid" 2>/dev/null) || continue
+        [[ "$owner" == 0 ]] || continue
+        _xs_descends "$pid" "$leader" || continue
+        auth="$(tr '\0' '\n' < "$r/proc/$pid/cmdline" 2>/dev/null | awk '/^-auth$/{getline; print; exit}')" || auth=""
+        [[ "$auth" == /* ]] || continue
+        _xs_trusted "$r$auth" "$uid" || continue
+        printf '%s\n' "$pid"
+    done
+    return 0
 }
 
 xs_seat0_session(){
@@ -350,7 +518,12 @@ _xs_served(){
     read -r owner _ < <(stat -c '%u %a' -- "$sock" 2>/dev/null) || return 1
     [[ "$owner" == 0 || "$owner" == "$uid" ]] || return 1
     # Bound to the process: both listeners of X<N> are this Xorg's fds and
-    # nobody else listens there — a free abstract name would be anyone's.
+    # nobody else listens there — a free abstract name would be anyone's. Only
+    # by fds: a root Xorg here is under no session of USER's — another console
+    # user's `startx -- :0` (Xorg.wrap, needs_root_rights) plus `xhost
+    # +si:localuser:USER` would pass _xs_confirm. A root Xorg of USER's own
+    # session is found by fallback 1 (_xs_root_xorgs), never here.
+    _xs_pid_sockets "$pid" >/dev/null || return 1
     _xs_x_held "$n" "$pid"
 }
 
@@ -403,8 +576,9 @@ _xs_confirm(){
 }
 
 xs_find_display(){
-    local user="${1:-}" s sid type display state pw uid pids pid found how n
+    local user="${1:-}" s sid="" type="" display state pw uid pids pid found how n whose
     local -a pidv=()
+    local -A rootpid=()
     _xs_name_ok "$user" || return 1
     if s="$(xs_seat0_session "$user")"; then
         read -r sid type display state <<< "$s"
@@ -420,9 +594,16 @@ xs_find_display(){
     pw="$(_xs_passwd "$user")" || return 1
     uid="${pw%% *}"
     # Fallback 1: an Xorg owned by the user (rootless GDM, startx) — its display
-    # bound to it by its lock file (from argv or the lock alone), served by
-    # both its listeners, confirmed by an authority.
+    # bound to it by its lock file (from argv or the lock alone) or its own
+    # sockets, served by both its listeners, confirmed by an authority. Then an
+    # Xorg of root under the user's seat0 session (GDM through Xorg.wrap: L4T,
+    # no KMS) — _xs_root_xorgs; its fds are not readable, the kernel tells who
+    # listens (SO_PEERCRED).
     pids="$(pgrep -u "$uid" -x Xorg 2>/dev/null)" || pids=""
+    if [[ -n "$sid" && "$type" == x11 ]] && s="$(_xs_root_xorgs "$sid" "$uid")" && [[ -n "$s" ]]; then
+        while IFS= read -r pid; do rootpid[$pid]=1; done <<< "$s"
+        pids+=$'\n'"$s"
+    fi
     mapfile -t pidv <<< "$pids"
     for pid in "${pidv[@]}"; do
         [[ "$pid" =~ ^[0-9]+$ ]] || continue
@@ -430,12 +611,14 @@ xs_find_display(){
         read -r display how <<< "$found"
         _xs_display_ok "$display" || continue
         n="${display#:}"; n="${n%%.*}"
-        if ! _xs_x_held "$n" "$pid"; then
+        if ! _xs_x_held "$n" "$pid" "$uid"; then
             _xs_info "дисплей $display: сокеты X$n (файл и абстрактный) — не оба у Xorg $pid или их не проверить — не принимаю"
             continue
         fi
+        whose="пользователя $user"
+        [[ -n "${rootpid[$pid]:-}" ]] && whose="(root) сеанса $sid пользователя $user"
         if _xs_confirm "$user" "$display"; then
-            _xs_info "дисплей $display: Xorg $pid пользователя $user, $how (в logind Display пуст)"
+            _xs_info "дисплей $display: Xorg $pid $whose, $how (в logind Display пуст)"
             printf '%s\n' "$display"
             return 0
         fi
