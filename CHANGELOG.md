@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.28.1](https://github.com/iamletenkov/cream-extensions/compare/v5.28.0...v5.28.1) (2026-11-17)
+
+
+### Исправлено
+
+* **selkies:** Xorg от root под сеансом GDM и DISPLAY=:N для pixelflux ([#159](https://github.com/iamletenkov/cream-extensions/issues/159)) ([d0a2cad](https://github.com/iamletenkov/cream-extensions/commit/d0a2cad61eb45a8550f6730a6e1739fd813e5164))
+
 ## [5.28.0](https://github.com/iamletenkov/cream-extensions/compare/v5.27.0...v5.28.0) (2026-11-15)
 
 
