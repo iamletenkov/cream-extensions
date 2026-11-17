@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.28.2](https://github.com/iamletenkov/cream-extensions/compare/v5.28.1...v5.28.2) (2026-11-17)
+
+
+### Исправлено
+
+* **sensing-gmsl2-camera:** adapter-check считает каналы мультиплексора по ссылкам channel-* ([#162](https://github.com/iamletenkov/cream-extensions/issues/162)) ([81e3f78](https://github.com/iamletenkov/cream-extensions/commit/81e3f780a373fa63cae83a28d1b17809ae3bdbce)), closes [#161](https://github.com/iamletenkov/cream-extensions/issues/161)
+
 ## [5.28.1](https://github.com/iamletenkov/cream-extensions/compare/v5.28.0...v5.28.1) (2026-11-17)
 
 
