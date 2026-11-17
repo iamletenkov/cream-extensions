@@ -20,7 +20,9 @@
 # controller) count. Its I2C
 # client is the device of /sys/bus/i2c/devices whose of_node is that node;
 # the name of the client (2-0070) gives the bus and the address. Healthy: the
-# client has a driver and one child bus i2c-N per channel with a deserializer.
+# client has a driver and one channel bus i2c-N per channel with a deserializer,
+# found through the links channel-K of the client (the buses sit next to the
+# client on kernel 5.15) or as its nested i2c-N directories.
 #
 # SENSING_ADAPTER_WAIT seconds (default 60) the check is repeated every 2 s:
 # a probe deferred for a supplier (regulator, GPIO) binds later. A probe that
@@ -83,9 +85,31 @@ client_of() {
     return 1
 }
 
+# channel_buses CLIENT: prints the names (i2c-N) of the channel buses of the mux
+# client, one per line, each bus once. The kernel (i2c-mux-core) gives the client
+# a link channel-K to the bus of every channel it created; on kernel 5.15 the
+# buses sit NEXT TO the client (…/i2c-2/2-0070, …/i2c-2/i2c-9) and the link is
+# relative (channel-0 -> ../i2c-9) — a bus nested under the client is not
+# there. So a channel counts when its link resolves to an existing i2c-N
+# directory; a dangling link or a link to something else does not. The nested
+# i2c-N directories of the client are counted too (a layout of other kernels).
+channel_buses() {
+    local n real name
+    local -A seen=()
+    for n in "$1"/channel-[0-9]* "$1"/i2c-[0-9]*; do
+        [[ -e "$n" ]] || continue
+        real="$(realpath -e -- "$n" 2>/dev/null)" || continue
+        name="${real##*/}"
+        [[ "$name" =~ ^i2c-[0-9]+$ ]] || continue
+        [[ -z "${seen[$real]:-}" ]] || continue
+        seen["$real"]=1
+        echo "$name"
+    done
+}
+
 # check_all: one pass; 0 — all muxes healthy. PROBLEMS and GOOD get the lines.
 check_all() {
-    local mux c name where n chans
+    local mux c name where chans
     PROBLEMS=(); GOOD=()
     for mux in "${!want[@]}"; do
         if ! c="$(client_of "$mux")"; then
@@ -98,8 +122,7 @@ check_all() {
             PROBLEMS+=("SG8A не отвечает: $where без драйвера, камер нет — проверьте питание и шлейф")
             continue
         fi
-        chans=()
-        for n in "$c"/i2c-[0-9]*; do [[ -e "$n" ]] && chans+=("$(basename "$n")"); done
+        mapfile -t chans < <(channel_buses "$c")
         if (( ${#chans[@]} < ${want[$mux]} )); then
             PROBLEMS+=("SG8A не отвечает: $where — каналов мультиплексора ${#chans[@]} из ${want[$mux]}, камер нет — проверьте питание и шлейф")
             continue

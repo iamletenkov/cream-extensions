@@ -20,7 +20,10 @@
 # and the udev rule are `files` and call them by absolute path (ruling R7).
 schema: cream/v1
 name: sensing-gmsl2-camera
-version: 5.1.1
+version: 5.1.2
+# 5.1.2: adapter-check finds the mux channels through the links channel-K of the
+#        client (kernel 5.15 puts the channel buses next to it, not under it);
+#        it used to count 0 of 2 and failed a healthy adapter (Orin 2026-11-17).
 # 5.1.1: the units start without /etc/cream/sensing-gmsl2-camera/config
 #        (EnvironmentFile=-: cream writes the file only when a key is set), and
 #        camera-profile from the unit takes the default SENSING_CAMERA_CONTROLS of
