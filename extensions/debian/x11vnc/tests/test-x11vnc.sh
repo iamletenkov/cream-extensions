@@ -130,7 +130,7 @@ mode_of() { stat -c %a "$1"; }
 echo "== манифест =="
 mf() { python3 -c 'import sys, yaml; m = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$EXT/extension.yaml" "$1"; }
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
-eq "версия 6.0.2 (remove без failed x11vnc@, SuccessExitStatus=2 — приёмка 2026-11-13)" 6.0.2 "$(mf 'm["version"]')"
+eq "версия 6.0.3 (lib/x-session.sh: Xorg root под сеансом — Orin 2026-11-16)" 6.0.3 "$(mf 'm["version"]')"
 eq "X11VNC_USER: имя, пусто — cloud-user" "re:^[a-z_][a-z0-9_-]{0,31}\$||True" \
     "$(mf 'm["config"]["keys"]["X11VNC_USER"]["type"] + "|" + m["config"]["keys"]["X11VNC_USER"]["default"] + "|" + str(m["config"]["keys"]["X11VNC_USER"].get("empty"))')"
 eq "X11VNC_DISPLAY: auto или :N, умолчание auto" "re:^(auto|:[0-9]+(\\.[0-9]+)?)\$|auto" \

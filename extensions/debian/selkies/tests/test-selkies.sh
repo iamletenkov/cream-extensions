@@ -127,7 +127,7 @@ x0srv() {
 echo "== манифест и раскладка =="
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
 eq "name" selkies "$(mf 'm["name"]')"
-eq "версия 7.0.2 (remove сбрасывает сбой selkies@ — приёмка 2026-11-13)" 7.0.2 "$(mf 'm["version"]')"
+eq "версия 7.0.3 (DISPLAY=:N для pixelflux, Xorg root под сеансом — Orin 2026-11-16)" 7.0.3 "$(mf 'm["version"]')"
 eq "SELKIES_USER: имя, пусто — cloud-user" "re:^[a-z_][a-z0-9_-]{0,31}\$||True" \
     "$(mf '(lambda k: k["type"] + "|" + k["default"] + "|" + str(k.get("empty")))(m["config"]["keys"]["SELKIES_USER"])')"
 eq "SELKIES_DISPLAY: auto или :N, умолчание auto" "re:^(auto|:[0-9]+(\.[0-9]+)?)\$|auto|True" \
@@ -906,20 +906,26 @@ check "selkies запущен" test -e "$FAKE/selkies.env"
 check_not "SELKIES_USER нет в окружении Selkies" grep -q '^SELKIES_USER=' "$FAKE/selkies.env"
 
 echo "== run-selkies.sh: SELKIES_DISPLAY — auto по logind, :N жёстко, без ключа — auto (Р4) =="
+# DISPLAY is :N, not unix:N: the X11 capture of pixelflux (Rust, x11rb) does not
+# parse unix:N — «X11 connect failed: Failed to parse value '0'», no video
+# (Jetson AGX Orin 2026-11-16); Selkies' own Python reads both forms.
 wr_root; seat0 2 alice x11 :1
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"
-check "ключ не задан: дисплей из logind — :1" grep -qx 'DISPLAY=unix:1' "$FAKE/selkies.env"
+check "ключ не задан: дисплей из logind — :1" grep -qx 'DISPLAY=:1' "$FAKE/selkies.env"
+check_not "DISPLAY без unix: (pixelflux его не разбирает)" grep -q '^DISPLAY=unix' "$FAKE/selkies.env"
 check "Selkies получает найденный дисплей, не auto" grep -qx 'SELKIES_DISPLAY=:1' "$FAKE/selkies.env"
 check "путь назван в журнале (logind)" grep -q 'logind' "$ROOT/out"
 wr_root; seat0 2 alice x11 :1
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_DISPLAY=auto
-check "auto: дисплей :1" grep -qx 'DISPLAY=unix:1' "$FAKE/selkies.env"
+check "auto: дисплей :1" grep -qx 'DISPLAY=:1' "$FAKE/selkies.env"
 wr_root; seat0 2 alice x11 :1
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_DISPLAY=
-check "пусто — как auto: :1" grep -qx 'DISPLAY=unix:1' "$FAKE/selkies.env"
+check "пусто — как auto: :1" grep -qx 'DISPLAY=:1' "$FAKE/selkies.env"
 wr_root; seat0 2 alice x11 :1
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_DISPLAY=:0
-check "сохранённое :0 не меняется" grep -qx 'DISPLAY=unix:0' "$FAKE/selkies.env"
+check "сохранённое :0 не меняется" grep -qx 'DISPLAY=:0' "$FAKE/selkies.env"
+check "жёсткий :0 — SELKIES_DISPLAY=:0" grep -qx 'SELKIES_DISPLAY=:0' "$FAKE/selkies.env"
+check "жёсткий :0 — authority проверена по unix:0" grep -qx -- '-display unix:0' "$FAKE/xdpyinfo.argv"
 wr_root
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" 'SELKIES_DISPLAY=:0;x'; eq "негодный SELKIES_DISPLAY — 78" 78 "$?"
 check_not "selkies не запущен" test -e "$FAKE/selkies.env"
@@ -932,8 +938,52 @@ ht_fake xhost 'echo "access control enabled, only authorized clients can connect
 x0srv
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"
 check "selkies запущен" test -e "$FAKE/selkies.env"
-check "дисплей :0 (как 6.x)" grep -qx 'DISPLAY=unix:0' "$FAKE/selkies.env"
+check "дисплей :0 (как 6.x)" grep -qx 'DISPLAY=:0' "$FAKE/selkies.env"
 check "путь назван: запасной" grep -q 'запасной путь' "$ROOT/out"
+
+echo "== run-selkies.sh: Xorg от root под сеансом GDM (Jetson L4T) — дисплей находится =="
+# Jetson AGX Orin, Ubuntu 22.04 L4T, GDM autologin (2026-11-16): Xorg of root
+# (Xorg.wrap, needs_root_rights=yes), a child of gdm-x-session — the Leader of
+# alice's x11 session; logind Display empty, no /tmp/.X0-lock, its fds not
+# readable. Before: «жду X-сессию … его дисплей пока не открывается» for ever.
+# A real listener on X0 (file and abstract, under CREAM_ROOT) plays the Xorg:
+# lib/x-session.sh asks the kernel who listens (SO_PEERCRED).
+wr_root
+seat0 2 alice x11 ""
+echo "Leader=2269" >> "$FAKE/session.2"
+mkdir -p "$ROOT/tmp/.X11-unix" "$ROOT/run/user/1000/gdm" "$ROOT/proc/2269"
+: > "$ROOT/run/user/1000/gdm/Xauthority"
+echo '2269 (gdm-x-session) S 1 2269 0 0 -1' > "$ROOT/proc/2269/stat"
+mkfifo "$FAKE/ready"
+python3 -c '
+import socket, sys, time
+ls = []
+for name in (sys.argv[1], "\0" + sys.argv[1]):
+    s = socket.socket(socket.AF_UNIX)
+    s.bind(name)
+    s.listen(8)
+    ls.append(s)
+with open(sys.argv[2], "w") as f:
+    f.write("ok\n")
+time.sleep(120)' "$ROOT/tmp/.X11-unix/X0" "$FAKE/ready" &
+XPID=$!
+read -r _ < "$FAKE/ready"
+mkdir -p "$ROOT/proc/$XPID"
+printf '%s\0' /usr/lib/xorg/Xorg vt2 -displayfd 3 -auth /run/user/1000/gdm/Xauthority -nolisten tcp \
+    -background none -noreset -keeptty -novtswitch -verbose 3 > "$ROOT/proc/$XPID/cmdline"
+echo Xorg > "$ROOT/proc/$XPID/comm"
+echo "$XPID (Xorg) S 2269 $XPID 0 0 -1" > "$ROOT/proc/$XPID/stat"
+# pgrep: the root Xorg by uid 0, alice has none. stat: /proc/<pid> is root's,
+# the files of alice are hers (uid 1000 of the fake passwd), 0600.
+ht_fake pgrep "[[ \"\$*\" == '-u 0 -x Xorg' ]] && { echo $XPID; exit 0; }; exit 1"
+ht_fake stat 'case "${!#}" in */proc/*) echo "0 555" ;; *) echo "1000 600" ;; esac'
+ht_fake xhost 'echo "access control enabled, only authorized clients can connect"'
+run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"
+kill "$XPID" 2>/dev/null; wait "$XPID" 2>/dev/null
+check "Jetson: selkies запущен" test -e "$FAKE/selkies.env"
+check "Jetson: DISPLAY=:0" grep -qx 'DISPLAY=:0' "$FAKE/selkies.env"
+check "Jetson: путь назван — Xorg root сеанса" grep -q "Xorg $XPID (root) сеанса 2" "$ROOT/out"
+check_not "Jetson: не ждал сеанс" grep -q 'жду X-сессию' "$ROOT/out"
 
 echo "== run-selkies.sh: ожидание сеанса — диагноз раз в 5 минут =="
 wr_root

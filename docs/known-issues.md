@@ -24,20 +24,29 @@
   [`gdm-xorg`](../extensions/debian/gdm-xorg/README.md) (стол не через cream) или `gnome`;
   у SDDM своего переключателя в каталоге нет (Kubuntu 24.04 — Plasma 5.27, сеанс по
   умолчанию X11, замер P4; Plasma 6, по сведениям, по умолчанию на Wayland).
-- **Xorg от root при пустом `Display` в logind — обёртка ждёт.** Это GDM с Xorg через
-  `Xorg.wrap` от root (нет KMS, NVIDIA без `nvidia-drm.modeset=1`) и `startx` с
-  root-Xorg. Обёртки `selkies` и `x11vnc` работают от пользователя и fd такого Xorg не
-  видят. Без них дисплей не доказать (запасные пути `lib/x-session.sh`): cookie уходит
-  только Xorg, чей `N` доказан — доверенным lock-файлом с его pid, а без lock-файла
-  единственным `N` его собственных слушающих сокетов — и чьи оба слушателя `X<N>` — его
-  fd. Поэтому обёртка ждёт, строка в журнале раз в 5 минут. Их это не задевает: LightDM
-  и SDDM пишут `Display`, rootless GDM — Xorg пользователя без lock-файла, `N` из его
-  сокетов (замер P1/P2, П27б). Обход — сознательно
-  задать дисплей: `sudo cream set selkies SELKIES_DISPLAY=:N` /
+- **Xorg от root при пустом `Display` в logind — только под сеансом пользователя.** Это
+  GDM с Xorg через `Xorg.wrap` от root (Jetson L4T с `needs_root_rights=yes`, нет KMS,
+  NVIDIA без `nvidia-drm.modeset=1`) и `startx` с root-Xorg. Обёртки `selkies` и `x11vnc`
+  работают от пользователя и fd такого Xorg не видят (в 5.25.0–5.28.0 из-за этого ждали
+  вечно, Orin 2026-11-16). Теперь `lib/x-session.sh` берёт root-Xorg, если: он потомок
+  Leader X11-сеанса пользователя на seat0 (logind), его `-auth` — файл пользователя, который
+  больше никто не пишет, и оба слушателя `X<N>` (файл и абстрактный) по `SO_PEERCRED`
+  (ядро, читается всеми; зонд на `perl` ничего не пишет) — его pid; `N` — lock-файл или
+  единственный дисплей, который он так обслуживает. Остаточный риск: подмена pid
+  между зондом и `xdpyinfo` (pid должен освободиться и достаться чужому процессу за
+  миллисекунды), как и у пути по fd. Ждёт обёртка, если root-Xorg вне сеанса
+  пользователя и без lock-файла или на машине нет `perl`. Обход — сознательно задать
+  дисплей: `sudo cream set selkies SELKIES_DISPLAY=:N` /
   `sudo cream set x11vnc X11VNC_DISPLAY=:N`. Замеры по DM — [runbook 05](runbooks/05_existing-desktop-acceptance.md),
   [#139](https://github.com/iamletenkov/cream-extensions/issues/139).
+- **Selkies получает `DISPLAY=:N`, а не `unix:N`.** Захват X11 в pixelflux (x11rb) `unix:N`
+  не разбирает — в 5.25.0–5.28.0 видео не было. Клиент `:N` уходит на TCP
+  `127.0.0.1:6000+N` только без unix-слушателя `X<N>`: на старте оба доказаны (`auto`) или
+  `:N` открыт по `unix:N` (жёсткий); после ухода X-сервера сторож гасит Selkies за ~20 с,
+  а cookie GDM, LightDM, SDDM и `startx` выпускается на каждый запуск сервера. Риск —
+  постоянная cookie, заданная руками. x11vnc подключается по `-display unix:N`, как раньше.
 - **Жёсткий `:N` и `Display` из logind — без привязки к Xorg.** Authority предлагается
-  дисплею как есть (как в 5.x); проверка authority и подключение x11vnc/Selkies — по
+  дисплею как есть (как в 5.x); проверка authority и подключение x11vnc — по
   `unix:N`, без отката на TCP. Но GDM
   пишет wild-cookie, и на `:N` без X-сервера (например, сохранённый с 5.x `:0`, а сеанс
   на `:1`) cookie получит тот, кто займёт абстрактное имя `@/tmp/.X11-unix/X<N>`.

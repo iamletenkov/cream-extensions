@@ -40,7 +40,13 @@
 #        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: selkies
-version: 7.0.2
+version: 7.0.3
+# 7.0.3: DISPLAY=:N for Selkies, not unix:N — the X11 capture of pixelflux does
+#        not parse unix:N, no video since 7.0.0 (Jetson AGX Orin 2026-11-16);
+#        lib/x-session.sh: an Xorg of root under the user's x11 session on seat0
+#        (GDM through Xorg.wrap: Jetson L4T, no KMS) is found — a descendant of
+#        the session Leader, -auth a file of the user, both listeners of X<N>
+#        its pid by SO_PEERCRED (its fds are not readable by the user).
 # 7.0.2: remove resets the failed state of every selkies@ (acceptance 2026-11-13:
 #        an instance that exited 78 on Wayland stayed "not-found failed" after
 #        remove and the machine degraded until a reboot).
