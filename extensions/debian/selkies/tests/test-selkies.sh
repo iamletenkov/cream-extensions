@@ -127,7 +127,7 @@ x0srv() {
 echo "== манифест и раскладка =="
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
 eq "name" selkies "$(mf 'm["name"]')"
-eq "версия 7.0.3 (DISPLAY=:N для pixelflux, Xorg root под сеансом — Orin 2026-11-16)" 7.0.3 "$(mf 'm["version"]')"
+eq "версия 7.1.0 (источник в строке привязки # stvor:)" 7.1.0 "$(mf 'm["version"]')"
 eq "SELKIES_USER: имя, пусто — cloud-user" "re:^[a-z_][a-z0-9_-]{0,31}\$||True" \
     "$(mf '(lambda k: k["type"] + "|" + k["default"] + "|" + str(k.get("empty")))(m["config"]["keys"]["SELKIES_USER"])')"
 eq "SELKIES_DISPLAY: auto или :N, умолчание auto" "re:^(auto|:[0-9]+(\.[0-9]+)?)\$|auto|True" \
@@ -330,7 +330,8 @@ ht_secret SELKIES_MASTER_TOKEN "$TOKEN"
 ht_hook configure CREAM_REASON=boot; eq "configure — 0" 0 "$?"
 check "загрузка: start --no-block selkies@alice" ht_called '^systemctl start --no-block selkies@alice\.service'
 check_not "в selkies@ ничего не включается навсегда" ht_called '^systemctl enable'
-eq "объявление" "NAME=selkies URI=http://127.0.0.1:8080 ICON=desktop" "$(tr '\n' ' ' < "$DECL" | sed 's/ $//')"
+eq "объявление" "# stvor: source=extension:selkies|NAME=selkies|URI=http://127.0.0.1:8080|ICON=desktop" "$(paste -sd'|' "$DECL")"
+eq "объявление: одна строка привязки, первой" "1 1" "$(grep -c '^# stvor: ' "$DECL") $(grep -n '^# stvor: ' "$DECL" | cut -d: -f1)"
 eq "объявление 0644" 644 "$(stat -c %a "$DECL")"
 check_not "секреты не в выводе, argv, журнале вызовов" leaked "$ROOT/out" "$FAKE"
 check_not "секреты не в объявлении" leaked "$APPS"

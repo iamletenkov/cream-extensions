@@ -328,10 +328,15 @@ sudo cream set selkies SELKIES_USER=<кто входит на экран>  # е�
 расширения [`teleport`](../teleport/README.md) (`files/teleport.sh`, `read_decl`):
 
 ```
+# stvor: source=extension:selkies
 NAME=selkies
 URI=http://127.0.0.1:8080      # https — при SELKIES_ENABLE_HTTPS=true; ::1 — [::1]
 ICON=desktop
 ```
+
+Первая строка — привязка в том виде, что пишет stvor-agent: источник
+`extension:selkies` для раздела apps его инвентаря. Для `teleport` это
+комментарий — на публикацию не влияет.
 
 Объявление есть, только когда служба может работать (аутентификация есть) и
 слушает петлю (`127.0.0.1`, `localhost`, `0.0.0.0`, `::1`); `remove` его снимает.
