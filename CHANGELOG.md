@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.30.0](https://github.com/iamletenkov/cream-extensions/compare/v5.29.0...v5.30.0) (2026-11-19)
+
+
+### Добавлено
+
+* **selkies:** объявление apps.d несёт источник в строке # stvor: ([#167](https://github.com/iamletenkov/cream-extensions/issues/167)) ([cee7668](https://github.com/iamletenkov/cream-extensions/commit/cee76680877bebf7dd387cf55d4d9365ba65e09e))
+* **stvor-agent:** пин агента 5.11.0 ([#166](https://github.com/iamletenkov/cream-extensions/issues/166)) ([edd5a8d](https://github.com/iamletenkov/cream-extensions/commit/edd5a8d00a2b8c2384fa60492446ee322c7ea531))
+
 ## [5.29.0](https://github.com/iamletenkov/cream-extensions/compare/v5.28.2...v5.29.0) (2026-11-17)
 
 
