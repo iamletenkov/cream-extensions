@@ -44,12 +44,13 @@ Leader X11-сеанса пользователя на seat0 по logind, а ег
 Без сеанса пользователя (запасной путь `:0`) Xorg от root не берётся.
 Дисплей ещё подтверждает собственная authority пользователя (у SDDM — `/tmp/xauth_*`,
 только его uid и права `0600`) — по `unix:N`, без отката на TCP ([`lib/x-session.sh`](../../../lib/x-session.sh)). Selkies получает
-`DISPLAY=:N`, а не `unix:N` (5.25.0–5.28.0): захват X11 в pixelflux `unix:N` не разбирает —
-видео нет. Откат клиента `:N` на TCP `127.0.0.1:6000+N` возможен только без
-unix-слушателя `X<N>`; на старте оба слушателя доказаны (или `:N` открыт по `unix:N`), а
-после ухода X-сервера сторож гасит Selkies на первой неудачной проверке (~10 с), если
-файла сокета `X<N>` уже нет, иначе на второй (~20 с)
-([#139](https://github.com/iamletenkov/cream-extensions/issues/139), п. 2). `:N` — жёстко. Стол,
+`DISPLAY=unix/:N` — только unix-сокет `X<N>`, без отката на TCP. Не `unix:N`
+(5.25.0–5.28.0): захват X11 в pixelflux его не разбирает — видео нет. Не `:N`
+(selkies 7.0.3–7.1.0): клиент `:N` без unix-слушателя `X<N>` уходит на TCP
+`127.0.0.1:6000+N` ([#139](https://github.com/iamletenkov/cream-extensions/issues/139), п. 2).
+`unix/:N` читают pixelflux, libxcb и python-xlib Selkies (замер на Jetson Nano 2026-11-22).
+После ухода X-сервера сторож гасит Selkies на первой неудачной проверке (~10 с), если
+файла сокета `X<N>` уже нет, иначе на второй (~20 с). `:N` — жёстко. Стол,
 поставленный не через cream (готовая Ubuntu, GDM/LightDM/SDDM), —
 [`existing-desktop`](../existing-desktop/README.md); сеанс на Wayland не
 транслируется — [`gdm-xorg`](../gdm-xorg/README.md).
@@ -281,16 +282,10 @@ sudo cream set selkies SELKIES_USER=<кто входит на экран>  # е�
   root-Xorg вне сеанса пользователя (с lock-файлом или без — так выглядит и `startx`
   другого консольного пользователя) или машина без `perl` — дисплей не доказать. Обход — сознательно
   `sudo cream set selkies SELKIES_DISPLAY=:N`.
-- **Откат `:N` на TCP после ухода X-сервера.** Selkies получает `DISPLAY=:N` (pixelflux не
-  разбирает `unix:N`); если X-сервер исчез, до остановки сторожем (~10 с без файла
-  сокета `X<N>`, ~20 с с ним) клиент Xlib/xcb
-  может постучаться на `127.0.0.1:6000+N` с cookie уже ушедшего сервера. GDM, LightDM,
-  SDDM и `startx` выпускают cookie на каждый запуск сервера, так что она уже ничего не
-  открывает; постоянная cookie, заданная руками, — риск.
 - **Жёсткий `SELKIES_DISPLAY=:N` и `Display` из logind — без привязки к Xorg** (как в
   5.x; authority проверяется по `unix:N`): на `:N` без X-сервера wild-cookie GDM получит тот, кто
   займёт `@/tmp/.X11-unix/X<N>`. Жёсткий `:N` — только там, где на нём гарантированно
-  X-сервер пользователя. Оба пункта —
+  X-сервер пользователя. Подробнее —
   [#139](https://github.com/iamletenkov/cream-extensions/issues/139),
   [known-issues](../../../docs/known-issues.md).
 - Без пароля или явного `SELKIES_ALLOW_NO_AUTH=1` служба не стартует.

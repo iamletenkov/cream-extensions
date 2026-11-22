@@ -40,7 +40,11 @@
 #        otherwise skips it by the configure mark; audit 2026-10-21).
 schema: cream/v1
 name: selkies
-version: 7.1.0
+version: 7.1.1
+# 7.1.1: DISPLAY=unix/:N for Selkies, not :N — a client of :N (x11rb, libxcb)
+#        falls back to TCP 127.0.0.1:6000+N once the unix listeners of X<N> are
+#        gone; unix/:N is the unix socket only, and pixelflux, libxcb and the
+#        python-xlib of Selkies read it (Jetson Nano, L4T R32, 2026-11-22).
 # 7.1.0: объявление для Teleport начинается строкой привязки
 #        «# stvor: source=extension:selkies» — источник для раздела apps инвентаря
 #        stvor-agent (план Stvor 2026-11-12, Task C1), в том же виде, что пишет агент;
