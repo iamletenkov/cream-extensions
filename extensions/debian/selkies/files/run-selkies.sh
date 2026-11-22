@@ -271,23 +271,22 @@ if [[ -n "$QUIET_TRY" && "$WANT_DISPLAY" == auto ]]; then
 fi
 log_info "дисплей $DISPLAY_NUM, authority $AUTH"
 
-# Selkies gets the display found, never "auto", and as ":N", auto or not.
+# Selkies gets the display found, never "auto", and as "unix/:N", auto or not
+# (the form of the X protocol name, "protocol/host:display"): the unix socket
+# of X<N> and nothing else.
 # Not "unix:N" (5.25.0–5.28.0): the X11 capture of pixelflux (Rust, x11rb)
 # does not parse it — «X11 connect failed: Failed to parse value '0'», no
-# video, while Selkies' Python reads both (x_display_socket, (?:unix)?:(\d+);
-# Jetson AGX Orin 2026-11-16). What unix:N defended (issue #139 item 2): a
-# client of ":N" falls back to TCP 127.0.0.1:6000+N only when no unix listener
-# of X<N> answers. Here one does: auto proved both listeners (file and
-# abstract) to be the Xorg's (lib/x-session.sh), an explicit :N was opened
-# over unix:N by xs_find_authority; while that Xorg lives nobody else can bind
-# its abstract name, and its socket file in the sticky /tmp/.X11-unix is not
-# anyone's to replace. The fallback is left for the window after the server
-# has gone — the watcher below stops Selkies within ~20 s, and the cookie of a
-# display manager's (or startx's) server is made anew for every server. Whether
-# the Xorg runs -nolisten tcp changes nothing: the fallback goes to a port it
-# does not hold either way once it is gone. The search and the watcher still
-# ask over unix:N. SELKIES_DISPLAY is ":N" — Selkies does not read it.
-export DISPLAY="$DISPLAY_NUM" XAUTHORITY="$AUTH" SELKIES_DISPLAY="$DISPLAY_NUM"
+# video (Jetson AGX Orin 2026-11-16; Jetson Nano 2026-11-22).
+# Not ":N" (7.0.3–7.1.0): a client of ":N" (x11rb, libxcb) falls back to TCP
+# 127.0.0.1:6000+N, a port anyone may hold, when no unix listener of X<N>
+# answers — after the server has gone, until the watcher below stops Selkies,
+# it would hand that port the cookie (issue #139 item 2). "unix/:N" never
+# goes to TCP: x11rb, libxcb and python-xlib of Selkies read it (measured on
+# Jetson Nano 2026-11-22: capture, xdpyinfo); Selkies' own x_display_socket
+# does not, but it serves only its Wayland backend. The search and the
+# watcher ask over unix:N (xdpyinfo, Xlib). SELKIES_DISPLAY is ":N" — Selkies
+# does not read it.
+export DISPLAY="unix/$DISPLAY_NUM" XAUTHORITY="$AUTH" SELKIES_DISPLAY="$DISPLAY_NUM"
 export HOME="$HOME_OF_USER" USER="$USERNAME"
 export XDG_RUNTIME_DIR="/run/user/${UID_OF_USER}"
 export PULSE_RUNTIME_PATH="$XDG_RUNTIME_DIR/pulse"
@@ -362,8 +361,8 @@ log_info "${scheme}://${addr}:${SELKIES_PORT:-8080}/ файлы=${SELKIES_FILE_T
 # обёртка раз в 10 с проверяет дисплей и при двух неудачах подряд гасит его
 # и выходит с ошибкой: юнит перезапустит, обёртка дождётся новой сессии.
 # Файла сокета X<N> уже нет (Xorg снимает его при выходе) — сессия точно
-# кончилась, гасим на первой неудаче: Selkies с DISPLAY=:N без unix-слушателя
-# ушёл бы на TCP 6000+N, окно отката — короче.
+# кончилась, гасим на первой неудаче: незачем ждать ещё 10 с, новый сеанс
+# подхватится раньше. На TCP Selkies не уходит и так (DISPLAY=unix/:N).
 # The secrets are exported in the subshell that becomes Selkies, and only there.
 (
     for k in "${SECRET_KEYS[@]}"; do

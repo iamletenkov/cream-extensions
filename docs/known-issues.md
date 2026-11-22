@@ -46,13 +46,12 @@
   дисплей: `sudo cream set selkies SELKIES_DISPLAY=:N` /
   `sudo cream set x11vnc X11VNC_DISPLAY=:N`. Замеры по DM — [runbook 05](runbooks/05_existing-desktop-acceptance.md),
   [#139](https://github.com/iamletenkov/cream-extensions/issues/139).
-- **Selkies получает `DISPLAY=:N`, а не `unix:N`.** Захват X11 в pixelflux (x11rb) `unix:N`
-  не разбирает — в 5.25.0–5.28.0 видео не было. Клиент `:N` уходит на TCP
-  `127.0.0.1:6000+N` только без unix-слушателя `X<N>`: на старте оба доказаны (`auto`) или
-  `:N` открыт по `unix:N` (жёсткий); после ухода X-сервера сторож гасит Selkies на первой
-  неудачной проверке (~10 с), если файла сокета `X<N>` уже нет (Xorg снимает его при
-  выходе), иначе на второй (~20 с: один промах — может быть занятый сервер), а cookie GDM, LightDM, SDDM и `startx` выпускается на каждый запуск сервера. Риск —
-  постоянная cookie, заданная руками. x11vnc подключается по `-display unix:N`, как раньше.
+- **Selkies получает `DISPLAY=unix/:N`.** Захват X11 в pixelflux (x11rb) `unix:N`
+  не разбирает — в 5.25.0–5.28.0 видео не было; клиент `:N` (selkies 7.0.3–7.1.0) без
+  unix-слушателя `X<N>` уходил на TCP `127.0.0.1:6000+N` — после ухода X-сервера, до
+  остановки сторожем. `unix/:N` (с 7.1.1) — только unix-сокет, без отката на TCP; его
+  читают pixelflux, libxcb и python-xlib Selkies (замер на Jetson Nano 2026-11-22).
+  x11vnc подключается по `-display unix:N`, как раньше.
 - **Жёсткий `:N` и `Display` из logind — без привязки к Xorg.** Authority предлагается
   дисплею как есть (как в 5.x); проверка authority и подключение x11vnc — по
   `unix:N`, без отката на TCP. Но GDM

@@ -127,7 +127,7 @@ x0srv() {
 echo "== манифест и раскладка =="
 eq "schema" cream/v1 "$(mf 'm["schema"]')"
 eq "name" selkies "$(mf 'm["name"]')"
-eq "версия 7.1.0 (источник в строке привязки # stvor:)" 7.1.0 "$(mf 'm["version"]')"
+eq "версия 7.1.1 (DISPLAY=unix/:N — без отката на TCP)" 7.1.1 "$(mf 'm["version"]')"
 eq "SELKIES_USER: имя, пусто — cloud-user" "re:^[a-z_][a-z0-9_-]{0,31}\$||True" \
     "$(mf '(lambda k: k["type"] + "|" + k["default"] + "|" + str(k.get("empty")))(m["config"]["keys"]["SELKIES_USER"])')"
 eq "SELKIES_DISPLAY: auto или :N, умолчание auto" "re:^(auto|:[0-9]+(\.[0-9]+)?)\$|auto|True" \
@@ -907,24 +907,27 @@ check "selkies запущен" test -e "$FAKE/selkies.env"
 check_not "SELKIES_USER нет в окружении Selkies" grep -q '^SELKIES_USER=' "$FAKE/selkies.env"
 
 echo "== run-selkies.sh: SELKIES_DISPLAY — auto по logind, :N жёстко, без ключа — auto (Р4) =="
-# DISPLAY is :N, not unix:N: the X11 capture of pixelflux (Rust, x11rb) does not
+# DISPLAY is unix/:N: the X11 capture of pixelflux (Rust, x11rb) does not
 # parse unix:N — «X11 connect failed: Failed to parse value '0'», no video
-# (Jetson AGX Orin 2026-11-16); Selkies' own Python reads both forms.
+# (Jetson AGX Orin 2026-11-16); a bare :N falls back to TCP 6000+N once the
+# unix listeners are gone. unix/:N is the unix socket only — x11rb, libxcb and
+# python-xlib of Selkies all read it (Jetson Nano 2026-11-22).
 wr_root; seat0 2 alice x11 :1
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"
-check "ключ не задан: дисплей из logind — :1" grep -qx 'DISPLAY=:1' "$FAKE/selkies.env"
-check_not "DISPLAY без unix: (pixelflux его не разбирает)" grep -q '^DISPLAY=unix' "$FAKE/selkies.env"
+check "ключ не задан: дисплей из logind — :1" grep -qx 'DISPLAY=unix/:1' "$FAKE/selkies.env"
+check_not "DISPLAY не unix:N (pixelflux его не разбирает)" grep -q '^DISPLAY=unix:' "$FAKE/selkies.env"
+check_not "DISPLAY не голое :N (откат на TCP)" grep -q '^DISPLAY=:' "$FAKE/selkies.env"
 check "Selkies получает найденный дисплей, не auto" grep -qx 'SELKIES_DISPLAY=:1' "$FAKE/selkies.env"
 check "путь назван в журнале (logind)" grep -q 'logind' "$ROOT/out"
 wr_root; seat0 2 alice x11 :1
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_DISPLAY=auto
-check "auto: дисплей :1" grep -qx 'DISPLAY=:1' "$FAKE/selkies.env"
+check "auto: дисплей :1" grep -qx 'DISPLAY=unix/:1' "$FAKE/selkies.env"
 wr_root; seat0 2 alice x11 :1
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_DISPLAY=
-check "пусто — как auto: :1" grep -qx 'DISPLAY=:1' "$FAKE/selkies.env"
+check "пусто — как auto: :1" grep -qx 'DISPLAY=unix/:1' "$FAKE/selkies.env"
 wr_root; seat0 2 alice x11 :1
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW" SELKIES_DISPLAY=:0
-check "сохранённое :0 не меняется" grep -qx 'DISPLAY=:0' "$FAKE/selkies.env"
+check "сохранённое :0 не меняется" grep -qx 'DISPLAY=unix/:0' "$FAKE/selkies.env"
 check "жёсткий :0 — SELKIES_DISPLAY=:0" grep -qx 'SELKIES_DISPLAY=:0' "$FAKE/selkies.env"
 check "жёсткий :0 — authority проверена по unix:0" grep -qx -- '-display unix:0' "$FAKE/xdpyinfo.argv"
 wr_root
@@ -939,7 +942,7 @@ ht_fake xhost 'echo "access control enabled, only authorized clients can connect
 x0srv
 run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"
 check "selkies запущен" test -e "$FAKE/selkies.env"
-check "дисплей :0 (как 6.x)" grep -qx 'DISPLAY=:0' "$FAKE/selkies.env"
+check "дисплей :0 (как 6.x)" grep -qx 'DISPLAY=unix/:0' "$FAKE/selkies.env"
 check "путь назван: запасной" grep -q 'запасной путь' "$ROOT/out"
 
 echo "== run-selkies.sh: Xorg от root под сеансом GDM (Jetson L4T) — дисплей находится =="
@@ -986,7 +989,7 @@ run_wrapper "SELKIES_BASIC_AUTH_PASSWORD=$PW"
 kill "$XPID" 2>/dev/null; wait "$XPID" 2>/dev/null
 check "Jetson: perl спросил ядро о слушателях X0" grep -q 'X11-unix/X0' "$FAKE/perl.argv"
 check "Jetson: selkies запущен" test -e "$FAKE/selkies.env"
-check "Jetson: DISPLAY=:0" grep -qx 'DISPLAY=:0' "$FAKE/selkies.env"
+check "Jetson: DISPLAY=unix/:0" grep -qx 'DISPLAY=unix/:0' "$FAKE/selkies.env"
 check "Jetson: путь назван — Xorg root сеанса" grep -q "Xorg $XPID (root) сеанса 2" "$ROOT/out"
 check_not "Jetson: не ждал сеанс" grep -q 'жду X-сессию' "$ROOT/out"
 
@@ -1038,8 +1041,8 @@ check "xdpyinfo — unix:0" grep -qx -- '-display unix:0' "$FAKE/xdpyinfo.args"
 check_not "xdpyinfo без :N (TCP-откат)" grep -qE -- '-display :' "$FAKE/xdpyinfo.args"
 
 echo "== run-selkies.sh: сторож — файла сокета X<N> нет, Selkies гаснет сразу =="
-# Selkies gets DISPLAY=:N: with the server gone x11rb falls back to TCP
-# 6000+N. The socket file of X<N> gone too (the Xorg removed it on exit) — the
+# Selkies gets DISPLAY=unix/:N (no TCP fallback) and would only spin with the
+# server gone. The socket file of X<N> gone too (the Xorg removed it on exit) — the
 # session is surely over, the first miss stops Selkies; the file still there —
 # one miss may be a slow server, the second stops it.
 for wd in nosocket socket; do
