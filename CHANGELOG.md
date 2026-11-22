@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.30.1](https://github.com/iamletenkov/cream-extensions/compare/v5.30.0...v5.30.1) (2026-11-22)
+
+
+### Исправлено
+
+* **selkies:** DISPLAY=unix/:N — захват pixelflux без отката на TCP ([#169](https://github.com/iamletenkov/cream-extensions/issues/169)) ([5f25dff](https://github.com/iamletenkov/cream-extensions/commit/5f25dffd69f560617854d4847d43155178b2337a))
+
 ## [5.30.0](https://github.com/iamletenkov/cream-extensions/compare/v5.29.0...v5.30.0) (2026-11-19)
 
 
